@@ -47,6 +47,9 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 			fire_ray(s, origin, spread_dir(dir, spread + (W["spread"] if W["pellets"] > 1 else 0.0)), W, k == 0 or k % 3 == 0)
 	G.fx.muzzle(origin, W["id"] == "shotgun" or W["id"] == "sniper")
 	G.audio.shot(origin, W)
+	if not W["rocket"] and not W["flame"]:
+		var rt = s.gun_dir.cross(Vector3.UP).normalized()
+		G.fx.casing(origin - s.gun_dir * (W["len"] * 0.55), -rt)
 	s.parts[6].apply_central_impulse(-s.gun_dir * W["force"] * 0.08)
 	# gunfire gives away your rough position to enemies within earshot
 	for o in G.soldiers:
@@ -194,6 +197,8 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 	elif kind == "leg":
 		mult = 0.6
 	s.hp -= dmg * mult
+	if kind == "torso" or kind == "leg" or kind == "arm":
+		s.wound_part = part
 	Stats.hit(attacker, s, dmg * mult)
 	Morale.shock(s, 10.0)
 	s.last_attacker = attacker

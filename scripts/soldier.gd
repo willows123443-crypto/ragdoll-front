@@ -147,6 +147,7 @@ var dragging = null
 var carrying = null         # a wounded friend over the shoulder
 var carried_by = null
 var crate = false           # lugging an ammo box
+var wound_part = -1         # where they were last hit (they clutch it)
 var vet = 0                 # veteran level (campaign): steadier aim and nerves
 var kills = 0
 var crate_mesh: MeshInstance3D = null
@@ -650,6 +651,12 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 				G.fx.debris(pm, Vector3(randf_range(-0.3, 0.3), -0.5, randf_range(-0.3, 0.3)), 0.1, G.C_DARK)
 	else:
 		lh = rh + g * W["hold"]
+		# hurt and not shooting: one hand presses on the wound, the gun hangs from the other
+		if wound_part >= 0 and hp < 60.0 and not shoulder and state == "alive" and wound_part != 4 and wound_part != 3:
+			var wp: Vector3 = parts[wound_part].global_position
+			lh = wp + uf * 0.08
+			g = (uf * 0.4 - ur * 0.3 + Vector3(0, -0.6, 0)).normalized()
+			anchor_l = false
 	if not reloading:
 		mag_drop = false
 	gun_dir_p = g
@@ -1361,7 +1368,7 @@ func _tick_wounded() -> void:
 			if d < 10.0 and d > 0.8 and d < bd and (not has_threat or cp.p.distance_to(threat) > pos.distance_to(threat) - 2.0):
 				bd = d
 				best = cp
-		crawl_target = best.p if best and randf() < 0.5 else null
+		crawl_target = best.p if best and randf() < 0.85 else null
 	want = Vector3.ZERO
 	if crawl_target != null and heal_t <= 0.0 and medic == null:
 		var d3: Vector3 = G.flat(crawl_target - pos)

@@ -51,7 +51,7 @@ var orders = [{"mode": "free", "point": null}, {"mode": "free", "point": null}, 
 var squads: Array = []
 var grenades: Array = []
 var smoke_clouds: Array = []
-var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day"}
+var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day"}
 
 # ---------------------------------------------------------------- teams: names, armband colours and uniforms
 const UNIFORMS = {

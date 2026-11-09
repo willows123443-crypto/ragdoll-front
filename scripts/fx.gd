@@ -10,7 +10,11 @@ var flash_boost = 1.0
 var dust_pool: Array = []
 var blood_pool: Array = []
 var spark_pool: Array = []
-var pool_i = {"dust": 0, "blood": 0, "spark": 0}
+var pool_i = {"dust": 0, "blood": 0, "spark": 0, "dirt": 0}
+var dirt_pool: Array = []
+var casings: Array = []          # [mesh, velocity, life]
+var casing_i = 0
+var casing_mm: MultiMesh
 var decals: Array = []
 var decal_i = 0
 var blood_tex: ImageTexture
@@ -49,6 +53,31 @@ func _ready() -> void:
 		blood_pool.append(_make_burst(Color(0.5, 0.03, 0.03), 12, 0.6, 2.5, 0.05, false))
 	for i in range(10):
 		spark_pool.append(_make_burst(Color(1.0, 0.8, 0.4), 6, 0.2, 6.0, 0.03, true))
+	for i in range(16):
+		dirt_pool.append(_make_burst(Color(0.42, 0.36, 0.27), 14, 0.9, 4.5, 0.07, false))
+	# spent brass: one multimesh, simulated by hand
+	casing_mm = MultiMesh.new()
+	casing_mm.transform_format = MultiMesh.TRANSFORM_3D
+	var cm = CylinderMesh.new()
+	cm.top_radius = 0.008
+	cm.bottom_radius = 0.008
+	cm.height = 0.045
+	cm.radial_segments = 5
+	cm.rings = 1
+	casing_mm.mesh = cm
+	casing_mm.instance_count = 80
+	var cmi = MultiMeshInstance3D.new()
+	cmi.multimesh = casing_mm
+	var brass = StandardMaterial3D.new()
+	brass.albedo_color = Color(0.78, 0.6, 0.28)
+	brass.metallic = 0.7
+	brass.roughness = 0.35
+	cmi.material_override = brass
+	cmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(cmi)
+	for i in range(80):
+		casings.append({"p": Vector3(0, -999, 0), "v": Vector3.ZERO, "life": 0.0, "spin": 0.0})
+		casing_mm.set_instance_transform(i, Transform3D(Basis(), Vector3(0, -999, 0)))
 	for i in range(90):
 		var d = Decal.new()
 		d.size = Vector3(1, 2, 1)
@@ -142,8 +171,46 @@ func _fire_pool(name_: String, pool: Array, pos: Vector3, dir: Vector3) -> void:
 	p.restart()
 	p.emitting = true
 
+# a spent case flicked out to the right of the gun (only near the camera)
+func casing(pos: Vector3, right: Vector3) -> void:
+	var cam = get_viewport().get_camera_3d()
+	if cam == null or cam.global_position.distance_squared_to(pos) > 35.0 * 35.0:
+		return
+	var c = casings[casing_i]
+	casing_i = (casing_i + 1) % casings.size()
+	c["p"] = pos
+	c["v"] = right * randf_range(1.8, 3.0) + Vector3(0, randf_range(1.5, 2.6), 0) + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4))
+	c["life"] = 4.0
+	c["spin"] = randf() * 6.0
+
+func _step_casings(dt: float) -> void:
+	for i in range(casings.size()):
+		var c = casings[i]
+		if c["life"] <= 0.0:
+			continue
+		c["life"] -= dt
+		var p: Vector3 = c["p"]
+		var gy = G.world.ground_y(p.x, p.z)
+		if p.y > gy + 0.01 or c["v"].y > 0.0:
+			c["v"].y -= 9.8 * dt
+			p += c["v"] * dt
+			c["spin"] += dt * 25.0
+			if p.y < gy + 0.01:
+				p.y = gy + 0.01
+				c["v"] = Vector3(c["v"].x * 0.3, -c["v"].y * 0.25, c["v"].z * 0.3)
+				if c["v"].y < 0.4:
+					c["v"] = Vector3.ZERO
+		c["p"] = p
+		if c["life"] <= 0.0:
+			p = Vector3(0, -999, 0)
+		casing_mm.set_instance_transform(i, Transform3D(Basis.from_euler(Vector3(c["spin"], c["spin"] * 0.7, PI / 2.0)), p))
+
 # ---------------------------------------------------------------- one-off effects
 func impact(pos: Vector3, normal: Vector3) -> void:
+	# rounds hitting the ground kick up a spurt of dirt
+	if normal.y > 0.6 and pos.y < G.world.ground_y(pos.x, pos.z) + 0.25:
+		_fire_pool("dirt", dirt_pool, pos, Vector3(randf_range(-0.2, 0.2), 1.0, randf_range(-0.2, 0.2)))
+		return
 	_fire_pool("dust", dust_pool, pos, normal + Vector3(0, 0.5, 0))
 	if randf() < 0.3:
 		_fire_pool("spark", spark_pool, pos, normal)
@@ -332,6 +399,7 @@ func _torches() -> void:
 func step(dt: float) -> void:
 	if G.main.is_night() or not torch_lights.is_empty():
 		_torches()
+	_step_casings(dt)
 	for i in range(tracers.size() - 1, -1, -1):
 		var t = tracers[i]
 		t["d"] += t["speed"] * dt

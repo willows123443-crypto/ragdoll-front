@@ -1112,6 +1112,14 @@ func _show_settings() -> void:
 		G.settings["volume"] = x
 		G.audio.set_volume(x))
 	_row(v, "Volume", vol)
+	var mus = HSlider.new()
+	mus.min_value = 0.0
+	mus.max_value = 1.0
+	mus.step = 0.05
+	mus.value = G.settings["music"]
+	mus.custom_minimum_size = Vector2(220, 0)
+	mus.value_changed.connect(func(x): G.settings["music"] = x)
+	_row(v, "Music", mus)
 	var sens = HSlider.new()
 	sens.min_value = 0.2
 	sens.max_value = 3.0

@@ -15,6 +15,7 @@ var s_hammer: AudioStreamWAV
 var players: Array = []
 var pi = 0
 var ui_player: AudioStreamPlayer
+var ui_player2: AudioStreamPlayer
 
 func _ready() -> void:
 	var bus = AudioServer.bus_count
@@ -22,6 +23,7 @@ func _ready() -> void:
 	AudioServer.set_bus_name(bus, "World")
 	AudioServer.set_bus_send(bus, "Master")
 	var rev = AudioEffectReverb.new()
+	reverb = rev
 	rev.room_size = 0.55
 	rev.damping = 0.6
 	rev.wet = 0.18
@@ -47,7 +49,136 @@ func _ready() -> void:
 		players.append(p)
 	ui_player = AudioStreamPlayer.new()
 	add_child(ui_player)
+	ui_player2 = AudioStreamPlayer.new()
+	add_child(ui_player2)
+	s_far = _noise(2.2, 0.6, 0.04, 0.9, 40.0)
+	_build_music.call_deferred()
 	set_volume(G.settings["volume"])
+
+# ---------------------------------------------------------------- battle music and the sound of the wider battle
+# Three looping layers built at startup: a low drone, war drums and a tense string ostinato.
+# They fade in as the fighting near the camera heats up.
+const MRATE = 11025
+var music: Array = []           # AudioStreamPlayer per layer
+var intensity = 0.0
+var heat = 0.0                  # recent fighting near the camera
+var rumble_t = 3.0
+var s_far: AudioStreamWAV
+var reverb: AudioEffectReverb
+var indoor = 0.0
+var music_ready = false
+
+func notice(pos: Vector3, amount: float) -> void:
+	var d = cam_dist(pos)
+	if d < 90.0:
+		heat = minf(3.0, heat + amount * (1.0 - d / 90.0))
+
+func _build_music() -> void:
+	var bpm = 96.0
+	var beat = 60.0 / bpm
+	var bars = 8
+	var n = int(beat * 4.0 * bars * MRATE)
+	var drone = PackedFloat32Array()
+	var drums = PackedFloat32Array()
+	var strings = PackedFloat32Array()
+	drone.resize(n)
+	drums.resize(n)
+	strings.resize(n)
+	var roots = [73.42, 73.42, 87.31, 65.41, 73.42, 73.42, 58.27, 65.41]   # D D F C D D Bb C
+	var lp = 0.0
+	for i in range(n):
+		var t = float(i) / MRATE
+		var bar = int(t / (beat * 4.0)) % bars
+		var f = roots[bar]
+		var sw = 0.6 + 0.4 * sin(TAU * t / (beat * 8.0))
+		drone[i] = (sin(TAU * f * t) * 0.5 + sin(TAU * f * 1.5 * t) * 0.25 + sin(TAU * f * 0.5 * t) * 0.35) * 0.32 * sw
+	# drums: low toms on the beat, a snare-ish crack on 2 and 4, rolls into each fourth bar
+	var hit_len = int(0.35 * MRATE)
+	for b in range(bars * 4):
+		var start = int(b * beat * MRATE)
+		var low = b % 4 == 0 or b % 4 == 2
+		for k in range(hit_len):
+			if start + k >= n:
+				break
+			var t = float(k) / MRATE
+			var v = 0.0
+			if low:
+				v = sin(TAU * (70.0 - t * 60.0) * t) * exp(-t / 0.12) * 0.9
+			else:
+				lp += (randf() * 2.0 - 1.0 - lp) * 0.5
+				v = lp * exp(-t / 0.06) * 0.6 + sin(TAU * 180.0 * t) * exp(-t / 0.05) * 0.3
+			drums[start + k] += v
+		if b % 16 == 15:
+			for r in range(4):
+				var st2 = start + int(r * beat * 0.25 * MRATE)
+				for k in range(int(0.12 * MRATE)):
+					if st2 + k < n:
+						var t2 = float(k) / MRATE
+						drums[st2 + k] += sin(TAU * (110.0 - r * 10.0) * t2) * exp(-t2 / 0.05) * 0.5
+	# strings: a driving eighth-note ostinato on the chord tones
+	var pat = [0, 0, 7, 0, 3, 0, 7, 10]
+	for e in range(bars * 8):
+		var st3 = int(e * beat * 0.5 * MRATE)
+		var bar2 = int(e / 8) % bars
+		var f2 = roots[bar2] * 2.0 * pow(2.0, pat[e % 8] / 12.0)
+		var L = int(beat * 0.5 * MRATE)
+		var ph = 0.0
+		for k in range(L):
+			if st3 + k >= n:
+				break
+			var t3 = float(k) / MRATE
+			ph += f2 / MRATE
+			var saw = (fmod(ph, 1.0) * 2.0 - 1.0)
+			strings[st3 + k] = saw * 0.22 * minf(1.0, t3 * 60.0) * exp(-t3 / 0.25)
+	for arr in [drone, drums, strings]:
+		var w = _wav_rate(arr, MRATE)
+		w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		w.loop_begin = 0
+		w.loop_end = n
+		var pl = AudioStreamPlayer.new()
+		pl.stream = w
+		pl.volume_db = -80.0
+		add_child(pl)
+		pl.play()
+		music.append(pl)
+	music_ready = true
+
+func _wav_rate(samples: PackedFloat32Array, rate: int) -> AudioStreamWAV:
+	var w = _wav(samples)
+	w.mix_rate = rate
+	return w
+
+func _process(dt: float) -> void:
+	if not music_ready:
+		return
+	var on = G.started and not G.over
+	heat = maxf(0.0, heat - dt * 0.25)
+	var want = clampf(heat / 2.0, 0.0, 1.0) if on else 0.0
+	intensity = move_toward(intensity, want, dt * (0.35 if want > intensity else 0.08))
+	var mv = G.settings["music"]
+	var lv = [0.25 + intensity * 0.5, maxf(0.0, intensity - 0.25) * 1.3, maxf(0.0, intensity - 0.55) * 2.0]
+	for i in range(music.size()):
+		var a = clampf(lv[i], 0.0, 1.0) * mv * (1.0 if on else 0.0)
+		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 6.0
+	# the wider battle: far-off booms and crackling gunfire while a fight is on
+	if on:
+		rumble_t -= dt
+		if rumble_t <= 0.0:
+			rumble_t = randf_range(2.5, 8.0) / (0.5 + G.soldiers.size() / 40.0)
+			ui_player2.stream = s_far
+			ui_player2.pitch_scale = randf_range(0.45, 0.8)
+			ui_player2.volume_db = randf_range(-26.0, -16.0)
+			ui_player2.play()
+	# echo inside buildings
+	var cam = get_viewport().get_camera_3d()
+	if cam != null and G.started and G.world != null:
+		var p = cam.global_position
+		var inside = G.world.inside_at(p.x, p.y + 2.2, p.z) or not G.ray(p, p + Vector3(0, 6.0, 0), G.L_WORLD).is_empty()
+		indoor = move_toward(indoor, 1.0 if inside else 0.0, dt * 2.0)
+		if reverb != null:
+			reverb.room_size = 0.55 + indoor * 0.35
+			reverb.wet = 0.18 + indoor * 0.35
+			reverb.damping = 0.6 - indoor * 0.3
 
 func set_volume(v: float) -> void:
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(v, 0.001)))
@@ -110,9 +241,11 @@ func cam_dist(pos: Vector3) -> float:
 
 func shot(pos: Vector3, w: Dictionary) -> void:
 	var d = cam_dist(pos)
+	notice(pos, 0.08)
 	play(s_shot, pos, w["snd_vol"], w["snd_pitch"], minf(d / 343.0, 0.4))
 
 func boom(pos: Vector3) -> void:
+	notice(pos, 0.6)
 	play(s_boom, pos, 6.0, 1.0, minf(cam_dist(pos) / 343.0, 0.5))
 
 func rocket(pos: Vector3) -> void:

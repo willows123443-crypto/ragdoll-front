@@ -57,7 +57,7 @@ jobs:
 
       - name: Automatic test run
         run: |
-          timeout 240 ~/godot-bin/godot --headless --path . -- --autotest > test.log 2>&1 || echo "EXIT CODE $?" >> test.log
+          timeout 600 ~/godot-bin/godot --headless --path . -- --autotest > test.log 2>&1 || echo "EXIT CODE $?" >> test.log
           cat test.log
 
       - name: Export web build

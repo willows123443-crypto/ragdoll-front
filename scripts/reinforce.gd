@@ -20,6 +20,8 @@ static func step(dt: float) -> void:
 	if not G.reinforce or G.over:
 		return
 	for t in range(G.team_count()):
+		if G.mode == "laststand":
+			continue          # waves are handled by the game mode
 		var missing = G.team_size - G.alive_count(t)
 		if missing <= 0:
 			timers[t] = minf(timers[t], 0.0)
@@ -63,8 +65,8 @@ static func truck(t: int, n: int) -> void:
 	var home: Vector3 = G.world.rally_point(t)
 	# unload on open ground short of the base, on the way in from the edge
 	var inward = G.flat(home - entry)
-	var drop = home
-	if inward.length() > 22.0:
+	var drop = G.main._free_spot(home)
+	if home.distance_to(G.world.spawn[t]) < 1.0 and inward.length() > 22.0:
 		drop = G.main._free_spot(entry + inward.normalized() * 18.0)
 	var yaw = atan2(drop.x - entry.x, drop.z - entry.z)
 	var v = Vehicle.make("truck", t, entry, yaw)

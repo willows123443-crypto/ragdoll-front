@@ -1,10 +1,10 @@
 extends Node3D
 # Terrain, static geometry, colliders, navigation, cover points, destruction and the three maps.
 
-const TX0 = -130.0
-const TZ0 = -95.0
-const TW = 260
-const TH_ = 190
+var TX0 = -130.0
+var TZ0 = -95.0
+var TW = 260
+var TH_ = 190
 var th = PackedFloat32Array()          # (TW+1)*(TH_+1) heights, 1 m grid
 var ter_max = 0.0
 var terrain_mesh: MeshInstance3D = null
@@ -25,15 +25,16 @@ var spawn = [Vector3(-96, 0, 0), Vector3(96, 0, 0)]
 var capture = Vector3.ZERO
 var bounds = Rect2(-128, -93, 256, 186)   # playable area (x, z)
 var ammo_points: Array = []   # {"p": Vector3, "team": int (-1 = anyone)}
+var objectives: Array = []    # control points, in order from Alpha's side to Bravo's: {"p", "name"}
 var geo_root: Node3D
 var rng = RandomNumberGenerator.new()
 
 # navigation (0.5 m grid)
 const NCS = 0.5
-const NX0 = -130.0
-const NZ0 = -95.0
-const NW = 520
-const NH = 380
+var NX0 = -130.0
+var NZ0 = -95.0
+var NW = 520
+var NH = 380
 var astar = AStarGrid2D.new()
 var nav_vault = PackedByteArray()      # 1 where a low wall can be vaulted
 
@@ -42,7 +43,24 @@ var MAPS = {
 	"town": {"name": "Town ruins", "ground": Color(0.48, 0.45, 0.37), "seed": 1337},
 	"field": {"name": "Farmland", "ground": Color(0.44, 0.46, 0.31), "seed": 4242},
 	"trenches": {"name": "Trenches", "ground": Color(0.42, 0.38, 0.30), "seed": 777},
+	"valley": {"name": "Valley offensive (large)", "ground": Color(0.43, 0.45, 0.32), "seed": 9001, "size": Vector2(660, 260)},
+	"front": {"name": "Western front (large)", "ground": Color(0.41, 0.37, 0.3), "seed": 1916, "size": Vector2(560, 240)},
 }
+
+# the map's terrain, navigation grid and playable bounds all come from its size
+func _set_size(w: float, d: float) -> void:
+	TW = int(w)
+	TH_ = int(d)
+	TX0 = -w / 2.0
+	TZ0 = -d / 2.0
+	NX0 = TX0
+	NZ0 = TZ0
+	NW = int(w / NCS)
+	NH = int(d / NCS)
+	bounds = Rect2(TX0 + 2.0, TZ0 + 2.0, w - 4.0, d - 4.0)
+
+func is_large() -> bool:
+	return TW > 300
 
 func rnd(a: float, b: float) -> float:
 	return rng.randf_range(a, b)
@@ -816,13 +834,13 @@ func live_tree(x: float, z: float) -> void:
 		add_box(x + rnd(-0.7, 0.7), h - 0.6 + i * 0.7, z + rnd(-0.7, 0.7), s, s * 0.8, s, leaf[i], {"ry": rnd(0, 1), "collide": false})
 
 func skyline(colors: Array, hmin: float, hmax: float) -> void:
-	for i in range(46):
+	for i in range(46 if not is_large() else 70):
 		var a = rnd(0.0, TAU)
-		var r = rnd(190.0, 250.0)
-		add_box(cos(a) * r, 0.0, sin(a) * r * 0.8, rnd(8, 20), rnd(hmin, hmax), rnd(8, 18), colors[i % colors.size()], {"collide": false, "no_shadow": true})
+		var r = rnd(1.45, 1.9) * TW / 2.0
+		add_box(cos(a) * r, 0.0, sin(a) * r * float(TH_) / float(TW) * 1.1, rnd(8, 20), rnd(hmin, hmax), rnd(8, 18), colors[i % colors.size()], {"collide": false, "no_shadow": true})
 
-func base(sx: float) -> void:
-	var bx = sx * 96.0
+func base(sx: float, dist: float = 96.0) -> void:
+	var bx = sx * dist
 	for i in range(3):
 		add_box(bx + sx * 7.0, 0.0, -22.0 + i * 22.0, 6.0, 2.4, 4.0, Color(0.33, 0.38, 0.24) if sx < 0 else Color(0.42, 0.39, 0.28), {"dest": true, "hp": 120.0})
 	add_box(bx + sx * 3.0, 0.0, 0.0, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
@@ -837,7 +855,14 @@ func ammo_crate(x: float, z: float, team: int) -> void:
 	ammo_points.append({"p": Vector3(x, ground_y(x, z), z), "team": team})
 
 # where a beaten soldier runs back to
+# (reinforcements gather behind the most forward control point the team holds, otherwise at base)
 func rally_point(team: int) -> Vector3:
+	if Obj.chain() or G.mode == "laststand":
+		var i = Obj.forward_held(team)
+		if i >= 0:
+			var p: Vector3 = Obj.points[i]["p"]
+			var back = G.flat(spawn[team] - p).normalized()
+			return p + back * 14.0
 	return spawn[team]
 
 func crater_at(x: float, z: float, r: float, d: float) -> void:
@@ -1021,6 +1046,205 @@ func build_trenches() -> void:
 	skyline([Color(0.43, 0.42, 0.36), Color(0.37, 0.36, 0.31), Color(0.48, 0.46, 0.41)], 6, 18)
 	capture = Vector3.ZERO
 
+# ---------------------------------------------------------------- large maps
+# a cluster of houses (some with an upper floor) around a point, keeping clear of roads
+func village(cx: float, cz: float, rx: float, rz: float, n: int, towers_: int) -> void:
+	var placed: Array = []
+	var tries = 0
+	while placed.size() < n + towers_ and tries < 200:
+		tries += 1
+		var tw = placed.size() < towers_
+		var w = rnd(8, 11) if tw else rnd(6, 10)
+		var d = rnd(7, 9) if tw else rnd(6, 9)
+		var x = cx + rnd(-rx, rx)
+		var z = cz + rnd(-rz, rz)
+		var ok = true
+		for q in placed:
+			if absf(q[0] - x) < (q[2] + w) / 2.0 + 4.0 and absf(q[1] - z) < (q[3] + d) / 2.0 + 4.0:
+				ok = false
+				break
+		for rd in roads:
+			if x + w / 2.0 + 2.0 > rd[0] and x - w / 2.0 - 2.0 < rd[1] and z + d / 2.0 + 2.0 > rd[2] and z - d / 2.0 - 2.0 < rd[3]:
+				ok = false
+		if not ok:
+			continue
+		placed.append([x, z, w, d])
+		flatten_rect(x - w / 2.0 - 1.0, z - d / 2.0 - 1.0, x + w / 2.0 + 1.0, z + d / 2.0 + 1.0, 3.0)
+	return_village = placed
+
+var return_village: Array = []
+
+func _village_build(placed: Array, towers_: int) -> void:
+	var i = 0
+	for q in placed:
+		if i < towers_:
+			tower(q[0], q[1], q[2], q[3])
+		else:
+			building(q[0], q[1], q[2], q[3], rnd(3.5, 6.0))
+		i += 1
+
+# a line of sandbagged positions facing along x
+func strongpoint(x: float, z: float, facing: float) -> void:
+	sandbags(x, z - 4.0, 3.5, true); sandbags(x, z + 4.0, 3.5, true); sandbags(x + facing * 2.0, z, 4.0, false)
+	crate(x - facing * 3.0, z + rnd(-3, 3), 1.0)
+
+func build_valley() -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	var X = [-200.0, -100.0, 0.0, 100.0, 200.0]
+	var Z = [26.0, -34.0, 0.0, 30.0, -22.0]
+	# rolling hills, steeper along the valley sides, and a ridge at D
+	for i in range(46):
+		var x = rnd(-W2, W2)
+		var z = rnd(-D2, D2)
+		var side = absf(z) / D2
+		hill(x, z, rnd(16, 40), rnd(1.0, 3.0) + side * rnd(2.0, 6.0))
+	for k in range(6):
+		hill(100.0 + rnd(-30, 30), 30.0 + rnd(-20, 20), rnd(18, 26), rnd(3.0, 5.0))
+	roads = [[-W2, W2, -3.5, 3.5]]
+	for i in range(5):
+		roads.append([X[i] - 3.0, X[i] + 3.0, minf(0.0, Z[i]) - 12.0, maxf(0.0, Z[i]) + 12.0])
+	for sx in [-1.0, 1.0]:
+		flatten_rect(sx * (W2 - 70.0) - 26.0, -30.0, sx * (W2 - 70.0) + 26.0, 30.0, 8.0)
+	var vil: Array = []
+	for i in range(5):
+		var n = [6, 3, 9, 2, 6][i]
+		var tw = [1, 1, 3, 0, 1][i]
+		village(X[i], Z[i], 22.0 if i != 2 else 30.0, 20.0, n, tw)
+		vil.append([return_village, tw])
+		flatten_rect(X[i] - 7.0, Z[i] - 7.0, X[i] + 7.0, Z[i] + 7.0, 4.0)
+	# shell holes in no-man's land between the objectives
+	for i in range(60):
+		crater_at(rnd(-W2 + 90.0, W2 - 90.0), rnd(-D2 + 15.0, D2 - 15.0), rnd(2, 3.4), rnd(0.8, 1.3))
+	_flatten_roads()
+	build_terrain(MAPS["valley"]["ground"])
+	for rd in roads:
+		flat_plane((rd[0] + rd[1]) * 0.5, (rd[2] + rd[3]) * 0.5, rd[1] - rd[0], rd[3] - rd[2], Color(0.31, 0.3, 0.3) if rd[1] - rd[0] > 100.0 else Color(0.45, 0.4, 0.31), 0.015)
+	for i in range(5):
+		_village_build(vil[i][0], vil[i][1])
+		var facing_a = 1.0
+		strongpoint(X[i] - 10.0, Z[i], -1.0)
+		strongpoint(X[i] + 10.0, Z[i], 1.0)
+		for k in range(4):
+			crate(X[i] + rnd(-6, 6), Z[i] + rnd(-6, 6), rnd(0.9, 1.2))
+		ammo_crate(X[i] + 3.0, Z[i] + 5.5, -1)
+	# the ridge at D gets a trench line
+	trench_ter([Vector2(92.0, 8.0), Vector2(90.0, 30.0), Vector2(93.0, 52.0)], 2.4, 1.1)
+	# farmland: hedge rows and tree lines across the valley
+	var x = -W2 + 110.0
+	while x < W2 - 110.0:
+		var z = -D2 + 15.0
+		while z < D2 - 15.0:
+			var L = rnd(8, 16)
+			if absf(z) > 9.0 and rng.randf() < 0.55:
+				var near_obj = false
+				for i in range(5):
+					if absf(x - X[i]) < 28.0 and absf(z - Z[i]) < 26.0:
+						near_obj = true
+				if not near_obj:
+					hedge_row(x + rnd(-3, 3), z + L / 2.0, L, false)
+			z += rnd(14, 22)
+		x += rnd(24, 34)
+	for i in range(140):
+		var tx = rnd(-W2 + 20.0, W2 - 20.0)
+		var tz = rnd(-D2 + 8.0, D2 - 8.0)
+		if absf(tz) < 7.0 or on_road(tx, tz) or inside_any(tx, tz, 2.0):
+			continue
+		if absf(tz) > D2 * 0.55 or rng.randf() < 0.3:
+			live_tree(tx, tz)
+	for i in range(14):
+		var wx = rnd(-W2 + 100.0, W2 - 100.0)
+		var wz = rnd(-60, 60)
+		if not inside_any(wx, wz, 4.0) and not on_road(wx, wz):
+			if rng.randf() < 0.5:
+				tank(wx, wz)
+			else:
+				truck(wx, wz, rng.randf() < 0.5)
+	for sx in [-1.0, 1.0]:
+		base(sx, W2 - 70.0)
+	skyline([Color(0.32, 0.38, 0.26), Color(0.37, 0.42, 0.3), Color(0.45, 0.47, 0.4)], 10, 28)
+	objectives = []
+	for i in range(5):
+		objectives.append({"p": Vector3(X[i], 0, Z[i]), "name": "ABCDE"[i]})
+	capture = objectives[2]["p"]
+	spawn = [Vector3(-(W2 - 70.0), 0, 0), Vector3(W2 - 70.0, 0, 0)]
+
+func build_front() -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	var X = [-150.0, -50.0, 50.0, 150.0]
+	var lines: Array = []
+	for i in range(4):
+		var pts: Array = []
+		var k = 0
+		var z = -D2 + 12.0
+		while z <= D2 - 12.0:
+			pts.append(Vector2(X[i] + (1.6 if k % 2 == 1 else -1.6) + sin(z * 0.03 + i) * 4.0, z))
+			z += 8.0
+			k += 1
+		trench_ter(pts, 2.4, 1.2)
+		lines.append({"pts": pts, "sx": -1.0 if X[i] < 0.0 else 1.0})
+		for zc in [-60.0, 0.0, 60.0]:
+			trench_ter([Vector2(X[i] - 12.0, zc), Vector2(X[i] + 12.0, zc)], 2.0, 1.1)
+	for i in range(120):
+		crater_at(rnd(-W2 + 70.0, W2 - 70.0), rnd(-D2 + 10.0, D2 - 10.0), rnd(2, 4), rnd(0.9, 1.5))
+	for sx in [-1.0, 1.0]:
+		flatten_rect(sx * (W2 - 55.0) - 24.0, -28.0, sx * (W2 - 55.0) + 24.0, 28.0, 6.0)
+	for i in range(4):
+		flatten_rect(X[i] + 6.0, -7.0, X[i] + 16.0, 7.0, 3.0)
+	build_terrain(MAPS["front"]["ground"])
+	for L in lines:
+		var pts: Array = L["pts"]
+		for k in range(pts.size() - 1):
+			var a: Vector2 = pts[k]
+			var b: Vector2 = pts[k + 1]
+			var t = 0.1
+			while t < 1.0:
+				var p = a.lerp(b, t)
+				terrain_cover.append([p.x + 0.45, p.y, -1.0, 0.0])
+				terrain_cover.append([p.x - 0.45, p.y, 1.0, 0.0])
+				t += 0.2
+			var mid = (a + b) / 2.0
+			add_box(mid.x, 0.02, mid.y, 0.9, 0.06, a.distance_to(b), Color(0.35, 0.27, 0.2), {"collide": false, "ry": atan2(b.x - a.x, b.y - a.y)})
+			if rng.randf() < 0.5:
+				sandbags(mid.x + 2.0, mid.y, rnd(2.5, 4), false, 0.5)
+			if rng.randf() < 0.5:
+				sandbags(mid.x - 2.0, mid.y, rnd(2.5, 4), false, 0.5)
+	# barbed wire and stakes in no-man's land
+	for i in range(40):
+		var x = rnd(-W2 + 80.0, W2 - 80.0)
+		var z = rnd(-D2 + 15.0, D2 - 15.0)
+		for k in range(5):
+			add_box(x, 0.0, z + k * 1.4 - 2.8, 0.08, 0.9, 0.08, Color(0.23, 0.2, 0.17), {"collide": false})
+		add_box(x, 0.4, z, 0.04, 0.04, 6.0, Color(0.33, 0.31, 0.29), {"collide": false})
+		add_box(x, 0.75, z, 0.04, 0.04, 6.0, Color(0.33, 0.31, 0.29), {"collide": false})
+	for i in range(50):
+		add_box(rnd(-W2 + 40.0, W2 - 40.0), 0.0, rnd(-D2 + 5.0, D2 - 5.0), 0.35, rnd(1, 3.5), 0.35, Color(0.23, 0.19, 0.16), {"rz": rnd(-0.3, 0.3)})
+	# a concrete bunker behind each line: the control point
+	var cc = Color(0.54, 0.53, 0.5)
+	for i in range(4):
+		var bx = X[i] + 11.0
+		add_box(bx, 0, -4, 6, 1.4, 0.6, cc, {"dest": true, "hp": 300.0}); add_box(bx, 0, 4, 6, 1.4, 0.6, cc, {"dest": true, "hp": 300.0})
+		for p in [[-3, -4], [3, -4], [-3, 4], [3, 4]]:
+			add_box(bx + p[0], 0, p[1], 0.5, 2.1, 0.5, Color(0.49, 0.48, 0.45), {"dest": true, "hp": 300.0})
+		add_box(bx, 2.1, 0, 6.6, 0.3, 8.6, Color(0.49, 0.48, 0.45), {"dest": true, "hp": 300.0})
+		ammo_crate(bx - 1.0, 0.0, -1)
+	for i in range(10):
+		var wx = rnd(-W2 + 90.0, W2 - 90.0)
+		var wz = rnd(-D2 + 20.0, D2 - 20.0)
+		if not inside_any(wx, wz, 4.0):
+			tank(wx, wz)
+	for i in range(30):
+		dead_tree(rnd(-W2 + 20.0, W2 - 20.0), rnd(-D2 + 5.0, D2 - 5.0))
+	for sx in [-1.0, 1.0]:
+		base(sx, W2 - 55.0)
+	skyline([Color(0.43, 0.42, 0.36), Color(0.37, 0.36, 0.31), Color(0.48, 0.46, 0.41)], 6, 18)
+	objectives = []
+	for i in range(4):
+		objectives.append({"p": Vector3(X[i] + 11.0, 0, 0), "name": "ABCD"[i]})
+	capture = objectives[1]["p"]
+	spawn = [Vector3(-(W2 - 55.0), 0, 0), Vector3(W2 - 55.0, 0, 0)]
+
 # roads are flat painted strips, so the ground under them must be flat too (no hills or holes hidden under the paint)
 func _flatten_roads() -> void:
 	for rd in roads:
@@ -1034,7 +1258,7 @@ func on_road(x: float, z: float) -> bool:
 
 func build_decor() -> void:
 	# grass
-	var n = 4000
+	var n = int(4000.0 * TW * TH_ / (260.0 * 190.0))
 	var mm = MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
@@ -1050,8 +1274,8 @@ func build_decor() -> void:
 	var tries = 0
 	while k < n and tries < n * 3:
 		tries += 1
-		var x = rnd(-128, 128)
-		var z = rnd(-93, 93)
+		var x = rnd(bounds.position.x, bounds.end.x)
+		var z = rnd(bounds.position.y, bounds.end.y)
 		var gy = ground_y(x, z)
 		if on_road(x, z) or inside_any(x, z, 0.3) or gy < -0.4:
 			continue
@@ -1112,6 +1336,9 @@ func load_map(id: String) -> void:
 	geo_root = Node3D.new()
 	add_child(geo_root)
 	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []
+	var sz: Vector2 = MAPS[id].get("size", Vector2(260, 190))
+	_set_size(sz.x, sz.y)
+	objectives = []
 	th = PackedFloat32Array()
 	th.resize((TW + 1) * (TH_ + 1))
 	th.fill(0.0)
@@ -1122,8 +1349,14 @@ func load_map(id: String) -> void:
 		build_town()
 	elif id == "field":
 		build_field()
+	elif id == "valley":
+		build_valley()
+	elif id == "front":
+		build_front()
 	else:
 		build_trenches()
+	if objectives.is_empty():
+		objectives = [{"p": capture, "name": "A"}]
 	finalize_static()
 	build_nav()
 	build_cover()

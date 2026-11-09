@@ -5,7 +5,7 @@ var env: Environment
 var sun: DirectionalLight3D
 var reinf_t = [0.0, 0.0]
 var markers: Node3D
-var cap_flag: Node3D
+var point_flags: Array = []
 var spawn_flags: Array = []
 var tick_us = 0
 var tick_n = 0
@@ -115,9 +115,16 @@ func start_game(o: Dictionary) -> void:
 	G.world.load_map(o.get("map", "town"))
 	Stats.reset()
 	Reinforce.reset()
+	Obj.reset()
 	for t in range(2):
+		if G.mode == "laststand" and t == 1:
+			continue
 		for i in range(G.team_size):
-			base_spawn(t)
+			if G.mode == "laststand":
+				var c: Vector3 = Obj.points[0]["p"]
+				spawn_soldier(0, c.x + randf_range(-8, 8), c.z + randf_range(-8, 8), "")
+			else:
+				base_spawn(t)
 		_starting_vehicles(t)
 	refresh_markers()
 	G.pc.free_pos = Vector3(-62, G.world.ground_y(-62, -6) + 7.0, -6)
@@ -231,57 +238,47 @@ func _sim_step() -> void:
 	Combat.step_strikes()
 	G.fx.step(G.DT)
 	Stats.step(G.DT)
-	_update_capture()
+	Obj.step(G.DT)
 	if randf() < 0.05:
 		cleanup_bodies(false)
 
 func _process(dt: float) -> void:
 	G.fx.update_callouts(dt)
 	G.ui.update_hud(dt)
-	if cap_flag:
-		cap_flag.get_child(1).rotation.y = sin(Time.get_ticks_msec() * 0.003) * 0.3
+	for f in point_flags:
+		if is_instance_valid(f):
+			f.get_child(1).rotation.y = sin(Time.get_ticks_msec() * 0.003 + f.position.x) * 0.3
 
 func on_kill(_s, _attacker) -> void:
+	Obj.on_death(_s)
 	if G.mode == "deathmatch" and not G.over:
 		for t in range(2):
 			if G.score[t] >= G.limit:
 				end_game(t)
 
 func end_game(t: int) -> void:
+	if G.over:
+		return
 	G.over = true
 	if G.player != null:
 		G.pc.leave_soldier()
 	G.ui.show_win(t)
 
-func _update_capture() -> void:
-	if G.mode != "capture" or G.over:
-		return
-	var c: Vector3 = G.world.capture
-	var n = [0, 0]
-	for s in G.soldiers:
-		if s.state == "alive" and G.dist2d(s.pos, c) < 8.0:
-			n[s.team] += 1
-	if n[0] > 0 and n[1] == 0:
-		G.cap_prog = minf(1.0, G.cap_prog + G.DT * 0.1 * mini(n[0], 3))
-	elif n[1] > 0 and n[0] == 0:
-		G.cap_prog = maxf(-1.0, G.cap_prog - G.DT * 0.1 * mini(n[1], 3))
-	var owner_t = G.cap_owner
-	if G.cap_prog >= 1.0:
-		owner_t = 0
-	elif G.cap_prog <= -1.0:
-		owner_t = 1
-	elif not ((G.cap_owner == 0 and G.cap_prog > 0.0) or (G.cap_owner == 1 and G.cap_prog < 0.0)):
-		owner_t = -1
-	if owner_t != G.cap_owner:
-		G.cap_owner = owner_t
-		_set_flag_color(cap_flag, G.TEAM_BAND[owner_t] if owner_t >= 0 else Color(0.85, 0.85, 0.85))
-		if owner_t >= 0:
-			G.ui.message("%s captured the objective" % G.TEAM_NAMES[owner_t])
-	if G.cap_owner >= 0:
-		G.cap_score[G.cap_owner] += G.DT * 0.5
-		if G.cap_score[G.cap_owner] >= G.limit:
-			end_game(G.cap_owner)
-	G.cap_contested = n[0] > 0 and n[1] > 0
+func on_point_changed(i: int, prev: int, owner: int) -> void:
+	var pt = Obj.points[i]
+	_set_flag_color(point_flags[i] if i < point_flags.size() else null, G.TEAM_BAND[owner] if owner >= 0 else Color(0.85, 0.85, 0.85))
+	if owner >= 0:
+		G.ui.message("%s captured point %s" % [G.TEAM_NAMES[owner], pt["name"]])
+		for s in G.soldiers:
+			if s.state != "dead" and s.team < 2:
+				if s.team == owner:
+					Morale.boost(s, 10.0)
+				else:
+					Morale.shock(s, 6.0)
+	elif prev >= 0:
+		G.ui.message("%s lost point %s" % [G.TEAM_NAMES[prev], pt["name"]])
+	for q in G.squads:
+		q["obj_t"] = -1.0
 
 # ---------------------------------------------------------------- flags
 func _make_flag(col: Color, big: bool) -> Node3D:
@@ -331,11 +328,26 @@ func refresh_markers() -> void:
 	for t in range(2):
 		var p: Vector3 = G.world.spawn[t]
 		spawn_flags[t].position = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
-	cap_flag = null
-	if G.mode == "capture":
-		cap_flag = _make_flag(Color(0.85, 0.85, 0.85), true)
-		var c: Vector3 = G.world.capture
-		cap_flag.position = Vector3(c.x, G.world.ground_y(c.x, c.z), c.z)
+	point_flags = []
+	var pts = Obj.points
+	if not G.started:
+		pts = []
+		for o in G.world.objectives:
+			pts.append({"p": o["p"], "name": o["name"], "owner": -1})
+	for pt in pts:
+		var f = _make_flag(G.TEAM_BAND[pt["owner"]] if pt["owner"] >= 0 else Color(0.85, 0.85, 0.85), true)
+		var c: Vector3 = pt["p"]
+		f.position = Vector3(c.x, G.world.ground_y(c.x, c.z), c.z)
+		var lbl = Label3D.new()
+		lbl.text = pt["name"]
+		lbl.font_size = 96
+		lbl.pixel_size = 0.02
+		lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		lbl.no_depth_test = true
+		lbl.modulate = Color(1, 1, 1, 0.85)
+		lbl.position = Vector3(0, 5.0, 0)
+		f.add_child(lbl)
+		point_flags.append(f)
 
 # ---------------------------------------------------------------- automatic test (run by the GitHub build)
 func _wait(sec: float) -> void:
@@ -385,11 +397,17 @@ func _report(tag: String) -> void:
 
 func _autotest() -> void:
 	print("AUTOTEST start")
-	for m in ["town", "field", "trenches"]:
-		start_game({"map": m, "mode": "capture", "size": 10, "limit": 9999, "reinforce": true, "armor": "heavy",
-			"reinf_mode": {"town": "truck", "field": "para", "trenches": "truck"}[m]})
+	var scen = [["town", "capture", 30.0, "truck"], ["field", "capture", 30.0, "para"], ["trenches", "capture", 30.0, "truck"],
+		["valley", "frontline", 75.0, "truck"], ["front", "assault", 50.0, "para"], ["town", "laststand", 45.0, "truck"]]
+	var only = _arg("scen", "")
+	for sc in scen:
+		var m = sc[0]
+		if only != "" and only != m + ":" + sc[1]:
+			continue
+		var tag = m + "/" + sc[1]
+		start_game({"map": m, "mode": sc[1], "size": 10, "limit": 100, "reinforce": true, "armor": "heavy", "reinf_mode": sc[3]})
 		await _wait(12.0)
-		_report(m + " 12s")
+		_report(tag + " 12s")
 		var s = null
 		for o in G.soldiers:
 			if o.state == "alive":
@@ -402,11 +420,12 @@ func _autotest() -> void:
 				G.pc.leave_soldier()
 		Combat.explode(G.world.capture + Vector3(0, 0.5, 0), null, 1.0)
 		Combat.mortar_strike(G.world.capture, 4)
-		await _wait(15.0)
-		_report(m + " 30s")
-		if m == "town":
-			await _wait(60.0)
-			_report(m + " 90s")
+		await _wait(sc[2] - 15.0)
+		_report(tag + " %ds" % int(sc[2]))
+		var pts = []
+		for pt in Obj.points:
+			pts.append("%s:%d%s" % [pt["name"], pt["owner"], "*" if pt["contested"] else ""])
+		print("AUTOTEST %s | points %s | %s | over=%s" % [tag, " ".join(pts), Obj.status_text(), G.over])
 	print("AUTOTEST done")
 	get_tree().quit()
 

@@ -90,12 +90,48 @@ static func objective_for(s) -> Vector3:
 	var o = order_of(s)
 	if o["mode"] == "move" and o["point"] != null:
 		return o["point"]
-	if G.mode == "capture":
-		return G.world.capture
+	if Obj.uses_points() and not Obj.points.is_empty():
+		var i = squad_point(s)
+		if i >= 0:
+			return Obj.points[i]["p"]
 	var c = team_intel_center(s.team)
 	if c != null:
 		return c
-	return G.world.capture if G.dist2d(s.pos, G.world.capture) > 18.0 else G.world.spawn[1 - s.team]
+	return G.world.capture if G.dist2d(s.pos, G.world.capture) > 18.0 else G.world.rally_point(1 - s.team)
+
+# which control point a soldier's squad is working on (attack the front, or hold a threatened point)
+static func squad_point(s) -> int:
+	var n = Obj.points.size()
+	if n == 1:
+		return 0
+	var q = s.squad
+	if q != null and G.sim_time < q.get("obj_t", -1.0) and q.get("obj", -1) >= 0 and q.get("obj", -1) < n:
+		return q["obj"]
+	var team = s.team
+	var pick = Obj.front(team)
+	var qi = 0
+	if q != null:
+		var k = 0
+		for sq in G.squads:
+			if sq["team"] == team:
+				if sq == q:
+					qi = k
+				k += 1
+	if G.mode == "assault" and team == 1:
+		# defenders: most squads hold the point under attack, the rest the next one back
+		var f = Obj.front(0)
+		pick = f if qi % 3 != 2 or f >= n - 1 else f + 1
+	else:
+		# hold a point of ours that has enemies on it
+		for i in range(n):
+			var pt = Obj.points[i]
+			if pt["owner"] == team and pt["n"][1 - team] > 0 and qi % 3 == 2:
+				pick = i
+				break
+	if q != null:
+		q["obj"] = pick
+		q["obj_t"] = G.sim_time + 8.0
+	return pick
 
 # ---------------------------------------------------------------- cover
 static func release_cover(s) -> void:
@@ -268,9 +304,15 @@ static func follow_path(s) -> String:
 			return "wait"
 		G.path_budget -= 1
 		s.need_path = false
-		s.path = G.world.find_path(s.pos, s.move_target)
+		var tgt: Vector3 = s.move_target
+		s.partial = false
+		if G.dist2d(s.pos, tgt) > 70.0:
+			# long trips are planned in legs so path searches stay cheap on large maps
+			tgt = s.pos + G.flat(tgt - s.pos).normalized() * 55.0
+			s.partial = true
+		s.path = G.world.find_path(s.pos, tgt)
 		if s.path.is_empty():
-			s.path = [s.move_target]
+			s.path = [tgt]
 		s.path_i = 0
 	var wp: Vector3 = s.path[s.path_i]
 	var d = G.dist2d(wp, s.pos)
@@ -279,6 +321,9 @@ static func follow_path(s) -> String:
 		wp = s.path[s.path_i]
 		d = G.dist2d(wp, s.pos)
 	var last = s.path_i == s.path.size() - 1
+	if last and s.partial and d < 2.5:
+		s.need_path = true
+		return "moving"
 	if last and d < 0.35:
 		s.want = Vector3.ZERO
 		return "arrived"
@@ -528,8 +573,8 @@ static func decide(s) -> void:
 		s.task = "hold"
 		return
 	# capture mode: keep pushing onto the objective when nobody is in sight
-	if G.mode == "capture" and s.vis_t == null and s.supp < 0.7 and s.task != "post":
-		var C: Vector3 = G.world.capture
+	if Obj.uses_points() and not Obj.points.is_empty() and s.vis_t == null and s.supp < 0.7 and s.task != "post" and G.dist2d(s.pos, objective_for(s)) < 60.0:
+		var C: Vector3 = objective_for(s)
 		var dc = G.dist2d(s.pos, C)
 		var q = s.squad
 		var can_move = q == null or squad_movers(q) < ceili(q["members"].size() / 2.0) + 1

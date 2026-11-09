@@ -91,6 +91,7 @@ var seat = -1
 var board_target = null
 var hidden_in_vehicle = false
 var chute: Node3D = null
+var partial = false
 var reload_t = 0.0
 var fire_cd = 0.0
 var burst = 0

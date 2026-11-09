@@ -3,6 +3,7 @@ extends CanvasLayer
 
 var tool = "ctl"
 var tab = "units"
+const MAP_IDS = ["town", "field", "trenches", "valley", "front"]
 const TOOLS = {
 	"units": [["a1", "Alpha soldier"], ["b1", "Bravo soldier"], ["a5", "Alpha squad"], ["b5", "Bravo squad"], ["ctl", "Take control"], ["spA", "Alpha spawn"], ["spB", "Bravo spawn"]],
 	"vehicles": [["jA", "Alpha jeep"], ["jB", "Bravo jeep"], ["tA", "Alpha tank"], ["tB", "Bravo tank"], ["trA", "Alpha truck"], ["trB", "Bravo truck"]],
@@ -46,6 +47,7 @@ var scope: TextureRect
 var cap_box: VBoxContainer
 var cap_lbl: Label
 var cap_bar: ProgressBar
+var points_box: HBoxContainer
 var menu: PanelContainer
 var help: PanelContainer
 var win: PanelContainer
@@ -160,6 +162,10 @@ func _build_top() -> void:
 	cap_bar.max_value = 1.0
 	cap_bar.show_percentage = false
 	cap_bar.custom_minimum_size = Vector2(260, 8)
+	points_box = HBoxContainer.new()
+	points_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	points_box.add_theme_constant_override("separation", 6)
+	cap_box.add_child(points_box)
 	cap_box.add_child(cap_lbl)
 	cap_box.add_child(cap_bar)
 	cap_box.visible = false
@@ -385,15 +391,15 @@ func _build_menu() -> void:
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD
 	d.custom_minimum_size = Vector2(480, 0)
 	v.add_child(d)
-	opt_map = _option(["Town ruins", "Farmland", "Trenches"], 0)
+	opt_map = _option(["Town ruins", "Farmland", "Trenches", "Valley offensive (large)", "Western front (large)"], 0)
 	opt_map.item_selected.connect(func(i):
 		if not G.started:
-			G.main.preview_map(["town", "field", "trenches"][i]))
+			G.main.preview_map(MAP_IDS[i]))
 	_row(v, "Map", opt_map)
-	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the point"], 0)
+	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the point", "Frontline — push across the map", "Assault — Alpha attacks", "Last stand — survive the waves"], 0)
 	_row(v, "Mode", opt_mode)
-	opt_limit = _option(["25", "50", "100"], 1)
-	_row(v, "Kills / points to win", opt_limit)
+	opt_limit = _option(["25", "50", "100", "200"], 1)
+	_row(v, "Kills / points / tickets", opt_limit)
 	opt_size = _option(["5", "8", "10", "15", "20"], 2)
 	_row(v, "Soldiers per team", opt_size)
 	opt_reinf = _option(["By truck", "Paratroopers", "Appear at base", "None"], 0)
@@ -412,9 +418,8 @@ func _build_menu() -> void:
 	root.add_child(menu)
 
 func _deploy() -> void:
-	var maps = ["town", "field", "trenches"]
-	var modes = ["sandbox", "deathmatch", "capture"]
-	G.main.start_game({"map": maps[opt_map.selected], "mode": modes[opt_mode.selected],
+	var modes = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand"]
+	G.main.start_game({"map": MAP_IDS[opt_map.selected], "mode": modes[opt_mode.selected],
 		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": int(opt_limit.get_item_text(opt_limit.selected)),
 		"reinforce": opt_reinf.selected != 3, "reinf_mode": ["truck", "para", "instant", "truck"][opt_reinf.selected],
 		"armor": ["none", "light", "heavy"][opt_armor.selected]})
@@ -508,8 +513,9 @@ func _unhandled_key_input(ev: InputEvent) -> void:
 
 func update_hud(dt: float) -> void:
 	var cap = G.mode == "capture"
-	lbl_sa.text = str(int(G.cap_score[0])) if cap else str(G.score[0])
-	lbl_sb.text = str(int(G.cap_score[1])) if cap else str(G.score[1])
+	var tick = G.mode == "frontline"
+	lbl_sa.text = str(int(G.cap_score[0])) if cap else (str(Obj.tickets[0]) if tick and not Obj.tickets.is_empty() else str(G.score[0]))
+	lbl_sb.text = str(int(G.cap_score[1])) if cap else (str(Obj.tickets[1]) if tick and not Obj.tickets.is_empty() else str(G.score[1]))
 	var t = int(G.game_time)
 	lbl_clock.text = "%02d:%02d" % [t / 60, t % 60]
 	if get_tree().paused:
@@ -518,19 +524,52 @@ func update_hud(dt: float) -> void:
 		lbl_mode.text = "slow-mo"
 	elif G.mode == "sandbox":
 		lbl_mode.text = "sandbox"
+	elif cap:
+		lbl_mode.text = "capture · %d" % G.limit
+	elif G.mode == "deathmatch":
+		lbl_mode.text = "first to %d" % G.limit
 	else:
-		lbl_mode.text = ("capture · %d" if cap else "first to %d") % G.limit
+		lbl_mode.text = Obj.status_text()
 	lbl_a.text = "%d alive" % G.alive_count(0)
 	lbl_b.text = "%d alive" % G.alive_count(1)
-	cap_box.visible = cap and G.started
-	if cap:
-		cap_bar.value = G.cap_prog
-		if G.cap_contested:
-			cap_lbl.text = "Objective contested"
-		elif G.cap_owner >= 0:
-			cap_lbl.text = "Objective held by " + G.TEAM_NAMES[G.cap_owner]
+	var pts = Obj.points
+	cap_box.visible = Obj.uses_points() and G.started and not pts.is_empty()
+	if cap_box.visible:
+		while points_box.get_child_count() < pts.size():
+			var l = _label("", 15)
+			l.custom_minimum_size = Vector2(26, 0)
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			points_box.add_child(l)
+		while points_box.get_child_count() > pts.size():
+			var c = points_box.get_child(points_box.get_child_count() - 1)
+			points_box.remove_child(c)
+			c.queue_free()
+		var blink = int(Time.get_ticks_msec() / 300) % 2 == 0
+		for i in range(pts.size()):
+			var pt = pts[i]
+			var l = points_box.get_child(i)
+			l.text = "[%s]" % pt["name"]
+			var col = Color(0.85, 0.85, 0.85) if pt["owner"] < 0 else G.TEAM_BAND[pt["owner"]].lightened(0.25)
+			if pt["contested"] and blink:
+				col = Color(1.0, 0.85, 0.3)
+			l.add_theme_color_override("font_color", col)
+		var focus = pts[0]
+		if G.player != null and is_instance_valid(G.player):
+			var bd = 1e9
+			for pt in pts:
+				var d = G.dist2d(pt["p"], G.player.pos)
+				if d < bd:
+					bd = d
+					focus = pt
+		elif pts.size() > 1:
+			focus = pts[Obj.front(0)]
+		cap_bar.value = focus["prog"]
+		if focus["contested"]:
+			cap_lbl.text = "Point %s contested" % focus["name"]
+		elif focus["owner"] >= 0:
+			cap_lbl.text = "Point %s held by %s" % [focus["name"], G.TEAM_NAMES[focus["owner"]]]
 		else:
-			cap_lbl.text = "Objective neutral"
+			cap_lbl.text = "Point %s neutral" % focus["name"]
 	var show_game = G.started
 	top_bar.visible = show_game
 	side.visible = show_game

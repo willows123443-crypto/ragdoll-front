@@ -7,19 +7,19 @@ extends RefCounted
 # in the modes that use bases, nobody new arrives until the team builds another FOB.
 
 const KINDS = {
-	"hq": {"name": "HQ", "work": 90.0, "size": Vector2(16, 12)},
-	"fob": {"name": "FOB", "work": 45.0, "size": Vector2(11, 10)},
-	"sandbags": {"name": "Sandbag wall", "work": 6.0, "size": Vector2(3.4, 1.2)},
-	"wire": {"name": "Barbed wire", "work": 5.0, "size": Vector2(6, 1.2)},
-	"traps": {"name": "Tank traps", "work": 9.0, "size": Vector2(8, 2)},
-	"mgnest": {"name": "MG nest", "work": 14.0, "size": Vector2(4, 4)},
-	"mortarpit": {"name": "Mortar pit", "work": 14.0, "size": Vector2(3.6, 3.6)},
-	"tower": {"name": "Watchtower", "work": 24.0, "size": Vector2(3.6, 3.6)},
-	"bunker": {"name": "Bunker", "work": 40.0, "size": Vector2(7.5, 6.5)},
-	"hospital": {"name": "Field hospital", "work": 26.0, "size": Vector2(9, 6.5)},
-	"radio": {"name": "Radio mast", "work": 18.0, "size": Vector2(4.5, 4.5)},
-	"depot": {"name": "Vehicle depot", "work": 36.0, "size": Vector2(11, 9)},
-	"supply": {"name": "Supply dump", "work": 16.0, "size": Vector2(6.5, 5.5)},
+	"hq": {"name": "HQ", "work": 144.0, "size": Vector2(16, 12)},
+	"fob": {"name": "FOB", "work": 72.0, "size": Vector2(11, 10)},
+	"sandbags": {"name": "Sandbag wall", "work": 9.6, "size": Vector2(3.4, 1.2)},
+	"wire": {"name": "Barbed wire", "work": 8.0, "size": Vector2(6, 1.2)},
+	"traps": {"name": "Tank traps", "work": 14.4, "size": Vector2(8, 2)},
+	"mgnest": {"name": "MG nest", "work": 22.4, "size": Vector2(4, 4)},
+	"mortarpit": {"name": "Mortar pit", "work": 22.4, "size": Vector2(3.6, 3.6)},
+	"tower": {"name": "Watchtower", "work": 38.4, "size": Vector2(3.6, 3.6)},
+	"bunker": {"name": "Bunker", "work": 64.0, "size": Vector2(7.5, 6.5)},
+	"hospital": {"name": "Field hospital", "work": 41.6, "size": Vector2(9, 6.5)},
+	"radio": {"name": "Radio mast", "work": 28.8, "size": Vector2(4.5, 4.5)},
+	"depot": {"name": "Vehicle depot", "work": 57.6, "size": Vector2(11, 9)},
+	"supply": {"name": "Supply dump", "work": 25.6, "size": Vector2(6.5, 5.5)},
 }
 const ORDER = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "tower", "bunker", "hospital", "radio", "depot", "supply"]
 # what an AI team adds around a finished FOB, in order: [kind, sideways, forward]
@@ -27,6 +27,8 @@ const FOB_PLAN = [["mgnest", 0.0, 13.0], ["sandbags", -6.0, 10.0], ["sandbags", 
 	["supply", 11.0, -5.0], ["radio", -12.0, 5.0], ["mortarpit", 6.0, -12.0], ["tower", 12.0, 7.0], ["wire", 0.0, 20.0],
 	["traps", -12.0, 19.0], ["bunker", 0.0, 0.0], ["depot", 0.0, -22.0]]
 
+const DEPOT_COST = {"jeep": 6, "truck": 6, "halftrack": 12, "armoredcar": 16}
+const DEPOT_TIME = {"jeep": 35.0, "truck": 40.0, "halftrack": 60.0, "armoredcar": 75.0}
 const CANVAS = Color(0.52, 0.5, 0.38)
 const WOODC = Color(0.45, 0.35, 0.23)
 const CONCRETE = Color(0.56, 0.56, 0.53)
@@ -57,7 +59,7 @@ static func reset() -> void:
 
 # modes where reinforcements need a base to arrive at
 static func bases_matter() -> bool:
-	return G.reinforce and G.mode in ["deathmatch", "capture", "frontline", "assault"]
+	return G.reinforce and G.mode in ["deathmatch", "capture", "frontline", "assault", "destroy", "breakthrough", "siege"]
 
 # ---------------------------------------------------------------- placing and building
 static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: bool = false, player: bool = false):
@@ -97,9 +99,9 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 	for i in range(before, G.world.cols.size()):
 		var c = G.world.cols[i]
 		c.dest = true
-		# headquarters and bunkers are built to take a pounding
+		# headquarters and bunkers are built to take a pounding (but can be blown up when that's the point)
 		if kind == "hq":
-			c.hp = maxf(c.hp, 1500.0)
+			c.hp = maxf(c.hp, 650.0 if G.mode == "destroy" else 1500.0)
 		elif kind == "bunker":
 			c.hp = maxf(c.hp, 900.0)
 		elif kind == "fob":
@@ -156,7 +158,7 @@ static func _scaffold(st: Dictionary) -> void:
 		var mid = (a + b) * 0.5
 		var tape = MeshInstance3D.new()
 		var bm = BoxMesh.new()
-		bm.size = Vector3(0.04, 0.06, a.distance_to(b))
+		bm.size = Vector3(0.02, 0.03, a.distance_to(b))
 		tape.mesh = bm
 		tape.material_override = VModel.mat(Color(0.9, 0.75, 0.15))
 		tape.position = Vector3(mid.x, G.world.ground_y(mid.x, mid.y) + 0.8, mid.y)
@@ -282,7 +284,7 @@ static func _check_alive(st: Dictionary) -> void:
 	for c in st["cols"]:
 		if c.alive:
 			left += 1
-	var keep = {"hq": 0.3, "fob": 0.4}.get(st["kind"], 0.35)
+	var keep = {"hq": 0.5 if G.mode == "destroy" else 0.3, "fob": 0.4}.get(st["kind"], 0.35)
 	if float(left) / n < keep:
 		_lose(st, true)
 
@@ -499,18 +501,48 @@ static func _effect(st: Dictionary, dt: float) -> void:
 						if o.team != t and o.state != "dead" and G.dist2d(o.pos, st["p"]) < 80.0 and not G.blocked(eye, o.chest()):
 							AI.share_intel(friend, o, o.pos)
 		"depot":
-			if st["t"] > 100.0:
-				st["t"] = 0.0
-				var n = 0
-				for v in G.vehicles:
-					if v.team == t and not v.dead and not v.spec.get("static", false) and not v.spec.get("air", false):
-						n += 1
-				if n < 3:
-					var kinds = ["jeep", "halftrack", "jeep", "armoredcar"] if G.armor != "none" else ["jeep"]
+			# vehicles cost supply points and take time to put together
+			if st.get("making", "") == "":
+				if st["t"] > 20.0:
+					st["t"] = 0.0
+					var n = 0
+					for v in G.vehicles:
+						if v.team == t and not v.dead and not v.spec.get("static", false) and not v.spec.get("air", false):
+							n += 1
+					var kinds = ["jeep", "halftrack", "jeep", "armoredcar", "truck"] if G.armor != "none" else ["jeep", "truck"]
 					var k: String = kinds[randi() % kinds.size()]
+					var cost = DEPOT_COST.get(k, 10)
+					if n < 3 and t < Support.points.size() and Support.points[t] >= cost:
+						Support.points[t] -= cost
+						st["making"] = k
+						st["make_t"] = 0.0
+						var lb = Label3D.new()
+						lb.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+						lb.font_size = 36
+						lb.pixel_size = 0.012
+						lb.outline_size = 8
+						lb.modulate = G.team_color(t).lightened(0.3)
+						lb.visibility_range_end = 90.0
+						lb.position = st["p"] + Vector3(0, 5.2, 0)
+						st["root"].add_child(lb)
+						st["make_lbl"] = lb
+						G.ui.radio(t, "Depot: building a %s (%d supply)" % [Vehicle.SPECS[k]["name"].to_lower(), cost])
+			else:
+				st["make_t"] += dt
+				var need = DEPOT_TIME.get(st["making"], 45.0)
+				if is_instance_valid(st.get("make_lbl")):
+					st["make_lbl"].text = "%s  %d%%" % [Vehicle.SPECS[st["making"]]["name"], int(100.0 * st["make_t"] / need)]
+				if randf() < dt * 0.8:
+					G.audio.hammer(st["p"])
+				if st["make_t"] >= need:
+					var k2: String = st["making"]
+					st["making"] = ""
+					st["t"] = 0.0
+					if is_instance_valid(st.get("make_lbl")):
+						st["make_lbl"].queue_free()
 					var p = G.main._free_spot(st["p"] + _front(st) * 7.0)
-					G.main.spawn_vehicle(k, t, p, atan2(_front(st).x, _front(st).z), false)
-					G.ui.radio(t, "Depot: a %s is ready for crew" % Vehicle.SPECS[k]["name"].to_lower())
+					G.main.spawn_vehicle(k2, t, p, atan2(_front(st).x, _front(st).z), false)
+					G.ui.radio(t, "Depot: a %s is ready for crew" % Vehicle.SPECS[k2]["name"].to_lower())
 		"fob", "hq", "supply":
 			# top up grenades and engineer kits at the crates
 			if st["t"] > 3.0:
@@ -523,7 +555,7 @@ static func _effect(st: Dictionary, dt: float) -> void:
 
 # in modes with bases, a team with no base and nobody left is out
 static func _check_out() -> void:
-	if not bases_matter() or G.over:
+	if not bases_matter() or G.over or G.mode == "destroy":
 		return
 	var left = []
 	for t in range(G.team_count()):
@@ -542,8 +574,43 @@ static func _check_out() -> void:
 		G.main.end_game(left[0])
 
 # ---------------------------------------------------------------- AI: what to build where
+# what an AI side may build in each mode (the player can still mark out anything)
+static func allowed(t: int) -> Array:
+	match G.mode:
+		"sandbox":
+			return []
+		"deathmatch":
+			return ["sandbags"]
+		"laststand":
+			return ["sandbags", "wire", "traps", "mgnest"] if t == 0 else []
+		"assault":
+			if t == 0:
+				return ["fob", "sandbags", "hospital", "supply", "radio", "mortarpit", "tower"]
+			return ["sandbags", "wire", "traps", "mgnest", "bunker", "tower", "mortarpit"]
+		"siege":
+			if t == 0:
+				return ["sandbags", "wire", "traps", "mgnest", "bunker", "hospital", "tower"]
+			return ["fob", "sandbags", "mortarpit", "supply", "radio"]
+		"breakthrough":
+			if t == 1:
+				return ["sandbags", "wire", "traps", "mgnest", "bunker", "tower"]
+			return ["fob", "sandbags", "hospital", "supply", "mortarpit"]
+		"sabotage":
+			return []
+	return ORDER.duplicate()
+
+# defenders dig in around the points they hold instead of setting up FOBs
+const DEFENCE_PLAN = [["mgnest", 0.0, 9.0], ["sandbags", -5.0, 7.0], ["sandbags", 5.0, 7.0], ["wire", 0.0, 15.0], ["bunker", 0.0, -4.0],
+	["traps", 9.0, 14.0], ["tower", -9.0, -6.0], ["mortarpit", 6.0, -10.0]]
+
 static func _ai_plan(t: int) -> void:
 	if G.alive_count(t) == 0:
+		return
+	var ok = allowed(t)
+	if ok.is_empty() or (ok.size() == 1 and ok[0] == "sandbags"):
+		return
+	if not ("fob" in ok):
+		_ai_defend_plan(t, ok)
 		return
 	var mine = sites.filter(func(st): return st["team"] == t and not st["dead"])
 	var unfinished = mine.filter(func(st): return not st["done"])
@@ -573,6 +640,8 @@ static func _ai_plan(t: int) -> void:
 		var fw = _front(f)
 		var side = Vector3(fw.z, 0, -fw.x)
 		for item in FOB_PLAN:
+			if not (item[0] in ok):
+				continue
 			var key = "%s_%d_%d" % [item[0], int(item[1]), int(item[2])]
 			if f.has("plan_" + key):
 				continue
@@ -592,6 +661,33 @@ static func _ai_plan(t: int) -> void:
 			if spot != null:
 				place(item[0], t, spot, fw)
 				return
+
+static func _ai_defend_plan(t: int, ok: Array) -> void:
+	var held = []
+	for pt in Obj.points:
+		if pt["owner"] == t:
+			held.append(pt)
+	if held.is_empty():
+		return
+	var pt = held[randi() % held.size()]
+	var ed = G.flat(Commander._enemy_center(t) - pt["p"]) if Commander._enemy_center(t) != null else G.flat(G.world.spawn[(t + 1) % G.team_count()] - pt["p"])
+	if ed.length_squared() < 1.0:
+		ed = Vector3(1, 0, 0)
+	var fw = ed.normalized()
+	var side = Vector3(fw.z, 0, -fw.x)
+	if not pt.has("plan"):
+		pt["plan"] = {}
+	for item in DEFENCE_PLAN:
+		if not (item[0] in ok):
+			continue
+		var key = "%s_%d_%d" % [item[0], int(item[1]), int(item[2])]
+		if pt["plan"].has(key):
+			continue
+		pt["plan"][key] = true
+		var spot = find_spot(pt["p"] + side * item[1] + fw * item[2], item[0], 5.0)
+		if spot != null:
+			place(item[0], t, spot, fw)
+			return
 
 static func _all_done(a: Array) -> bool:
 	for st in a:

@@ -241,12 +241,12 @@ func wreck_smoke(pos: Vector3, parent: Node) -> void:
 	p.emitting = true
 
 # a lingering smoke screen; returns the emitter so it can be stopped
-func smoke_screen(pos: Vector3, life: float) -> CPUParticles3D:
+func smoke_screen(pos: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.83), big: float = 1.0) -> CPUParticles3D:
 	var p = CPUParticles3D.new()
-	p.amount = 70
-	p.lifetime = 7.0
+	p.amount = int(110 * big)
+	p.lifetime = 8.0
 	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
-	p.emission_sphere_radius = 1.5
+	p.emission_sphere_radius = 4.0 * big
 	p.direction = Vector3(0.2, 1, 0)
 	p.spread = 60.0
 	p.initial_velocity_min = 0.2
@@ -254,11 +254,11 @@ func smoke_screen(pos: Vector3, life: float) -> CPUParticles3D:
 	p.gravity = Vector3(0.15, 0.05, 0)
 	p.mesh = QuadMesh.new()
 	p.material_override = billboard_mat(Color(1, 1, 1, 1), false)
-	var c = Color(0.85, 0.85, 0.83, 0.9)
+	var c = Color(tint.r, tint.g, tint.b, 0.9)
 	p.color = c
 	p.color_ramp = _fade_ramp(c)
-	p.scale_amount_min = 2.5
-	p.scale_amount_max = 3.5
+	p.scale_amount_min = 3.5 * big
+	p.scale_amount_max = 5.0 * big
 	p.scale_amount_curve = _grow_curve(1.0, 3.0)
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	# the web renderer draws particles that haven't been emitted yet as black discs, so the cloud

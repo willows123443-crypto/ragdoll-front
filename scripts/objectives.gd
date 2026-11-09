@@ -17,7 +17,27 @@ static var wave_t = 0.0
 static var wave_left = 0
 
 static func uses_points() -> bool:
-	return G.mode in ["capture", "frontline", "assault", "laststand"]
+	return G.mode in ["capture", "frontline", "assault", "laststand", "breakthrough", "siege"]
+
+const MODE_INFO = {
+	"sandbox": "Free play with no way to win or lose. Drop in soldiers, vehicles and buildings and watch what happens.",
+	"deathmatch": "First side to reach the kill limit wins. Reinforcements arrive at your HQ or FOBs.",
+	"capture": "Three or more flags across the middle of the map. Every flag you hold earns points each second; first side to the points limit wins.",
+	"frontline": "A chain of flags across a big map. Take them one after another; whoever holds more drains the other side's tickets. Run out of tickets or lose every flag and you lose.",
+	"assault": "Alpha attacks a chain of flags held by Bravo, with limited tickets. Bravo digs in with bunkers, wire and MG nests.",
+	"laststand": "Alpha holds one flag against bigger and bigger enemy waves. Survive as long as you can.",
+	"destroy": "Each side has an HQ and builds FOBs. Blow up an enemy's HQ and all its FOBs to knock it out; the last side with a base wins.",
+	"breakthrough": "Bravo holds a fortified line of bunkers, wire and MG nests. Alpha must take every flag on the line before its tickets run out, then hold at least one against the counter-attack.",
+	"sabotage": "At night, a small Alpha raiding party must blow up Bravo's radio mast and vehicle depot with satchel charges. The raiders get no reinforcements.",
+	"siege": "Alpha holds a fortified town while its supplies run down; holding the supply-road flags slows the drain. Bravo wins by taking the town, Alpha by holding out until the timer ends.",
+}
+
+static var phase = 0
+static var hold_t = 0.0
+static var supply = 0.0
+static var siege_t = 0.0
+static var sab_targets: Array = []
+static var mode_t = 0.0
 
 static func chain() -> bool:
 	return G.mode in ["frontline", "assault"]
@@ -25,8 +45,16 @@ static func chain() -> bool:
 static func reset() -> void:
 	points = []
 	var src: Array = G.world.objectives
-	if G.mode == "capture" or G.mode == "laststand":
+	if G.mode == "laststand":
 		src = [{"p": G.world.capture, "name": "A"}]
+	elif G.mode == "capture":
+		src = _capture_points()
+	elif G.mode == "breakthrough":
+		src = _line_points(2)
+	elif G.mode == "siege":
+		src = _siege_points()
+	elif G.mode in ["destroy", "sabotage"]:
+		src = []
 	for o in src:
 		points.append({"p": Vector3(o["p"].x, G.world.ground_y(o["p"].x, o["p"].z), o["p"].z), "name": o["name"],
 			"owner": -1, "prog": 0.0, "contested": false, "n": _zeros(), "amt": 0.0, "ct": -1})
@@ -37,11 +65,142 @@ static func reset() -> void:
 	if G.mode == "laststand":
 		points[0]["owner"] = 0
 		points[0]["prog"] = 1.0
+	if G.mode == "breakthrough":
+		for pt in points:
+			pt["owner"] = 1
+			pt["prog"] = -1.0
+	if G.mode == "siege":
+		for pt in points:
+			pt["owner"] = 0
+			pt["prog"] = 1.0
+	phase = 0
+	hold_t = 150.0
+	supply = float(G.limit) * 1.2
+	siege_t = 480.0
+	sab_targets = []
+	mode_t = 0.0
 	tickets = [G.limit, G.limit]
 	bleed_t = 0.0
 	wave = 0
 	wave_t = 8.0
 	wave_left = 0
+
+# capture mode: several points spread across the middle of the map, so squads split up
+static func _capture_points() -> Array:
+	var n = 3 if G.team_count() == 2 else G.team_count() + 1
+	var W = G.world
+	var out = []
+	if G.team_count() == 2 and W.objectives.size() >= 3:
+		var ci = 0
+		for i in range(W.objectives.size()):
+			if W.objectives[i]["p"].distance_to(W.capture) < 1.0:
+				ci = i
+		var a = clampi(ci - 1, 0, W.objectives.size() - 3)
+		for i in range(3):
+			out.append({"p": W.objectives[a + i]["p"], "name": "ABC"[i]})
+		return out
+	var c: Vector3 = W.capture
+	var axis = G.flat(W.spawn[1] - W.spawn[0])
+	axis = axis.normalized() if axis.length_squared() > 1.0 else Vector3(1, 0, 0)
+	var perp = Vector3(-axis.z, 0, axis.x)
+	var b: Rect2 = W.bounds
+	var R = clampf(minf(b.size.x, b.size.y) * 0.3, 26.0, 70.0)
+	var raw = []
+	if n == 3:
+		raw = [c + perp * R, c, c - perp * R]
+	else:
+		raw.append(c)
+		for k in range(n - 1):
+			var ang = k * TAU / (n - 1) + 0.4
+			raw.append(c + (perp * cos(ang) + axis * sin(ang)) * R)
+	var names = "ABCDE"
+	for i in range(raw.size()):
+		var p: Vector3 = raw[i]
+		p.x = clampf(p.x, b.position.x + 18.0, b.end.x - 18.0)
+		p.z = clampf(p.z, b.position.y + 18.0, b.end.y - 18.0)
+		for k in range(12):
+			if not W.inside_any(p.x, p.z, 2.5) and not W.in_water(p.x, p.z):
+				break
+			p = raw[i] + Vector3(randf_range(-10, 10), 0, randf_range(-10, 10))
+		out.append({"p": p, "name": names[i]})
+	return out
+
+# a line of n points across the middle, square to the line between the bases
+static func _line_points(n: int) -> Array:
+	var W = G.world
+	var c: Vector3 = W.capture
+	var axis = G.flat(W.spawn[1] - W.spawn[0])
+	axis = axis.normalized() if axis.length_squared() > 1.0 else Vector3(1, 0, 0)
+	var perp = Vector3(-axis.z, 0, axis.x)
+	var R = clampf(minf(W.bounds.size.x, W.bounds.size.y) * 0.22, 20.0, 50.0)
+	var out = []
+	for i in range(n):
+		var k = (float(i) - (n - 1) * 0.5)
+		out.append({"p": _free_near(c + perp * k * R * 1.6), "name": "ABCDE"[i]})
+	return out
+
+# siege: the town (A) and two supply roads (B, C) back toward Alpha's edge
+static func _siege_points() -> Array:
+	var W = G.world
+	var c: Vector3 = W.capture
+	var home: Vector3 = W.spawn[0]
+	var back = G.flat(home - c)
+	var L = back.length()
+	back = back.normalized() if L > 1.0 else Vector3(-1, 0, 0)
+	var perp = Vector3(-back.z, 0, back.x)
+	var d = clampf(L * 0.55, 30.0, 90.0)
+	return [{"p": c, "name": "A"}, {"p": _free_near(c + back * d + perp * d * 0.6), "name": "B"}, {"p": _free_near(c + back * d - perp * d * 0.6), "name": "C"}]
+
+static func _free_near(p: Vector3) -> Vector3:
+	var W = G.world
+	var b: Rect2 = W.bounds
+	var q = p
+	for k in range(14):
+		q.x = clampf(q.x, b.position.x + 18.0, b.end.x - 18.0)
+		q.z = clampf(q.z, b.position.y + 18.0, b.end.y - 18.0)
+		if not W.inside_any(q.x, q.z, 2.5) and not W.in_water(q.x, q.z):
+			return q
+		q = p + Vector3(randf_range(-12, 12), 0, randf_range(-12, 12))
+	return q
+
+# things each mode sets up once the bases exist
+static func setup_mode() -> void:
+	var W = G.world
+	match G.mode:
+		"breakthrough":
+			# Bravo's fortified line in front of the points
+			var axis = G.flat(W.spawn[1] - W.spawn[0]).normalized()
+			var perp = Vector3(-axis.z, 0, axis.x)
+			for pt in points:
+				var front = -axis
+				var base: Vector3 = pt["p"]
+				for item in [["bunker", 0.0, -6.0], ["mgnest", -9.0, 7.0], ["mgnest", 9.0, 7.0], ["wire", -6.0, 15.0], ["wire", 6.0, 15.0],
+						["traps", 0.0, 21.0], ["sandbags", -4.0, 8.0], ["sandbags", 4.0, 8.0], ["tower", 12.0, -5.0]]:
+					var sp = Build.find_spot(base + perp * item[1] + front * item[2], item[0], 4.0, 10, true)
+					if sp != null:
+						Build.place(item[0], 1, sp, front, true)
+		"siege":
+			var a: Vector3 = points[0]["p"]
+			var toward = G.flat(W.spawn[1] - a).normalized()
+			var perp2 = Vector3(-toward.z, 0, toward.x)
+			for item in [["bunker", 0.0, 9.0], ["mgnest", -11.0, 12.0], ["mgnest", 11.0, 12.0], ["wire", 0.0, 22.0], ["wire", -12.0, 20.0],
+					["wire", 12.0, 20.0], ["sandbags", -6.0, 11.0], ["sandbags", 6.0, 11.0], ["hospital", 0.0, -12.0], ["traps", 0.0, 27.0]]:
+				var sp = Build.find_spot(a + perp2 * item[1] + toward * item[2], item[0], 5.0, 10, true)
+				if sp != null:
+					Build.place(item[0], 0, sp, toward, true)
+		"sabotage":
+			# the raid targets, between Bravo's HQ and the middle of the map
+			var h: Vector3 = W.spawn[1]
+			var to_mid = G.flat(W.capture - h).normalized()
+			var side = Vector3(-to_mid.z, 0, to_mid.x)
+			for item in [["radio", 22.0, 14.0], ["depot", 22.0, -14.0]]:
+				var sp = Build.find_spot(h + to_mid * item[1] + side * item[2], item[0], 10.0, 30, true)
+				if sp != null:
+					sab_targets.append(Build.place(item[0], 1, sp, to_mid, true))
+			for item in [["mgnest", 34.0, 0.0], ["tower", 30.0, 22.0], ["wire", 38.0, -8.0]]:
+				var sp2 = Build.find_spot(h + to_mid * item[1] + side * item[2], item[0], 6.0, 20, true)
+				if sp2 != null:
+					Build.place(item[0], 1, sp2, to_mid, true)
 
 # can this team start capturing point i right now?
 static func capturable(i: int, team: int) -> bool:
@@ -80,6 +239,9 @@ static func forward_held(team: int) -> int:
 	return best
 
 static func step(dt: float) -> void:
+	if G.over:
+		return
+	_mode_step(dt)
 	if points.is_empty() or G.over:
 		return
 	for pt in points:
@@ -164,11 +326,13 @@ static func _step_two(dt: float) -> void:
 static func _score(dt: float) -> void:
 	match G.mode:
 		"capture":
-			var o = points[0]["owner"]
-			if o >= 0:
-				G.cap_score[o] += dt * 0.5
-				if G.cap_score[o] >= G.limit:
-					G.main.end_game(o)
+			for pt in points:
+				var o = pt["owner"]
+				if o >= 0:
+					G.cap_score[o] += dt * 0.75 / points.size()
+					if G.cap_score[o] >= G.limit:
+						G.main.end_game(o)
+						return
 		"frontline":
 			var held = [0, 0]
 			for pt in points:
@@ -196,16 +360,80 @@ static func _score(dt: float) -> void:
 				G.main.end_game(0)
 		"laststand":
 			_waves(dt)
+		"breakthrough":
+			var taken = 0
+			for pt in points:
+				if pt["owner"] == 0:
+					taken += 1
+			if phase == 0 and taken == points.size():
+				phase = 1
+				hold_t = 150.0
+				G.ui.radio(0, "The line is ours! Dig in, the counter-attack is coming")
+				G.ui.radio(1, "We've lost the line. All units, counter-attack!")
+				for t in range(Reinforce.timers.size()):
+					Reinforce.timers[t] = 999.0 if t == 1 else Reinforce.timers[t]
+			elif phase == 1:
+				hold_t -= dt
+				if taken == 0:
+					G.main.end_game(1)
+				elif hold_t <= 0.0:
+					G.main.end_game(0)
+		"siege":
+			siege_t -= dt
+			var roads = 0
+			for i in range(1, points.size()):
+				if points[i]["owner"] != 0:
+					roads += 1
+			supply = maxf(0.0, supply - dt * (0.12 + 0.18 * roads))
+			if points[0]["owner"] == 1:
+				G.main.end_game(1)
+			elif siege_t <= 0.0:
+				G.main.end_game(0)
+			elif supply <= 0.0 and G.alive_count(0) == 0:
+				G.main.end_game(1)
+
+# win conditions for the modes that aren't just about flags
+static func _mode_step(dt: float) -> void:
+	mode_t += dt
+	match G.mode:
+		"destroy":
+			if mode_t < 3.0:
+				return
+			var alive_bases = []
+			for t in range(G.team_count()):
+				if Build.out[t] if t < Build.out.size() else false:
+					continue
+				if Build.hq_alive(t) or not Build.fobs(t).is_empty():
+					alive_bases.append(t)
+				elif t < Build.out.size():
+					Build.out[t] = true
+					G.ui.radio(t, "Our HQ and every FOB are gone. %s is out!" % G.TEAM_NAMES[t])
+					for o in range(G.team_count()):
+						if o != t:
+							G.ui.radio(o, "%s's base is destroyed!" % G.TEAM_NAMES[t])
+			if alive_bases.size() == 1:
+				G.main.end_game(alive_bases[0])
+		"sabotage":
+			if mode_t < 3.0:
+				return
+			var left = 0
+			for st in sab_targets:
+				if not st["dead"]:
+					left += 1
+			if not sab_targets.is_empty() and left == 0:
+				G.main.end_game(0)
+			elif G.alive_count(0) == 0:
+				G.main.end_game(1)
 
 static func _spend(team: int, n: int) -> void:
-	if G.mode != "frontline" and not (G.mode == "assault" and team == 0):
+	if G.mode != "frontline" and not (G.mode in ["assault", "breakthrough"] and team == 0):
 		return
 	tickets[team] = maxi(0, tickets[team] - n)
 	if tickets[team] <= 0:
 		G.main.end_game(1 - team)
 
 static func on_death(s) -> void:
-	if s.team < 2 and (G.mode == "frontline" or G.mode == "assault"):
+	if s.team < 2 and (G.mode == "frontline" or G.mode == "assault" or (G.mode == "breakthrough" and phase == 0)):
 		_spend(s.team, 1)
 	if G.mode == "laststand" and s.team == 0 and G.alive_count(0) == 0:
 		G.main.end_game(1)
@@ -245,4 +473,18 @@ static func status_text() -> String:
 			return "attackers' tickets %d" % tickets[0]
 		"laststand":
 			return "wave %d" % wave
+		"breakthrough":
+			if phase == 0:
+				return "break the line · tickets %d" % tickets[0]
+			return "hold! %d:%02d" % [int(hold_t) / 60, int(hold_t) % 60]
+		"siege":
+			return "supply %d · %d:%02d left" % [int(supply), int(siege_t) / 60, int(siege_t) % 60]
+		"destroy":
+			return "destroy the enemy base"
+		"sabotage":
+			var left = 0
+			for st in sab_targets:
+				if not st["dead"]:
+					left += 1
+			return "targets left: %d" % left
 	return ""

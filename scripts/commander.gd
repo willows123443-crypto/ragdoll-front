@@ -53,24 +53,14 @@ static func _plan(team: int, off) -> void:
 		return
 	var said = false
 	var home: Vector3 = G.world.spawn[team]
-	if Obj.chain() or G.mode == "capture":
-		var f = Obj.front(team) if Obj.chain() else 0
-		var threatened = -1
-		for i in range(Obj.points.size()):
-			var pt = Obj.points[i]
-			if pt["owner"] == team and pt["n"][(team + 1) % 2] > 0:
-				threatened = i
-		for k in range(qs.size()):
-			var q = qs[k]
-			var job = "attack"
-			if threatened >= 0 and k % 3 == 2:
-				job = "defend"
-			elif qs.size() >= 4 and k == qs.size() - 1:
-				job = "flank"
-			_assign(q, job, Obj.points[threatened]["p"] if job == "defend" else Obj.points[f]["p"], home)
-			if not said:
-				said = true
-				G.ui.radio(team, "Command: %d squad%s pushing point %s%s" % [qs.size() - (1 if threatened >= 0 else 0), "s" if qs.size() > 1 else "", Obj.points[f]["name"], ", one holding %s" % Obj.points[threatened]["name"] if threatened >= 0 else ""])
+	if G.mode == "destroy":
+		_base_plan(team, qs, home)
+		return
+	if G.mode == "sabotage":
+		_raid_plan(team, qs, home)
+		return
+	if Obj.uses_points() and not Obj.points.is_empty() and G.mode != "laststand":
+		_spread_over_points(team, qs, home)
 		return
 	# deathmatch / sandbox: hit the enemy where they are, with one squad going round the side
 	var ec = _enemy_center(team)
@@ -85,6 +75,93 @@ static func _plan(team: int, off) -> void:
 			job = "defend"
 		_assign(q, job, ec if job != "defend" else home + G.flat(ec - home).normalized() * 25.0, home)
 	G.ui.radio(team, "Command: enemy concentrating near %s, all squads engage" % AI.grid_ref(ec))
+
+# hand squads out across the points: attack what we can take, defend what's under threat,
+# keep a light hold on the rest, and never send everyone to the same place
+static func _spread_over_points(team: int, qs: Array, home: Vector3) -> void:
+	var pts = Obj.points
+	var vals = []
+	for i in range(pts.size()):
+		var pt = pts[i]
+		var v = 0.0
+		var enemies = 0
+		for t in range(G.team_count()):
+			if t != team:
+				enemies += pt["n"][t]
+		if pt["owner"] == team:
+			v = 3.0 if enemies > 0 else 0.7
+		elif Obj.capturable(i, team):
+			v = 2.4 if pt["owner"] < 0 else 2.0
+		else:
+			v = 0.0
+		if G.mode == "assault" and team == 1 and pt["owner"] == 1:
+			v = 2.6 if i == Obj.front(0) else 1.0
+		vals.append(v)
+	var count = []
+	for i in range(pts.size()):
+		count.append(0)
+	var lines = []
+	for q in qs:
+		var L = Squad.leader_of(q)
+		var from: Vector3 = L.pos if L != null else home
+		var best = -1
+		var bs = -1e9
+		for i in range(pts.size()):
+			if vals[i] <= 0.0:
+				continue
+			var d = G.dist2d(from, pts[i]["p"])
+			var sc = vals[i] / (1.0 + count[i] * 0.9) - d / 250.0
+			if sc > bs:
+				bs = sc
+				best = i
+		if best < 0:
+			continue
+		var job = "defend" if pts[best]["owner"] == team else "attack"
+		# a second squad on the same point swings round the side
+		if job == "attack" and count[best] == 1:
+			job = "flank"
+		count[best] += 1
+		_assign(q, job, pts[best]["p"], home)
+		q["obj"] = best
+		q["obj_t"] = G.sim_time + 20.0
+		lines.append("%s %s" % [job, pts[best]["name"]])
+	if not lines.is_empty() and randf() < 0.6:
+		G.ui.radio(team, "Command: " + ", ".join(lines.slice(0, 4)))
+
+# destroy base: most squads go for the nearest enemy HQ or FOB, one stays home to guard the HQ
+static func _base_plan(team: int, qs: Array, home: Vector3) -> void:
+	var targets = Build.sites.filter(func(st): return st["team"] != team and not st["dead"] and st["done"] and st["kind"] in ["hq", "fob"])
+	if targets.is_empty():
+		return
+	targets.sort_custom(func(a, b): return G.dist2d(a["p"], home) < G.dist2d(b["p"], home))
+	var mine = Build.hq(team)
+	var k = 0
+	for q in qs:
+		if k % 4 == 3 and mine != null and Build.alive(mine):
+			_assign(q, "defend", mine["p"] + G.flat(targets[0]["p"] - mine["p"]).normalized() * 12.0, home)
+		else:
+			var tg = targets[mini(k / 3, targets.size() - 1)]
+			_assign(q, "flank" if k % 3 == 1 else "attack", tg["p"], home)
+		k += 1
+	G.ui.radio(team, "Command: all squads, hit the enemy %s at %s" % [targets[0]["name"], AI.grid_ref(targets[0]["p"])])
+
+# sabotage: raiders split between the targets; defenders guard them and hunt the raiders
+static func _raid_plan(team: int, qs: Array, home: Vector3) -> void:
+	var tg = Obj.sab_targets.filter(func(st): return not st["dead"])
+	if tg.is_empty():
+		return
+	var k = 0
+	for q in qs:
+		var st = tg[k % tg.size()]
+		if team == 0:
+			_assign(q, "flank" if k % 2 == 1 else "attack", st["p"], home)
+		else:
+			var ec = _enemy_center(team)
+			if k % 2 == 0 or ec == null:
+				_assign(q, "defend", st["p"], home)
+			else:
+				_assign(q, "attack", ec, home)
+		k += 1
 
 static func _assign(q, job: String, target: Vector3, home: Vector3) -> void:
 	var p = target

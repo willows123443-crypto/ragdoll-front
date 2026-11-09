@@ -118,6 +118,9 @@ var rockets = 3
 var nade_cd = 6.0
 var throw_t = 0.0
 var hand_t = null
+var tool_mode = ""           # "hammer" while building
+var hammer: Node3D = null
+var hammer_hit = false
 var mag_drop = false
 var skin = Color.WHITE
 var callout_cd = 0.0
@@ -166,6 +169,12 @@ var kneel = false
 var prog_t = 0.0
 var prog_p = Vector3.ZERO
 var stuck_n = 0
+var unstick_t = 0.0          # sidestepping around whatever we ran into
+var unstick_dir = Vector3.ZERO
+var bad_spot = null          # a place we got stuck trying to reach
+var bad_t = 0.0
+var idle_p = Vector3.ZERO
+var idle_t = 0.0
 var ff_t = 0.0
 var block_t = 0.0
 var squad = null
@@ -474,7 +483,39 @@ func _aim_vector(t: float, spd: float) -> Vector3:
 	var cp = cos(sp)
 	return Vector3(sin(sy) * cp, sin(sp), cos(sy) * cp)
 
+# show the hammer and put the gun away while building, and the other way round after
+func _tool_visuals() -> void:
+	var want = tool_mode == "hammer" and state == "alive"
+	if want and hammer == null:
+		hammer = Node3D.new()
+		var handle = MeshInstance3D.new()
+		var hm = CylinderMesh.new()
+		hm.top_radius = 0.018
+		hm.bottom_radius = 0.022
+		hm.height = 0.34
+		hm.radial_segments = 6
+		handle.mesh = hm
+		handle.material_override = _mat("hhandle", Color(0.45, 0.32, 0.18), false)
+		handle.rotation.x = PI / 2.0
+		handle.position = Vector3(0, 0, 0.12)
+		hammer.add_child(handle)
+		var head = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.05, 0.16, 0.06)
+		head.mesh = bm
+		head.material_override = _mat("hhead", Color(0.25, 0.25, 0.26), false)
+		head.position = Vector3(0, 0.03, 0.28)
+		hammer.add_child(head)
+		parts[6].add_child(hammer)
+		hammer.position = Vector3(0, 0.17, 0)
+	if hammer != null:
+		hammer.visible = want
+	if gun_node != null and vehicle == null and gun_body == null:
+		gun_node.visible = not want
+
 func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vector3) -> void:
+	if tool_mode != "" or (hammer != null and hammer.visible):
+		_tool_visuals()
 	var reloading = reload_t > 0.0
 	var rk = 1.0 - reload_t / W["reload"] if reloading else 0.0
 	var shoulder = ready_ and not reloading and not sprint and not gun_blocked and (ads or burst > 0 or fire_cd > -0.8 or prone)
@@ -517,6 +558,19 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 		lh = lsh + uf * 0.22 + Vector3(0, -0.32, 0)
 		g = (uf * 0.6 + ur * 0.5 + Vector3(0, -0.4, 0)).normalized()
 		anchor_l = true
+	elif hand_t != null and tool_mode == "hammer":
+		# hammering: the right hand swings up and down, the left steadies the work
+		var sw = sin(G.sim_time * 8.5 + seed_ * 3.0)
+		rh = hand_t + ur * 0.1 + Vector3(0, 0.1 + 0.34 * maxf(sw, -0.25), 0) - uf * 0.12 * sw
+		lh = hand_t - ur * 0.2 + uf * 0.05 + Vector3(0, -0.06, 0)
+		if sw < -0.2 and not hammer_hit:
+			hammer_hit = true
+			if randf() < 0.6:
+				G.audio.hammer(hand_t)
+			if randf() < 0.15:
+				G.fx.impact(hand_t, Vector3.UP)
+		elif sw > 0.3:
+			hammer_hit = false
 	elif hand_t != null:
 		rh = hand_t + ur * 0.13
 		lh = hand_t - ur * 0.13
@@ -1128,7 +1182,7 @@ func _tick_wounded() -> void:
 	if crawl_target == null or pos.distance_to(crawl_target) < 0.5:
 		var best = null
 		var bd = 1e9
-		for cp in G.world.cover:
+		for cp in G.world.cover_near(pos, 10.0):
 			if cp.upper:
 				continue
 			var d: float = cp.p.distance_to(pos)

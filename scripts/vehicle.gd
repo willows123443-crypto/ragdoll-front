@@ -9,7 +9,7 @@ const SPECS = {
 		"bullet": 0.35, "tracked": false, "standoff": 38.0,
 		"seats": [
 			{"o": Vector3(0.45, 1.12, 0.15), "role": "driver", "pose": "sit", "face": 0.0},
-			{"o": Vector3(0.0, 1.72, -1.35), "role": "gunner", "pose": "stand", "face": 0.0},
+			{"o": Vector3(0.0, 1.73, -1.2), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true},
 			{"o": Vector3(-0.45, 1.12, 0.15), "role": "pass", "pose": "sit", "face": 0.0},
 			{"o": Vector3(-0.5, 1.12, -0.85), "role": "pass", "pose": "sit", "face": 0.0}]},
 	"truck": {"name": "Truck", "len": 7.2, "wid": 2.5, "speed": 11.0, "rev": 4.0, "accel": 4.5, "turn": 1.0, "hp": 650.0,
@@ -28,7 +28,7 @@ const SPECS = {
 		"bullet": 0.12, "tracked": false, "standoff": 30.0, "gun": "mg",
 		"seats": [
 			{"o": Vector3(0.5, 1.55, 1.7), "role": "driver", "pose": "sit", "face": 0.0},
-			{"o": Vector3(0.0, 2.05, 0.6), "role": "gunner", "pose": "stand", "face": 0.0},
+			{"o": Vector3(0.0, 2.05, 0.45), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true},
 			{"o": Vector3(0.75, 1.5, -0.4), "role": "pass", "pose": "sit", "face": -PI / 2.0},
 			{"o": Vector3(-0.75, 1.5, -0.4), "role": "pass", "pose": "sit", "face": PI / 2.0},
 			{"o": Vector3(0.75, 1.5, -1.3), "role": "pass", "pose": "sit", "face": -PI / 2.0},
@@ -77,7 +77,7 @@ const SPECS = {
 			{"o": Vector3(-0.9, 1.3, -1.6), "role": "pass", "pose": "sit", "face": 0.0}]},
 	"nest": {"name": "MG nest", "len": 3.2, "wid": 3.2, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 900.0,
 		"bullet": 0.04, "tracked": false, "standoff": 0.0, "static": true,
-		"seats": [{"o": Vector3(0.0, 0.95, -0.85), "role": "gunner", "pose": "stand", "face": 0.0}]},
+		"seats": [{"o": Vector3(0.0, 0.95, -0.55), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true}]},
 	"mortar": {"name": "Mortar", "len": 1.6, "wid": 1.6, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 260.0,
 		"bullet": 0.5, "tracked": false, "standoff": 0.0, "static": true,
 		"seats": [{"o": Vector3(0.75, 0.95, -0.2), "role": "gunner", "pose": "stand", "face": 0.0}]},
@@ -218,7 +218,9 @@ func seat_xform(i: int) -> Transform3D:
 	var sd = spec["seats"][i]
 	var xf = global_transform
 	if sd.get("turret", false) and turret != null:
-		xf = global_transform * Transform3D(Basis(Vector3.UP, turret_yaw), Vector3.ZERO)
+		# turn with the gun, around the turret's pivot
+		var tp: Vector3 = turret.position
+		xf = global_transform * Transform3D(Basis(), tp) * Transform3D(Basis(Vector3.UP, turret_yaw), Vector3.ZERO) * Transform3D(Basis(), -tp)
 	return Transform3D(xf.basis * Basis(Vector3.UP, sd["face"]), xf * sd["o"])
 
 func forward() -> Vector3:
@@ -453,7 +455,14 @@ func _weapons(dt: float) -> void:
 		_mortar(controller, dt, want, shoot)
 		return
 	if want == null:
-		turret_yaw = lerp_angle(turret_yaw, 0.0, dt * 0.8)
+		# no target: watch where the enemy was last seen, or sweep the front
+		var look = 0.0
+		if not controller.is_player and controller.has_threat and G.sim_time - controller.seen_t < 30.0:
+			var lt = global_transform.affine_inverse() * controller.threat
+			look = atan2(lt.x, lt.z)
+		elif not spec.get("air", false):
+			look = sin(G.sim_time * 0.35 + float(get_instance_id() % 97)) * (0.9 if kind in ["jeep", "halftrack", "nest", "motorbike"] else 0.5)
+		turret_yaw = turret_yaw + clampf(wrapf(look - turret_yaw, -PI, PI), -0.9 * dt, 0.9 * dt)
 		gun_pitch = lerpf(gun_pitch, 0.0, dt)
 		_apply_turret()
 		return
@@ -945,13 +954,17 @@ func _air_step(dt: float) -> void:
 		np.x = clampf(np.x, b.position.x - 60.0, b.end.x + 60.0)
 		np.z = clampf(np.z, b.position.y - 60.0, b.end.y + 60.0)
 	alt = clampf(alt + climb * 8.0 * dt, 0.0, 90.0)
-	# don't fly through the scenery: stay clear of whatever is underneath
+	# don't fly through the scenery: keep the whole airframe (rotor included) above anything nearby
 	var floor_y = gy
-	var hit = G.ray(Vector3(np.x, gy + alt + 6.0, np.z), Vector3(np.x, gy - 1.0, np.z), G.L_WORLD)
-	if not hit.is_empty():
-		floor_y = maxf(gy, hit.position.y)
-	if gy + alt < floor_y + 0.3:
-		alt = floor_y - gy + 0.3
+	for c in G.world.cols_in_rect(np.x - 6.5, np.z - 6.5, np.x + 6.5, np.z + 6.5):
+		if c.alive:
+			floor_y = maxf(floor_y, c.hi.y + 0.4)
+	if floor_y > gy + 0.5:
+		if gy + alt < floor_y:
+			# something tall ahead: stop and climb over it rather than sliding through
+			np = Vector3(pos.x, np.y, pos.z)
+			air_vel *= 0.5
+			alt = minf(alt + 12.0 * dt, 90.0)
 	pos = Vector3(np.x, gy + alt, np.z)
 	var lv = global_transform.basis.inverse() * air_vel
 	pitch = lerpf(pitch, clampf(lv.z * 0.012, -0.3, 0.3), dt * 3.0)
@@ -972,6 +985,31 @@ func _air_step(dt: float) -> void:
 		if life_t <= 0.0 and mission == null:
 			mission = {"type": "leave", "exit": Reinforce.entry_point(team) + Vector3(0, 0, 0) * 1.0, "stage": 3, "wait": 0.0, "drop": pos}
 
+# an open, flat patch for a helicopter to set down on, near the wanted spot
+static func find_lz(want: Vector3) -> Vector3:
+	var W = G.world
+	for k in range(30):
+		var r = 0.0 if k == 0 else 4.0 + k * 1.6
+		var a = k * 2.4
+		var p = want + Vector3(cos(a), 0, sin(a)) * r
+		if p.x < W.bounds.position.x + 12.0 or p.x > W.bounds.end.x - 12.0 or p.z < W.bounds.position.y + 12.0 or p.z > W.bounds.end.y - 12.0:
+			continue
+		var g0 = W.ground_y(p.x, p.z)
+		var clear = not W.in_water(p.x, p.z)
+		if clear:
+			for c in W.cols_in_rect(p.x - 8.0, p.z - 8.0, p.x + 8.0, p.z + 8.0):
+				if c.alive and c.hi.y > g0 + 0.4:
+					clear = false
+					break
+		if clear:
+			for v in G.vehicles:
+				if not v.dead and G.dist2d(v.pos, p) < 9.0 and not v.spec.get("air", false):
+					clear = false
+					break
+		if clear and absf(W.ground_y(p.x + 5.0, p.z) - g0) < 1.2 and absf(W.ground_y(p.x, p.z + 5.0) - g0) < 1.2:
+			return Vector3(p.x, g0, p.z)
+	return want
+
 func landed() -> bool:
 	return spec.get("air", false) and alt < 1.0 and air_vel.length() < 1.0
 
@@ -982,11 +1020,17 @@ func _ai_fly(dt: float) -> Array:
 	if mission != null:
 		var m = mission
 		if m["stage"] == 0:
+			if not m.get("lz_ok", false):
+				m["drop"] = find_lz(m["drop"])
+				m["lz_ok"] = true
 			target = m["drop"]
 			var dd = G.dist2d(pos, target)
-			if dd < 25.0:
+			# come in high, slow to a hover over the landing zone, then straight down
+			if dd < 7.0:
 				want_alt = 0.0
-			if dd < 6.0 and alt < 1.2:
+			elif dd < 40.0:
+				want_alt = 14.0
+			if dd < 7.0 and alt < 1.2:
 				m["stage"] = 1
 				m["wait"] = 3.0
 				for i in range(1, seats.size()):
@@ -1003,6 +1047,8 @@ func _ai_fly(dt: float) -> Array:
 			return [0.0, 0.0, -1.0]
 		else:
 			target = m["exit"]
+			if alt < 16.0:
+				return [0.0, 0.0, 1.0]       # lift off before moving away
 			if G.dist2d(pos, target) < 30.0:
 				var dr = driver()
 				remove()
@@ -1024,6 +1070,11 @@ func _ai_fly(dt: float) -> Array:
 	var to = G.flat(target - pos)
 	var ang = wrapf(atan2(to.x, to.z) - yaw, -PI, PI)
 	var fwd = clampf(to.length() / 30.0, 0.0, 1.0) * (1.0 if absf(ang) < 1.2 else 0.3)
+	if mission != null and mission["stage"] == 0 and to.length() < 40.0:
+		fwd = clampf(to.length() / 22.0, 0.0, 0.6)
+		if to.length() < 7.0:
+			fwd = 0.0
+			air_vel = air_vel.move_toward(Vector3.ZERO, 6.0 * dt)
 	var climb = clampf((want_alt - alt) / 6.0, -1.0, 1.0)
 	return [fwd, clampf(ang * 1.5, -1.0, 1.0), climb]
 

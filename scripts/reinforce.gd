@@ -26,11 +26,18 @@ static func step(dt: float) -> void:
 		if missing <= 0:
 			timers[t] = minf(timers[t], 0.0)
 			continue
+		if G.mode == "sabotage" and t == 0:
+			continue
+		if G.mode == "siege" and t == 0 and Obj.supply < 1.0:
+			continue
 		# no HQ and no FOB: nobody can come in until one is built
 		if not Build.can_respawn(t):
 			timers[t] = minf(timers[t], 0.0)
 			continue
 		timers[t] += dt
+		if G.mode == "siege" and t == 0:
+			missing = mini(missing, int(Obj.supply))
+		var before = timers[t]
 		# fresh troops are gathered and sent forward in groups, which takes a while
 		match G.reinf_mode:
 			"instant":
@@ -49,6 +56,8 @@ static func step(dt: float) -> void:
 				if timers[t] > (30.0 if missing >= 4 else 50.0):
 					timers[t] = -20.0
 					truck(t, mini(missing, 8))
+		if G.mode == "siege" and t == 0 and timers[t] < before - 1.0:
+			Obj.supply = maxf(0.0, Obj.supply - mini(missing, 8))
 
 # where a team's trucks come in from: the team's own edge of the map, on a road if there is one
 static func entry_point(t: int) -> Vector3:

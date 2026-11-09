@@ -147,13 +147,23 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 						G.world.destroy_col(col)
 	G.fx.tracer(o, d, t_end, W["tracer"], on_hit, vis)
 
+# keep ragdolls from flying off like rockets
+static func _cap(s, maxv: float) -> void:
+	for b in s.parts:
+		var v: Vector3 = b.linear_velocity
+		if v.length() > maxv:
+			b.linear_velocity = v.normalized() * maxv
+		if b.linear_velocity.y > maxv * 0.6:
+			b.linear_velocity.y = maxv * 0.6
+
 static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, attacker, force: float) -> void:
 	if attacker != null and not is_instance_valid(attacker):
 		attacker = null
 	var b: RigidBody3D = s.parts[part]
 	var imp = dir * force * 1.6
 	if s.state == "dead":
-		b.apply_impulse(imp * b.mass * 0.6, point - b.global_position)
+		b.apply_impulse(imp * b.mass * 0.25, point - b.global_position)
+		_cap(s, 5.0)
 		G.fx.bleed(point, dir, false)
 		return
 	var kind = Soldier.PART_KIND[part]
@@ -179,7 +189,8 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 		G.ui.damage_indicator(attacker.pos if attacker != null else point - dir * 10.0)
 	if s.hp <= 0.0:
 		kill(s, attacker, kind == "head")
-		b.apply_impulse(imp * b.mass * (1.3 if kind == "head" else 1.0), point - b.global_position)
+		b.apply_impulse(imp * b.mass * (0.5 if kind == "head" else 0.4), point - b.global_position)
+		_cap(s, 5.5)
 		return
 	b.apply_impulse(imp * b.mass * 0.8, point - b.global_position)
 	if s.state == "alive" or s.state == "riding":
@@ -427,12 +438,13 @@ static func throw_grenade(s, target: Vector3, type: String) -> void:
 	s.throw_t = 0.55
 	G.fx.callout(s, {"smoke": "Popping smoke!", "satchel": "Satchel charge! Get back!"}.get(type, "Grenade out!"))
 
-static func smoke_at(p: Vector3, life: float) -> void:
+static func smoke_at(p: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.83), big: float = 1.0) -> void:
 	var sc = SmokeCloud.new()
 	sc.p = p + Vector3(0, 1.0, 0)
 	sc.r = 0.5
 	sc.t = life
-	sc.node = G.fx.smoke_screen(p + Vector3(0, 0.5, 0), life - 4.0)
+	sc.node = G.fx.smoke_screen(p + Vector3(0, 0.5, 0), life - 4.0, tint, big)
+	sc.set_meta("max_r", 9.0 * big)
 	G.smoke_clouds.append(sc)
 
 static func step_grenades() -> void:
@@ -448,7 +460,7 @@ static func step_grenades() -> void:
 			if owner_s != null and not is_instance_valid(owner_s):
 				owner_s = null
 			if g.get_meta("type") == "smoke":
-				smoke_at(g.global_position, 24.0)
+				smoke_at(g.global_position, 32.0)
 			elif g.get_meta("type") == "satchel":
 				explode(g.global_position, owner_s, 2.1)
 			else:
@@ -458,7 +470,7 @@ static func step_grenades() -> void:
 	for i in range(G.smoke_clouds.size() - 1, -1, -1):
 		var c = G.smoke_clouds[i]
 		c.t -= G.DT
-		c.r = minf(5.5, c.r + G.DT * 2.2)
+		c.r = minf(c.get_meta("max_r", 9.0), c.r + G.DT * 2.6)
 		if c.t < 4.0:
 			c.r = maxf(0.0, c.r - G.DT * 1.3)
 		if c.t <= 0.0:
@@ -500,10 +512,12 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 			elif s.state == "alive":
 				s.stun = maxf(s.stun, 0.3)
 		s.wake()
+		# thrown flat and rolled, not launched skyward
 		for b in s.parts:
 			var away: Vector3 = b.global_position - pos
-			away.y = maxf(away.y, 0.0) + 0.8
-			b.apply_central_impulse(away.normalized() * 14.0 * f * randf_range(0.8, 1.2) * b.mass * (0.6 if s.state == "alive" else 1.0))
+			away.y = maxf(away.y, 0.0) + 0.25
+			b.apply_central_impulse(away.normalized() * 8.5 * f * randf_range(0.85, 1.1) * b.mass * (0.7 if s.state == "alive" else 0.8))
+		_cap(s, 9.0)
 	for d in G.fx.debris_list:
 		if is_instance_valid(d["b"]) and d["b"].global_position.distance_to(pos) < R:
 			var aw: Vector3 = d["b"].global_position - pos

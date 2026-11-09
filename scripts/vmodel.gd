@@ -256,22 +256,23 @@ static func mg(v, parent: Node3D, at: Vector3, l: float = 0.9) -> void:
 	box(v, parent, Vector3(0.12, 0.14, 0.22), at + Vector3(0.12, -0.04, l * 0.1), Color(0.3, 0.3, 0.22), {"b": 0.02})
 
 static func sandbag_ring(v, parent: Node3D, pts: Array, rows: int, c: Color) -> void:
-	# pts: [Vector3 start, Vector3 end] segments of bags
+	# pts: [Vector3 start, Vector3 end] segments; bags lie along the wall, staggered like bricks
 	for seg in pts:
 		var a: Vector3 = seg[0]
 		var b: Vector3 = seg[1]
 		var L = a.distance_to(b)
 		var dir = (b - a).normalized()
 		var yaw = atan2(dir.x, dir.z)
+		var n = maxi(1, ceili(L / 0.58))
 		for r in range(rows):
-			var n = maxi(1, int(L / 0.62))
+			var off = 0.5 if r % 2 == 1 else 0.0
 			for i in range(n):
-				var t = (i + 0.5 + (0.5 if r % 2 == 1 else 0.0)) / n
+				var t = (i + 0.5 + off) / n
 				if t > 1.0:
 					continue
-				var p = a.lerp(b, t) + Vector3(0, 0.16 + r * 0.24, 0)
+				var p = a.lerp(b, t) + Vector3(0, 0.12 + r * 0.21, 0)
 				var bc = c.darkened(randf_range(0.0, 0.12))
-				ball(parent, Vector3(0.36, 0.26, 0.66), p, bc, {"rot": Vector3(0, yaw + PI / 2.0 + randf_range(-0.1, 0.1), 0)})
+				ball(parent, Vector3(0.46, 0.26, 0.68), p, bc, {"rot": Vector3(0, yaw + randf_range(-0.06, 0.06), 0)})
 
 static func build(v) -> void:
 	var team: int = v.team
@@ -547,58 +548,69 @@ static func build(v) -> void:
 			var hc = base.darkened(0.05)
 			col(v, Vector3(2.4 if big else 1.4, 1.9 if big else 1.4, 5.0 if big else 4.2), Vector3(0, 1.4, 0.6 if big else 1.0))
 			if big:
-				box(v, hull, Vector3(2.4, 1.9, 4.6), Vector3(0, 1.4, 0.4), hc, {"b": 0.35 if rnd else 0.12})
-				ball(hull, Vector3(2.2, 1.7, 2.0), Vector3(0, 1.45, 2.8), hc)
-				ball(hull, Vector3(1.7, 1.0, 1.0), Vector3(0, 1.55, 3.55), Color.WHITE, {"m": glass()})
-				# sliding side doors (open by sliding back)
-				for x in [1.2, -1.2]:
+				# rounded cabin, glazed nose, engine hump
+				ball(hull, Vector3(2.5, 2.1, 6.2), Vector3(0, 1.45, 0.4), hc)
+				box(v, hull, Vector3(2.1, 0.45, 4.6), Vector3(0, 0.62, 0.3), hc.darkened(0.08), {"b": 0.18})
+				ball(hull, Vector3(1.95, 1.35, 1.7), Vector3(0, 1.65, 3.05), Color.WHITE, {"m": glass()})
+				ball(hull, Vector3(1.5, 0.8, 2.8), Vector3(0, 2.45, 0.3), hc.darkened(0.04))
+				for x in [0.45, -0.45]:
+					cyl(hull, 0.22, 0.6, Vector3(x, 2.5, -1.25), METAL, "z", {"seg": 10})
+				# sliding side doors with windows, round portholes behind them
+				for x in [1.18, -1.18]:
 					var dn = Node3D.new()
-					dn.position = Vector3(x, 0.75, 0.9)
+					dn.position = Vector3(x, 0.8, 1.2)
+					dn.rotation.y = 0.0
 					hull.add_child(dn)
-					box(v, dn, Vector3(0.06, 1.2, 1.5), Vector3(0, 0.6, -0.75), hc.darkened(0.08), {"b": 0.03})
-					box(v, dn, Vector3(0.07, 0.4, 0.8), Vector3(0, 0.9, -0.75), Color.WHITE, {"m": glass(), "b": 0.02})
-					v.doors.append({"n": dn, "slide": 1.6, "t": 0.0, "c": Vector3(x, 1.4, 0.2)})
-					insignia(v, hull, Vector3(x * 1.01, 1.55, -1.2), "x+" if x > 0 else "x-", 0.35)
-				box(v, hull, Vector3(1.3, 0.6, 1.6), Vector3(0, 2.5, 0.4), hc, {"b": 0.2})
-				cyl(hull, 0.25, 0.5, Vector3(0.0, 2.6, -0.6), dark, "z", {"seg": 10})
+					box(v, dn, Vector3(0.06, 1.25, 1.5), Vector3(0, 0.62, -0.75), hc.darkened(0.08), {"b": 0.04})
+					box(v, dn, Vector3(0.07, 0.45, 0.9), Vector3(0, 0.95, -0.75), Color.WHITE, {"m": glass(), "b": 0.03})
+					v.doors.append({"n": dn, "slide": 1.6, "t": 0.0, "c": Vector3(x, 1.4, 0.45)})
+					for k in range(3):
+						cyl(hull, 0.17, 0.06, Vector3(x * 1.0, 1.65, -0.6 - k * 0.65), Color.WHITE, "x", {"m": glass(), "seg": 12})
+					insignia(v, hull, Vector3(x * 0.96, 1.2, -1.6), "x+" if x > 0 else "x-", 0.32)
+				for x in [1.15, -1.15]:
+					cyl(hull, 0.05, 3.6, Vector3(x, 0.1, 0.5), dark, "z", {"seg": 6})
+					for z in [1.6, -0.6]:
+						cyl(hull, 0.045, 0.75, Vector3(x * 0.82, 0.42, z), dark, "y", {"rot": Vector3(0, 0, signf(x) * 0.5), "seg": 6})
 			else:
-				box(v, hull, Vector3(1.3, 1.3, 3.4), Vector3(0, 1.4, 0.6), hc, {"b": 0.3 if rnd else 0.08})
-				ball(hull, Vector3(1.25, 1.2, 2.2), Vector3(0, 1.4, 2.4), hc)
-				ball(hull, Vector3(0.9, 0.8, 1.6), Vector3(0, 1.85, 2.0), Color.WHITE, {"m": glass()})
-				ball(hull, Vector3(0.8, 0.7, 1.2), Vector3(0, 1.45, 3.15), Color.WHITE, {"m": glass()})
+				# slim attack helicopter: tandem canopy, stub wings with rocket pods, chin gun
+				ball(hull, Vector3(1.45, 1.55, 5.4), Vector3(0, 1.4, 0.6), hc)
+				ball(hull, Vector3(1.0, 1.0, 2.9), Vector3(0, 2.0, 1.5), Color.WHITE, {"m": glass()})
+				box(v, hull, Vector3(0.9, 0.08, 2.6), Vector3(0, 2.48, 1.5), hc.darkened(0.15), {"b": 0.02})
+				ball(hull, Vector3(1.1, 0.7, 2.2), Vector3(0, 2.2, -0.6), hc.darkened(0.04))
 				for x in [1.0, -1.0]:
-					box(v, hull, Vector3(1.0, 0.07, 0.6), Vector3(x * 0.95, 1.25, 0.8), dark, {"b": 0.02, "rot": Vector3(0, 0, x * 0.08)})
-					cyl(hull, 0.17, 1.3, Vector3(x * 1.35, 1.08, 0.85), Color(0.2, 0.22, 0.18), "z", {"seg": 10})
-					cyl(hull, 0.13, 0.06, Vector3(x * 1.35, 1.08, 1.5), Color(0.05, 0.05, 0.05), "z", {"seg": 10})
-					insignia(v, hull, Vector3(x * 0.66, 1.45, -0.4), "x+" if x > 0 else "x-", 0.25)
-				box(v, hull, Vector3(0.9, 0.5, 1.4), Vector3(0, 2.1, 0.3), hc, {"b": 0.15})
-			cyl(hull, 0.3, 5.0, Vector3(0, 1.85, -3.9), hc, "z", {"r2": 0.4, "seg": 10})
-			box(v, hull, Vector3(0.1, 1.3, 0.9), Vector3(0, 2.45, -6.15), hc, {"b": 0.04, "rot": Vector3(-0.25, 0, 0)})
-			box(v, hull, Vector3(1.4, 0.06, 0.45), Vector3(0, 1.95, -5.6), hc, {"b": 0.02})
-			box(v, hull, Vector3(1.2, 0.07, 0.38), Vector3(0, 1.88, -2.0), band, {"b": 0.0})
+					box(v, hull, Vector3(1.1, 0.1, 0.7), Vector3(x * 0.95, 1.3, 0.5), hc.darkened(0.08), {"b": 0.03, "rot": Vector3(0, 0, x * 0.1)})
+					cyl(hull, 0.2, 1.4, Vector3(x * 1.4, 1.12, 0.55), Color(0.22, 0.24, 0.2), "z", {"seg": 12})
+					cyl(hull, 0.16, 0.05, Vector3(x * 1.4, 1.12, 1.26), Color(0.05, 0.05, 0.05), "z", {"seg": 12})
+					insignia(v, hull, Vector3(x * 0.7, 1.35, -0.8), "x+" if x > 0 else "x-", 0.24)
+				for x in [0.72, -0.72]:
+					cyl(hull, 0.05, 3.0, Vector3(x, 0.12, 0.8), dark, "z", {"seg": 6})
+					for z in [1.8, -0.2]:
+						cyl(hull, 0.04, 0.8, Vector3(x * 0.8, 0.5, z), dark, "y", {"rot": Vector3(0, 0, signf(x) * 0.35), "seg": 6})
+			cyl(hull, 0.18, 4.8, Vector3(0, 1.85, -4.0), hc, "z", {"r2": 0.42, "seg": 12})
+			box(v, hull, Vector3(0.12, 1.4, 1.0), Vector3(0, 2.45, -6.1), hc, {"b": 0.05, "rot": Vector3(-0.3, 0, 0)})
+			box(v, hull, Vector3(1.5, 0.07, 0.5), Vector3(0, 1.95, -5.5), hc, {"b": 0.03})
+			box(v, hull, Vector3(1.1, 0.07, 0.36), Vector3(0, 1.92 if not big else 2.0, -2.2), band, {"b": 0.0})
 			var tr = Node3D.new()
-			tr.position = Vector3(0.12, 2.6, -6.3)
+			tr.position = Vector3(0.13, 2.6, -6.3)
 			hull.add_child(tr)
-			box(v, tr, Vector3(0.03, 1.4, 0.12), Vector3.ZERO, Color(0.1, 0.1, 0.1), {"b": 0.0})
+			box(v, tr, Vector3(0.03, 1.4, 0.13), Vector3.ZERO, Color(0.1, 0.1, 0.1), {"b": 0.0})
+			box(v, tr, Vector3(0.03, 0.13, 1.4), Vector3.ZERO, Color(0.1, 0.1, 0.1), {"b": 0.0})
 			v.set_meta("tail_rotor", tr)
-			for x in ([1.15, -1.15] if big else [0.72, -0.72]):
-				cyl(hull, 0.05, 3.4, Vector3(x, 0.12, 0.6), dark, "z", {"seg": 6})
-				for z in [1.4, -0.3]:
-					cyl(hull, 0.04, 0.6, Vector3(x * 0.85, 0.42, z), dark, "y", {"rot": Vector3(0, 0, signf(x) * 0.4), "seg": 6})
 			v.rotor = Node3D.new()
-			v.rotor.position = Vector3(0, 2.95 if big else 2.55, 0.5)
+			v.rotor.position = Vector3(0, 3.0 if big else 2.75, 0.4)
 			hull.add_child(v.rotor)
-			cyl(v.rotor, 0.22, 0.25, Vector3.ZERO, METAL, "y", {"seg": 10})
+			cyl(v.rotor, 0.25, 0.3, Vector3.ZERO, METAL, "y", {"seg": 12})
+			cyl(hull, 0.1, 0.5, Vector3(0, (3.0 if big else 2.75) - 0.3, 0.4), METAL, "y", {"seg": 8})
 			var nb = 4 if big else 2
 			for k in range(nb):
-				var blade = box(v, v.rotor, Vector3(0.28, 0.04, 6.5 if big else 5.5), Vector3.ZERO, Color(0.1, 0.1, 0.1), {"b": 0.01})
+				var blade = box(v, v.rotor, Vector3(0.3, 0.04, 6.5 if big else 5.5), Vector3.ZERO, Color(0.1, 0.1, 0.1), {"b": 0.01})
 				blade.rotation.y = k * TAU / nb
 				blade.position = Basis(Vector3.UP, k * TAU / nb) * Vector3(0, 0, 3.25 if big else 2.75)
 			if not big:
 				v.turret = Node3D.new()
-				v.turret.position = Vector3(0, 0.75, 3.3)
+				v.turret.position = Vector3(0, 0.75, 3.1)
 				hull.add_child(v.turret)
-				ball(v.turret, Vector3(0.5, 0.4, 0.5), Vector3(0, 0.1, 0), dark)
+				ball(v.turret, Vector3(0.55, 0.45, 0.55), Vector3(0, 0.1, 0), dark)
 				v.gun_pivot = Node3D.new()
 				v.turret.add_child(v.gun_pivot)
 				cyl(v.gun_pivot, 0.06, 1.0, Vector3(0, 0, 0.45), Color(0.1, 0.1, 0.1), "z", {"seg": 8})
@@ -638,12 +650,12 @@ static func build(v) -> void:
 			box(v, hull, Vector3(0.5, 0.06, 0.4), Vector3(0, 0.85, 0.8), dark, {"b": 0.01})
 			box(v, hull, Vector3(0.35, 0.25, 0.25), Vector3(0.8, 0.12, -0.3), Color(0.3, 0.3, 0.22), {"b": 0.03})
 			v.turret = Node3D.new()
-			v.turret.position = Vector3(0, 1.08, 0.15)
+			v.turret.position = Vector3(0, 1.22, 0.1)
 			hull.add_child(v.turret)
-			cyl(v.turret, 0.04, 0.6, Vector3(0, -0.4, 0), METAL, "y", {"seg": 6})
+			cyl(v.turret, 0.04, 0.7, Vector3(0, -0.4, 0), METAL, "y", {"seg": 6})
 			for k in range(3):
 				var a = k * TAU / 3.0
-				cyl(v.turret, 0.025, 0.7, Vector3(cos(a) * 0.15, -0.75, sin(a) * 0.15), METAL, "y", {"rot": Vector3(sin(a) * 0.4, 0, -cos(a) * 0.4), "seg": 5})
+				cyl(v.turret, 0.025, 0.9, Vector3(cos(a) * 0.2, -0.85, sin(a) * 0.2), METAL, "y", {"rot": Vector3(sin(a) * 0.35, 0, -cos(a) * 0.35), "seg": 5})
 			v.gun_pivot = Node3D.new()
 			v.turret.add_child(v.gun_pivot)
 			mg(v, v.gun_pivot, Vector3(0, 0, 0.05))

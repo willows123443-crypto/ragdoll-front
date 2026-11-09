@@ -223,7 +223,7 @@ func start_game(o: Dictionary) -> void:
 	_clear()
 	G.mode = o.get("mode", "sandbox")
 	G.teams = clampi(o.get("teams", G.teams), 2, 4)
-	if G.mode in ["frontline", "assault", "laststand"]:
+	if G.mode in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege"]:
 		G.teams = 2
 	G.apply_teams()
 	G.score = []
@@ -232,6 +232,11 @@ func start_game(o: Dictionary) -> void:
 		G.score.append(0)
 		G.cap_score.append(0.0)
 	G.team_size = o.get("size", 10)
+	if G.mode == "sabotage":
+		var keep_t = G.settings["time"]
+		G.settings["time"] = "night"
+		apply_time()
+		G.settings["time"] = keep_t
 	G.limit = o.get("limit", 50)
 	G.reinforce = o.get("reinforce", true)
 	G.reinf_mode = o.get("reinf_mode", G.reinf_mode)
@@ -244,16 +249,26 @@ func start_game(o: Dictionary) -> void:
 	Support.reset()
 	Build.reset()
 	Build.setup_bases()
+	Obj.setup_mode()
 	for t in range(G.team_count()):
 		if G.mode == "laststand" and t == 1:
 			continue
-		for i in range(G.team_size):
+		var n_here = G.team_size
+		if G.mode == "sabotage" and t == 0:
+			n_here = maxi(4, G.team_size / 2)
+		for i in range(n_here):
 			if G.mode == "laststand":
 				var c: Vector3 = Obj.points[0]["p"]
 				spawn_soldier(0, c.x + randf_range(-8, 8), c.z + randf_range(-8, 8), "")
 			else:
 				base_spawn(t)
-		_starting_vehicles(t)
+		if G.mode == "sabotage" and t == 0:
+			for sd in G.soldiers:
+				if sd.team == 0:
+					sd.satchels = 2
+		else:
+			_starting_vehicles(t)
+	G.started = true
 	refresh_markers()
 	G.pc.free_pos = Vector3(-62, G.world.ground_y(-62, -6) + 7.0, -6)
 	G.pc.free_yaw = PI / 2.0 + 0.12
@@ -534,6 +549,10 @@ func _report(tag: String) -> void:
 			if o.cover.type == "wall" and o.cover.side != 0.0:
 				lean_n += 1
 	print("AUTOTEST %s | cover types %s" % [tag, str(ctypes)])
+	var qo = []
+	for q in G.squads:
+		qo.append("%d:%s" % [q["team"], str(q.get("obj", -1))])
+	print("AUTOTEST %s | squad objectives %s" % [tag, " ".join(qo)])
 	print("AUTOTEST %s | builds %s | spawnable %s | wall-leaners %d" % [tag, ", ".join(bl), str([Build.can_respawn(0), Build.can_respawn(1)]), lean_n])
 	var alive = [G.alive_count(0), G.alive_count(1)]
 	var dead = G.soldiers.filter(func(s): return s.state == "dead").size()
@@ -597,9 +616,10 @@ func _report(tag: String) -> void:
 
 func _autotest() -> void:
 	print("AUTOTEST start")
-	var scen = [["town", "capture", 30.0, "truck"], ["field", "capture", 30.0, "para"], ["trenches", "capture", 30.0, "truck"],
+	var scen = [["town", "capture", 30.0, "truck"], ["field", "capture", 30.0, "para"], ["trenches", "capture", 30.0, "truck"], ["valley", "capture", 60.0, "truck"],
 		["valley", "frontline", 75.0, "heli"], ["front", "assault", 50.0, "para"], ["town", "laststand", 45.0, "truck"],
-		["field", "capture", 40.0, "truck", 4, "night"], ["town", "deathmatch", 30.0, "para", 3, "dusk"]]
+		["field", "capture", 40.0, "truck", 4, "night"], ["town", "deathmatch", 30.0, "para", 3, "dusk"],
+		["field", "destroy", 45.0, "truck"], ["town", "breakthrough", 35.0, "truck"], ["field", "sabotage", 35.0, "truck"], ["town", "siege", 35.0, "truck"]]
 	var only = _arg("scen", "")
 	for sc in scen:
 		var m = sc[0]
@@ -724,6 +744,15 @@ func _shot_mode(dir: String) -> void:
 		var av = _arg("at", "0,0,0").split(",")
 		await _look(c + Vector3(float(cv[0]), float(cv[1]), float(cv[2])), c + Vector3(float(av[0]), float(av[1]), float(av[2])))
 		await _snap(dir, "cam")
+	if _arg("builders", "") != "":
+		var bn = 0
+		for s in G.soldiers:
+			if s.state == "alive" and s.tool_mode == "hammer" and bn < 3:
+				var f = Vector3(sin(s.aim_yaw), 0, cos(s.aim_yaw))
+				await _look(s.pos + Vector3(-f.z, 0, f.x) * 2.6 + f * 1.2 + Vector3(0, 1.4, 0), s.pos + Vector3(0, 0.9, 0))
+				await _snap(dir, "builder%d" % bn)
+				bn += 1
+		print("SHOT builders found ", bn)
 	if _arg("cams", "") != "":
 		var ci = 0
 		for spec in _arg("cams", "").split(";"):

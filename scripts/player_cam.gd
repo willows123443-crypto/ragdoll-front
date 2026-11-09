@@ -103,13 +103,16 @@ func player_update(s) -> void:
 		lean = (1.0 if Input.is_key_pressed(KEY_E) else 0.0) - (1.0 if Input.is_key_pressed(KEY_Q) else 0.0)
 	s.lean_t = lean
 	# hold U next to a friendly construction site to help build it
+	s.tool_mode = ""
+	if s.hand_t != null and not Input.is_key_pressed(KEY_U):
+		s.hand_t = null
 	if Input.is_key_pressed(KEY_U) and m.length_squared() == 0.0:
 		var st = Build.work_site(s.team, s.pos, 30.0)
 		if st != null and G.dist2d(s.pos, st["p"]) < Build.build_radius(st) + 1.0:
 			s.crouch_t = 0.75
+			s.tool_mode = "hammer"
+			s.hand_t = s.pos + G.flat(st["p"] - s.pos).normalized() * 0.55 + Vector3(0, 0.45, 0)
 			Build.add_work(st, (1.6 if s.cls == "engineer" else 1.0) * G.DT)
-			if randf() < G.DT * 3.0:
-				G.audio.hammer(s.pos)
 			build_msg_t -= G.DT
 			if build_msg_t <= 0.0:
 				build_msg_t = 0.5

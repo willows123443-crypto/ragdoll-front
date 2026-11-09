@@ -76,6 +76,8 @@ var report_body: VBoxContainer
 var report_chart: Control
 var opt_map: OptionButton
 var opt_mode: OptionButton
+var mode_info: Label
+const MODE_IDS = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand", "destroy", "breakthrough", "sabotage", "siege"]
 var opt_size: OptionButton
 var opt_limit: OptionButton
 var opt_reinf: OptionButton
@@ -464,8 +466,15 @@ func _build_menu() -> void:
 		if opt_map.selected < MAP_IDS.size() and MAP_IDS[opt_map.selected] == "random":
 			G.main.preview_map("random")))
 	_row(v, "Random map seed", seed_row)
-	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the point", "Frontline — push across the map", "Assault — Alpha attacks", "Last stand — survive the waves"], 0)
+	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the points", "Frontline — push across the map", "Assault — Alpha attacks", "Last stand — survive the waves",
+		"Destroy base", "Breakthrough — break the line", "Sabotage — night raid", "Siege — hold the town"], 0)
 	_row(v, "Mode", opt_mode)
+	mode_info = _label("", 13, Color(0.8, 0.82, 0.78))
+	mode_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	mode_info.custom_minimum_size = Vector2(380, 54)
+	v.add_child(mode_info)
+	opt_mode.item_selected.connect(func(_i): _show_mode_info())
+	_show_mode_info()
 	opt_limit = _option(["25", "50", "100", "200"], 1)
 	_row(v, "Kills / points / tickets", opt_limit)
 	opt_size = _option(["5", "8", "10", "15", "20"], 2)
@@ -499,15 +508,22 @@ func _deploy() -> void:
 	if seed_edit != null and seed_edit.text.strip_edges() != "":
 		var t = seed_edit.text.strip_edges()
 		G.random_seed = int(t) if t.is_valid_int() else t.hash()
-	var modes = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand"]
 	var mid = _map_id(opt_map.selected)
-	G.main.start_game({"map": mid, "mode": modes[opt_mode.selected],
+	G.main.start_game({"map": mid, "mode": MODE_IDS[opt_mode.selected],
 		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": int(opt_limit.get_item_text(opt_limit.selected)),
 		"reinforce": opt_reinf.selected != 4, "reinf_mode": ["truck", "para", "heli", "instant", "truck"][opt_reinf.selected],
 		"armor": ["none", "light", "heavy"][opt_armor.selected], "teams": opt_teams.selected + 2})
 	G.save_prefs()
 	menu.visible = false
 	help.visible = false
+
+func _show_mode_info() -> void:
+	if mode_info != null:
+		var id = MODE_IDS[clampi(opt_mode.selected, 0, MODE_IDS.size() - 1)]
+		var extra = ""
+		if id in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege"]:
+			extra = "  (two sides only)"
+		mode_info.text = Obj.MODE_INFO.get(id, "") + extra
 
 func show_menu() -> void:
 	menu.visible = true

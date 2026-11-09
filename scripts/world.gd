@@ -583,6 +583,15 @@ func inside_any(x: float, z: float, r: float, y: float = -999.0) -> bool:
 			return true
 	return false
 
+# like inside_any, but low walls you can vault don't count
+func solid_at(x: float, z: float, r: float, y: float) -> bool:
+	for c in cell_at(x, z):
+		if not blocks_at(c, y) or vaultable(c):
+			continue
+		if x > c.lo.x - r and x < c.hi.x + r and z > c.lo.z - r and z < c.hi.z + r:
+			return true
+	return false
+
 func inside_at(x: float, y: float, z: float) -> bool:
 	for c in cell_at(x, z):
 		if x > c.lo.x and x < c.hi.x and y > c.lo.y and y < c.hi.y and z > c.lo.z and z < c.hi.z:
@@ -660,9 +669,29 @@ func update_nav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 			astar.set_point_solid(Vector2i(ix, iz), false)
 			astar.set_point_weight_scale(Vector2i(ix, iz), 1.0)
 			nav_vault[iz * NW + ix] = 0
-	for c in cols:
-		if c.hi.x > x0 - 2.0 and c.lo.x < x1 + 2.0 and c.hi.z > z0 - 2.0 and c.lo.z < z1 + 2.0:
-			_nav_mark(c)
+	for c in cols_in_rect(x0 - 2.0, z0 - 2.0, x1 + 2.0, z1 + 2.0):
+		_nav_mark(c)
+	# water stays slow going
+	for iz in range(a.y, b.y + 1):
+		for ix in range(a.x, b.x + 1):
+			var px = NX0 + (ix + 0.5) * NCS
+			var pz = NZ0 + (iz + 0.5) * NCS
+			if not water.is_empty() and in_water(px, pz) and not astar.is_point_solid(Vector2i(ix, iz)):
+				astar.set_point_weight_scale(Vector2i(ix, iz), 12.0)
+
+# colliders overlapping a rectangle, found through the spatial grid
+func cols_in_rect(x0: float, z0: float, x1: float, z1: float) -> Array:
+	var out = []
+	var seen = {}
+	for ix in range(int(floor(x0 / GRID)), int(floor(x1 / GRID)) + 1):
+		for iz in range(int(floor(z0 / GRID)), int(floor(z1 / GRID)) + 1):
+			for c in grid.get(_gkey(ix, iz), []):
+				if seen.has(c):
+					continue
+				seen[c] = true
+				if c.hi.x > x0 and c.lo.x < x1 and c.hi.z > z0 and c.lo.z < z1:
+					out.append(c)
+	return out
 
 func _nearest_free(c: Vector2i) -> Vector2i:
 	if not astar.is_point_solid(c):
@@ -713,15 +742,29 @@ func find_path(from: Vector3, to: Vector3) -> Array:
 	return out
 
 # ---------------------------------------------------------------- cover points
+const CGRID = 8.0
+var cover_grid = {}
+
+func _ckey(x: float, z: float) -> int:
+	return int(floor(x / CGRID)) * 4096 + int(floor(z / CGRID))
+
+# cover points within r of a spot, through a spatial grid
+func cover_near(p: Vector3, r: float) -> Array:
+	var out = []
+	for ix in range(int(floor((p.x - r) / CGRID)), int(floor((p.x + r) / CGRID)) + 1):
+		for iz in range(int(floor((p.z - r) / CGRID)), int(floor((p.z + r) / CGRID)) + 1):
+			out.append_array(cover_grid.get(ix * 4096 + iz, []))
+	return out
+
 func add_cp(x: float, z: float, n: Vector3, t: Vector3, type: String, c, y: float = -999.0):
-	if absf(x) > 125.0 or absf(z) > 90.0:
+	if x < bounds.position.x or x > bounds.end.x or z < bounds.position.y or z > bounds.end.y:
 		return null
 	var upper = y != -999.0
 	if not upper:
 		y = ground_y(x, z)
 		if inside_any(x, z, 0.28, y):
 			return null
-	for o in cover:
+	for o in cover_near(Vector3(x, y, z), 0.7):
 		if Vector2(o.p.x - x, o.p.z - z).length_squared() < 0.36 and absf(o.p.y - y) < 1.0 and o.type == type:
 			return null
 	var cp = CoverPoint.new()
@@ -732,6 +775,14 @@ func add_cp(x: float, z: float, n: Vector3, t: Vector3, type: String, c, y: floa
 	cp.col = c
 	cp.upper = upper
 	cover.append(cp)
+	var k = _ckey(x, z)
+	if not cover_grid.has(k):
+		cover_grid[k] = []
+	cover_grid[k].append(cp)
+	if c != null:
+		if not c.has_meta("cps"):
+			c.set_meta("cps", [])
+		c.get_meta("cps").append(cp)
 	return cp
 
 func gen_cover_for(c) -> void:
@@ -780,6 +831,7 @@ func _face_pt(f: Dictionary, s: float) -> Vector2:
 
 func build_cover() -> void:
 	cover = []
+	cover_grid = {}
 	for c in cols:
 		gen_cover_for(c)
 	for t in terrain_cover:
@@ -817,28 +869,37 @@ func destroy_col(c, depth: int = 0) -> void:
 		var p = Vector3(randf_range(c.lo.x, c.hi.x), randf_range(c.lo.y, c.hi.y), randf_range(c.lo.z, c.hi.z))
 		G.fx.debris(p, Vector3(randf_range(-3, 3), randf_range(1, 5), randf_range(-3, 3)), randf_range(0.15, 0.5), c.color)
 	G.fx.dust_cloud((c.lo + c.hi) / 2.0, maxf(size.x, size.z))
-	for cp in cover:
-		if cp.col == c and cp.owner_s != null and is_instance_valid(cp.owner_s):
-			cp.owner_s.cover = null
-			cp.owner_s.in_cover = false
-	cover = cover.filter(func(cp): return cp.col != c)
+	if c.has_meta("cps"):
+		for cp in c.get_meta("cps"):
+			if cp.owner_s != null and is_instance_valid(cp.owner_s):
+				cp.owner_s.cover = null
+				cp.owner_s.in_cover = false
+			cover.erase(cp)
+			var k = _ckey(cp.p.x, cp.p.z)
+			if cover_grid.has(k):
+				cover_grid[k].erase(cp)
+		c.set_meta("cps", [])
 	for s in G.soldiers:
 		if G.dist2d(s.parts[0].global_position, (c.lo + c.hi) / 2.0) < 7.0:
 			s.wake()
 	# anything resting on top falls with it
 	if depth < 3:
-		for o in cols.duplicate():
-			if o.dest and o.lo.y >= c.hi.y - 0.15 and o.lo.y <= c.hi.y + 0.4 and o.hi.x > c.lo.x and o.lo.x < c.hi.x and o.hi.z > c.lo.z and o.lo.z < c.hi.z:
+		for o in cols_in_rect(c.lo.x - 0.1, c.lo.z - 0.1, c.hi.x + 0.1, c.hi.z + 0.1):
+			if o.dest and o.alive and o.lo.y >= c.hi.y - 0.4 and o.lo.y <= c.hi.y + 0.4 and o.hi.x > c.lo.x and o.lo.x < c.hi.x and o.hi.z > c.lo.z and o.lo.z < c.hi.z:
 				var support = 0
-				for s2 in cols:
-					if s2 != o and s2.hi.y >= o.lo.y - 0.15 and s2.hi.y <= o.lo.y + 0.2 and s2.hi.x > o.lo.x and s2.lo.x < o.hi.x and s2.hi.z > o.lo.z and s2.lo.z < o.hi.z:
+				var big = (o.hi.x - o.lo.x) * (o.hi.z - o.lo.z) > 12.0
+				for s2 in cols_in_rect(o.lo.x, o.lo.z, o.hi.x, o.hi.z):
+					if s2 != o and s2.hi.y >= o.lo.y - 0.15 and s2.hi.y <= o.lo.y + 0.45 and s2.hi.x > o.lo.x and s2.lo.x < o.hi.x and s2.hi.z > o.lo.z and s2.lo.z < o.hi.z:
 						support += 1
+				# a floor or roof needs walls on several sides to stay up
+				if big and support < 4:
+					support = mini(support, 1)
 				if support < 2:
 					destroy_col(o, depth + 1)
 	update_nav_area(c.lo.x, c.lo.z, c.hi.x, c.hi.z)
 
 func damage_area(pos: Vector3, R: float, power: float) -> void:
-	for c in cols.duplicate():
+	for c in cols_in_rect(pos.x - R, pos.z - R, pos.x + R, pos.z + R):
 		if not c.dest or not c.alive:
 			continue
 		var cp = Vector3(clampf(pos.x, c.lo.x, c.hi.x), clampf(pos.y, c.lo.y, c.hi.y), clampf(pos.z, c.lo.z, c.hi.z))
@@ -867,7 +928,12 @@ func wall_run(horiz: bool, fixed: float, a0: float, a1: float, h: float, color: 
 		if can_open and r < 0.24:
 			if ph > 2.6:
 				_wall_piece(horiz, fixed, c, seg, 2.4, ph - 2.4, color, th_, "lintel")
-			_door_frame(horiz, fixed, c, minf(seg, 1.6), color, th_)
+			if cols.size() > 0:
+				var dcol = cols[cols.size() - 1]
+				piece_start()
+				_door_frame(horiz, fixed, c, minf(seg, 1.6), color, th_)
+				dcol.vis.append_array(piece)
+				piece = null
 		elif can_open and r < 0.55:
 			_wall_piece(horiz, fixed, c, seg, 0.0, 1.0, color, th_, "sill")
 			if ph > 2.7:
@@ -1088,7 +1154,7 @@ func church(x: float, z: float, w: float, d: float) -> void:
 	add_box(sx, 12.0, sz, 3.8, 0.4, 3.8, color.lightened(0.1), {"dest": true, "hp": 200.0})
 	var spire = add_box(sx, ground_y(sx, sz) + 12.4, sz, 3.2, 5.5, 3.2, Color(0.3, 0.31, 0.34), {"shape": "cone", "abs": true, "collide": false})
 	cols[cols.size() - 1].vis.append(spire)
-	add_box(sx, ground_y(sx, sz) + 17.6, sz, 0.12, 1.4, 0.12, Color(0.6, 0.55, 0.35), {"abs": true, "collide": false})
+	cols[cols.size() - 1].vis.append(add_box(sx, ground_y(sx, sz) + 17.6, sz, 0.12, 1.4, 0.12, Color(0.6, 0.55, 0.35), {"abs": true, "collide": false}))
 	_claim(sb, c1)
 
 func apartment(x: float, z: float, w: float, d: float) -> void:
@@ -1117,6 +1183,8 @@ func apartment(x: float, z: float, w: float, d: float) -> void:
 				var c = (x if horiz else z) - L / 2.0 + (i + 0.5) * L / n
 				var fixed = (z + sd[1] * d / 2.0) if horiz else (x + sd[1] * w / 2.0)
 				_wall_piece(horiz, fixed, c, L / n, y0, h, color, t, "full")
+				var wcol = cols[cols.size() - 1]
+				piece_start()
 				# a window: dark pane, sill and shutters, on the outside face
 				var out = fixed + sd[1] * (t / 2.0 + 0.02)
 				if horiz:
@@ -1129,12 +1197,18 @@ func apartment(x: float, z: float, w: float, d: float) -> void:
 					add_box(out + sd[1] * 0.06, y0 + 0.82, c, 0.16, 0.1, 1.3, color.lightened(0.2), {"collide": false})
 					for e in [-1.0, 1.0]:
 						add_box(out + sd[1] * 0.03, y0 + 0.9, c + e * 0.75, 0.05, 1.4, 0.38, Color(0.3, 0.38, 0.3), {"collide": false})
+				wcol.vis.append_array(piece)
+				piece = null
 	var top = floors * h
 	add_box(x, top - 0.25, z, w + 0.3, 0.35, d + 0.3, color.darkened(0.15), {"dest": true, "hp": 260.0})
+	var rcol = cols[cols.size() - 1]
+	piece_start()
 	for e in [-1.0, 1.0]:
 		add_box(x, top + 0.1, z + e * (d / 2.0), w + 0.3, 0.6, 0.25, color.darkened(0.1), {"collide": false})
 		add_box(x + e * (w / 2.0), top + 0.1, z, 0.25, 0.6, d + 0.3, color.darkened(0.1), {"collide": false})
 	add_box(x + w * 0.25, top + 0.1, z, 1.6, 1.4, 1.6, Color(0.45, 0.45, 0.43), {"collide": false})
+	rcol.vis.append_array(piece)
+	piece = null
 	_claim(bld, c0)
 
 # remember which colliders belong to a building so it can come down floor by floor
@@ -2114,7 +2188,7 @@ func begin_edit(m: Dictionary) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
+	cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]
 	build_terrain(m["ground"])
@@ -2572,7 +2646,7 @@ func load_map(id: String) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
+	cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
 	if id == "random":
 		var rs = RandomNumberGenerator.new()
 		rs.seed = G.random_seed

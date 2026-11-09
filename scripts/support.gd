@@ -81,6 +81,8 @@ static func can_afford(team: int, what: String) -> bool:
 static func call_in(team: int, what: String, target: Vector3) -> bool:
 	if points.is_empty() or points[team] < COSTS[what]:
 		return false
+	if G.mode == "sabotage" and team == 0 and what in ["paradrop", "heli", "jeep", "halftrack", "armoredcar", "tank", "motorbike"]:
+		return false      # the raiders are on their own
 	points[team] -= COSTS[what]
 	match what:
 		"artillery":

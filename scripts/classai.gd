@@ -6,6 +6,11 @@ extends RefCounted
 
 static func jobs(s, known: bool, threat: Vector3) -> bool:
 	s.job_cd -= 2.0
+	grenade_structure(s)
+	if G.mode == "sabotage" and s.team == 0 and s.satchels > 0 and s.cls != "engineer":
+		var r = _satchel_site(s, 40.0)
+		if r >= 0:
+			return r == 1
 	if s.cls != "engineer" and _help_build(s):
 		return true
 	match s.cls:
@@ -61,16 +66,9 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 				s.task = "sapper"
 				return true
 		# and enemy positions: FOBs, nests, bunkers
-		var es = Build.enemy_site_near(s.team, s.pos, 26.0)
-		if es != null and Build.sees(s.head_pos(), es[0]):
-			if G.dist2d(es[1], s.pos) < 13.0:
-				Combat.throw_grenade(s, es[1], "satchel")
-				G.fx.callout(s, G.pick(["Charge set!", "Blowing their position!"]))
-				return false
-			AI.release_cover(s)
-			AI.go_to(s, es[1], 5.0)
-			s.task = "sapper"
-			return true
+		var r = _satchel_site(s, 26.0)
+		if r >= 0:
+			return r == 1
 	var far_contact = s.vis_t != null and is_instance_valid(s.vis_t) and G.dist2d(s.vis_t.pos, s.pos) > 60.0
 	if far_contact and s.job_cd <= 0.0 and s.task != "construct":
 		var ws0 = Build.work_site(s.team, s.pos, 120.0)
@@ -98,7 +96,7 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 	var holding = s.task in ["hold", "defend", "objective"] or (Obj.uses_points() and not Obj.points.is_empty() and G.dist2d(s.pos, AI.objective_for(s)) < 14.0)
 	if not holding:
 		return false
-	if s.kits > 0 and s.cover == null and randf() < 0.6:
+	if s.kits > 0 and s.cover == null and randf() < 0.6 and "sandbags" in Build.allowed(s.team):
 		var dir = G.flat(threat - s.pos)
 		if dir.length_squared() < 0.01:
 			dir = Vector3(0, 0, 1)
@@ -153,10 +151,9 @@ static func work(s) -> void:
 				s.crouch_t = 0.75
 				var to = G.flat(st["p"] - s.pos)
 				s.aim_yaw = G.turn_to(s.aim_yaw, atan2(to.x, to.z), 4.0 * G.DT)
-				s.hand_t = s.pos + to.normalized() * 0.6 + Vector3(0, 0.2 + absf(sin(G.sim_time * 7.0)) * 0.35, 0)
+				s.hand_t = s.pos + to.normalized() * 0.55 + Vector3(0, 0.45, 0)
+				s.tool_mode = "hammer"
 				Build.add_work(st, (1.0 if s.cls == "engineer" else 0.55) * G.DT)
-				if randf() < G.DT * 2.2:
-					G.audio.hammer(s.pos)
 			elif s.move_target == null:
 				AI.go_to(s, Build.work_spot(st, s), 4.6)
 		"mine":
@@ -289,6 +286,44 @@ static func call_artillery(s, target: Vector3) -> void:
 	G.ui.radio(s.team, "%s: fire mission on grid %s" % [s.sname, AI.grid_ref(target)])
 
 # ---------------------------------------------------------------- anti-tank: go after enemy armour
+# returns -1 nothing to do, 0 threw a charge, 1 moving in to place one
+static func _satchel_site(s, reach: float) -> int:
+	var es = Build.enemy_site_near(s.team, s.pos, reach)
+	if es == null or not Build.sees(s.head_pos(), es[0]):
+		return -1
+	if G.dist2d(es[1], s.pos) < 13.0:
+		Combat.throw_grenade(s, es[1], "satchel")
+		G.fx.callout(s, G.pick(["Charge set!", "Blowing their position!"]))
+		return 0
+	AI.release_cover(s)
+	AI.go_to(s, es[1], 5.0)
+	s.task = "sapper"
+	return 1
+
+static func _rocket_structure(s) -> bool:
+	if s.wid != "rpg" or s.rockets <= 0 or s.vis_t != null or s.job_cd > 0.0:
+		return false
+	var es = Build.enemy_site_near(s.team, s.pos, 60.0)
+	if es == null or G.dist2d(es[1], s.pos) < 12.0 or not Build.sees(s.head_pos(), es[0]):
+		return false
+	var aim = es[1] + Vector3(randf_range(-1.5, 1.5), randf_range(0.4, 1.4), randf_range(-1.5, 1.5))
+	s.aim_yaw = atan2(aim.x - s.pos.x, aim.z - s.pos.z)
+	Combat.launch_rocket(s, s.head_pos() + Vector3(0, 0.1, 0), (aim - s.head_pos()).normalized())
+	s.rockets -= 1
+	s.job_cd = 8.0
+	G.fx.callout(s, G.pick(["Rocket on their position!", "Hitting the bunker!"]))
+	return false
+
+# riflemen lob grenades into enemy positions they've crept up on
+static func grenade_structure(s) -> void:
+	if s.grenades <= 0 or s.vis_t != null or s.job_cd > 0.0 or s.cls in ["medic", "sniper", "radio"]:
+		return
+	var es = Build.enemy_site_near(s.team, s.pos, 24.0)
+	if es == null or G.dist2d(es[1], s.pos) < 7.0 or not Build.sees(s.head_pos(), es[0]):
+		return
+	Combat.throw_grenade(s, es[1], "frag")
+	s.job_cd = 10.0
+
 static func _anti_tank(s) -> bool:
 	if s.wid != "rpg" and s.wid != "atrifle":
 		return false
@@ -302,7 +337,10 @@ static func _anti_tank(s) -> bool:
 			if d < bd:
 				bd = d
 				best = v
-	if best == null or bd < 25.0:
+	if best == null:
+		# nothing armoured about: knock holes in enemy positions instead
+		return _rocket_structure(s)
+	if bd < 25.0:
 		return false
 	# close in to firing range, using cover on the way
 	var c = AI.find_cover(s, best.pos, "advance")

@@ -97,7 +97,9 @@ static func objective_for(s) -> Vector3:
 	if Obj.uses_points() and not Obj.points.is_empty():
 		var i = squad_point(s)
 		if i >= 0:
-			return Obj.points[i]["p"]
+			# everyone takes a different patch of the point rather than its exact centre
+			var a = float(s.id) * 2.39
+			return Obj.points[i]["p"] + Vector3(cos(a), 0, sin(a)) * (2.5 + float(s.id % 4) * 1.2)
 	var c = team_intel_center(s.team)
 	if c != null:
 		return c
@@ -195,7 +197,7 @@ static func find_cover(s, threat: Vector3, mode: String):
 	var tdir = G.flat(threat - s.pos) / maxf(dme, 0.01)
 	var cands: Array = []
 	var i = 0
-	for cp in G.world.cover:
+	for cp in G.world.cover_near(s.pos, max_d):
 		i += 1
 		if cp.upper or not cover_free(cp, s) or cp.ban > G.sim_time:
 			continue
@@ -311,6 +313,12 @@ static func go_to(s, point: Vector3, speed: float) -> void:
 	if s.move_target != null and s.move_target.distance_squared_to(point) < 0.25 and not s.path.is_empty():
 		s.speed_t = speed
 		return
+	# don't head straight back to a spot we just got stuck on
+	if s.bad_spot != null and G.sim_time < s.bad_t and G.dist2d(point, s.bad_spot) < 2.5:
+		var a = randf() * TAU
+		var alt = point + Vector3(cos(a), 0, sin(a)) * randf_range(3.0, 5.0)
+		if not G.world.inside_any(alt.x, alt.z, 0.45):
+			point = alt
 	s.move_target = point
 	s.path = []
 	s.need_path = true
@@ -360,17 +368,35 @@ static func follow_path(s) -> String:
 	var sp = s.speed_t
 	if last and d < 1.2:
 		sp *= maxf(0.3, d / 1.2)
-	s.want = G.flat(wp - s.pos) / maxf(d, 0.01) * sp
+	if s.unstick_t > 0.0:
+		s.unstick_t -= G.DT
+		s.want = s.unstick_dir * maxf(sp, 2.5)
+		return "moving"
+	var dir = G.flat(wp - s.pos) / maxf(d, 0.01)
+	# slide round corners and posts instead of walking into them
+	if d > 0.8 and G.world.solid_at(s.pos.x + dir.x * 0.6, s.pos.z + dir.z * 0.6, 0.22, s.pos.y):
+		for ang in [0.6, -0.6, 1.1, -1.1, 1.6, -1.6]:
+			var nd = dir.rotated(Vector3.UP, ang)
+			if not G.world.solid_at(s.pos.x + nd.x * 0.6, s.pos.z + nd.z * 0.6, 0.22, s.pos.y):
+				dir = nd
+				break
+	s.want = dir * sp
 	s.prog_t += G.DT
-	if s.prog_t > 1.4:
+	if s.prog_t > 1.2:
 		var moved = G.dist2d(s.pos, s.prog_p)
 		s.prog_p = s.pos
 		s.prog_t = 0.0
 		if moved < 0.35 and s.vault == null:
 			s.stuck_n += 1
 			s.need_path = true
+			# back off and step sideways before trying again
+			var side = Vector3(-dir.z, 0, dir.x) * (1.0 if randf() < 0.5 else -1.0)
+			s.unstick_dir = (side - dir * 0.6).normalized()
+			s.unstick_t = 0.6 + 0.3 * s.stuck_n
 			if s.stuck_n >= 3:
 				s.stuck_n = 0
+				s.bad_spot = s.move_target
+				s.bad_t = G.sim_time + 12.0
 				return "stuck"
 		else:
 			s.stuck_n = 0
@@ -667,7 +693,7 @@ static func decide(s) -> void:
 			var bestc = null
 			var bdc = 1e9
 			var idx = 0
-			for cp in G.world.cover:
+			for cp in G.world.cover_near(C, 9.5):
 				idx += 1
 				if cp.upper or not cover_free(cp, s) or cp.ban > G.sim_time:
 					continue
@@ -783,6 +809,35 @@ static func decide(s) -> void:
 		s.task = "advance"
 
 # ---------------------------------------------------------------- every tick
+# soldiers who've stood in the same spot a long while with nothing happening get moving again
+static func _watchdog(s) -> void:
+	s.idle_t += G.DT
+	if G.dist2d(s.pos, s.idle_p) > 2.5:
+		s.idle_p = s.pos
+		s.idle_t = 0.0
+		return
+	if s.idle_t < 22.0:
+		return
+	s.idle_t = 0.0
+	s.idle_p = s.pos
+	if s.vis_t != null or G.sim_time - s.seen_t < 8.0 or ClassAI.busy(s) or s.task in ["hold", "post", "defend", "medic"] or s.broken:
+		return
+	var o = order_of(s)
+	if o["mode"] == "hold" or o["mode"] == "follow":
+		return
+	if s.cover != null and s.cover.type != "low":
+		s.cover.ban = G.sim_time + 20.0
+	release_cover(s)
+	stop_move(s)
+	s.route = null
+	s.task = null
+	var goal = objective_for(s)
+	if G.dist2d(goal, s.pos) < 12.0:
+		return
+	var a = randf() * TAU
+	go_to(s, goal + Vector3(cos(a), 0, sin(a)) * randf_range(2.0, 6.0), 4.6)
+	s.decide_t = 3.0
+
 static func update(s) -> void:
 	s.think -= G.DT
 	s.decide_t -= G.DT
@@ -793,6 +848,7 @@ static func update(s) -> void:
 		supply_tick(s, 0.5)
 	if s.think <= 0.0:
 		perceive(s)
+	_watchdog(s)
 	if s.decide_t <= 0.0:
 		decide(s)
 	if s.task == "flee":
@@ -802,6 +858,7 @@ static func update(s) -> void:
 			s.flee = null
 			s.decide_t = 0.0
 	s.hand_t = null
+	s.tool_mode = ""
 	if ClassAI.busy(s):
 		ClassAI.work(s)
 	# climbing into a vehicle
@@ -849,7 +906,7 @@ static func update(s) -> void:
 			var dest = null
 			if exposed and w.heal_t <= 0.0:
 				var bd = 1e9
-				for cp in G.world.cover:
+				for cp in G.world.cover_near(w.pos, 14.0):
 					if cp.upper or not cover_free(cp, s):
 						continue
 					var dd = cp.p.distance_to(w.pos)

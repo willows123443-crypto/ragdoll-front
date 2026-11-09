@@ -13,6 +13,7 @@ const L_DEBRIS = 4
 var teams = 2
 var vehicles: Array = []
 var custom_map: Dictionary = {}
+var random_seed = 12345
 var editor = null
 var reinf_mode = "truck"     # truck, para, instant
 var armor = "light"          # none, light, heavy: vehicles each side starts with

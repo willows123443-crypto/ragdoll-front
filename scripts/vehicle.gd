@@ -63,6 +63,18 @@ const SPECS = {
 		"seats": [
 			{"o": Vector3(0.0, 1.5, 1.6), "role": "driver", "pose": "hidden", "face": 0.0},
 			{"o": Vector3(0.0, 1.5, 2.6), "role": "gunner", "pose": "hidden", "face": 0.0}]},
+	"boat": {"name": "Landing craft", "len": 9.0, "wid": 3.4, "speed": 9.0, "rev": 4.0, "accel": 3.5, "turn": 0.6, "hp": 800.0,
+		"bullet": 0.1, "tracked": false, "standoff": 0.0, "boat": true,
+		"seats": [
+			{"o": Vector3(0.0, 1.95, -3.8), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.9, 1.3, 2.0), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.9, 1.3, 2.0), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.9, 1.3, 0.8), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.9, 1.3, 0.8), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.9, 1.3, -0.4), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.9, 1.3, -0.4), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.9, 1.3, -1.6), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.9, 1.3, -1.6), "role": "pass", "pose": "sit", "face": 0.0}]},
 	"nest": {"name": "MG nest", "len": 3.2, "wid": 3.2, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 900.0,
 		"bullet": 0.04, "tracked": false, "standoff": 0.0, "static": true,
 		"seats": [{"o": Vector3(0.0, 0.95, -0.85), "role": "gunner", "pose": "stand", "face": 0.0}]},
@@ -125,6 +137,7 @@ var air_vel = Vector3.ZERO
 var rotor: Node3D = null
 var orbit_a = 0.0
 var life_t = -1.0             # gunships called in for a while
+var ramp: Node3D = null
 
 static var mats = {}
 
@@ -347,6 +360,18 @@ func _build() -> void:
 				gun_pivot = Node3D.new()
 				turret.add_child(gun_pivot)
 				_box(gun_pivot, Vector3(0.14, 0.14, 1.0), Vector3(0, 0, 0.4), Color(0.1, 0.1, 0.1))
+		"boat":
+			var bc = Color(0.38, 0.42, 0.4)
+			_box(self, Vector3(3.3, 0.3, 8.8), Vector3(0, 0.35, 0), bc, true)
+			for x in [1.6, -1.6]:
+				_box(self, Vector3(0.12, 1.6, 8.6), Vector3(x, 1.1, 0), bc)
+			_box(self, Vector3(3.3, 1.6, 0.15), Vector3(0, 1.1, -4.35), bc)
+			_box(self, Vector3(1.2, 0.6, 1.0), Vector3(0, 2.0, -3.6), bc.darkened(0.2))
+			turret = null
+			ramp = Node3D.new()
+			ramp.position = Vector3(0, 0.3, 4.35)
+			add_child(ramp)
+			_box(ramp, Vector3(3.2, 1.7, 0.15), Vector3(0, 0.85, 0), bc.darkened(0.1))
 		"nest":
 			var bag = Color(0.66, 0.6, 0.45)
 			_box(self, Vector3(3.0, 0.9, 0.7), Vector3(0, 0.45, 0.9), bag, true)
@@ -441,7 +466,9 @@ func center() -> Vector3:
 
 # ---------------------------------------------------------------- placement on the ground
 func _ground(x: float, z: float) -> float:
-	return G.world.ground_y(x, z)
+	if spec.get("boat", false):
+		return maxf(G.world.ground_y(x, z), G.world.water_level(x, z) - 0.35)
+	return G.world.drive_y(x, z)
 
 func _place(dt: float) -> void:
 	var f = forward()
@@ -535,9 +562,23 @@ func step(dt: float) -> void:
 		G.audio.hit_tick(false)
 	elif bumped:
 		speed *= 0.8
+	if not G.world.water.is_empty():
+		var wet = G.world.in_water(np.x + f.x * spec["len"] * 0.4 * signf(speed if speed != 0.0 else 1.0), np.z + f.z * spec["len"] * 0.4 * signf(speed if speed != 0.0 else 1.0))
+		if spec.get("boat", false):
+			if not wet and G.world.ground_y(np.x, np.z) > G.world.water_level(np.x, np.z) - 0.2:
+				np = pos       # run aground
+				speed = 0.0
+		elif wet:
+			np = pos
+			speed = 0.0
+		if not spec.get("boat", false) and G.world.in_water(pos.x, pos.z):
+			# went into the river (a bridge came down under it)
+			destroy(null)
+			return
 	var b = G.world.bounds
-	np.x = clampf(np.x, b.position.x + 3.0, b.end.x - 3.0)
-	np.z = clampf(np.z, b.position.y + 3.0, b.end.y - 3.0)
+	if mission == null:
+		np.x = clampf(np.x, b.position.x + 3.0, b.end.x - 3.0)
+		np.z = clampf(np.z, b.position.y + 3.0, b.end.y - 3.0)
 	pos = np
 	_place(dt)
 	_hit_people(f)
@@ -882,6 +923,8 @@ func _ai_drive(dt: float) -> Array:
 		target = _mission_target(dt)
 		if target == null:
 			return [0.0, 0.0]
+		if spec.get("boat", false):
+			return _steer_to(target, dt)
 	else:
 		var obj: Vector3 = AI.objective_for(d)
 		var enemy = null
@@ -966,6 +1009,11 @@ func _ai_drive(dt: float) -> Array:
 
 func _mission_target(dt: float):
 	var m = mission
+	if spec.get("boat", false) and m["stage"] == 0 and (absf(speed) < 0.3 and G.dist2d(pos, m["drop"]) < 40.0 and m.get("go_t", 0.0) > 6.0):
+		m["drop"] = pos     # beached short of the mark: unload here
+	m["go_t"] = m.get("go_t", 0.0) + dt
+	if spec.get("boat", false) and ramp != null:
+		ramp.rotation.x = lerpf(ramp.rotation.x, 1.3 if m["stage"] == 1 else 0.0, dt * 3.0)
 	if m["stage"] == 0:
 		if G.dist2d(pos, m["drop"]) < 6.0:
 			m["stage"] = 1

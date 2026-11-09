@@ -65,6 +65,9 @@ static func entry_point(t: int) -> Vector3:
 	return Vector3(x, G.world.ground_y(x, z), z)
 
 static func truck(t: int, n: int) -> void:
+	if G.map_id == "beach" and t == 0:
+		boat(t, n)
+		return
 	var entry = entry_point(t)
 	var home: Vector3 = G.world.rally_point(t)
 	# unload on open ground short of the base, on the way in from the edge
@@ -104,6 +107,26 @@ static func heli(t: int, n: int) -> void:
 			break
 		s.mount(v, i + 1)
 	G.ui.radio(t, "Helicopter inbound with %d troops" % n)
+
+# landing craft come in from the sea and drop their ramp on the beach
+static func boat(t: int, n: int) -> void:
+	var b: Rect2 = G.world.bounds
+	var z = randf_range(b.position.y + 30.0, b.end.y - 30.0)
+	var entry = Vector3(b.position.x - 60.0, 0, z)
+	var drop = Vector3(b.position.x + 68.0, 0, z)
+	var v = Vehicle.make("boat", t, entry, PI / 2.0)
+	v.mission = {"type": "deliver", "drop": drop, "exit": entry, "stage": 0, "wait": 0.0}
+	var drv = G.main.spawn_soldier(t, b.position.x + 5.0, z, "rifle")
+	if drv == null:
+		v.remove()
+		return
+	drv.mount(v, 0)
+	for i in range(mini(n, 8)):
+		var s = G.main.spawn_soldier(t, b.position.x + 5.0, z, "")
+		if s == null:
+			break
+		s.mount(v, i + 1)
+	G.ui.radio(t, "Landing craft inbound, %d troops" % n)
 
 static func paradrop(t: int, n: int) -> void:
 	var home: Vector3 = G.world.rally_point(t)

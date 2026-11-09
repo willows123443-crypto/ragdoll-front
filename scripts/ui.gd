@@ -3,7 +3,7 @@ extends CanvasLayer
 
 var tool = "ctl"
 var tab = "units"
-const MAP_IDS = ["town", "field", "trenches", "valley", "front"]
+const MAP_IDS = ["town", "field", "trenches", "forest", "city", "beach", "valley", "front", "river", "pass", "random"]
 const TOOLS = {
 	"units": [["a1", "Alpha soldier"], ["b1", "Bravo soldier"], ["a5", "Alpha squad"], ["b5", "Bravo squad"], ["ctl", "Take control"], ["spA", "Alpha spawn"], ["spB", "Bravo spawn"]],
 	"command": [["sel", "Select"], ["mvA", "Alpha: move to"], ["mvB", "Bravo: move to"]],
@@ -77,6 +77,7 @@ var opt_reinf: OptionButton
 var opt_armor: OptionButton
 var opt_teams: OptionButton
 var opt_time: OptionButton
+var seed_edit: LineEdit
 var teams_panel: PanelContainer
 var settings_panel: PanelContainer
 
@@ -417,7 +418,7 @@ func _row(parent: Control, label: String, ctrl: Control) -> void:
 
 func _build_menu() -> void:
 	menu = _panel(Color(0.11, 0.13, 0.15, 0.97))
-	_place(menu, Control.PRESET_CENTER, -280, -290, 560, 580)
+	_place(menu, Control.PRESET_CENTER, -280, -310, 560, 620)
 	menu.custom_minimum_size = Vector2(520, 0)
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
@@ -426,12 +427,27 @@ func _build_menu() -> void:
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD
 	d.custom_minimum_size = Vector2(480, 0)
 	v.add_child(d)
-	opt_map = _option(["Town ruins", "Farmland", "Trenches", "Valley offensive (large)", "Western front (large)"], 0)
+	opt_map = _option(["Town ruins", "Farmland", "Trenches", "Forest", "City blocks", "Beach landing", "Valley offensive (large)", "Western front (large)", "River crossing (large)", "Mountain pass (large)", "Random map (seed below)"], 0)
 	opt_map.item_selected.connect(func(i):
 		if not G.started:
 			_select_map(i))
 	refresh_maps()
 	_row(v, "Map", opt_map)
+	seed_edit = LineEdit.new()
+	seed_edit.text = str(G.random_seed)
+	seed_edit.custom_minimum_size = Vector2(120, 0)
+	seed_edit.text_submitted.connect(func(t):
+		G.random_seed = int(t) if t.is_valid_int() else t.hash()
+		if MAP_IDS[opt_map.selected] == "random":
+			G.main.preview_map("random"))
+	var seed_row = HBoxContainer.new()
+	seed_row.add_child(seed_edit)
+	seed_row.add_child(_button("New seed", func():
+		G.random_seed = randi() % 1000000
+		seed_edit.text = str(G.random_seed)
+		if opt_map.selected < MAP_IDS.size() and MAP_IDS[opt_map.selected] == "random":
+			G.main.preview_map("random")))
+	_row(v, "Random map seed", seed_row)
 	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the point", "Frontline — push across the map", "Assault — Alpha attacks", "Last stand — survive the waves"], 0)
 	_row(v, "Mode", opt_mode)
 	opt_limit = _option(["25", "50", "100", "200"], 1)
@@ -444,9 +460,10 @@ func _build_menu() -> void:
 	_row(v, "Vehicles", opt_armor)
 	opt_teams = _option(["2 teams", "3 teams", "4 teams"], 0)
 	_row(v, "Sides (3–4 only in sandbox, deathmatch, capture)", opt_teams)
-	opt_time = _option(["Day", "Dusk", "Night"], ["day", "dusk", "night"].find(G.settings["time"]))
+	opt_time = _option(["Day", "Dusk", "Night", "Day into night (cycle)"], maxi(0, ["day", "dusk", "night", "cycle"].find(G.settings["time"])))
 	opt_time.item_selected.connect(func(i):
-		G.settings["time"] = ["day", "dusk", "night"][i]
+		G.settings["time"] = ["day", "dusk", "night", "cycle"][i]
+		G.main.clock = 0.25
 		G.main.apply_time())
 	_row(v, "Time of day", opt_time)
 	var go = _button("Deploy", func(): _deploy())
@@ -463,6 +480,9 @@ func _build_menu() -> void:
 	root.add_child(menu)
 
 func _deploy() -> void:
+	if seed_edit != null and seed_edit.text.strip_edges() != "":
+		var t = seed_edit.text.strip_edges()
+		G.random_seed = int(t) if t.is_valid_int() else t.hash()
 	var modes = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand"]
 	var mid = _map_id(opt_map.selected)
 	G.main.start_game({"map": mid, "mode": modes[opt_mode.selected],

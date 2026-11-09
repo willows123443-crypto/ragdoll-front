@@ -1110,6 +1110,10 @@ func _tick_alive() -> void:
 	if state != "alive":
 		return
 	var sm: float = W["speed"] * (0.3 if prone else 1.0)
+	var wading = not G.world.water.is_empty() and G.world.in_water(pos.x, pos.z)
+	if wading:
+		sm *= 0.4
+		prone_t = false
 	if vault != null:
 		vault["t"] += G.DT / 0.6
 		var k = G.smooth01(vault["t"])

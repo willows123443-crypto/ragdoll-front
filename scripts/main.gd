@@ -36,6 +36,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shot="):
 			_shot_mode(a.substr(7))
+		if a == "--maptest":
+			_map_test()
 		if a == "--breachtest":
 			_breach_test()
 		if a.begins_with("--edtest="):
@@ -80,8 +82,23 @@ func _build_environment() -> void:
 	apply_time()
 
 # day, dusk or night: sky, light and how far soldiers can see
+var clock = 0.25          # 0.25 = midday ... 0.6 = dusk ... 0.8 = night ... 1.25 = midday again
+var clock_t = 0.0
+
+func _cycle_step(dt: float) -> void:
+	if G.settings["time"] != "cycle":
+		return
+	clock += dt / 900.0          # a full day in fifteen minutes
+	clock_t -= dt
+	if clock_t <= 0.0:
+		clock_t = 1.0
+		apply_time()
+
 func apply_time() -> void:
 	var t = G.settings["time"]
+	if t == "cycle":
+		_blend_time(fposmod(clock, 1.0))
+		return
 	var amb = float(_arg("amb", "0.38"))
 	var ex = float(_arg("exp", "0.68"))
 	var sn = float(_arg("sun", "0.95"))
@@ -126,7 +143,40 @@ func apply_time() -> void:
 	sky_mat.ground_bottom_color = sky_mat.ground_horizon_color.darkened(0.5)
 
 func is_night() -> bool:
-	return G.settings["time"] == "night"
+	return G.settings["time"] == "night" or (G.settings["time"] == "cycle" and G.view_range < 80.0)
+
+# the cycle mixes the three looks: day (0.25), dusk (0.55), night (0.75), dawn back to day
+func _blend_time(c: float) -> void:
+	var keys = [[0.0, "night"], [0.15, "dusk"], [0.25, "day"], [0.5, "day"], [0.62, "dusk"], [0.75, "night"], [1.0, "night"]]
+	var a = keys[0]
+	var b = keys[1]
+	for i in range(keys.size() - 1):
+		if c >= keys[i][0] and c <= keys[i + 1][0]:
+			a = keys[i]
+			b = keys[i + 1]
+	var k = (c - a[0]) / maxf(0.0001, b[0] - a[0])
+	var A = _tod(a[1])
+	var B = _tod(b[1])
+	sky_mat.sky_top_color = A[0].lerp(B[0], k)
+	sky_mat.sky_horizon_color = A[1].lerp(B[1], k)
+	sky_mat.ground_horizon_color = A[2].lerp(B[2], k)
+	sky_mat.ground_bottom_color = sky_mat.ground_horizon_color.darkened(0.5)
+	sun.light_color = A[3].lerp(B[3], k)
+	sun.light_energy = lerpf(A[4], B[4], k)
+	env.ambient_light_color = A[5].lerp(B[5], k)
+	env.ambient_light_energy = lerpf(A[6], B[6], k)
+	env.fog_light_color = A[7].lerp(B[7], k)
+	G.view_range = lerpf(A[8], B[8], k)
+	sun.rotation = Vector3(deg_to_rad(lerpf(-60.0, -8.0, absf(c - 0.375) / 0.375)), deg_to_rad(-35.0 + c * 120.0), 0)
+	sun.shadow_enabled = G.settings["shadows"]
+
+func _tod(n: String) -> Array:
+	match n:
+		"dusk":
+			return [Color(0.32, 0.36, 0.55), Color(0.86, 0.55, 0.35), Color(0.5, 0.36, 0.28), Color(1.0, 0.68, 0.42), 0.76, Color(0.62, 0.52, 0.5), 0.3, Color(0.72, 0.55, 0.45), 110.0]
+		"night":
+			return [Color(0.02, 0.03, 0.07), Color(0.06, 0.08, 0.14), Color(0.04, 0.05, 0.08), Color(0.55, 0.65, 0.9), 0.22, Color(0.3, 0.38, 0.6), 0.2, Color(0.04, 0.05, 0.09), 45.0]
+	return [Color(0.45, 0.55, 0.66), Color(0.68, 0.7, 0.71), Color(0.6, 0.6, 0.58), Color(1.0, 0.95, 0.86), 0.95, Color(0.62, 0.66, 0.72), 0.38, Color(0.66, 0.69, 0.7), 150.0]
 
 func follow_sun(_cam_pos: Vector3, _fwd: Vector3) -> void:
 	pass   # directional shadows already follow the camera in Godot
@@ -346,6 +396,8 @@ func _sim_step() -> void:
 		cleanup_bodies(false)
 
 func _process(dt: float) -> void:
+	if G.started:
+		_cycle_step(dt * Engine.time_scale)
 	G.fx.update_callouts(dt)
 	G.ui.update_hud(dt)
 	for f in point_flags:
@@ -784,4 +836,20 @@ func _breach_test() -> void:
 		if o.team == 0 and o.state == "alive" and Squad._building_at(o.pos) != null:
 			inside += 1
 	print("BREACHTEST events %s enemy %s attackers inside %d" % [str(Squad.events), e.state, inside])
+	get_tree().quit()
+
+func _map_test() -> void:
+	await _wait(0.5)
+	for m in ["river", "forest", "city", "pass", "beach", "random"]:
+		var t0 = Time.get_ticks_msec()
+		start_game({"map": m, "mode": "assault" if m == "beach" else "frontline", "size": 8, "limit": 100, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+		var load_ms = Time.get_ticks_msec() - t0
+		await _wait(15.0)
+		var wet = 0
+		for o in G.soldiers:
+			if o.state == "alive" and G.world.in_water(o.pos.x, o.pos.z):
+				wet += 1
+		print("MAPTEST %s size %dx%d load %d ms | alive %d v %d | points %d | wading %d | vehicles %d | sim %.2f ms" % [m, G.world.TW, G.world.TH_, load_ms, G.alive_count(0), G.alive_count(1), Obj.points.size(), wet, G.vehicles.size(), (tick_us / 1000.0) / maxi(tick_n, 1)])
+		tick_us = 0
+		tick_n = 0
 	get_tree().quit()

@@ -24,6 +24,8 @@ var roads: Array = []
 var spawn = [Vector3(-96, 0, 0), Vector3(96, 0, 0)]
 var capture = Vector3.ZERO
 var bounds = Rect2(-128, -93, 256, 186)   # playable area (x, z)
+var water: Array = []          # [x0, x1, z0, z1, level] areas of deep water (rivers, sea)
+var bridges: Array = []        # [x0, x1, z0, z1, deck_y, col]
 var ammo_points: Array = []   # {"p": Vector3, "team": int (-1 = anyone)}
 var objectives: Array = []    # control points, in order from Alpha's side to Bravo's: {"p", "name"}
 var geo_root: Node3D
@@ -44,6 +46,12 @@ var MAPS = {
 	"field": {"name": "Farmland", "ground": Color(0.44, 0.46, 0.31), "seed": 4242},
 	"trenches": {"name": "Trenches", "ground": Color(0.42, 0.38, 0.30), "seed": 777},
 	"valley": {"name": "Valley offensive (large)", "ground": Color(0.43, 0.45, 0.32), "seed": 9001, "size": Vector2(660, 260)},
+	"river": {"name": "River crossing (large)", "ground": Color(0.42, 0.46, 0.3), "seed": 4410, "size": Vector2(560, 240)},
+	"forest": {"name": "Forest", "ground": Color(0.33, 0.38, 0.24), "seed": 2601, "size": Vector2(300, 220)},
+	"city": {"name": "City blocks", "ground": Color(0.45, 0.44, 0.41), "seed": 8080, "size": Vector2(300, 220)},
+	"pass": {"name": "Mountain pass (large)", "ground": Color(0.47, 0.45, 0.38), "seed": 3300, "size": Vector2(560, 220)},
+	"beach": {"name": "Beach landing", "ground": Color(0.72, 0.66, 0.48), "seed": 1944, "size": Vector2(300, 240)},
+	"random": {"name": "Random", "ground": Color(0.44, 0.45, 0.33), "seed": 1, "size": Vector2(360, 220)},
 	"front": {"name": "Western front (large)", "ground": Color(0.41, 0.37, 0.3), "seed": 1916, "size": Vector2(560, 240)},
 }
 
@@ -58,6 +66,59 @@ func _set_size(w: float, d: float) -> void:
 	NW = int(w / NCS)
 	NH = int(d / NCS)
 	bounds = Rect2(TX0 + 2.0, TZ0 + 2.0, w - 4.0, d - 4.0)
+
+func water_level(x: float, z: float) -> float:
+	for w in water:
+		if x > w[0] and x < w[1] and z > w[2] and z < w[3]:
+			return w[4]
+	return -99.0
+
+func in_water(x: float, z: float) -> bool:
+	for w in water:
+		if x > w[0] and x < w[1] and z > w[2] and z < w[3] and ground_y(x, z) < w[4] - 0.3:
+			for b in bridges:
+				if b[5].alive and x > b[0] and x < b[1] and z > b[2] and z < b[3]:
+					return false
+			return true
+	return false
+
+# vehicles drive on bridge decks; everything else on the ground
+func drive_y(x: float, z: float) -> float:
+	for b in bridges:
+		if b[5].alive and x > b[0] - 0.5 and x < b[1] + 0.5 and z > b[2] and z < b[3]:
+			return b[4]
+	return ground_y(x, z)
+
+func add_water(x0: float, x1: float, z0: float, z1: float, level: float, col: Color) -> void:
+	water.append([x0, x1, z0, z1, level])
+	var m = MeshInstance3D.new()
+	var pm = PlaneMesh.new()
+	pm.size = Vector2(x1 - x0, z1 - z0)
+	m.mesh = pm
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.roughness = 0.15
+	mat.metallic_specular = 0.8
+	m.material_override = mat
+	m.position = Vector3((x0 + x1) / 2.0, level, (z0 + z1) / 2.0)
+	_geo().add_child(m)
+
+# a destructible deck across a river; when it's blown the crossing is gone
+func bridge(x0: float, x1: float, zc: float, wide: float) -> void:
+	var deck_y = 0.15
+	var c = add_col((x0 + x1) / 2.0, deck_y - 0.5, zc, x1 - x0, 0.5, wide)
+	var ref = add_box((x0 + x1) / 2.0, deck_y - 0.5, zc, x1 - x0, 0.5, wide, Color(0.42, 0.38, 0.32), {"abs": true, "collide": false})
+	c.vis = [ref]
+	c.dest = true
+	c.hp = 400.0
+	c.color = Color(0.42, 0.38, 0.32)
+	c.no_move = true
+	for k in [-1.0, 1.0]:
+		add_box((x0 + x1) / 2.0, deck_y, zc + k * (wide / 2.0 - 0.15), x1 - x0, 1.0, 0.25, Color(0.36, 0.33, 0.29), {"abs": true, "collide": false})
+	for i in range(int((x1 - x0) / 8.0) + 1):
+		add_box(x0 + i * 8.0, -3.0, zc, 1.0, deck_y + 2.5, wide - 1.0, Color(0.4, 0.38, 0.34), {"abs": true, "collide": false})
+	bridges.append([x0, x1, zc - wide / 2.0, zc + wide / 2.0, deck_y, c])
 
 func is_large() -> bool:
 	return TW > 300
@@ -221,6 +282,12 @@ func build_terrain(base: Color) -> void:
 # out in the open the heightmap is exact and much cheaper
 func surface_y(x: float, z: float, cur: float) -> float:
 	var g = ground_y(x, z)
+	if not water.is_empty():
+		var wl = water_level(x, z)
+		if wl > -50.0 and g < wl - 0.3:
+			# wading: chest deep at most (bridge decks are found by the ray below)
+			var hit = _surface_ray(x, z, cur)
+			return maxf(hit, wl - 1.25)
 	if cur < g + 0.2:
 		var in_tower = false
 		for T in towers:
@@ -501,6 +568,17 @@ func build_nav() -> void:
 	nav_vault.resize(NW * NH)
 	for c in cols:
 		_nav_mark(c)
+	for w in water:
+		var ix0 = maxi(0, int((w[0] - NX0) / NCS))
+		var ix1 = mini(NW - 1, int((w[1] - NX0) / NCS))
+		var iz0 = maxi(0, int((w[2] - NZ0) / NCS))
+		var iz1 = mini(NH - 1, int((w[3] - NZ0) / NCS))
+		for iz in range(iz0, iz1 + 1, 1):
+			for ix in range(ix0, ix1 + 1, 1):
+				var px = NX0 + (ix + 0.5) * NCS
+				var pz = NZ0 + (iz + 0.5) * NCS
+				if in_water(px, pz) and not astar.is_point_solid(Vector2i(ix, iz)):
+					astar.set_point_weight_scale(Vector2i(ix, iz), 12.0)
 
 func update_nav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 	var a = nav_cell(x0 - 1.0, z0 - 1.0)
@@ -648,6 +726,8 @@ func destroy_col(c, depth: int = 0) -> void:
 	c.alive = false
 	cols.erase(c)
 	_remove_grid(c)
+	if depth < 3:
+		_collapse_check(c)
 	if is_instance_valid(c.body):
 		c.body.queue_free()
 	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
@@ -727,7 +807,9 @@ func _wall_piece(horiz: bool, fixed: float, c: float, ln: float, y0: float, h: f
 func building(x: float, z: float, w: float, d: float, h: float) -> void:
 	var color: Color = WALLC[rng.randi() % WALLC.size()]
 	var t = 0.35
-	buildings.append({"x": x, "z": z, "w": w, "d": d, "h": h})
+	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h, "cols": [], "walls0": 0, "fallen": 0}
+	buildings.append(bld)
+	var c0 = cols.size()
 	wall_run(true, z - d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t)
 	wall_run(true, z + d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t)
 	wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t)
@@ -742,9 +824,58 @@ func building(x: float, z: float, w: float, d: float, h: float) -> void:
 		add_box(x, h - 0.1, z - d / 2.0 + rd / 2.0, w + 0.2, 0.3, rd, Color(0.36, 0.29, 0.25), {"dest": true, "hp": 140.0})
 	for i in range(5):
 		add_box(x + rnd(-w / 2.0, w / 2.0), 0.0, z + rnd(-d / 2.0, d / 2.0), rnd(0.5, 1.4), rnd(0.2, 0.5), rnd(0.5, 1.4), Color(0.54, 0.52, 0.47), {"ry": rnd(0.0, 3.0), "collide": false})
+	_claim(bld, c0)
+
+# remember which colliders belong to a building so it can come down floor by floor
+func _claim(bld: Dictionary, c0: int) -> void:
+	for i in range(c0, cols.size()):
+		var c = cols[i]
+		if c.dest:
+			bld["cols"].append(c)
+			c.set_meta("bld", bld)
+			if c.lo.y - c.gy < 0.5:
+				bld["walls0"] += 1
+
+func _collapse_check(c) -> void:
+	if not c.has_meta("bld"):
+		return
+	var bld = c.get_meta("bld")
+	if c.lo.y - c.gy < 0.5:
+		bld["fallen"] += 1
+	if bld.get("down", 0) >= 2 or bld["walls0"] == 0:
+		return
+	var frac = float(bld["fallen"]) / float(bld["walls0"])
+	var stage = 2 if frac > 0.7 else (1 if frac > 0.4 else 0)
+	if stage <= bld.get("down", 0):
+		return
+	bld["down"] = stage
+	# the floors above give way first; then the rest of the shell
+	var mid = Vector3(bld["x"], ground_y(bld["x"], bld["z"]), bld["z"])
+	for o in bld["cols"].duplicate():
+		if not o.alive:
+			continue
+		var upper = o.lo.y - o.gy > 1.5
+		if upper or stage == 2:
+			destroy_col(o, 3)
+	G.fx.dust_cloud(mid + Vector3(0, 2, 0), maxf(bld["w"], bld["d"]))
+	G.audio.boom(mid)
+	Combat.shake = maxf(Combat.shake, 0.4)
+	for sd in G.soldiers:
+		if sd.state != "dead" and absf(sd.pos.x - bld["x"]) < bld["w"] / 2.0 + 0.5 and absf(sd.pos.z - bld["z"]) < bld["d"] / 2.0 + 0.5:
+			sd.hp -= 45.0 if sd.pos.y - mid.y < 1.0 else 120.0
+			if sd.hp <= 0.0:
+				Combat.kill(sd, null, false)
+			else:
+				sd.fall(2.0)
 
 # two-storey building with stairs and an upper floor; upper windows become firing posts
 func tower(x: float, z: float, w: float, d: float) -> void:
+	var c0t = cols.size()
+	_tower(x, z, w, d)
+	var bld = {"x": x, "z": z, "w": w, "d": d, "h": 7.0, "cols": [], "walls0": 0, "fallen": 0}
+	_claim(bld, c0t)
+
+func _tower(x: float, z: float, w: float, d: float) -> void:
 	var color: Color = WALLC[rng.randi() % WALLC.size()]
 	var t = 0.35
 	var FY = 3.45
@@ -1622,10 +1753,294 @@ func begin_edit(m: Dictionary) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []
+	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]
 	build_terrain(m["ground"])
+
+# ---------------------------------------------------------------- more maps
+func bunker(x: float, z: float) -> void:
+	var cc = Color(0.54, 0.53, 0.5)
+	add_box(x, 0, z - 4, 6, 1.4, 0.6, cc, {"dest": true, "hp": 300.0}); add_box(x, 0, z + 4, 6, 1.4, 0.6, cc, {"dest": true, "hp": 300.0})
+	for p in [[-3, -4], [3, -4], [-3, 4], [3, 4]]:
+		add_box(x + p[0], 0, z + p[1], 0.5, 2.1, 0.5, Color(0.49, 0.48, 0.45), {"dest": true, "hp": 300.0})
+	add_box(x, 2.1, z, 6.6, 0.3, 8.6, Color(0.49, 0.48, 0.45), {"dest": true, "hp": 300.0})
+
+func _std_end(style_ground: String, objs: Array, sp: float) -> void:
+	objectives = []
+	var names = "ABCDEFGH"
+	for i in range(objs.size()):
+		objectives.append({"p": objs[i], "name": names[i]})
+	capture = objs[objs.size() / 2]
+	spawn = [Vector3(-sp, 0, 0), Vector3(sp, 0, 0)]
+	for sx in [-1.0, 1.0]:
+		base(sx, sp)
+
+# a river runs north-south through the middle; three bridges cross it (blow them and you have to wade)
+func build_river() -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	for i in range(30):
+		hill(rnd(-W2, W2), rnd(-D2, D2), rnd(16, 34), rnd(1.0, 3.5))
+	roads = [[-W2, W2, -3.5, 3.5]]
+	for sx in [-1.0, 1.0]:
+		flatten_rect(sx * (W2 - 60.0) - 24.0, -28.0, sx * (W2 - 60.0) + 24.0, 28.0, 6.0)
+	# the riverbed
+	_each_vert(-16.0, -D2 - 2.0, 16.0, D2 + 2.0, func(i, vx, vz):
+		var dx = absf(vx - sin(vz * 0.02) * 6.0)
+		if dx < 11.0:
+			th[i] = minf(th[i], -2.6 * (1.0 - G.smooth01(maxf(0.0, dx - 7.0) / 4.0))))
+	var X = [-170.0, -80.0, 80.0, 170.0]
+	var Z = [20.0, -25.0, 25.0, -20.0]
+	var vil = []
+	for i in range(4):
+		village(X[i], Z[i], 22.0, 18.0, 5, 1)
+		vil.append(return_village)
+	_flatten_roads()
+	build_terrain(MAPS["river"]["ground"])
+	add_water(-14.0, 14.0, -D2, D2, -0.7, Color(0.22, 0.34, 0.38, 0.85))
+	for rd in roads:
+		if rd[1] - rd[0] > 100.0:
+			flat_plane(-W2 / 2.0 - 7.0, (rd[2] + rd[3]) * 0.5, W2 - 14.0, rd[3] - rd[2], Color(0.31, 0.3, 0.3), 0.015)
+			flat_plane(W2 / 2.0 + 7.0, (rd[2] + rd[3]) * 0.5, W2 - 14.0, rd[3] - rd[2], Color(0.31, 0.3, 0.3), 0.015)
+	bridge(-15.0, 15.0, 0.0, 7.0)
+	bridge(-15.0, 15.0, -70.0, 5.0)
+	bridge(-15.0, 15.0, 70.0, 5.0)
+	for i in range(4):
+		_village_build(vil[i], 1)
+		strongpoint(X[i] + (8.0 if X[i] < 0.0 else -8.0), Z[i], 1.0 if X[i] < 0.0 else -1.0)
+		ammo_crate(X[i], Z[i] + 6.0, -1)
+	for zc in [0.0, -70.0, 70.0]:
+		for sx in [-1.0, 1.0]:
+			sandbags(sx * 22.0, zc + 6.0, 4.0, false); sandbags(sx * 22.0, zc - 6.0, 4.0, false)
+	for i in range(80):
+		var tx = rnd(-W2 + 10.0, W2 - 10.0)
+		var tz = rnd(-D2 + 5.0, D2 - 5.0)
+		if absf(tx) > 20.0 and not on_road(tx, tz) and not inside_any(tx, tz, 2.0):
+			live_tree(tx, tz)
+	var objs = [Vector3(-170, 0, 20), Vector3(-80, 0, -25), Vector3(0, 0, 0), Vector3(80, 0, 25), Vector3(170, 0, -20)]
+	_std_end("farm", objs, W2 - 60.0)
+
+# dense woods, a few clearings with log cabins and foxholes
+func build_forest() -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	for i in range(20):
+		hill(rnd(-W2, W2), rnd(-D2, D2), rnd(14, 30), rnd(1.0, 3.0))
+	var clear = [Vector3(-60, 0, 30), Vector3(0, 0, -20), Vector3(60, 0, 30)]
+	for c in clear:
+		flatten_rect(c.x - 14.0, c.z - 12.0, c.x + 14.0, c.z + 12.0, 6.0)
+	for sx in [-1.0, 1.0]:
+		flatten_rect(sx * (W2 - 40.0) - 20.0, -24.0, sx * (W2 - 40.0) + 20.0, 24.0, 6.0)
+	roads = [[-W2, W2, -2.0, 2.0]]
+	_flatten_roads()
+	build_terrain(MAPS["forest"]["ground"])
+	flat_plane(0, 0, TW, 4.0, Color(0.42, 0.36, 0.27), 0.015)
+	var n = 0
+	var tries = 0
+	while n < 520 and tries < 4000:
+		tries += 1
+		var x = rnd(-W2 + 4.0, W2 - 4.0)
+		var z = rnd(-D2 + 4.0, D2 - 4.0)
+		var ok = not on_road(x, z) and absf(x) < W2 - 62.0
+		for c in clear:
+			if absf(x - c.x) < 15.0 and absf(z - c.z) < 13.0:
+				ok = false
+		if ok and not inside_any(x, z, 1.2):
+			live_tree(x, z)
+			n += 1
+	for i in range(40):
+		var x = rnd(-W2 + 70.0, W2 - 70.0)
+		var z = rnd(-D2 + 8.0, D2 - 8.0)
+		if not inside_any(x, z, 2.0) and not on_road(x, z):
+			add_box(x, 0.0, z, rnd(3, 6), 0.55, 0.55, Color(0.33, 0.25, 0.17), {"ry": 0.0, "dest": true, "hp": 120.0, "mat": 1})
+	for c in clear:
+		building(c.x + 6.0, c.z + 3.0, 7.0, 6.0, 3.6)
+		for k in range(3):
+			crater_ter(c.x - 6.0 + k * 5.0, c.z - 6.0, 1.4, 0.8)
+		sandbags(c.x - 4.0, c.z - 8.0, 4.0, true)
+		ammo_crate(c.x, c.z + 8.0, -1)
+	_std_end("farm", clear, W2 - 40.0)
+
+# a grid of streets lined with houses, alleys between them
+func build_city() -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	roads = []
+	for zc in [-60.0, 0.0, 60.0]:
+		roads.append([-W2, W2, zc - 4.0, zc + 4.0])
+	for xc in [-90.0, -30.0, 30.0, 90.0]:
+		roads.append([xc - 4.0, xc + 4.0, -D2, D2])
+	for sx in [-1.0, 1.0]:
+		flatten_rect(sx * (W2 - 25.0) - 15.0, -20.0, sx * (W2 - 25.0) + 15.0, 20.0, 5.0)
+	_flatten_roads()
+	flatten_rect(-W2 + 40.0, -D2, W2 - 40.0, D2, 4.0)
+	build_terrain(MAPS["city"]["ground"])
+	for rd in roads:
+		flat_plane((rd[0] + rd[1]) / 2.0, (rd[2] + rd[3]) / 2.0, rd[1] - rd[0], rd[3] - rd[2], Color(0.3, 0.3, 0.31), 0.015)
+	var xs = [-120.0, -60.0, 0.0, 60.0, 120.0]
+	var zs = [-90.0, -30.0, 30.0, 90.0]
+	for bx in xs:
+		for bz in zs:
+			if absf(bx) > W2 - 45.0:
+				continue
+			# a block: a row of houses with an alley through the middle
+			for k in range(-1, 2):
+				var hx = bx + k * 15.0
+				var hz = bz + rnd(-2, 2)
+				if rng.randf() < 0.25:
+					tower(hx, hz - 7.0, 11.0, 9.0)
+				else:
+					building(hx, hz - 7.0, 12.0, 10.0, rnd(4.0, 7.5))
+				if rng.randf() < 0.7:
+					building(hx, hz + 8.0, 12.0, 9.0, rnd(3.8, 6.5))
+			for i in range(3):
+				crate(bx + rnd(-20, 20), bz + rnd(-2, 2), 1.0)
+	for i in range(14):
+		var p = Vector3(rnd(-W2 + 50.0, W2 - 50.0), 0, [-60.0, 0.0, 60.0][rng.randi() % 3] + rnd(-2.5, 2.5))
+		if not inside_any(p.x, p.z, 2.0):
+			if rng.randf() < 0.5:
+				truck(p.x, p.z, false)
+			else:
+				sandbags(p.x, p.z, 4.0, false)
+	var objs = [Vector3(-60, 0, 0), Vector3(0, 0, 0), Vector3(60, 0, 0)]
+	for o in objs:
+		ammo_crate(o.x + 2.0, o.z + 5.5, -1)
+	_std_end("urban", objs, W2 - 25.0)
+
+# a road winds up a valley between steep slopes; bunkers hold the heights
+func build_pass() -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	_each_vert(-W2, -D2, W2, D2, func(i, vx, vz):
+		var dz = absf(vz - sin(vx * 0.012) * 25.0)
+		th[i] += G.smooth01(clampf((dz - 18.0) / 70.0, 0.0, 1.0)) * (14.0 + 6.0 * sin(vx * 0.03)))
+	for i in range(30):
+		hill(rnd(-W2, W2), rnd(-D2, D2), rnd(10, 22), rnd(1.0, 3.0))
+	roads = [[-W2, W2, -3.0, 3.0]]
+	var X = [-160.0, -60.0, 60.0, 160.0]
+	var objs = []
+	for x in X:
+		var zc = sin(x * 0.012) * 25.0
+		flatten_rect(x - 10.0, zc - 10.0, x + 10.0, zc + 10.0, 6.0)
+		objs.append(Vector3(x, 0, zc))
+	for sx in [-1.0, 1.0]:
+		var zc2 = sin(sx * (W2 - 50.0) * 0.012) * 25.0
+		flatten_rect(sx * (W2 - 50.0) - 22.0, zc2 - 22.0, sx * (W2 - 50.0) + 22.0, zc2 + 22.0, 6.0)
+	build_terrain(MAPS["pass"]["ground"])
+	for o in objs:
+		bunker(o.x, o.z)
+		ammo_crate(o.x - 5.0, o.z, -1)
+		for k in [-1.0, 1.0]:
+			strongpoint(o.x + k * 12.0, o.z + k * 16.0, k)
+	for i in range(30):
+		var x = rnd(-W2 + 30.0, W2 - 30.0)
+		var z = sin(x * 0.012) * 25.0 + rnd(-14, 14)
+		if not inside_any(x, z, 3.0):
+			add_box(x, 0.0, z, rnd(1.5, 3.5), rnd(1.0, 2.2), rnd(1.5, 3.0), Color(0.5, 0.48, 0.44), {"ry": 0.0})
+	for i in range(70):
+		if rng.randf() < 0.3:
+			dead_tree(rnd(-W2, W2), rnd(-D2, D2))
+		else:
+			live_tree(rnd(-W2, W2), rnd(-D2, D2))
+	objectives = []
+	for i in range(objs.size()):
+		objectives.append({"p": objs[i], "name": "ABCD"[i]})
+	capture = objs[1]
+	spawn = [Vector3(-(W2 - 50.0), 0, sin(-(W2 - 50.0) * 0.012) * 25.0), Vector3(W2 - 50.0, 0, sin((W2 - 50.0) * 0.012) * 25.0)]
+	for t in range(2):
+		camp(t, spawn[t])
+
+# Alpha comes ashore from the sea in the west; Bravo holds the dunes and bunkers
+func build_beach() -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	_each_vert(-W2, -D2, W2, D2, func(i, vx, vz):
+		var k = (vx + W2) / TW
+		th[i] = -3.0 + clampf(k * 3.2, 0.0, 1.0) * 3.0 + clampf((vx + 40.0) / 40.0, 0.0, 1.0) * 2.5 + sin(vz * 0.05) * 0.4)
+	for i in range(18):
+		hill(rnd(0, W2), rnd(-D2, D2), rnd(10, 20), rnd(1.0, 2.5))
+	flatten_rect(W2 - 60.0, -24.0, W2 - 20.0, 24.0, 6.0)
+	build_terrain(MAPS["beach"]["ground"])
+	add_water(-W2 - 400.0, -W2 + 70.0, -D2 - 400.0, D2 + 400.0, -0.4, Color(0.2, 0.36, 0.45, 0.88))
+	for i in range(40):
+		hedgehog(rnd(-W2 + 70.0, -W2 + 120.0), rnd(-D2 + 10.0, D2 - 10.0))
+	for i in range(4):
+		var bz = -75.0 + i * 50.0
+		bunker(-W2 + 175.0, bz)
+	for i in range(8):
+		sandbags(-W2 + 150.0 + rnd(0, 20), rnd(-D2 + 10.0, D2 - 10.0), 5.0, false)
+	for i in range(12):
+		var x = -W2 + 128.0
+		var z = -D2 + 10.0 + i * (TH_ - 20.0) / 11.0
+		for k in range(5):
+			add_box(x, 0.0, z + k * 1.4 - 2.8, 0.08, 0.9, 0.08, Color(0.23, 0.2, 0.17), {"collide": false})
+		add_box(x, 0.4, z, 0.04, 0.04, 6.0, Color(0.33, 0.31, 0.29), {"collide": false})
+	village(W2 - 90.0, 0.0, 26.0, 40.0, 7, 2)
+	_village_build(return_village, 2)
+	var objs = [Vector3(-W2 + 110.0, 0, 0), Vector3(-W2 + 175.0, 0, -25), Vector3(W2 - 90.0, 0, 0)]
+	objectives = []
+	for i in range(3):
+		objectives.append({"p": objs[i], "name": "ABC"[i]})
+	capture = objs[1]
+	spawn = [Vector3(-W2 + 85.0, 0, 0), Vector3(W2 - 40.0, 0, 0)]
+	camp(0, spawn[0])
+	base(1.0, W2 - 40.0)
+
+# a different battlefield every time, from a seed
+func build_random(seed_v: int) -> void:
+	rng.seed = seed_v
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	for i in range(rng.randi_range(15, 40)):
+		hill(rnd(-W2, W2), rnd(-D2, D2), rnd(12, 36), rnd(1.0, 4.5))
+	var n = rng.randi_range(3, 5)
+	var objs = []
+	for i in range(n):
+		objs.append(Vector3(-W2 + 70.0 + i * (TW - 140.0) / (n - 1), 0, rnd(-D2 * 0.5, D2 * 0.5)))
+	roads = [[-W2, W2, -3.5, 3.5]] if rng.randf() < 0.7 else []
+	var vils = []
+	for o in objs:
+		var kind = rng.randi() % 3
+		if kind == 0:
+			village(o.x, o.z, 20.0, 18.0, rng.randi_range(3, 7), rng.randi_range(0, 2))
+			vils.append([return_village, 1])
+		else:
+			flatten_rect(o.x - 8.0, o.z - 8.0, o.x + 8.0, o.z + 8.0, 4.0)
+			vils.append(null)
+	for i in range(rng.randi_range(0, 30)):
+		crater_at(rnd(-W2 + 60.0, W2 - 60.0), rnd(-D2, D2), rnd(2, 3.5), rnd(0.8, 1.3))
+	for sx in [-1.0, 1.0]:
+		flatten_rect(sx * (W2 - 40.0) - 20.0, -24.0, sx * (W2 - 40.0) + 20.0, 24.0, 6.0)
+	_flatten_roads()
+	build_terrain(Color(rng.randf_range(0.38, 0.55), rng.randf_range(0.4, 0.5), rng.randf_range(0.28, 0.38)))
+	for rd in roads:
+		flat_plane(0, 0, TW, rd[3] - rd[2], Color(0.31, 0.3, 0.3), 0.015)
+	for i in range(objs.size()):
+		var o = objs[i]
+		if vils[i] != null:
+			_village_build(vils[i][0], vils[i][1])
+		elif rng.randf() < 0.5:
+			bunker(o.x, o.z)
+		else:
+			strongpoint(o.x - 6.0, o.z, -1.0); strongpoint(o.x + 6.0, o.z, 1.0)
+		ammo_crate(o.x + 3.0, o.z + 6.0, -1)
+	for i in range(rng.randi_range(4, 14)):
+		hedge_row(rnd(-W2 + 60.0, W2 - 60.0), rnd(-D2 + 10.0, D2 - 10.0), rnd(6, 16), rng.randf() < 0.5)
+	for i in range(rng.randi_range(30, 160)):
+		var x = rnd(-W2 + 10.0, W2 - 10.0)
+		var z = rnd(-D2 + 5.0, D2 - 5.0)
+		if not on_road(x, z) and not inside_any(x, z, 2.0):
+			live_tree(x, z)
+	for i in range(rng.randi_range(2, 8)):
+		var x = rnd(-W2 + 70.0, W2 - 70.0)
+		var z = rnd(-D2 + 15.0, D2 - 15.0)
+		if not inside_any(x, z, 4.0):
+			if rng.randf() < 0.5:
+				tank(x, z)
+			else:
+				truck(x, z, rng.randf() < 0.5)
+	_std_end("farm", objs, W2 - 40.0)
 
 # roads are flat painted strips, so the ground under them must be flat too (no hills or holes hidden under the paint)
 func _flatten_roads() -> void:
@@ -1717,7 +2132,11 @@ func load_map(id: String) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []
+	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
+	if id == "random":
+		var rs = RandomNumberGenerator.new()
+		rs.seed = G.random_seed
+		MAPS["random"]["size"] = Vector2([300.0, 360.0, 480.0][rs.randi() % 3], [200.0, 240.0][rs.randi() % 2])
 	var sz: Vector2 = MAPS.get(id, {}).get("size", Vector2(260, 190))
 	if id == "custom":
 		sz = G.custom_map["size"]
@@ -1737,6 +2156,18 @@ func load_map(id: String) -> void:
 		build_valley()
 	elif id == "front":
 		build_front()
+	elif id == "river":
+		build_river()
+	elif id == "forest":
+		build_forest()
+	elif id == "city":
+		build_city()
+	elif id == "pass":
+		build_pass()
+	elif id == "beach":
+		build_beach()
+	elif id == "random":
+		build_random(G.random_seed)
 	elif id == "custom":
 		build_custom(G.custom_map)
 	else:
@@ -1753,6 +2184,6 @@ func load_map(id: String) -> void:
 	build_nav()
 	build_cover()
 	build_decor()
-	build_backdrop({"town": "urban", "field": "farm", "trenches": "war", "valley": "farm", "front": "war"}.get(id, "farm"))
+	build_backdrop({"town": "urban", "field": "farm", "trenches": "war", "valley": "farm", "front": "war", "city": "urban", "river": "farm", "pass": "farm", "forest": "farm", "beach": "farm"}.get(id, "farm"))
 	for s in smoke_sources:
 		G.fx.wreck_smoke(s, geo_root)

@@ -569,7 +569,15 @@ static func decide(s) -> void:
 			s.task = null
 		else:
 			return
-	if s.ammo_frac() < 0.3 and (s.vis_t == null or s.mag == 0):
+	if s.ammo_frac() < 0.7 and s.vis_t == null and s.task != "resupply":
+		for o in G.soldiers:
+			if o.state == "dead" and o.reserve > 0 and G.dist2d(o.pos, s.pos) < 9.0:
+				release_cover(s)
+				s.supply_target = o
+				s.task = "resupply"
+				go_to(s, o.pos, 4.0)
+				return
+	if s.ammo_frac() < 0.4 and (s.vis_t == null or s.mag == 0):
 		var src = find_ammo(s)
 		if src != null:
 			release_cover(s)
@@ -1082,6 +1090,14 @@ static func aim_and_fire(s) -> void:
 						s.burst = randi_range(1, 3) if randf() < 0.35 else 0
 					else:
 						s.burst = randi_range(W["burst"][0], W["burst"][1])
+					# running low: short, aimed bursts and no shooting at shadows
+					var af = s.ammo_frac()
+					if af < 0.35:
+						s.burst = mini(s.burst, maxi(1, W["burst"][0]))
+						if tgt == null:
+							s.burst = 0
+					elif af < 0.6 and tgt == null and randf() < 0.5:
+						s.burst = 0
 					s.burst_cd = (randf_range(0.35, 1.1) if W["auto"] else randf_range(0.2, 0.6)) * (1.0 + s.supp) * (3.0 if far else 1.0)
 	else:
 		s.burst = 0
@@ -1170,11 +1186,12 @@ static func find_ammo(s):
 		if d < bd and d < 140.0:
 			bd = d
 			best = a
+	bd *= 1.3      # a long walk to a crate is worth less than a body close by
 	for o in G.soldiers:
 		if o.state == "dead" and o.reserve > 0 and o != s:
 			var d2 = G.dist2d(o.pos, s.pos)
-			if d2 < 30.0 and d2 * 2.0 < bd:
-				bd = d2 * 2.0
+			if d2 < 45.0 and d2 < bd:
+				bd = d2
 				best = o
 	return best
 

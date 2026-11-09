@@ -270,7 +270,8 @@ static func _complete(st: Dictionary, quiet: bool) -> void:
 	match st["kind"]:
 		"fob", "fob2", "supply", "hq":
 			var a = _wv(st, 2.6 if st["kind"] in ["fob", "fob2"] else 0.0, 1.5 if st["kind"] in ["fob", "fob2"] else 0.0)
-			st["ammo"] = {"p": a, "team": t, "stock": 100.0 if st["kind"] != "hq" else 1e9, "site": st}
+			# only HQ never runs dry; FOBs and dumps start with what the builders brought and rely on supply trucks
+			st["ammo"] = {"p": a, "team": t, "stock": 60.0 if st["kind"] != "hq" else 1e9, "site": st}
 			G.world.ammo_points.append(st["ammo"])
 		"mgnest", "mortarpit", "aa", "pillbox":
 			VModel.bare = true
@@ -607,6 +608,16 @@ static func _effect(st: Dictionary, dt: float) -> void:
 	st["t"] += dt
 	match st["kind"]:
 		"hospital":
+			# each aid station keeps an ambulance running
+			if G.sim_time - st.get("amb_t", -999.0) > 45.0:
+				var have = false
+				for v in G.vehicles:
+					if v.kind == "ambulance" and v.team == t and not v.dead:
+						have = true
+				if not have:
+					st["amb_t"] = G.sim_time
+					var ap = G.main._free_spot(st["p"] + _front(st) * 8.0)
+					G.main.spawn_vehicle("ambulance", t, ap, atan2(_front(st).x, _front(st).z), true)
 			for s in G.soldiers:
 				if s.team == t and s.state == "alive" and s.hp < 100.0 and G.dist2d(s.pos, st["p"]) < 10.0:
 					s.hp = minf(100.0, s.hp + 4.0 * dt)
@@ -761,7 +772,7 @@ static func _ai_plan(t: int) -> void:
 			at = home + to * 0.3
 		if G.dist2d(at, obj) < 45.0 and L > 60.0:
 			at = obj - to.normalized() * 45.0
-		var spot = find_spot(at, "fob", 22.0)
+		var spot = find_spot(at, "fob", 22.0, 14, false, t)
 		if spot != null:
 			place("fob", t, spot, to)
 			G.ui.radio(t, "Engineers: setting up a FOB at %s" % AI.grid_ref(spot))
@@ -800,7 +811,7 @@ static func _ai_plan(t: int) -> void:
 				if not hq_alive(t):
 					continue
 				want = home + G.flat(obj - home).normalized() * 12.0 + side * 14.0
-			var spot = find_spot(want, item[0], 8.0)
+			var spot = find_spot(want, item[0], 8.0, 14, false, t)
 			if spot != null:
 				place(item[0], t, spot, fw)
 				return
@@ -828,7 +839,7 @@ static func _ai_defend_plan(t: int, ok: Array) -> void:
 		if pt["plan"].has(key):
 			continue
 		pt["plan"][key] = true
-		var spot = find_spot(pt["p"] + side * item[1] + fw * item[2], item[0], 5.0)
+		var spot = find_spot(pt["p"] + side * item[1] + fw * item[2], item[0], 5.0, 14, false, t)
 		if spot != null:
 			place(item[0], t, spot, fw)
 			return
@@ -859,17 +870,46 @@ static func _held_point(t: int):
 	return null
 
 # somewhere flat and empty for a structure, near a wanted spot
-static func find_spot(want: Vector3, kind: String, spread: float, tries: int = 14, relaxed: bool = false):
+static func find_spot(want: Vector3, kind: String, spread: float, tries: int = 14, relaxed: bool = false, team: int = -1):
 	var sz: Vector2 = KINDS[kind]["size"]
 	var r = maxf(sz.x, sz.y) * 0.5
 	var b: Rect2 = G.world.bounds
-	for k in range(tries):
+	# where the enemy will be looking from
+	var eye = null
+	if team >= 0:
+		eye = Commander._enemy_center(team)
+		if eye == null:
+			eye = G.world.spawn[(team + 1) % G.team_count()]
+	var best = null
+	var bs = 1e9
+	var found = 0
+	for k in range(tries + (6 if team >= 0 else 0)):
 		var p = want if k == 0 else want + Vector3(randf_range(-spread, spread), 0, randf_range(-spread, spread))
 		if p.x < b.position.x + r + 3.0 or p.x > b.end.x - r - 3.0 or p.z < b.position.y + r + 3.0 or p.z > b.end.y - r - 3.0:
 			continue
-		if clear_at(p, kind, relaxed):
-			return Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
-	return null
+		if not clear_at(p, kind, relaxed):
+			continue
+		var gp = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
+		if team < 0:
+			return gp
+		found += 1
+		# out of the enemy's sight, tucked in among cover, not too far from where it's wanted
+		var sc = G.dist2d(gp, want) * 0.2
+		if not G.blocked(eye + Vector3(0, 1.6, 0), gp + Vector3(0, 1.5, 0)):
+			sc += 6.0 if kind in ["fob", "fob2", "hospital", "depot", "supply", "radio", "aa", "mortarpit"] else 2.0
+		var near = 0
+		for c in G.world.cols_in_rect(gp.x - 12.0, gp.z - 12.0, gp.x + 12.0, gp.z + 12.0):
+			if c.hi.y - c.gy > 1.2:
+				near += 1
+		sc -= minf(near, 8) * 0.5
+		if kind in ["fob", "fob2", "hospital", "depot", "supply", "radio"]:
+			sc -= minf(G.dist2d(gp, eye), 200.0) * 0.015
+		if sc < bs:
+			bs = sc
+			best = gp
+		if found >= 8:
+			break
+	return best
 
 static func clear_at(p: Vector3, kind: String, relaxed: bool = false) -> bool:
 	var sz: Vector2 = KINDS[kind]["size"]

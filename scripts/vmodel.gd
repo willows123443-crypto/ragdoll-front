@@ -350,7 +350,7 @@ static func build(v) -> void:
 			v.turret.add_child(v.gun_pivot)
 			mg(v, v.gun_pivot, Vector3(0, 0, 0.1))
 			box(v, v.gun_pivot, Vector3(0.6, 0.4, 0.04), Vector3(0, 0.1, 0.45), dark, {"b": 0.02})
-		"truck":
+		"truck", "ambulance", "radar":
 			col(v, Vector3(2.4, 0.5, 7.0), Vector3(0, 0.95, 0))
 			col(v, Vector3(2.3, 0.75, 1.8), Vector3(0, 1.55, 2.5))
 			box(v, hull, Vector3(1.6, 0.3, 7.0), Vector3(0, 0.85, 0), METAL)
@@ -380,6 +380,47 @@ static func build(v) -> void:
 			box(v, hull, Vector3(2.4, 0.16, 0.15), Vector3(0, 0.98, 4.66), METAL, {"b": 0.04})
 			cyl(hull, 0.07, 1.4, Vector3(1.05, 2.4, 1.52), METAL, "y", {"seg": 8})
 			cyl(hull, 0.26, 0.9, Vector3(-1.15, 1.05, 1.0), dark, "z")
+			if v.kind == "ambulance":
+				# a closed white box body with red crosses
+				var wc = Color(0.86, 0.86, 0.82)
+				box(v, hull, Vector3(2.45, 2.0, 4.7), Vector3(0, 2.3, -1.2), wc, {"b": 0.06})
+				var rc = Color(0.8, 0.12, 0.12)
+				for x in [1.24, -1.24]:
+					var cn = Node3D.new()
+					cn.position = Vector3(x, 2.4, -1.2)
+					cn.rotation.y = PI / 2.0 if x > 0 else -PI / 2.0
+					hull.add_child(cn)
+					box(v, cn, Vector3(1.0, 0.3, 0.02), Vector3.ZERO, rc, {"b": 0.0})
+					box(v, cn, Vector3(0.3, 1.0, 0.02), Vector3.ZERO, rc, {"b": 0.0})
+				var top = Node3D.new()
+				top.position = Vector3(0, 3.31, -1.2)
+				top.rotation.x = -PI / 2.0
+				hull.add_child(top)
+				box(v, top, Vector3(1.2, 0.36, 0.02), Vector3.ZERO, rc, {"b": 0.0})
+				box(v, top, Vector3(0.36, 1.2, 0.02), Vector3.ZERO, rc, {"b": 0.0})
+				box(v, hull, Vector3(2.0, 1.6, 0.05), Vector3(0, 2.2, -3.56), wc.darkened(0.1), {"b": 0.01})
+				for z in [2.4, -0.4, -2.6]:
+					for x in [1.1, -1.1]:
+						wheel(v, Vector3(x, 0.55, z), 0.55, 0.4, rim)
+				return
+			if v.kind == "radar":
+				# a closed command body with a turning radar dish and aerials
+				var bc = base.darkened(0.08)
+				box(v, hull, Vector3(2.45, 1.9, 4.7), Vector3(0, 2.25, -1.2), bc, {"b": 0.06})
+				for k in range(3):
+					box(v, hull, Vector3(0.04, 0.4, 0.6), Vector3(1.24, 2.4, -2.5 + k * 1.2), Color(0.2, 0.24, 0.28), {"b": 0.0})
+				cyl(hull, 0.12, 0.6, Vector3(0, 3.5, -1.6), METAL, "y", {"seg": 8})
+				v.rotor = Node3D.new()
+				v.rotor.position = Vector3(0, 3.85, -1.6)
+				hull.add_child(v.rotor)
+				box(v, v.rotor, Vector3(2.4, 0.9, 0.08), Vector3(0, 0.3, 0), Color(0.6, 0.62, 0.6), {"b": 0.02, "rot": Vector3(-0.3, 0, 0)})
+				for x in [-0.9, 0.9]:
+					antenna(v, hull, Vector3(x, 3.2, 0.6), 2.6)
+				insignia(v, hull, Vector3(-1.24, 2.4, -1.2), "x-", 0.35)
+				for z in [2.4, -0.4, -2.6]:
+					for x in [1.1, -1.1]:
+						wheel(v, Vector3(x, 0.55, z), 0.55, 0.4, rim)
+				return
 			# cargo bed with plank sides
 			box(v, hull, Vector3(2.4, 0.15, 4.6), Vector3(0, 1.38, -1.2), WOOD.darkened(0.15), {"b": 0.03})
 			for x in [1.18, -1.18]:

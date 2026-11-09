@@ -13,7 +13,7 @@ const TOOLS = {
 		["v:aagun:0", "AA gun A"], ["v:aagun:1", "AA gun B"], ["v:fighter:0", "Fighter A"], ["v:fighter:1", "Fighter B"], ["v:bomber:0", "Bomber A"], ["v:bridger:0", "Bridge layer A"]],
 	"support": [["sup:artillery", "Artillery 10"], ["sup:airstrike", "Air strike 16"], ["sup:paradrop", "Paras 12"], ["sup:heli", "Heli 16"],
 		["sup:jeep", "Jeep 8"], ["sup:halftrack", "Half-track 14"], ["sup:armoredcar", "Arm. car 20"], ["sup:tank", "Tank 30"], ["sup:gunship", "Gunship 34"],
-		["sup:fighter", "Fighter 22"], ["sup:bomber", "Dive bomber 28"], ["sup:bridger", "Bridge layer 14"]],
+		["sup:fighter", "Fighter 22"], ["sup:bomber", "Dive bomber 28"], ["sup:bridger", "Bridge layer 14"], ["sup:radar", "Command truck 18"], ["sup:ambulance", "Ambulance 8"]],
 	"build": [["bteam", "Team"], ["b:fob", "FOB"], ["b:sandbags", "Sandbags"], ["b:wire", "Wire"], ["b:traps", "Tank traps"], ["b:mgnest", "MG nest"],
 		["b:mortarpit", "Mortar pit"], ["b:aa", "AA gun"], ["b:tower", "Watchtower"], ["b:bunker", "Bunker"], ["b:hospital", "Hospital"], ["b:radio", "Radio mast"],
 		["b:depot", "Depot"], ["b:supply", "Supply dump"], ["up", "Upgrade"], ["camo", "Camo net"], ["rep", "Rebuild"], ["dis", "Dismantle"]],

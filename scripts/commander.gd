@@ -26,6 +26,8 @@ static func step(dt: float) -> void:
 			continue
 		var off = officer(t)
 		timers[t] = 14.0 if off != null else 30.0
+		if VehExt.has_radar(t):
+			timers[t] *= 0.6       # the command truck keeps the picture fresh
 		_plan(t, off)
 
 static func _squads(team: int) -> Array:

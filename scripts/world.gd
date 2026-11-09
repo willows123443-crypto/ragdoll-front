@@ -1476,15 +1476,15 @@ func base(sx: float, dist: float = 96.0) -> void:
 		add_box(bx + sx * 7.0, 0.0, -22.0 + i * 22.0, 6.0, 2.4, 4.0, Color(0.33, 0.38, 0.24) if sx < 0 else Color(0.42, 0.39, 0.28), {"dest": true, "hp": 120.0})
 	add_box(bx + sx * 3.0, 0.0, 0.0, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
 	add_box(bx + sx * 3.9, 5.6, 0.0, 1.6, 1.0, 0.05, G.team_color(0 if sx < 0 else 1), {"collide": false, "no_shadow": true})
-	ammo_crate(bx + sx * 1.5, -5.0, 0 if sx < 0 else 1)
-	ammo_crate(bx + sx * 1.5, 5.0, 0 if sx < 0 else 1)
+	ammo_crate(bx + sx * 1.5, -5.0, 0 if sx < 0 else 1, true)
+	ammo_crate(bx + sx * 1.5, 5.0, 0 if sx < 0 else 1, true)
 
 # a small camp: flagpole and two ammo crates
 func camp(t: int, p: Vector3) -> void:
 	add_box(p.x, 0.0, p.z, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
 	add_box(p.x + 0.9, 5.6, p.z, 1.6, 1.0, 0.05, G.team_color(t), {"collide": false, "no_shadow": true})
-	ammo_crate(p.x - 4.0, p.z, t)
-	ammo_crate(p.x + 4.0, p.z, t)
+	ammo_crate(p.x - 4.0, p.z, t, true)
+	ammo_crate(p.x + 4.0, p.z, t, true)
 	# tents and a sandbag ring facing the middle of the map
 	var hut = G.TEAM_UNI[t].lerp(Color(0.4, 0.4, 0.33), 0.5) if t < G.TEAM_UNI.size() else Color(0.4, 0.4, 0.33)
 	var inward = -signf(p.z) if absf(p.z) > absf(p.x) else 0.0
@@ -1497,10 +1497,12 @@ func camp(t: int, p: Vector3) -> void:
 		sandbags(p.x + k * 9.0, p.z + inward * 8.0, 5.0, true)
 
 # an ammo crate: stand next to it for a second to restock
-func ammo_crate(x: float, z: float, team: int) -> void:
+func ammo_crate(x: float, z: float, team: int, base_crate: bool = false) -> void:
 	add_box(x, 0.0, z, 1.3, 0.7, 0.8, Color(0.24, 0.29, 0.18), {"mat": 1})
 	add_box(x, 0.7, z, 1.32, 0.06, 0.2, Color(0.82, 0.7, 0.2), {"collide": false})
-	ammo_points.append({"p": Vector3(x, ground_y(x, z), z), "team": team})
+	# crates at a side's own base never run out; ones lying around the map do
+	var at_base = base_crate
+	ammo_points.append({"p": Vector3(x, ground_y(x, z), z), "team": team, "stock": 1e9 if at_base else 60.0})
 
 # where a beaten soldier runs back to
 # where a beaten soldier falls back to: the nearest held point behind him, or a line 40 m back toward base

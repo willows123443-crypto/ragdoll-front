@@ -464,4 +464,112 @@ static func supply_run(team: int, st: Dictionary) -> void:
 		return
 	drv.mount(v, 0)
 	st["truck"] = v
+	# crates stacked in the back, so you can see what it's carrying
+	var cargo = Node3D.new()
+	v.add_child(cargo)
+	for k in range(6):
+		VModel.box(v, cargo, Vector3(0.95, 0.55, 0.65), Vector3(-0.55 + (k % 2) * 1.1, 1.75, -0.2 - (k / 2) * 1.2), Color(0.3, 0.33, 0.2).darkened(randf_range(0.0, 0.15)), {"b": 0.03})
+	v.set_meta("cargo", cargo)
 	G.ui.radio(team, "Supply truck on its way to the %s at %s" % [st["name"], AI.grid_ref(st["p"])])
+
+# ---------------------------------------------------------------- smoke, ambulances, command trucks
+# armour hit hard throws a smoke screen out ahead and backs off behind it
+static func pop_smoke(v, at: Vector3) -> void:
+	v.smoke_cd = G.sim_time + 50.0
+	var away = G.flat(at - v.pos)
+	if away.length_squared() < 0.01:
+		away = v.forward()
+	away = away.normalized()
+	for k in range(3):
+		var side = Vector3(-away.z, 0, away.x) * (k - 1) * 5.0
+		Combat.smoke_at(v.pos + away * 9.0 + side, 26.0, Color(0.85, 0.85, 0.83), 0.8)
+	G.audio.play(G.audio.s_rocket, v.pos, -4.0, 1.6)
+	var d = v.driver()
+	if d != null and is_instance_valid(d):
+		G.fx.callout(d, G.pick(["Popping smoke!", "Smoke, smoke! Reversing!"]))
+		if not d.is_player:
+			v.reverse_t = 2.5
+
+# ambulances fetch the wounded and run them back to the field hospital (or HQ)
+static func medevac(v, dt: float):
+	var load = 0
+	for i in range(1, v.seats.size()):
+		if v.seats[i] != null:
+			load += 1
+	var hosp = null
+	for st in Build.sites:
+		if st["team"] == v.team and st["kind"] == "hospital" and Build.alive(st):
+			if hosp == null or G.dist2d(st["p"], v.pos) < G.dist2d(hosp["p"], v.pos):
+				hosp = st
+	var home: Vector3 = hosp["p"] if hosp != null else G.world.spawn[v.team]
+	# the nearest wounded soldier nobody is already helping
+	var best = null
+	var bd = 160.0
+	if load < v.seats.size() - 1:
+		for s in G.soldiers:
+			if s.team == v.team and s.state == "wounded" and s.dragger == null and s.carried_by == null:
+				var d = G.dist2d(s.pos, v.pos)
+				var near_enemy = false
+				for o in G.soldiers:
+					if o.team != v.team and o.state == "alive" and G.dist2d(o.pos, s.pos) < 25.0:
+						near_enemy = true
+						break
+				if d < bd and not near_enemy:
+					bd = d
+					best = s
+	if best != null and (load == 0 or bd < 50.0):
+		if bd < 5.0 and absf(v.speed) < 1.0:
+			var seat = v.free_seat("pass")
+			if seat > 0 and best.mount(v, seat):
+				G.fx.callout(best, "Thank God…")
+			return null
+		return best.pos
+	if load == 0:
+		# wait by the hospital for the next call
+		return home if G.dist2d(home, v.pos) > 14.0 else null
+	if G.dist2d(home, v.pos) < 12.0 and absf(v.speed) < 1.0:
+		for i in range(1, v.seats.size()):
+			var p = v.seats[i]
+			if p != null and is_instance_valid(p):
+				p.dismount(false)
+				p.hp = 100.0
+				p.heal_t = 0.0
+				G.fx.callout(p, G.pick(["Patched up and ready.", "Back in the fight."]))
+		G.ui.radio(v.team, "Ambulance: wounded delivered to the aid station")
+		return null
+	return home
+
+# the command truck parks well behind the line
+static func radar_spot(v) -> Vector3:
+	var home: Vector3 = G.world.spawn[v.team]
+	var r: Vector3 = G.world.rally_point(v.team)
+	return home.lerp(r, 0.5) + G.flat(home - Build._objective(v.team)).normalized() * 10.0
+
+# while it's running, the command truck tracks every enemy within a wide radius for the whole team
+static func radar_tick(v, dt: float) -> void:
+	v.radar_t += dt
+	if v.rotor != null:
+		v.rotor.rotation.y += dt * 1.6
+	if v.radar_t < 2.0:
+		return
+	v.radar_t = 0.0
+	if v.driver() == null and v.seats.size() > 1 and v.seats[1] == null:
+		return
+	var friend = null
+	for s in G.soldiers:
+		if s.team == v.team and s.state == "alive":
+			friend = s
+			break
+	if friend == null:
+		return
+	for o in G.soldiers:
+		if o.team != v.team and o.state != "dead" and G.dist2d(o.pos, v.pos) < 170.0:
+			for f in G.soldiers:
+				if f.team == v.team and f.state == "alive" and f.squad != null and Squad.leader_of(f.squad) == f:
+					AI.add_intel(f, o, o.pos, 4.0, false)
+
+static func has_radar(team: int) -> bool:
+	for v in G.vehicles:
+		if v.kind == "radar" and v.team == team and not v.dead:
+			return true
+	return false

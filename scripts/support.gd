@@ -7,12 +7,12 @@ extends RefCounted
 const COSTS = {
 	"artillery": 10, "airstrike": 16, "paradrop": 12, "heli": 16,
 	"jeep": 8, "motorbike": 6, "halftrack": 14, "armoredcar": 20, "tank": 30, "gunship": 34,
-	"fighter": 22, "bomber": 28, "bridger": 14,
+	"fighter": 22, "bomber": 28, "bridger": 14, "radar": 18, "ambulance": 8,
 }
 const NAMES = {
 	"artillery": "Artillery barrage", "airstrike": "Air strike", "paradrop": "Paratroopers", "heli": "Helicopter insertion",
 	"jeep": "Jeep", "motorbike": "Motorbike", "halftrack": "Half-track", "armoredcar": "Armoured car", "tank": "Tank", "gunship": "Gunship (70 s)",
-	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer",
+	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance",
 }
 
 static var points: Array = []

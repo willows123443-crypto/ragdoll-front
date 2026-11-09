@@ -335,6 +335,8 @@ func _starting_vehicles(t: int) -> void:
 		return
 	var fwd = G.flat(enemy - home).normalized()
 	spawn_vehicle("mortar", t, _free_spot(home - fwd * 6.0 + side * 6.0), yaw)
+	if G.mode != "laststand" and G.mode != "sabotage":
+		spawn_vehicle("radar", t, _free_spot(home - fwd * 16.0 - side * 8.0), yaw)
 	if G.mode != "laststand" or t == 0:
 		for k in [-1.0, 1.0]:
 			var np = _free_spot(home + fwd * minf(40.0, G.dist2d(home, enemy) * 0.3) + side * k * 14.0)

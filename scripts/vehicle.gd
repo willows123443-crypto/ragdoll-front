@@ -94,6 +94,19 @@ const SPECS = {
 	"bridger": {"name": "Bridge layer", "len": 7.4, "wid": 3.3, "speed": 7.0, "rev": 3.0, "accel": 3.0, "turn": 0.8, "hp": 1300.0,
 		"bullet": 0.0, "tracked": true, "standoff": 0.0,
 		"seats": [{"o": Vector3(0.6, 1.0, 1.8), "role": "driver", "pose": "hidden", "face": 0.0}]},
+	"ambulance": {"name": "Ambulance", "len": 7.2, "wid": 2.5, "speed": 12.0, "rev": 4.0, "accel": 5.0, "turn": 1.0, "hp": 550.0,
+		"bullet": 0.35, "tracked": false, "standoff": 0.0,
+		"seats": [
+			{"o": Vector3(0.5, 1.75, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.6, 1.6, -0.5), "role": "pass", "pose": "hidden", "face": 0.0},
+			{"o": Vector3(-0.6, 1.6, -0.5), "role": "pass", "pose": "hidden", "face": 0.0},
+			{"o": Vector3(0.6, 1.6, -2.0), "role": "pass", "pose": "hidden", "face": 0.0},
+			{"o": Vector3(-0.6, 1.6, -2.0), "role": "pass", "pose": "hidden", "face": 0.0}]},
+	"radar": {"name": "Command truck", "len": 7.2, "wid": 2.5, "speed": 10.0, "rev": 4.0, "accel": 4.5, "turn": 1.0, "hp": 750.0,
+		"bullet": 0.3, "tracked": false, "standoff": 0.0,
+		"seats": [
+			{"o": Vector3(0.5, 1.75, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.0, 1.6, -1.0), "role": "pass", "pose": "hidden", "face": 0.0}]},
 	"tank": {"name": "Tank", "len": 6.6, "wid": 3.3, "speed": 7.5, "rev": 3.5, "accel": 3.5, "turn": 0.85, "hp": 1800.0,
 		"bullet": 0.0, "tracked": true, "standoff": 50.0,
 		"seats": [
@@ -159,6 +172,8 @@ var towed_by = null
 var bomb_cd = 0.0
 var bridge_laid = false
 var fuel_said = false
+var smoke_cd = 0.0
+var radar_t = 0.0
 var gun_heat = 0.0             # mounted machine guns overheat
 var supply_t = 0.0
 
@@ -318,6 +333,8 @@ func step(dt: float) -> void:
 	if not doors.is_empty():
 		_doors_tick(dt)
 	gun_heat = maxf(0.0, gun_heat - 0.12 * dt)
+	if kind == "radar" and not dead:
+		VehExt.radar_tick(self, dt)
 	# mortars and field guns restock from nearby ammo crates, FOBs and supply dumps
 	if (kind == "mortar" or kind == "artillery") and shells < 20:
 		supply_t += dt
@@ -723,6 +740,8 @@ func take_damage(amount: float, attacker, at: Vector3) -> void:
 		if not burning and randf() < (0.35 if local.z > spec["len"] * 0.15 else 0.15):
 			burning = true
 			G.ui.radio(team, "%s on fire!" % spec["name"])
+	if amount >= 150.0 and (spec["tracked"] or kind == "armoredcar" or kind == "halftrack") and G.sim_time > smoke_cd and not dead:
+		VehExt.pop_smoke(self, at)
 	if amount >= 60.0 and not spec.get("plane", false):
 		VehExt.dent(self, at)
 		if hp < spec["hp"] * 0.55 and randf() < 0.3:
@@ -750,6 +769,13 @@ func destroy(attacker) -> void:
 	if towing != null and is_instance_valid(towing):
 		towing.towed_by = null
 		towing = null
+	if kind == "radar":
+		G.ui.radio(team, "Our command truck is destroyed! We're blind out here")
+		for t in range(G.team_count()):
+			if t != team:
+				G.ui.radio(t, "Enemy command truck destroyed")
+		if team < Commander.timers.size():
+			Commander.timers[team] = maxf(Commander.timers[team], 30.0)
 	for i in range(seats.size()):
 		var s = seats[i]
 		if s != null and is_instance_valid(s):
@@ -841,6 +867,14 @@ func _ai_drive(dt: float) -> Array:
 			return [0.0, 0.0]
 		if spec.get("boat", false):
 			return _steer_to(target, dt)
+	elif kind == "ambulance":
+		target = VehExt.medevac(self, dt)
+		if target == null:
+			return [0.0, 0.0]
+	elif kind == "radar":
+		target = VehExt.radar_spot(self)
+		if G.dist2d(target, pos) < 6.0:
+			return [0.0, 0.0]
 	elif fuel < 0.15 and VehExt.fuel_stop(self) != null and G.dist2d(VehExt.fuel_stop(self), pos) > 12.0:
 		target = VehExt.fuel_stop(self)
 	elif kind == "bridger":
@@ -962,7 +996,9 @@ func _mission_target(dt: float):
 			if m.get("type", "") == "supply":
 				var st = m["site"]
 				if st != null and not st["dead"] and st.get("ammo") != null:
-					st["ammo"]["stock"] = 100.0
+					st["ammo"]["stock"] = minf(160.0, st["ammo"]["stock"] + 100.0)
+					if has_meta("cargo"):
+						get_meta("cargo").visible = false
 					m["wait"] = 6.0
 					G.ui.radio(team, "Supplies delivered to the %s" % st["name"])
 			for i in range(1, seats.size()):

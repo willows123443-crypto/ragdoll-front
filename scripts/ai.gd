@@ -1,0 +1,877 @@
+class_name AI
+extends RefCounted
+# Soldier brains: what they know, where they take cover, how they move and when they shoot.
+
+# ---------------------------------------------------------------- knowledge
+# Soldiers only know about enemies they have seen or heard, or that a teammate reported:
+# squadmates share contacts by radio, anyone else has to be within shouting range.
+static func add_intel(s, enemy, at: Vector3, noise: float, seen: bool) -> void:
+	if enemy == null or not is_instance_valid(enemy) or enemy.team == s.team or enemy.state == "dead":
+		return
+	var e = s.intel.get(enemy)
+	if e != null and e["seen"] and G.sim_time - e["t"] < 1.5 and not seen:
+		return
+	var p = Vector3(at.x + randf_range(-noise, noise), at.y, at.z + randf_range(-noise, noise))
+	s.intel[enemy] = {"p": p, "t": G.sim_time, "seen": seen}
+
+static func share_intel(s, enemy, at: Vector3) -> void:
+	for o in G.soldiers:
+		if o == s or o.team != s.team or o.state == "dead" or o.state == "down":
+			continue
+		var radio = o.squad != null and o.squad == s.squad
+		if radio or o.pos.distance_squared_to(s.pos) < 35.0 * 35.0:
+			add_intel(o, enemy, at, 1.0 if radio else 2.5, false)
+
+static func best_intel(s):
+	var best = null
+	var bs = 1e9
+	for e in s.intel.keys():
+		var k = s.intel[e]
+		var age = G.sim_time - k["t"]
+		if age > 25.0 or not is_instance_valid(e) or e.state == "dead":
+			s.intel.erase(e)
+			continue
+		var sc = k["p"].distance_to(s.pos) * 0.5 + age * 4.0
+		if sc < bs:
+			bs = sc
+			best = k
+	return best
+
+static func team_intel_center(team: int):
+	var sum = Vector3.ZERO
+	var n = 0
+	for s in G.soldiers:
+		if s.team != team or s.state == "dead":
+			continue
+		for k in s.intel.values():
+			if G.sim_time - k["t"] < 20.0:
+				sum += k["p"]
+				n += 1
+	if n == 0:
+		return null
+	return sum / n
+
+static func bearing_text(from: Vector3, to: Vector3) -> String:
+	var dirs = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
+	var a = atan2(to.x - from.x, -(to.z - from.z))
+	var i = int(round(fposmod(a, TAU) / (PI / 4.0))) % 8
+	return dirs[i]
+
+static func order_of(s) -> Dictionary:
+	return s.order if s.order != null else G.orders[s.team]
+
+static func assign_squad(s) -> void:
+	var q = null
+	for sq in G.squads:
+		if sq["team"] == s.team:
+			sq["members"] = sq["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead")
+			if sq["members"].size() < 5:
+				q = sq
+				break
+	if q == null:
+		q = {"team": s.team, "members": []}
+		G.squads.append(q)
+	q["members"].append(s)
+	s.squad = q
+	s.role = "flanker" if q["members"].size() == 3 else "rifleman"
+
+static func squad_movers(q) -> int:
+	var n = 0
+	for m in q["members"]:
+		if is_instance_valid(m) and m.state == "alive" and m.move_target != null and not m.in_cover and not m.is_player:
+			n += 1
+	return n
+
+static func objective_for(s) -> Vector3:
+	var o = order_of(s)
+	if o["mode"] == "move" and o["point"] != null:
+		return o["point"]
+	if G.mode == "capture":
+		return G.world.capture
+	var c = team_intel_center(s.team)
+	if c != null:
+		return c
+	return G.world.capture if G.dist2d(s.pos, G.world.capture) > 18.0 else G.world.spawn[1 - s.team]
+
+# ---------------------------------------------------------------- cover
+static func release_cover(s) -> void:
+	if s.cover != null and s.cover.owner_s == s:
+		s.cover.owner_s = null
+	s.cover = null
+	s.in_cover = false
+	s.want_peek = false
+	s.lean_t = 0.0
+	s.force_peek = false
+
+static func take_cover(s, cp) -> void:
+	release_cover(s)
+	cp.owner_s = s
+	s.cover = cp
+	s.in_cover = false
+	s.cover_time = 0.0
+	s.cover_bad = 0
+	s.prone_t = false
+	go_to(s, cp.p, 4.8)
+
+static func cover_safe(cp, threat: Vector3) -> bool:
+	return G.blocked(Vector3(threat.x, threat.y + 1.5, threat.z), Vector3(cp.p.x, cp.p.y + 1.0, cp.p.z))
+
+static func peek_pos(cp) -> Vector3:
+	if cp.type == "corner":
+		return Vector3(cp.p.x + cp.t.x * 0.7, cp.p.y + 1.45, cp.p.z + cp.t.z * 0.7)
+	return Vector3(cp.p.x, cp.p.y + 1.55, cp.p.z)
+
+static func can_fire_from(cp, threat: Vector3) -> bool:
+	if cp.type == "wall":
+		return false
+	return not G.blocked(peek_pos(cp), Vector3(threat.x, threat.y + 1.2, threat.z))
+
+static func cover_free(cp, s) -> bool:
+	return cp.owner_s == null or cp.owner_s == s or not is_instance_valid(cp.owner_s) or cp.owner_s.state == "dead"
+
+static func find_cover(s, threat: Vector3, mode: String):
+	var dme = G.dist2d(s.pos, threat)
+	var max_d = 10.0 if mode == "hold" else (20.0 if mode == "defend" else 32.0)
+	var ideal = (s.W["range"][0] + s.W["range"][1]) / 2.0
+	var tdir = G.flat(threat - s.pos) / maxf(dme, 0.01)
+	var cands: Array = []
+	var i = 0
+	for cp in G.world.cover:
+		i += 1
+		if cp.upper or not cover_free(cp, s) or cp.ban > G.sim_time:
+			continue
+		var dx = cp.p.x - s.pos.x
+		var dz = cp.p.z - s.pos.z
+		var dm = Vector2(dx, dz).length()
+		if dm > max_d:
+			continue
+		var ex = threat.x - cp.p.x
+		var ez = threat.z - cp.p.z
+		var de = Vector2(ex, ez).length()
+		if de < 6.0:
+			continue
+		if (ex * cp.n.x + ez * cp.n.z) / de > -0.3:
+			continue
+		var sc = 0.0
+		if mode == "advance":
+			if de > dme - 5.0:
+				continue
+			sc = dm + de * 0.4
+		elif mode == "flank":
+			if de > dme - 3.0:
+				continue
+			var lat = absf(dx * tdir.z - dz * tdir.x)
+			sc = dm * 0.6 + de * 0.3 - minf(lat, 15.0) * 1.2
+		elif mode == "retreat":
+			if de < dme + 4.0:
+				continue
+			sc = dm
+		elif mode == "hold":
+			sc = dm
+		else:
+			sc = dm + maxf(0.0, de - dme) * 0.8 + (10.0 if de < 12.0 else 0.0)
+		var hide = s.hp < 40.0 or s.supp > 1.1
+		if cp.type == "wall":
+			sc += -3.0 if hide else 7.0
+		sc += absf(de - ideal) * 0.12
+		sc += float((i * 7919 + s.id * 31) % 100) / 50.0
+		cands.append([sc, cp])
+	cands.sort_custom(func(a, b): return a[0] < b[0])
+	var best = null
+	var bs = 1e9
+	for k in range(mini(6, cands.size())):
+		var cp = cands[k][1]
+		if not cover_safe(cp, threat):
+			continue
+		var sc2 = cands[k][0] + (6.0 if cp.type != "wall" and not can_fire_from(cp, threat) else 0.0)
+		if sc2 < bs:
+			bs = sc2
+			best = cp
+	return best
+
+static func find_post(s, threat: Vector3):
+	var best = null
+	var bs = 1e9
+	for T in G.world.towers:
+		for cp in T["cps"]:
+			if not cover_free(cp, s) or cp.ban > G.sim_time:
+				continue
+			var d = G.dist2d(cp.p, s.pos)
+			if d > 70.0:
+				continue
+			var de = G.dist2d(threat, cp.p)
+			if de < 15.0:
+				continue
+			if ((threat.x - cp.p.x) * cp.n.x + (threat.z - cp.p.z) * cp.n.z) / de > -0.3:
+				continue
+			var sc = d + absf(de - 60.0) * 0.3
+			if sc < bs:
+				bs = sc
+				best = cp
+	return best
+
+static func take_post(s, cp) -> void:
+	release_cover(s)
+	cp.owner_s = s
+	s.cover = cp
+	s.tower = cp.tower
+	s.task = "post"
+	s.prone_t = false
+	s.route = {"pts": [cp.tower["stair_bottom"], cp.tower["stair_top"], cp.p], "i": 0, "nav": true}
+	go_to(s, s.route["pts"][0], 4.4)
+
+static func upstairs(s) -> bool:
+	return s.pos.y - G.world.ground_y(s.pos.x, s.pos.z) > 1.5
+
+static func go_downstairs(s) -> void:
+	var T = s.tower
+	if T == null:
+		for t2 in G.world.towers:
+			if absf(s.pos.x - t2["x"]) < t2["w"] / 2.0 + 0.5 and absf(s.pos.z - t2["z"]) < t2["d"] / 2.0 + 0.5:
+				T = t2
+	release_cover(s)
+	stop_move(s)
+	if T == null:
+		return
+	s.route = {"pts": [T["stair_top"], T["stair_bottom"], T["inside"]], "i": 0, "nav": false}
+	s.task = "descend"
+
+# ---------------------------------------------------------------- movement
+static func go_to(s, point: Vector3, speed: float) -> void:
+	if s.move_target != null and s.move_target.distance_squared_to(point) < 0.25 and not s.path.is_empty():
+		s.speed_t = speed
+		return
+	s.move_target = point
+	s.path = []
+	s.need_path = true
+	s.speed_t = speed
+	s.prog_t = 0.0
+	s.prog_p = s.pos
+	s.stuck_n = 0
+
+static func stop_move(s) -> void:
+	s.move_target = null
+	s.path = []
+	s.need_path = false
+
+static func follow_path(s) -> String:
+	if s.move_target == null:
+		s.want = Vector3.ZERO
+		return "idle"
+	if s.need_path:
+		if G.path_budget <= 0:
+			s.want = Vector3.ZERO
+			return "wait"
+		G.path_budget -= 1
+		s.need_path = false
+		s.path = G.world.find_path(s.pos, s.move_target)
+		if s.path.is_empty():
+			s.path = [s.move_target]
+		s.path_i = 0
+	var wp: Vector3 = s.path[s.path_i]
+	var d = G.dist2d(wp, s.pos)
+	while d < 0.55 and s.path_i < s.path.size() - 1:
+		s.path_i += 1
+		wp = s.path[s.path_i]
+		d = G.dist2d(wp, s.pos)
+	var last = s.path_i == s.path.size() - 1
+	if last and d < 0.35:
+		s.want = Vector3.ZERO
+		return "arrived"
+	var sp = s.speed_t
+	if last and d < 1.2:
+		sp *= maxf(0.3, d / 1.2)
+	s.want = G.flat(wp - s.pos) / maxf(d, 0.01) * sp
+	s.prog_t += G.DT
+	if s.prog_t > 1.4:
+		var moved = G.dist2d(s.pos, s.prog_p)
+		s.prog_p = s.pos
+		s.prog_t = 0.0
+		if moved < 0.35 and s.vault == null:
+			s.stuck_n += 1
+			s.need_path = true
+			if s.stuck_n >= 3:
+				s.stuck_n = 0
+				return "stuck"
+		else:
+			s.stuck_n = 0
+	return "moving"
+
+static func follow_route(s) -> void:
+	var R = s.route
+	var wp: Vector3 = R["pts"][R["i"]]
+	var d = G.dist2d(wp, s.pos)
+	if d < 0.4 and absf(wp.y - s.pos.y) < 1.2:
+		R["i"] += 1
+		if R["i"] >= R["pts"].size():
+			s.route = null
+			s.want = Vector3.ZERO
+			if s.task == "post":
+				s.in_cover = true
+				s.cover_time = 0.0
+			else:
+				s.task = null
+				s.tower = null
+				s.decide_t = 0.0
+		return
+	s.want = G.flat(wp - s.pos) / maxf(d, 0.01) * 2.6
+
+# ---------------------------------------------------------------- perception
+static func perceive(s) -> void:
+	s.think = randf_range(0.25, 0.4)
+	var eye = s.head_pos()
+	var in_c = s.in_cover and s.cover != null
+	var pe = peek_pos(s.cover) if in_c else Vector3.ZERO
+	var vis = null
+	var peek_only = false
+	var cand: Array = []
+	for o in G.soldiers:
+		if o.team != s.team and o.state != "dead":
+			var d2 = o.pos.distance_squared_to(s.pos)
+			if d2 < 160.0 * 160.0:
+				cand.append([d2 * (0.5 if o == s.target else 1.0), o])
+	cand.sort_custom(func(a, b): return a[0] < b[0])
+	for k in range(mini(6, cand.size())):
+		var o = cand[k][1]
+		var d = sqrt(cand[k][0])
+		var rng = G.view_range
+		if d > rng:
+			continue
+		var ch = o.chest()
+		var seen = false
+		var po = false
+		if not G.blocked(eye, ch, true):
+			seen = true
+		elif in_c and s.cover.type != "wall" and not G.blocked(pe, ch, true):
+			seen = true
+			po = true
+		if not seen:
+			continue
+		var prev = s.intel.get(o)
+		var fresh = not (prev != null and prev["seen"] and G.sim_time - prev["t"] < 6.0)
+		add_intel(s, o, o.pos, 0.0, true)
+		if fresh or G.sim_time - s.report_t > 2.0:
+			s.report_t = G.sim_time
+			share_intel(s, o, o.pos)
+		if fresh and s.is_up() and G.sim_time - s.seen_t > 6.0:
+			var dist = int(round(s.pos.distance_to(o.pos) / 5.0)) * 5
+			G.fx.callout(s, G.pick(["Contact %s, %dm!" % [bearing_text(s.pos, o.pos), dist], "Enemy %s!" % bearing_text(s.pos, o.pos), "Contact!"]))
+		if vis == null:
+			vis = o
+			peek_only = po
+	s.vis_t = vis
+	s.peek_vis = peek_only
+	if vis != null:
+		s.target = vis
+	var best = best_intel(s)
+	if best != null:
+		s.threat = best["p"]
+		s.last_seen = best["p"]
+		s.seen_t = best["t"]
+		s.has_seen = true
+		s.has_threat = true
+	else:
+		s.has_seen = false
+		s.seen_t = -99.0
+		s.threat = objective_for(s)
+		s.has_threat = true
+	var known = s.has_seen and G.sim_time - s.seen_t < 12.0
+	if s.cover != null and known and (s.in_cover or s.pos.distance_to(s.cover.p) < 6.0):
+		if not cover_safe(s.cover, s.threat):
+			s.cover_bad += 1
+		else:
+			s.cover_bad = 0
+	# live grenades nearby
+	if s.flee == null and not upstairs(s):
+		for g in G.grenades:
+			if not is_instance_valid(g) or g.get_meta("type") != "frag":
+				continue
+			if g.get_meta("fuse") < 2.3 and g.global_position.distance_to(s.pos) < 6.5 and g.get_meta("owner") != s:
+				var away = G.flat(s.pos - g.global_position)
+				if away.length_squared() < 0.01:
+					away = Vector3(1, 0, 0)
+				s.flee = s.pos + away.normalized() * 8.0
+				s.flee_t = 3.0
+				release_cover(s)
+				s.route = null
+				go_to(s, s.flee, 6.0)
+				s.task = "flee"
+				G.fx.callout(s, "Grenade!")
+				if s.dragging != null:
+					s.dragging.dragger = null
+					s.dragging = null
+					s.hand_t = null
+				break
+
+# ---------------------------------------------------------------- decisions
+static func decide(s) -> void:
+	s.decide_t = randf_range(1.6, 2.6)
+	if s.task == "flee" or s.route != null:
+		return
+	var order = order_of(s)
+	var known = s.has_seen and G.sim_time - s.seen_t < 12.0
+	var threat: Vector3 = s.threat
+	var W = s.W
+	var dT = G.dist2d(threat, s.pos)
+	if upstairs(s):
+		if s.task == "post" and s.cover != null and s.cover_bad < 2 and order["mode"] != "move" and order["mode"] != "charge":
+			return
+		if s.cover != null and s.cover_bad >= 2:
+			s.cover.ban = G.sim_time + 20.0
+		go_downstairs(s)
+		return
+	# medic duty
+	if s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and s.patient.state == "wounded":
+		return
+	if s.vis_t == null and G.sim_time - s.seen_t > 2.0 and s.hp > 40.0:
+		for w in G.soldiers:
+			if w.team == s.team and w.state == "wounded" and w.medic == null and w.pos.distance_to(s.pos) < 22.0:
+				w.medic = s
+				s.patient = w
+				s.task = "medic"
+				release_cover(s)
+				go_to(s, w.pos, 5.0)
+				G.fx.callout(s, G.pick(["Hang on!", "Coming to you!", "I got you!"]))
+				if known and s.smokes > 0:
+					Combat.throw_grenade(s, w.pos + G.flat(threat - w.pos).normalized() * 5.0, "smoke")
+				return
+	if s.task == "medic":
+		s.task = null
+		s.patient = null
+		s.hand_t = null
+	# grenades at enemies hiding behind cover
+	s.nade_cd -= 2.0
+	if s.grenades > 0 and s.nade_cd <= 0.0 and known and s.target != null and is_instance_valid(s.target) and s.target.state != "dead" and s.intel.has(s.target) and dT > 11.0 and dT < 30.0 and (s.target.in_cover or s.vis_t == null):
+		if randf() < 0.5:
+			var e = s.intel[s.target]
+			Combat.throw_grenade(s, e["p"] + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5)), "frag")
+			s.burst = 0
+			s.burst_cd = 0.8
+		s.nade_cd = randf_range(10.0, 18.0)
+	if order["mode"] == "charge":
+		release_cover(s)
+		s.task = "charge"
+		s.prone_t = false
+		var best = null
+		var bd = 1e9
+		for k in s.intel.values():
+			var d = k["p"].distance_squared_to(s.pos)
+			if d < bd:
+				bd = d
+				best = k["p"]
+		go_to(s, best if best != null else objective_for(s), 5.4)
+		return
+	if order["mode"] == "hold":
+		s.task = "hold"
+		if s.cover != null and s.cover_bad < 2:
+			return
+		var c = find_cover(s, threat, "hold")
+		if c != null:
+			take_cover(s, c)
+		else:
+			stop_move(s)
+			s.kneel = true
+		return
+	if order["mode"] == "move" and order["point"] != null:
+		var k1 = (s.id * 37) % 9 - 4
+		var k2 = (s.id * 13) % 5 - 2
+		var goal: Vector3 = order["point"] if s.order != null else order["point"] + Vector3(k2 * 1.8, 0, k1 * 1.8)
+		if G.dist2d(s.pos, goal) > 5.0:
+			if s.in_cover and s.supp > 1.1:
+				return
+			if s.cover != null:
+				release_cover(s)
+			s.task = "move"
+			s.prone_t = false
+			go_to(s, goal, 4.4)
+			return
+		if s.cover == null or s.cover_bad >= 2:
+			var c2 = find_cover(s, threat, "hold")
+			if c2 != null:
+				take_cover(s, c2)
+			else:
+				stop_move(s)
+		s.task = "hold"
+		return
+	# capture mode: keep pushing onto the objective when nobody is in sight
+	if G.mode == "capture" and s.vis_t == null and s.supp < 0.7 and s.task != "post":
+		var C: Vector3 = G.world.capture
+		var dc = G.dist2d(s.pos, C)
+		var q = s.squad
+		var can_move = q == null or squad_movers(q) < ceili(q["members"].size() / 2.0) + 1
+		if dc > 9.0 and can_move and (not s.in_cover or s.cover_time > 4.0):
+			var bestc = null
+			var bdc = 1e9
+			var idx = 0
+			for cp in G.world.cover:
+				idx += 1
+				if cp.upper or not cover_free(cp, s) or cp.ban > G.sim_time:
+					continue
+				var d = G.dist2d(cp.p, C)
+				if d > 9.0:
+					continue
+				var sc = d + float((idx * 31 + s.id * 7) % 10) * 0.3
+				if sc < bdc and (not known or cover_safe(cp, threat)):
+					bdc = sc
+					bestc = cp
+			if bestc != null:
+				take_cover(s, bestc)
+				s.task = "objective"
+				return
+			if s.cover != null:
+				release_cover(s)
+			s.task = "objective"
+			go_to(s, C + Vector3(randf_range(-5, 5), 0, randf_range(-5, 5)), 4.6)
+			return
+	# marksmen and some gunners head for upstairs windows
+	if s.cover == null and known and (W["id"] == "sniper" or (W["id"] == "lmg" and s.id % 3 == 0)):
+		var post = find_post(s, threat)
+		if post != null:
+			take_post(s, post)
+			return
+	# in cover: stay, or leapfrog forward when the squad allows it
+	if s.cover != null:
+		if s.cover_bad >= 2:
+			s.cover.ban = G.sim_time + 8.0
+			release_cover(s)
+		elif not s.in_cover:
+			return
+		else:
+			s.cover_time += 2.0
+			var too_far = dT > W["range"][1]
+			var too_close = W["id"] == "sniper" and dT < W["range"][0]
+			var q2 = s.squad
+			var can_move2 = q2 == null or squad_movers(q2) < ceili(q2["members"].size() / 2.0)
+			if too_close:
+				var cr = find_cover(s, threat, "retreat")
+				if cr != null:
+					take_cover(s, cr)
+					s.task = "retreat"
+				return
+			if can_move2 and (s.supp < 0.5 or (too_far and s.supp < 0.9)) and ((s.vis_t == null and s.cover_time > 5.0) or too_far):
+				var ca = find_cover(s, threat, "flank" if s.role == "flanker" else "advance")
+				if ca != null:
+					take_cover(s, ca)
+					s.task = "advance"
+				elif not known:
+					release_cover(s)
+				elif too_far and s.supp < 0.9:
+					release_cover(s)
+					var fwd = G.flat(threat - s.pos).normalized()
+					if s.smokes > 0 and randf() < 0.5:
+						Combat.throw_grenade(s, s.pos + fwd * 10.0, "smoke")
+					go_to(s, s.pos + fwd * 14.0 + Vector3(randf_range(-3, 3), 0, randf_range(-3, 3)), 5.0)
+					s.task = "advance"
+			if s.cover != null:
+				return
+	if not known:
+		var obj = objective_for(s)
+		var k3 = (s.id * 37) % 11 - 5
+		var k4 = (s.id * 13) % 7 - 3
+		var goal2 = obj + Vector3(k4 * 1.5, 0, k3 * 1.6)
+		if s.squad != null:
+			for m in s.squad["members"]:
+				if is_instance_valid(m) and m.state == "alive" and m != s and not m.is_player:
+					if G.dist2d(m.pos, s.pos) > 14.0 and G.dist2d(m.pos, goal2) < G.dist2d(s.pos, goal2):
+						goal2 = m.pos + Vector3(k4, 0, k3 * 0.8)
+					break
+		s.prone_t = false
+		if G.dist2d(s.pos, goal2) < 5.0:
+			var ch = find_cover(s, G.world.spawn[1 - s.team], "hold")
+			if ch != null:
+				take_cover(s, ch)
+			else:
+				stop_move(s)
+			s.task = "hold"
+			return
+		s.task = "advance"
+		go_to(s, goal2, 3.6)
+		return
+	var mode = "defend" if (s.supp > 0.45 or s.hp < 55.0 or s.vis_t != null) else ("flank" if s.role == "flanker" else "advance")
+	var c3 = find_cover(s, threat, mode)
+	if c3 != null:
+		take_cover(s, c3)
+		s.task = mode
+	elif s.vis_t != null or s.supp > 0.8:
+		stop_move(s)
+		s.task = "fight"
+		if s.supp > 1.2 and s.smokes > 0:
+			Combat.throw_grenade(s, s.pos + G.flat(threat - s.pos).normalized() * 4.0, "smoke")
+		if s.supp > 0.8 or W["id"] == "sniper":
+			s.prone_t = true
+		else:
+			s.kneel = true
+	elif dT > 12.0:
+		s.prone_t = false
+		go_to(s, s.pos + G.flat(threat - s.pos).normalized() * minf(14.0, dT - 8.0), 4.0)
+		s.task = "advance"
+
+# ---------------------------------------------------------------- every tick
+static func update(s) -> void:
+	s.think -= G.DT
+	s.decide_t -= G.DT
+	if s.think <= 0.0:
+		perceive(s)
+	if s.decide_t <= 0.0:
+		decide(s)
+	if s.task == "flee":
+		s.flee_t -= G.DT
+		if s.flee_t <= 0.0 or s.move_target == null:
+			s.task = null
+			s.flee = null
+			s.decide_t = 0.0
+	s.hand_t = null
+	# medic: drag the wounded out of the line of fire, then patch them up
+	if s.task == "medic":
+		var w = s.patient
+		if w == null or not is_instance_valid(w) or w.state != "wounded":
+			s.task = null
+			s.patient = null
+			s.decide_t = 0.0
+			if s.dragging != null:
+				s.dragging.dragger = null
+				s.dragging = null
+		elif s.dragging != null:
+			var to = G.flat(s.drag_to - s.pos)
+			var d = to.length()
+			if d < 0.6:
+				s.dragging.dragger = null
+				s.dragging = null
+				s.want = Vector3.ZERO
+			else:
+				s.want = to / d * 1.5
+			var wp = w.parts[1].global_position
+			s.aim_yaw = G.turn_to(s.aim_yaw, atan2(wp.x - s.pos.x, wp.z - s.pos.z), 5.0 * G.DT)
+			s.ready_ = false
+			s.crouch_t = 0.5
+			s.hand_t = wp
+		elif G.dist2d(w.pos, s.pos) > 1.1:
+			if s.move_target == null or s.move_target.distance_to(w.pos) > 1.0:
+				go_to(s, w.pos, 5.0)
+		else:
+			stop_move(s)
+			var exposed = s.has_seen and G.sim_time - s.seen_t < 8.0 and not G.blocked(Vector3(s.threat.x, s.threat.y + 1.5, s.threat.z), w.pos + Vector3(0, 0.4, 0))
+			var dest = null
+			if exposed and w.heal_t <= 0.0:
+				var bd = 1e9
+				for cp in G.world.cover:
+					if cp.upper or not cover_free(cp, s):
+						continue
+					var dd = cp.p.distance_to(w.pos)
+					if dd > 1.5 and dd < 14.0 and dd < bd and cover_safe(cp, s.threat):
+						bd = dd
+						dest = cp
+			if dest != null:
+				s.dragging = w
+				w.dragger = s
+				s.drag_to = dest.p
+				G.fx.callout(s, "Moving you!")
+			else:
+				w.heal_t += G.DT
+				s.hand_t = w.parts[1].global_position
+				s.aim_yaw = G.turn_to(s.aim_yaw, atan2(w.pos.x - s.pos.x, w.pos.z - s.pos.z), 4.0 * G.DT)
+	if s.dragging != null and s.task != "medic":
+		s.dragging.dragger = null
+		s.dragging = null
+	if s.dragging == null:
+		if s.route != null and not (s.route["i"] == 0 and s.route["nav"]):
+			follow_route(s)
+		else:
+			var res = follow_path(s)
+			if res == "arrived":
+				if s.route != null and s.route["i"] == 0:
+					s.route["i"] = 1
+				else:
+					if s.task == "flee":
+						s.flee = null
+						s.task = null
+						s.decide_t = 0.0
+					if s.cover != null and s.cover.p.distance_to(s.pos) < 0.8:
+						s.in_cover = true
+						s.cover_time = 0.0
+				stop_move(s)
+			elif res == "stuck":
+				if s.cover != null:
+					s.cover.ban = G.sim_time + 15.0
+					release_cover(s)
+				stop_move(s)
+				s.route = null
+				s.decide_t = 0.0
+				if s.task == "flee":
+					s.flee = null
+					s.task = null
+	aim_and_fire(s)
+	stance(s)
+
+static func aim_at(s, pt: Vector3, rate: float) -> float:
+	var oy = s.pos.y + (0.3 if s.prone else 1.45 - 0.45 * s.crouch)
+	var dy = atan2(pt.x - s.pos.x, pt.z - s.pos.z)
+	var dp = atan2(pt.y - oy, G.dist2d(pt, s.pos))
+	s.aim_yaw = G.turn_to(s.aim_yaw, dy, rate * G.DT)
+	s.aim_pitch += clampf(dp - s.aim_pitch, -3.0 * G.DT, 3.0 * G.DT)
+	return absf(G.wrap_a(dy - s.aim_yaw))
+
+static func exposed_for_shot(s) -> bool:
+	if not s.in_cover or s.cover == null:
+		return true
+	var t = s.cover.type
+	if t == "low":
+		return not (s.peek_vis or s.force_peek) or s.crouch < 0.35
+	if t == "corner":
+		return not (s.peek_vis or s.force_peek) or absf(s.lean) > 0.6
+	return not s.peek_vis
+
+static func aim_and_fire(s) -> void:
+	var W = s.W
+	if s.reload_t > 0.0:
+		s.reload_t -= G.DT
+		if s.reload_t <= 0.0:
+			s.mag = W["mag"]
+	s.fire_cd -= G.DT
+	if s.dragging != null or (s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and G.dist2d(s.patient.pos, s.pos) < 1.3):
+		s.burst = 0
+		return
+	var tgt = null
+	if s.vis_t != null and is_instance_valid(s.vis_t) and s.vis_t.state != "dead" and s.task != "medic":
+		tgt = s.vis_t
+	# rocket launchers swap to a rifle up close or when out of rockets
+	if W["rocket"] and (s.rockets <= 0 or (tgt != null and tgt.pos.distance_to(s.pos) < 14.0)):
+		s.set_weapon("rifle")
+		return
+	var point = null
+	var extra = 0.0
+	if tgt != null:
+		point = tgt.chest()
+	elif s.in_cover and W["auto"] and G.sim_time - s.seen_t < 6.0 and s.squad != null and squad_movers(s.squad) > 0 and s.task != "medic":
+		point = s.last_seen + Vector3(0, 1.0, 0)
+		extra = 0.045
+	if point != null:
+		s.ready_ = true
+		var err = aim_at(s, point, 5.5)
+		s.want_peek = s.in_cover and (s.burst > 0 or s.burst_cd < 0.35) and s.reload_t <= 0.0
+		if s.reload_t <= 0.0 and err < 0.12 and exposed_for_shot(s) and not s.gun_blocked:
+			if s.burst > 0:
+				if s.fire_cd <= 0.0:
+					var dist = s.pos.distance_to(point)
+					var dvec: Vector3 = point - s.muzzle
+					var L = dvec.length()
+					var dir = dvec / maxf(L, 0.01)
+					# is the barrel clear? (no shooting into the wall you're hiding behind)
+					var hit = G.ray(s.muzzle, s.muzzle + dir * L, G.L_WORLD)
+					var clear = hit.is_empty() or (tgt == null and s.muzzle.distance_to(hit.position) > L * 0.8)
+					var ff = null
+					if clear:
+						var fh = G.ray(s.muzzle, s.muzzle + dir * maxf(0.1, L - 0.6), G.L_BODY, s.rids)
+						if not fh.is_empty() and fh.collider.has_meta("soldier"):
+							var o = fh.collider.get_meta("soldier")
+							if o.team == s.team and o.state != "dead":
+								ff = o
+					if not clear:
+						s.block_t += 0.15
+						s.fire_cd = 0.15
+						s.force_peek = true
+						if s.block_t > 1.0 and not s.in_cover and s.move_target == null:
+							s.block_t = 0.0
+							go_to(s, s.pos + Vector3(-dir.z, 0, dir.x) * (1.5 if randf() < 0.5 else -1.5), 3.0)
+						if s.block_t > 2.5 and s.in_cover:
+							s.block_t = 0.0
+							s.cover.ban = G.sim_time + 10.0
+							release_cover(s)
+							s.decide_t = 0.0
+					elif ff != null:
+						s.ff_t += 0.15
+						s.fire_cd = 0.15
+						if s.ff_t > 1.2 and s.move_target == null and not s.in_cover:
+							s.ff_t = 0.0
+							go_to(s, s.pos + Vector3(-dir.z, 0, dir.x) * (1.6 if randf() < 0.5 else -1.6), 3.0)
+					else:
+						s.block_t = maxf(0.0, s.block_t - 0.1)
+						var moving = s.vel.length() > 0.6
+						var spread = W["spread"] * (0.3 if W["pellets"] > 1 else 1.0) + dist * 0.00025 + s.supp * 0.03 + (W["move_spread"] if moving else 0.0) - (0.003 if (s.crouch > 0.5 or s.prone) else 0.0) + extra + (0.02 if s.task == "charge" else 0.0)
+						Combat.fire_weapon(s, s.muzzle, dir, spread)
+						s.burst -= 1
+						s.mag -= 1
+						s.fire_cd = W["rof"]
+						if s.mag <= 0:
+							s.reload_t = W["reload"]
+							s.burst = 0
+							if s.vis_t != null or G.sim_time - s.seen_t < 3.0:
+								G.fx.callout(s, "Reloading!")
+			elif s.fire_cd <= 0.0:
+				s.burst_cd -= G.DT
+				if s.burst_cd <= 0.0:
+					var far = W["id"] != "sniper" and s.pos.distance_to(point) > W["range"][1] * 1.4
+					if W["rocket"] and tgt == null:
+						s.burst = 0
+					elif far:
+						s.burst = randi_range(1, 3) if randf() < 0.35 else 0
+					else:
+						s.burst = randi_range(W["burst"][0], W["burst"][1])
+					s.burst_cd = (randf_range(0.35, 1.1) if W["auto"] else randf_range(0.2, 0.6)) * (1.0 + s.supp) * (3.0 if far else 1.0)
+	else:
+		s.burst = 0
+		s.want_peek = false
+		s.force_peek = false
+		var yaw = s.aim_yaw
+		if s.in_cover and s.cover != null:
+			var cp = s.cover
+			var ty = atan2(s.threat.x - s.pos.x, s.threat.z - s.pos.z)
+			if cp.type == "wall":
+				yaw = atan2(cp.n.x, cp.n.z)
+				s.ready_ = false
+			elif cp.type == "corner":
+				yaw = atan2(cp.t.x * 0.6 + sin(ty) * 0.4, cp.t.z * 0.6 + cos(ty) * 0.4)
+				s.ready_ = true
+			else:
+				yaw = ty
+				s.ready_ = true
+		elif s.want.length_squared() > 0.1:
+			yaw = atan2(s.want.x, s.want.z)
+			s.ready_ = G.sim_time - s.seen_t < 6.0 and s.want.length_squared() < 16.0
+		elif s.task == "medic":
+			s.ready_ = false
+		elif s.has_threat:
+			yaw = atan2(s.threat.x - s.pos.x, s.threat.z - s.pos.z)
+			s.ready_ = G.sim_time - s.seen_t < 12.0
+		s.aim_yaw = G.turn_to(s.aim_yaw, yaw, 3.5 * G.DT)
+		s.aim_pitch *= 0.95
+		if s.mag < W["mag"] * 0.5 and s.reload_t <= 0.0 and s.vis_t == null:
+			s.reload_t = W["reload"]
+
+static func stance(s) -> void:
+	s.lean_t = 0.0
+	if s.dragging != null:
+		s.crouch_t = 0.5
+		s.prone_t = false
+		return
+	if s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and G.dist2d(s.patient.pos, s.pos) < 1.3:
+		s.crouch_t = 1.0
+		s.prone_t = false
+		return
+	if s.want.length_squared() > 0.1 and not s.in_cover:
+		s.prone_t = false
+	if s.in_cover and s.cover != null:
+		var cp = s.cover
+		var peek = s.want_peek and (s.peek_vis or s.force_peek)
+		if cp.type == "low":
+			s.crouch_t = 0.0 if peek else 1.0
+		elif cp.type == "corner":
+			s.crouch_t = 0.45
+			if peek:
+				var rv = Vector3(-cos(s.body_yaw), 0, sin(s.body_yaw))
+				s.lean_t = 1.0 if cp.t.dot(rv) >= 0.0 else -1.0
+				s.crouch_t = 0.1
+				var stp = 0.5 if s.force_peek else 0.3
+				s.want = G.flat(cp.p + cp.t * stp - s.pos) * 3.0
+			else:
+				var back = G.flat(cp.p - s.pos)
+				if back.length_squared() > 0.01:
+					s.want = back * 3.0
+		else:
+			s.crouch_t = 1.0
+		return
+	if s.want.length_squared() > 0.1:
+		s.kneel = false
+		s.crouch_t = 0.3 if s.supp > 0.8 else 0.0
+	else:
+		s.crouch_t = 0.85 if s.kneel else 0.0

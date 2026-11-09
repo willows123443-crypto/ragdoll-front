@@ -1,0 +1,84 @@
+name: Build and publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: build
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.6.3"
+  REPORT_ISSUE: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot-bin
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot and web templates
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          V="$GODOT_VERSION"
+          BASE="https://github.com/godotengine/godot/releases/download/${V}-stable"
+          mkdir -p ~/godot-bin
+          curl -fsSL --retry 5 -o godot.zip "$BASE/Godot_v${V}-stable_linux.x86_64.zip"
+          unzip -q godot.zip -d ~/godot-bin
+          mv ~/godot-bin/Godot_v${V}-stable_linux.x86_64 ~/godot-bin/godot
+          curl -fsSL --retry 5 -o tpl.tpz "$BASE/Godot_v${V}-stable_export_templates.tpz"
+          mkdir -p tpl ~/.local/share/godot/export_templates/${V}.stable
+          unzip -q tpl.tpz -d tpl
+          mv tpl/templates/web_* ~/.local/share/godot/export_templates/${V}.stable/
+          echo "${V}.stable" > ~/.local/share/godot/export_templates/${V}.stable/version.txt
+          rm -rf tpl tpl.tpz godot.zip
+
+      - name: Import project
+        run: |
+          chmod +x ~/godot-bin/godot
+          ~/godot-bin/godot --headless --path . --import > import.log 2>&1 || true
+          cat import.log
+
+      - name: Automatic test run
+        run: |
+          timeout 240 ~/godot-bin/godot --headless --path . -- --autotest > test.log 2>&1 || echo "EXIT CODE $?" >> test.log
+          cat test.log
+
+      - name: Export web build
+        run: |
+          mkdir -p build/web
+          ~/godot-bin/godot --headless --path . --export-release "Web" build/web/index.html > export.log 2>&1 || true
+          cat export.log
+          cp test.log build/web/test-log.txt
+          touch build/web/.nojekyll
+          ls -la build/web
+
+      - name: Post report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/report.py
+
+      - name: Publish to GitHub Pages
+        if: hashFiles('build/web/index.html') != ''
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: build/web
+          force_orphan: true

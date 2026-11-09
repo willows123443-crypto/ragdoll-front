@@ -1,0 +1,323 @@
+extends Node3D
+# Sets up the scene, runs the simulation tick, and handles game setup, spawning and game modes.
+
+var env: Environment
+var sun: DirectionalLight3D
+var reinf_t = [0.0, 0.0]
+var markers: Node3D
+var cap_flag: Node3D
+var spawn_flags: Array = []
+var tick_us = 0
+var tick_n = 0
+
+func _ready() -> void:
+	G.main = self
+	randomize()
+	_build_environment()
+	G.fx = preload("res://scripts/fx.gd").new()
+	add_child(G.fx)
+	G.audio = preload("res://scripts/audio.gd").new()
+	add_child(G.audio)
+	G.world = preload("res://scripts/world.gd").new()
+	add_child(G.world)
+	G.pc = preload("res://scripts/player_cam.gd").new()
+	G.pc.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(G.pc)
+	G.ui = preload("res://scripts/ui.gd").new()
+	add_child(G.ui)
+	markers = Node3D.new()
+	add_child(markers)
+	preview_map("town")
+	if "--autotest" in OS.get_cmdline_user_args():
+		_autotest()
+
+func _build_environment() -> void:
+	env = Environment.new()
+	env.background_mode = Environment.BG_SKY
+	var sky = Sky.new()
+	var sm = ProceduralSkyMaterial.new()
+	sm.sky_top_color = Color(0.45, 0.55, 0.66)
+	sm.sky_horizon_color = Color(0.68, 0.7, 0.71)
+	sm.ground_horizon_color = Color(0.6, 0.6, 0.58)
+	sm.ground_bottom_color = Color(0.3, 0.29, 0.26)
+	sky.sky_material = sm
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_energy = 0.9
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.tonemap_exposure = 1.1
+	env.ssao_enabled = true
+	env.ssao_radius = 1.2
+	env.ssao_intensity = 1.6
+	env.glow_enabled = true
+	env.glow_intensity = 0.4
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.66, 0.69, 0.7)
+	env.fog_density = 0.0045
+	env.fog_aerial_perspective = 0.4
+	var we = WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	sun = DirectionalLight3D.new()
+	sun.light_color = Color(1.0, 0.95, 0.86)
+	sun.light_energy = 1.25
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 140.0
+	sun.rotation = Vector3(deg_to_rad(-52), deg_to_rad(-35), 0)
+	add_child(sun)
+
+func follow_sun(_cam_pos: Vector3, _fwd: Vector3) -> void:
+	pass   # directional shadows already follow the camera in Godot
+
+# ---------------------------------------------------------------- setting up battles
+func _clear() -> void:
+	if G.player != null:
+		G.pc.leave_soldier()
+	for s in G.soldiers:
+		if is_instance_valid(s):
+			s.queue_free()
+	G.soldiers.clear()
+	G.squads.clear()
+	Combat.clear_all()
+	G.fx.clear_all()
+	G.score = [0, 0]
+	G.cap_score = [0.0, 0.0]
+	G.cap_owner = -1
+	G.cap_prog = 0.0
+	G.over = false
+	G.game_time = 0.0
+	G.orders = [{"mode": "free", "point": null}, {"mode": "free", "point": null}]
+	get_tree().paused = false
+	Engine.time_scale = 1.0
+
+func preview_map(id: String) -> void:
+	_clear()
+	G.started = false
+	G.world.load_map(id)
+	refresh_markers()
+
+func start_game(o: Dictionary) -> void:
+	_clear()
+	G.mode = o.get("mode", "sandbox")
+	G.team_size = o.get("size", 10)
+	G.limit = o.get("limit", 50)
+	G.reinforce = o.get("reinforce", true)
+	G.world.load_map(o.get("map", "town"))
+	for t in range(2):
+		for i in range(G.team_size):
+			base_spawn(t)
+	refresh_markers()
+	G.pc.free_pos = Vector3(-62, G.world.ground_y(-62, -6) + 7.0, -6)
+	G.pc.free_yaw = PI / 2.0 + 0.12
+	G.pc.free_pitch = -0.12
+	G.started = true
+
+func spawn_soldier(team: int, x: float, z: float, wid: String):
+	if G.soldiers.size() >= 160:
+		cleanup_bodies(true)
+	if G.soldiers.size() >= 160:
+		return null
+	var p = Vector3(x, G.world.ground_y(x, z), z)
+	p = G.world.push_out_circle(p, 0.35)[0]
+	var s = Soldier.new()
+	add_child(s)
+	s.setup(team, p.x, p.z, wid if wid != "" else G.random_weapon())
+	var tgt: Vector3 = G.world.spawn[1 - team]
+	s.face(atan2(tgt.x - p.x, (tgt.z - p.z) * 0.3))
+	G.soldiers.append(s)
+	AI.assign_squad(s)
+	return s
+
+func base_spawn(team: int) -> void:
+	var b: Vector3 = G.world.spawn[team]
+	for k in range(6):
+		var x = b.x + randf_range(-8, 8)
+		var z = b.z + randf_range(-14, 14)
+		if not G.world.inside_any(x, z, 0.4):
+			spawn_soldier(team, x, z, "")
+			return
+	spawn_soldier(team, b.x, b.z, "")
+
+func cleanup_bodies(force: bool) -> void:
+	var dead = G.soldiers.filter(func(s): return s.state == "dead" and s != G.player)
+	var lim = maxi(0, dead.size() - 10) if force else 60
+	if dead.size() > lim:
+		dead.sort_custom(func(a, b): return a.dead_t > b.dead_t)
+		for i in range(dead.size() - lim):
+			G.soldiers.erase(dead[i])
+			dead[i].queue_free()
+
+func clear_bodies() -> void:
+	for s in G.soldiers.duplicate():
+		if s.state == "dead" and s != G.player:
+			G.soldiers.erase(s)
+			s.queue_free()
+
+# ---------------------------------------------------------------- simulation
+func _physics_process(_delta: float) -> void:
+	if not G.started:
+		return
+	var t0 = Time.get_ticks_usec()
+	_sim_step()
+	tick_us += Time.get_ticks_usec() - t0
+	tick_n += 1
+
+func _sim_step() -> void:
+	G.sim_time += G.DT
+	if not G.over:
+		G.game_time += G.DT
+	G.path_budget = 4
+	if G.reinforce and not G.over:
+		for t in range(2):
+			reinf_t[t] -= G.DT
+			if reinf_t[t] <= 0.0:
+				reinf_t[t] = 2.2
+				if G.alive_count(t) < G.team_size:
+					base_spawn(t)
+	for s in G.soldiers.duplicate():
+		if is_instance_valid(s):
+			s.tick()
+	Combat.step_grenades()
+	Combat.step_rockets()
+	Combat.step_strikes()
+	G.fx.step(G.DT)
+	_update_capture()
+	if randf() < 0.05:
+		cleanup_bodies(false)
+
+func _process(dt: float) -> void:
+	G.fx.update_callouts(dt)
+	G.ui.update_hud(dt)
+	if cap_flag:
+		cap_flag.get_child(1).rotation.y = sin(Time.get_ticks_msec() * 0.003) * 0.3
+
+func on_kill(_s, _attacker) -> void:
+	if G.mode == "deathmatch" and not G.over:
+		for t in range(2):
+			if G.score[t] >= G.limit:
+				end_game(t)
+
+func end_game(t: int) -> void:
+	G.over = true
+	if G.player != null:
+		G.pc.leave_soldier()
+	G.ui.show_win(t)
+
+func _update_capture() -> void:
+	if G.mode != "capture" or G.over:
+		return
+	var c: Vector3 = G.world.capture
+	var n = [0, 0]
+	for s in G.soldiers:
+		if s.state == "alive" and G.dist2d(s.pos, c) < 8.0:
+			n[s.team] += 1
+	if n[0] > 0 and n[1] == 0:
+		G.cap_prog = minf(1.0, G.cap_prog + G.DT * 0.1 * mini(n[0], 3))
+	elif n[1] > 0 and n[0] == 0:
+		G.cap_prog = maxf(-1.0, G.cap_prog - G.DT * 0.1 * mini(n[1], 3))
+	var owner_t = G.cap_owner
+	if G.cap_prog >= 1.0:
+		owner_t = 0
+	elif G.cap_prog <= -1.0:
+		owner_t = 1
+	elif not ((G.cap_owner == 0 and G.cap_prog > 0.0) or (G.cap_owner == 1 and G.cap_prog < 0.0)):
+		owner_t = -1
+	if owner_t != G.cap_owner:
+		G.cap_owner = owner_t
+		_set_flag_color(cap_flag, G.TEAM_BAND[owner_t] if owner_t >= 0 else Color(0.85, 0.85, 0.85))
+		if owner_t >= 0:
+			G.ui.message("%s captured the objective" % G.TEAM_NAMES[owner_t])
+	if G.cap_owner >= 0:
+		G.cap_score[G.cap_owner] += G.DT * 0.5
+		if G.cap_score[G.cap_owner] >= G.limit:
+			end_game(G.cap_owner)
+	G.cap_contested = n[0] > 0 and n[1] > 0
+
+# ---------------------------------------------------------------- flags
+func _make_flag(col: Color, big: bool) -> Node3D:
+	var g = Node3D.new()
+	var pole = MeshInstance3D.new()
+	var pm = BoxMesh.new()
+	pm.size = Vector3(0.08, 3.2, 0.08)
+	pole.mesh = pm
+	pole.position.y = 1.6
+	g.add_child(pole)
+	var fl = MeshInstance3D.new()
+	var fm = BoxMesh.new()
+	fm.size = Vector3(0.9, 0.55, 0.03)
+	fl.mesh = fm
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fl.material_override = mat
+	fl.position = Vector3(0.47, 2.85, 0)
+	g.add_child(fl)
+	var ring = MeshInstance3D.new()
+	var tm = TorusMesh.new()
+	tm.inner_radius = 7.6 if big else 1.2
+	tm.outer_radius = 8.0 if big else 1.45
+	ring.mesh = tm
+	var rm = StandardMaterial3D.new()
+	rm.albedo_color = Color(col.r, col.g, col.b, 0.6)
+	rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ring.material_override = rm
+	ring.scale = Vector3(1, 0.05, 1)
+	ring.position.y = 0.1
+	g.add_child(ring)
+	markers.add_child(g)
+	return g
+
+func _set_flag_color(f: Node3D, col: Color) -> void:
+	if f == null:
+		return
+	f.get_child(1).material_override.albedo_color = col
+	f.get_child(2).material_override.albedo_color = Color(col.r, col.g, col.b, 0.6)
+
+func refresh_markers() -> void:
+	for c in markers.get_children():
+		c.queue_free()
+	spawn_flags = [_make_flag(G.TEAM_BAND[0], false), _make_flag(G.TEAM_BAND[1], false)]
+	for t in range(2):
+		var p: Vector3 = G.world.spawn[t]
+		spawn_flags[t].position = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
+	cap_flag = null
+	if G.mode == "capture":
+		cap_flag = _make_flag(Color(0.85, 0.85, 0.85), true)
+		var c: Vector3 = G.world.capture
+		cap_flag.position = Vector3(c.x, G.world.ground_y(c.x, c.z), c.z)
+
+# ---------------------------------------------------------------- automatic test (run by the GitHub build)
+func _wait(sec: float) -> void:
+	await get_tree().create_timer(sec, true, true).timeout
+
+func _report(tag: String) -> void:
+	var alive = [G.alive_count(0), G.alive_count(1)]
+	var dead = G.soldiers.filter(func(s): return s.state == "dead").size()
+	var ms = (tick_us / 1000.0) / maxi(tick_n, 1)
+	print("AUTOTEST %s | alive %d v %d | dead %d | score %d-%d | sim %.2f ms/tick" % [tag, alive[0], alive[1], dead, G.score[0], G.score[1], ms])
+	tick_us = 0
+	tick_n = 0
+
+func _autotest() -> void:
+	print("AUTOTEST start")
+	for m in ["town", "field", "trenches"]:
+		start_game({"map": m, "mode": "capture", "size": 10, "limit": 9999, "reinforce": true})
+		await _wait(12.0)
+		_report(m + " 12s")
+		var s = null
+		for o in G.soldiers:
+			if o.state == "alive":
+				s = o
+				break
+		if s != null:
+			G.pc.possess(s)
+			await _wait(3.0)
+			if G.player != null:
+				G.pc.leave_soldier()
+		Combat.explode(G.world.capture + Vector3(0, 0.5, 0), null, 1.0)
+		Combat.mortar_strike(G.world.capture, 4)
+		await _wait(15.0)
+		_report(m + " 30s")
+	print("AUTOTEST done")
+	get_tree().quit()

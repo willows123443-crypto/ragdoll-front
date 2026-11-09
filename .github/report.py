@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Collects errors from the Godot logs and posts them as a comment on the report issue."""
+import os, re, subprocess
+
+def read(p):
+    try:
+        return open(p, errors="replace").read()
+    except OSError:
+        return ""
+
+logs = {"import": read("import.log"), "test": read("test.log"), "export": read("export.log")}
+errors = []
+seen = set()
+for name, text in logs.items():
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        if re.search(r"(SCRIPT ERROR|Parse Error|^ERROR|ERROR:|Invalid call|Invalid access|Invalid get|Invalid set|Nonexistent function|Identifier .* not declared|Cannot|Failed|EXIT CODE)", ln):
+            ctx = [ln.strip()]
+            for j in range(i + 1, min(i + 3, len(lines))):
+                if lines[j].strip().startswith("at:") or lines[j].startswith("   "):
+                    ctx.append(lines[j].strip())
+            key = re.sub(r"\d+\.\d+", "", " | ".join(ctx))
+            if key in seen:
+                continue
+            seen.add(key)
+            errors.append("[%s] %s" % (name, "\n    ".join(ctx)))
+
+autotest = [l for l in logs["test"].splitlines() if l.startswith("AUTOTEST")]
+built = os.path.exists("build/web/index.html")
+sha = os.environ.get("GITHUB_SHA", "")[:7]
+msg = os.popen("git log -1 --pretty=%s").read().strip()
+
+body = ["### Build `%s`: %s" % (sha, msg), ""]
+body.append("- Web build: **%s**" % ("OK" if built else "FAILED"))
+body.append("- Autotest finished: **%s**" % ("yes" if "AUTOTEST done" in logs["test"] else "NO"))
+body.append("- Errors found: **%d**" % len(errors))
+body.append("")
+if autotest:
+    body += ["```", *autotest, "```", ""]
+if errors:
+    body.append("<details><summary>Errors</summary>\n\n```")
+    body += errors[:80]
+    if len(errors) > 80:
+        body.append("... and %d more" % (len(errors) - 80))
+    body.append("```\n</details>")
+text = "\n".join(body)
+print(text)
+issue = os.environ.get("REPORT_ISSUE", "1")
+subprocess.run(["gh", "issue", "comment", issue, "--body", text[:60000]], check=False)

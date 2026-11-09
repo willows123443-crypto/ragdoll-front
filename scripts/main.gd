@@ -493,9 +493,33 @@ func _autotest() -> void:
 			await _wait(3.0)
 			if G.player != null:
 				G.pc.leave_soldier()
+		# orders: send three soldiers somewhere and a squad following someone
+		var picked = G.soldiers.filter(func(o): return o.team == 0 and o.state == "alive" and o.vehicle == null).slice(0, 3)
+		var goal = G.world.spawn[0] + Vector3(6, 0, 6)
+		for o in picked:
+			o.order = {"mode": "move", "point": goal}
+			o.decide_t = 0.0
+		var lead = null
+		for o in G.soldiers:
+			if o.team == 1 and o.state == "alive" and o.vehicle == null and o.squad != null and o.squad["members"].size() > 2:
+				lead = o
+				break
+		if lead != null:
+			G.pc._toggle_follow(lead)
 		Combat.explode(G.world.capture + Vector3(0, 0.5, 0), null, 1.0)
 		Combat.mortar_strike(G.world.capture, 4)
-		await _wait(sc[2] - 15.0)
+		await _wait(10.0)
+		var dd = []
+		for o in picked:
+			if is_instance_valid(o) and o.state == "alive":
+				dd.append(int(G.dist2d(o.pos, goal)))
+		var fd = []
+		if lead != null and is_instance_valid(lead):
+			for mb in lead.squad["members"]:
+				if is_instance_valid(mb) and mb != lead and mb.state == "alive":
+					fd.append(int(G.dist2d(mb.pos, lead.pos)))
+		print("AUTOTEST %s | ordered soldiers dist to goal %s | followers dist to leader %s" % [tag, str(dd), str(fd)])
+		await _wait(maxf(1.0, sc[2] - 25.0))
 		_report(tag + " %ds" % int(sc[2]))
 		var pts = []
 		for pt in Obj.points:

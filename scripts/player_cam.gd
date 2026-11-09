@@ -16,6 +16,12 @@ var bloom = 0.0
 var kick = 0.0
 var orbit = 0.0
 var first_person = false
+var selection: Array = []
+var sel_rings: Array = []
+var drag_from = null          # screen position where a selection box started
+var drag_to = Vector2.ZERO
+var r_press = Vector2.ZERO
+var r_moved = false
 var force_free = false   # development screenshots: keep the free camera while controlling a soldier
 
 func _ready() -> void:
@@ -124,6 +130,7 @@ func player_update(s) -> void:
 
 # ---------------------------------------------------------------- camera
 func _process(dt: float) -> void:
+	_update_rings()
 	bloom = maxf(0.0, bloom - dt * 0.08)
 	kick = maxf(0.0, kick - dt * 1.6)
 	var fov_t = 65.0
@@ -214,7 +221,12 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if G.player != null and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			cam_yaw -= ev.relative.x * k
 			cam_pitch = clampf(cam_pitch - ev.relative.y * k * inv, -1.2, 1.2)
-		elif G.player == null and r_drag:
+		elif G.player == null and drag_from != null:
+			drag_to = ev.position
+			G.ui.sel_box_changed()
+		if G.player == null and r_drag:
+			if ev.position.distance_to(r_press) > 6.0:
+				r_moved = true
 			free_yaw -= ev.relative.x * 0.004 * G.settings["sens"]
 			free_pitch = clampf(free_pitch - ev.relative.y * 0.004 * G.settings["sens"] * inv, -1.45, 1.45)
 	elif ev is InputEventMouseButton:
@@ -223,6 +235,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 				rmb_down = ev.pressed
 			else:
 				r_drag = ev.pressed
+				if ev.pressed:
+					r_press = ev.position
+					r_moved = false
+				elif not r_moved and not selection.is_empty():
+					_order_move(ev.position)
 		elif ev.button_index == MOUSE_BUTTON_LEFT:
 			if ev.pressed:
 				if G.player != null:
@@ -230,10 +247,17 @@ func _unhandled_input(ev: InputEvent) -> void:
 						Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 					else:
 						mouse_down = true
+				elif G.ui.tool == "sel":
+					drag_from = ev.position
+					drag_to = ev.position
 				else:
 					use_tool(ev.position)
 			else:
 				mouse_down = false
+				if drag_from != null and G.player == null:
+					_finish_select(ev.shift_pressed)
+					drag_from = null
+					G.ui.sel_box_changed()
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_UP and G.player == null and ev.pressed:
 			free_pos += Vector3(sin(free_yaw) * cos(free_pitch), sin(free_pitch), cos(free_yaw) * cos(free_pitch)) * 2.0
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN and G.player == null and ev.pressed:
@@ -281,6 +305,8 @@ func _key(k: int) -> void:
 					G.ui.message("No free seats")
 			else:
 				_pick_up(s)
+		elif k == KEY_O and s.state == "alive":
+			_toggle_follow(s)
 		elif k == KEY_L and s.state == "alive":
 			Combat.flare(s.pos, aim_point)
 			G.ui.message("Flare away")
@@ -340,6 +366,17 @@ func use_tool(screen: Vector2) -> void:
 	var tool = G.ui.tool
 	if tool == "ctl":
 		possess(pick_soldier(o, d))
+		return
+	if tool == "mvA" or tool == "mvB":
+		var team = 0 if tool == "mvA" else 1
+		var gp = G.ray(o, o + d * 500.0, G.L_WORLD)
+		if not gp.is_empty():
+			G.orders[team] = {"mode": "move", "point": gp.position}
+			G.fx.order_marker(gp.position)
+			G.ui.message("%s: move to the marked point" % G.TEAM_NAMES[team])
+			for s in G.soldiers:
+				if s.team == team:
+					s.decide_t = 0.0
 		return
 	if tool == "push":
 		var s = pick_soldier(o, d)
@@ -440,3 +477,99 @@ func rider_update(s) -> void:
 	v.player_inputs["fire"] = mouse_down and captured and (role == "gunner" or (role == "driver" and v.kind == "tank" and v.gunner() == null))
 	s.aim_yaw = atan2(aim_point.x - s.pos.x, aim_point.z - s.pos.z)
 	s.morale = maxf(s.morale, 60.0)
+
+# ---------------------------------------------------------------- commanding soldiers
+func _finish_select(add: bool) -> void:
+	if not add:
+		selection = []
+	var a: Vector2 = drag_from
+	var b: Vector2 = drag_to
+	if a.distance_to(b) < 6.0:
+		var o = cam.project_ray_origin(b)
+		var d = cam.project_ray_normal(b)
+		var s = pick_soldier(o, d)
+		if s != null and s.state != "dead":
+			if s in selection:
+				selection.erase(s)
+			else:
+				selection.append(s)
+	else:
+		var r = Rect2(Vector2(minf(a.x, b.x), minf(a.y, b.y)), (a - b).abs())
+		for s in G.soldiers:
+			if s.state == "dead" or cam.is_position_behind(s.chest()):
+				continue
+			if r.has_point(cam.unproject_position(s.chest())) and not (s in selection):
+				selection.append(s)
+	if not selection.is_empty():
+		G.ui.message("%d selected. Right-click the ground to send them there" % selection.size())
+
+func _order_move(screen: Vector2) -> void:
+	var o = cam.project_ray_origin(screen)
+	var d = cam.project_ray_normal(screen)
+	var hit = G.ray(o, o + d * 500.0, G.L_WORLD)
+	if hit.is_empty():
+		return
+	var p: Vector3 = hit.position
+	var n = 0
+	for s in selection:
+		if not is_instance_valid(s) or s.state == "dead":
+			continue
+		# spread them out a little around the point
+		var off = Vector3((n % 4) - 1.5, 0, int(n / 4) - 1.0) * 2.0
+		s.order = {"mode": "move", "point": p + off}
+		s.decide_t = 0.0
+		if s.cover != null:
+			AI.release_cover(s)
+		n += 1
+	G.fx.order_marker(p)
+	G.ui.message("Moving %d soldier%s" % [n, "" if n == 1 else "s"])
+
+func order_selected(mode: String) -> void:
+	for s in selection:
+		if is_instance_valid(s) and s.state != "dead":
+			s.order = null if mode == "free" else {"mode": mode, "point": s.pos}
+			s.decide_t = 0.0
+	G.ui.message({"free": "Selected soldiers act on their own", "hold": "Selected soldiers hold their ground", "charge": "Selected soldiers charge!"}[mode])
+
+func clear_selection() -> void:
+	selection = []
+
+# when you're a squad leader (or anyone, really): your squad follows you around
+func _toggle_follow(s) -> void:
+	var q = s.squad
+	if q == null:
+		return
+	var on = q.get("follow") != s
+	q["follow"] = s if on else null
+	for m in q["members"]:
+		if is_instance_valid(m) and m != s and m.state != "dead":
+			m.order = {"mode": "follow", "who": s, "point": null} if on else null
+			m.decide_t = 0.0
+	G.ui.message("Squad: follow me!" if on else "Squad: carry on")
+	if on:
+		G.fx.callout(s, G.pick(["On me!", "Follow me!", "With me, squad!"]))
+
+func _update_rings() -> void:
+	selection = selection.filter(func(x): return is_instance_valid(x) and x.state != "dead")
+	while sel_rings.size() < selection.size():
+		var r = MeshInstance3D.new()
+		var tm = TorusMesh.new()
+		tm.inner_radius = 0.42
+		tm.outer_radius = 0.5
+		r.mesh = tm
+		var m = StandardMaterial3D.new()
+		m.albedo_color = Color(1.0, 0.85, 0.25)
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		r.material_override = m
+		r.scale = Vector3(1, 0.3, 1)
+		add_child(r)
+		sel_rings.append(r)
+	for i in range(sel_rings.size()):
+		var r = sel_rings[i]
+		if i < selection.size():
+			r.visible = true
+			var s = selection[i]
+			var p: Vector3 = s.pos if s.state == "alive" or s.state == "riding" else s.parts[0].global_position
+			r.global_position = Vector3(p.x, p.y + 0.06, p.z)
+		else:
+			r.visible = false

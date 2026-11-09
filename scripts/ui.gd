@@ -6,10 +6,13 @@ var tab = "units"
 const MAP_IDS = ["town", "field", "trenches", "valley", "front"]
 const TOOLS = {
 	"units": [["a1", "Alpha soldier"], ["b1", "Bravo soldier"], ["a5", "Alpha squad"], ["b5", "Bravo squad"], ["ctl", "Take control"], ["spA", "Alpha spawn"], ["spB", "Bravo spawn"]],
+	"command": [["sel", "Select"], ["mvA", "Alpha: move to"], ["mvB", "Bravo: move to"]],
 	"vehicles": [["jA", "Alpha jeep"], ["jB", "Bravo jeep"], ["tA", "Alpha tank"], ["tB", "Bravo tank"], ["trA", "Alpha truck"], ["trB", "Bravo truck"]],
 	"fun": [["boom", "Explosion"], ["mortar", "Mortar strike"], ["smoke", "Smoke"], ["flare", "Flare"], ["push", "Shove"]],
 }
-const TIPS = {"a1": "Click the ground to drop in an Alpha soldier", "b1": "Click the ground to drop in a Bravo soldier",
+const TIPS = {"sel": "Click or drag a box to select soldiers (Shift adds), then right-click the ground to send them there",
+	"mvA": "Click to send the whole Alpha team to a point", "mvB": "Click to send the whole Bravo team to a point",
+	"a1": "Click the ground to drop in an Alpha soldier", "b1": "Click the ground to drop in a Bravo soldier",
 	"a5": "Click to drop in five Alpha soldiers", "b5": "Click to drop in five Bravo soldiers",
 	"ctl": "Click a soldier to take control of them (or press F)", "spA": "Click to move where Alpha reinforcements arrive",
 	"spB": "Click to move where Bravo reinforcements arrive", "boom": "Click anywhere to set off an explosion",
@@ -85,6 +88,7 @@ func _ready() -> void:
 	_build_menu()
 	_build_help()
 	_build_win()
+	_build_command()
 
 # ---------------------------------------------------------------- helpers
 func _place(c: Control, preset: int, x: float, y: float, w: float, h: float) -> void:
@@ -240,7 +244,7 @@ func _build_side() -> void:
 # ---------------------------------------------------------------- tool bar
 func _build_tools() -> void:
 	tabs_box = HBoxContainer.new()
-	_place(tabs_box, Control.PRESET_CENTER_BOTTOM, -140, -96, 280, 32)
+	_place(tabs_box, Control.PRESET_CENTER_BOTTOM, -190, -96, 380, 32)
 	root.add_child(tabs_box)
 	tool_box = HBoxContainer.new()
 	_place(tool_box, Control.PRESET_CENTER_BOTTOM, -420, -56, 840, 40)
@@ -256,7 +260,7 @@ func _render_tools() -> void:
 		c.queue_free()
 	for c in tool_box.get_children():
 		c.queue_free()
-	for t in [["units", "Units"], ["vehicles", "Vehicles"], ["fun", "Effects"]]:
+	for t in [["units", "Units"], ["command", "Command"], ["vehicles", "Vehicles"], ["fun", "Effects"]]:
 		var key = t[0]
 		var b = _button(t[1], func():
 			tab = key
@@ -624,6 +628,7 @@ func update_hud(dt: float) -> void:
 	tabs_box.visible = show_game and not ctl
 	tool_box.visible = show_game and not ctl
 	phud.visible = ctl
+	cmd_panel.visible = show_game and not ctl and tab == "command"
 	if ctl:
 		var s = G.player
 		var st = ""
@@ -879,3 +884,54 @@ func _show_settings() -> void:
 		settings_panel.visible = false))
 	settings_panel.add_child(v)
 	root.add_child(settings_panel)
+
+# ---------------------------------------------------------------- command panel
+var cmd_panel: PanelContainer = null
+var sel_rect: ColorRect = null
+
+func _build_command() -> void:
+	sel_rect = ColorRect.new()
+	sel_rect.color = Color(1.0, 0.85, 0.25, 0.15)
+	sel_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sel_rect.visible = false
+	root.add_child(sel_rect)
+	cmd_panel = _panel(Color(0.1, 0.12, 0.14, 0.9))
+	_place(cmd_panel, Control.PRESET_TOP_RIGHT, -250, 290, 240, 230)
+	var v = VBoxContainer.new()
+	v.add_child(_label("Orders", 16))
+	for ti in range(2):
+		var h = HBoxContainer.new()
+		var nm = _label(G.TEAM_NAMES[ti], 13, G.team_color(ti).lightened(0.4))
+		nm.custom_minimum_size = Vector2(56, 0)
+		h.add_child(nm)
+		for m in [["free", "Free"], ["hold", "Hold"], ["charge", "Charge"]]:
+			var mode = m[0]
+			var team = ti
+			h.add_child(_button(m[1], func():
+				G.orders[team] = {"mode": mode, "point": null}
+				for s in G.soldiers:
+					if s.team == team:
+						s.decide_t = 0.0
+				message("%s: %s" % [G.TEAM_NAMES[team], {"free": "act on your own", "hold": "hold your ground", "charge": "charge!"}[mode]])))
+		v.add_child(h)
+	v.add_child(_label("Selected soldiers", 13, Color(0.75, 0.75, 0.75)))
+	var h2 = HBoxContainer.new()
+	for m in [["free", "Free"], ["hold", "Hold"], ["charge", "Charge"]]:
+		var mode = m[0]
+		h2.add_child(_button(m[1], func(): G.pc.order_selected(mode)))
+	h2.add_child(_button("Clear", func(): G.pc.clear_selection()))
+	v.add_child(h2)
+	cmd_panel.add_child(v)
+	root.add_child(cmd_panel)
+
+func sel_box_changed() -> void:
+	if sel_rect == null:
+		return
+	var a = G.pc.drag_from
+	if a == null:
+		sel_rect.visible = false
+		return
+	var b: Vector2 = G.pc.drag_to
+	sel_rect.visible = a.distance_to(b) > 6.0
+	sel_rect.position = Vector2(minf(a.x, b.x), minf(a.y, b.y))
+	sel_rect.size = (a - b).abs()

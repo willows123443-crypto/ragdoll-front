@@ -540,6 +540,33 @@ static func decide(s) -> void:
 			s.burst = 0
 			s.burst_cd = 0.8
 		s.nade_cd = randf_range(10.0, 18.0)
+	if order["mode"] == "follow":
+		var L = order.get("who")
+		if L == null or not is_instance_valid(L) or L.state == "dead":
+			s.order = null
+		else:
+			var lp: Vector3 = L.pos if L.vehicle == null else L.vehicle.pos
+			var k1 = (s.id * 37) % 5 - 2
+			var k2 = (s.id * 13) % 3 + 1
+			var back = G.flat(Vector3(-sin(L.body_yaw), 0, -cos(L.body_yaw)))
+			var side = Vector3(back.z, 0, -back.x)
+			var spot = lp + back * k2 * 1.8 + side * k1 * 1.8
+			if G.dist2d(s.pos, spot) > 5.0:
+				release_cover(s)
+				s.task = "follow"
+				s.prone_t = false
+				go_to(s, spot, 5.6 if G.dist2d(s.pos, spot) > 18.0 else 4.2)
+			elif known and s.cover == null:
+				var fc = find_cover(s, threat, "defend")
+				if fc != null and G.dist2d(fc.p, lp) < 9.0:
+					take_cover(s, fc)
+				else:
+					stop_move(s)
+					s.kneel = true
+			else:
+				stop_move(s)
+				s.kneel = known
+			return
 	if order["mode"] == "charge":
 		release_cover(s)
 		s.task = "charge"

@@ -406,3 +406,22 @@ func update_callouts(dt: float) -> void:
 			continue
 		c["l"].global_position = c["s"].parts[2].global_position + Vector3(0, 0.55, 0)
 		c["l"].modulate.a = minf(1.0, c["t"] * 2.0)
+
+# a short-lived marker where an order was given
+func order_marker(p: Vector3) -> void:
+	var r = MeshInstance3D.new()
+	var tm = TorusMesh.new()
+	tm.inner_radius = 1.6
+	tm.outer_radius = 1.9
+	r.mesh = tm
+	var m = StandardMaterial3D.new()
+	m.albedo_color = Color(1.0, 0.85, 0.25, 0.8)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	r.material_override = m
+	r.scale = Vector3(1, 0.2, 1)
+	add_child(r)
+	r.global_position = p + Vector3(0, 0.1, 0)
+	var tw = r.create_tween()
+	tw.tween_property(r, "scale", Vector3(0.3, 0.2, 0.3), 1.2)
+	tw.tween_callback(r.queue_free)

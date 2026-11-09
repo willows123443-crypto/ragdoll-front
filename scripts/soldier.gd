@@ -666,6 +666,12 @@ func head_pos() -> Vector3:
 # ---------------------------------------------------------------- classes
 func set_class(c: String) -> void:
 	cls = c
+	if c == "officer" and parts.size() > 2:
+		# officers wear a peaked cap instead of a helmet
+		for m in parts[2].get_children():
+			if m is MeshInstance3D and m.position.y > 0.05:
+				m.material_override = _mat("cap", Color(0.42, 0.12, 0.1), false)
+				m.scale = Vector3(1.0, 0.7, 1.15)
 	mines = 3 if c == "engineer" else 0
 	satchels = 2 if c == "engineer" else 0
 	kits = 3 if c == "engineer" else 0

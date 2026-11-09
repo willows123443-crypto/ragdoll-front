@@ -905,7 +905,7 @@ func _build_command() -> void:
 	sel_rect.visible = false
 	root.add_child(sel_rect)
 	cmd_panel = _panel(Color(0.1, 0.12, 0.14, 0.9))
-	_place(cmd_panel, Control.PRESET_TOP_RIGHT, -250, 290, 240, 230)
+	_place(cmd_panel, Control.PRESET_TOP_RIGHT, -300, 290, 290, 260)
 	var v = VBoxContainer.new()
 	v.add_child(_label("Orders", 16))
 	for ti in range(2):
@@ -930,6 +930,12 @@ func _build_command() -> void:
 		h2.add_child(_button(m[1], func(): G.pc.order_selected(mode)))
 	h2.add_child(_button("Clear", func(): G.pc.clear_selection()))
 	v.add_child(h2)
+	var h3 = HBoxContainer.new()
+	h3.add_child(_label("Formation", 12, Color(0.75, 0.75, 0.75)))
+	for f in [["wedge", "Wedge"], ["line", "Line"], ["column", "Column"], ["auto", "Auto"]]:
+		var form = f[0]
+		h3.add_child(_button(f[1], func(): G.pc.set_formation(form)))
+	v.add_child(h3)
 	cmd_panel.add_child(v)
 	root.add_child(cmd_panel)
 

@@ -36,6 +36,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shot="):
 			_shot_mode(a.substr(7))
+		if a == "--breachtest":
+			_breach_test()
 		if a.begins_with("--edtest="):
 			_editor_test(a.substr(9))
 
@@ -186,6 +188,7 @@ func start_game(o: Dictionary) -> void:
 	Stats.reset()
 	Reinforce.reset()
 	Obj.reset()
+	Commander.reset()
 	for t in range(G.team_count()):
 		if G.mode == "laststand" and t == 1:
 			continue
@@ -334,6 +337,8 @@ func _sim_step() -> void:
 	Combat.step_fires()
 	G.fx.step(G.DT)
 	Stats.step(G.DT)
+	Squad.step(G.DT)
+	Commander.step(G.DT)
 	Obj.step(G.DT)
 	if randf() < 0.05:
 		cleanup_bodies(false)
@@ -503,6 +508,12 @@ func _report(tag: String) -> void:
 	print("AUTOTEST %s | teams %d alive %s" % [tag, G.team_count(), str(range(G.team_count()).map(func(t): return G.alive_count(t)))])
 	print("AUTOTEST %s | prof vehicles %.2f soldiers %.2f ms/tick" % [tag, prof[0] / 1000.0 / maxi(tick_n, 1), prof[1] / 1000.0 / maxi(tick_n, 1)])
 	prof = [0, 0]
+	var inb = 0
+	for o in G.soldiers:
+		if o.state == "alive" and Squad._building_at(o.pos) != null:
+			inb += 1
+	print("AUTOTEST %s | soldiers inside buildings %d" % [tag, inb])
+	print("AUTOTEST %s | squad events %s | officers %s" % [tag, str(Squad.events), str(range(G.team_count()).map(func(t): return Commander.officer(t) != null))])
 	print("AUTOTEST %s | alive %d v %d | dead %d | score %d-%d | sim %.2f ms/tick" % [tag, alive[0], alive[1], dead, G.score[0], G.score[1], ms])
 	tick_us = 0
 	tick_n = 0
@@ -732,4 +743,25 @@ func _editor_test(dir: String) -> void:
 	await _wait(20.0)
 	await _snap(dir, "played")
 	print("EDTEST after 20s alive %d v %d" % [G.alive_count(0), G.alive_count(1)])
+	get_tree().quit()
+
+func _breach_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "town", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	var b = G.world.buildings[3]
+	var e = spawn_soldier(1, b["x"], b["z"], "rifle")
+	e.order = {"mode": "hold", "point": e.pos}
+	var dir = Vector3(1, 0, 0)
+	for k in range(5):
+		var p = Vector3(b["x"], 0, b["z"]) - dir * 24.0 + Vector3(0, 0, (k - 2) * 2.0)
+		spawn_soldier(0, p.x, p.z, "rifle")
+	for t in range(30):
+		await _wait(1.0)
+		if Squad.events["breach"] > 0 and t > 8:
+			break
+	var inside = 0
+	for o in G.soldiers:
+		if o.team == 0 and o.state == "alive" and Squad._building_at(o.pos) != null:
+			inside += 1
+	print("BREACHTEST events %s enemy %s attackers inside %d" % [str(Squad.events), e.state, inside])
 	get_tree().quit()

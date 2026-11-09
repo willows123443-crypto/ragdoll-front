@@ -212,12 +212,12 @@ static func kill(s, attacker, head: bool) -> void:
 	G.ui.feed(attacker, s, head)
 	G.fx.decal(s.parts[0].global_position, randf_range(0.6, 1.0), false)
 	if attacker != null and attacker.team != s.team and attacker.state == "alive" and randf() < 0.3:
-		G.fx.callout(attacker, G.pick(["Target down!", "Got him!", "Enemy down!"]))
+		Voice.say(attacker, "kill")
 	for o in G.soldiers:
 		o.intel.erase(s)
 	for o in G.soldiers:
 		if o != s and o.team == s.team and o.is_up() and o.pos.distance_squared_to(s.pos) < 225.0 and randf() < 0.4:
-			G.fx.callout(o, G.pick(["Man down!", s.sname + "'s down!", "We lost " + s.sname + "!"]))
+			Voice.say(o, "man_down", [s.sname])
 			break
 	if s == G.player:
 		G.ui.message("You were killed in action")

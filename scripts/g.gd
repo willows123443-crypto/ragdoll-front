@@ -177,6 +177,7 @@ const CLASSES = {
 	"radio": {"name": "Radio operator", "w": ["rifle"], "share": 0.06},
 	"sniper": {"name": "Sniper", "w": ["sniper"], "share": 0.05},
 	"spotter": {"name": "Spotter", "w": ["rifle"], "share": 0.05},
+	"officer": {"name": "Officer", "w": ["smg", "pistol"], "share": 0.0},
 }
 
 # the class this team is shortest of, compared with the mix above
@@ -187,6 +188,8 @@ func pick_class(team: int) -> String:
 		if s.team == team and s.state != "dead":
 			have[s.cls] = have.get(s.cls, 0) + 1
 			n += 1
+	if n >= 5 and have.get("officer", 0) == 0:
+		return "officer"
 	var best = "rifleman"
 	var bd = -1e9
 	for c in CLASSES:

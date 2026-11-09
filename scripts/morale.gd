@@ -89,6 +89,9 @@ static func tick(s, dt: float) -> void:
 	rate += minf(friends, 4) * 0.35
 	if leader_near:
 		rate += 1.4
+	var off = Commander.officer(s.team)
+	if off != null and off != s and off.pos.distance_squared_to(s.pos) < 900.0:
+		rate += 1.0
 	if is_leader(s):
 		rate += 0.8
 	if s.supp > 0.4:
@@ -113,9 +116,9 @@ static func tick(s, dt: float) -> void:
 		s.route = null
 		s.task = "rout"
 		s.prone_t = false
-		var home: Vector3 = G.world.rally_point(s.team)
+		var home: Vector3 = G.world.fallback_point(s.team, s.pos)
 		AI.go_to(s, home + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6)), 5.8)
-		G.fx.callout(s, G.pick(["Fall back! Fall back!", "I'm getting out of here!", "We can't hold!", "Retreat!"]))
+		Voice.say(s, "fallback")
 	elif s.broken and s.morale > RECOVER:
 		s.broken = false
 		s.task = null

@@ -69,7 +69,7 @@ static func assign_squad(s) -> void:
 				q = sq
 				break
 	if q == null:
-		q = {"team": s.team, "members": []}
+		q = {"team": s.team, "members": [], "id": G.squads.size(), "form": "wedge", "bound": 0}
 		G.squads.append(q)
 	q["members"].append(s)
 	s.squad = q
@@ -91,6 +91,9 @@ static func objective_for(s) -> Vector3:
 	var o = order_of(s)
 	if o["mode"] == "move" and o["point"] != null:
 		return o["point"]
+	var ct = Commander.target_for(s)
+	if ct != null:
+		return ct
 	if Obj.uses_points() and not Obj.points.is_empty():
 		var i = squad_point(s)
 		if i >= 0:
@@ -212,7 +215,14 @@ static func find_cover(s, threat: Vector3, mode: String):
 		else:
 			sc = dm + maxf(0.0, de - dme) * 0.8 + (10.0 if de < 12.0 else 0.0)
 		var hide = s.hp < 40.0 or s.supp > 1.1
-		if cp.type == "wall":
+		# defenders like to fight from inside buildings
+		if (mode == "hold" or mode == "defend") and cp.get_meta("inside", -1) != 0:
+			var ins = cp.get_meta("inside", -1)
+			if ins == -1:
+				ins = 1 if Squad._building_at(cp.p) != null else 0
+				cp.set_meta("inside", ins)
+			if ins == 1:
+				sc -= 6.0
 			sc += -3.0 if hide else 7.0
 		sc += absf(de - ideal) * 0.12
 		sc += float((i * 7919 + s.id * 31) % 100) / 50.0
@@ -474,7 +484,7 @@ static func decide(s) -> void:
 		return
 	# routed: keep running to the rear, then cower in cover until morale comes back
 	if s.broken:
-		var home: Vector3 = G.world.rally_point(s.team)
+		var home: Vector3 = G.world.fallback_point(s.team, s.pos)
 		if G.dist2d(s.pos, home) > 12.0:
 			if s.move_target == null:
 				release_cover(s)
@@ -495,7 +505,7 @@ static func decide(s) -> void:
 			s.flare_cd = randf_range(18.0, 28.0)
 			Combat.flare(s.pos, s.threat)
 			G.fx.callout(s, G.pick(["Flare up!", "Light 'em up!"]))
-	if ClassAI.busy(s) or s.task == "sapper" and s.move_target != null:
+	if ClassAI.busy(s) or (s.task in ["sapper", "flank_move", "clear"] and s.move_target != null):
 		return
 	# low on ammunition: go and get some
 	if s.task == "resupply":
@@ -681,7 +691,7 @@ static func decide(s) -> void:
 					take_cover(s, cr)
 					s.task = "retreat"
 				return
-			if can_move2 and s.morale >= Morale.SHAKEN and (s.supp < 0.5 or (too_far and s.supp < 0.9)) and ((s.vis_t == null and s.cover_time > 5.0) or too_far):
+			if can_move2 and Squad.may_bound(s) and s.morale >= Morale.SHAKEN and (s.supp < 0.5 or (too_far and s.supp < 0.9)) and ((s.vis_t == null and s.cover_time > 5.0) or too_far):
 				var ca = find_cover(s, threat, "flank" if s.role == "flanker" else "advance")
 				if ca != null:
 					take_cover(s, ca)
@@ -702,12 +712,14 @@ static func decide(s) -> void:
 		var k3 = (s.id * 37) % 11 - 5
 		var k4 = (s.id * 13) % 7 - 3
 		var goal2 = obj + Vector3(k4 * 1.5, 0, k3 * 1.6)
-		if s.squad != null:
-			for m in s.squad["members"]:
-				if is_instance_valid(m) and m.state == "alive" and m != s and not m.is_player:
-					if G.dist2d(m.pos, s.pos) > 14.0 and G.dist2d(m.pos, goal2) < G.dist2d(s.pos, goal2):
-						goal2 = m.pos + Vector3(k4, 0, k3 * 0.8)
-					break
+		var fs = Squad.slot(s)
+		if fs != null and G.dist2d(s.pos, obj) > 12.0:
+			# keep formation on the squad leader while moving up
+			goal2 = fs
+			if G.dist2d(s.pos, goal2) < 2.5:
+				stop_move(s)
+				s.task = "advance"
+				return
 		s.prone_t = false
 		if G.dist2d(s.pos, goal2) < 5.0:
 			var ch = find_cover(s, G.world.spawn[(s.team + 1) % G.team_count()], "hold")
@@ -956,7 +968,7 @@ static func aim_and_fire(s) -> void:
 							s.burst = 0
 							if s.start_reload():
 								if s.vis_t != null or G.sim_time - s.seen_t < 3.0:
-									G.fx.callout(s, "Reloading!")
+									Voice.say(s, "reload")
 							else:
 								G.fx.callout(s, "I'm out!")
 								s.decide_t = 0.0

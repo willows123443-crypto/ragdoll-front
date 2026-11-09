@@ -942,6 +942,21 @@ func ammo_crate(x: float, z: float, team: int) -> void:
 	ammo_points.append({"p": Vector3(x, ground_y(x, z), z), "team": team})
 
 # where a beaten soldier runs back to
+# where a beaten soldier falls back to: the nearest held point behind him, or a line 40 m back toward base
+func fallback_point(team: int, from: Vector3) -> Vector3:
+	var home: Vector3 = spawn[team]
+	var back = G.flat(home - from)
+	if back.length() < 45.0:
+		return home
+	var best = from + back.normalized() * 40.0
+	if Obj.chain():
+		var bd = 1e9
+		for pt in Obj.points:
+			if pt["owner"] == team and G.dist2d(pt["p"], from) < bd and G.dist2d(pt["p"], home) < G.dist2d(from, home):
+				bd = G.dist2d(pt["p"], from)
+				best = pt["p"] + G.flat(home - pt["p"]).normalized() * 8.0
+	return best
+
 # (reinforcements gather behind the most forward control point the team holds, otherwise at base)
 func rally_point(team: int) -> Vector3:
 	if Obj.chain() or G.mode == "laststand":

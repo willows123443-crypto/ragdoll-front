@@ -653,3 +653,16 @@ func _class_action(s) -> void:
 				G.ui.radio(s.team, "%s: enemy marked at %s" % [s.sname, AI.grid_ref(o.pos)])
 		_:
 			G.ui.message("%s: no special action (engineers build, medics heal, radio calls artillery, snipers mark)" % G.CLASSES[s.cls]["name"])
+
+func set_formation(form: String) -> void:
+	var qs = []
+	for s in selection:
+		if is_instance_valid(s) and s.squad != null and not (s.squad in qs):
+			qs.append(s.squad)
+	if qs.is_empty():
+		qs = G.squads.filter(func(q): return q["team"] == 0)
+	for q in qs:
+		q["form_fixed"] = form != "auto"
+		if form != "auto":
+			q["form"] = form
+	G.ui.message("Formation: %s (%d squad%s)" % [form, qs.size(), "" if qs.size() == 1 else "s"])

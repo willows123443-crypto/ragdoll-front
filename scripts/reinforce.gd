@@ -20,7 +20,7 @@ static func step(dt: float) -> void:
 	if not G.reinforce or G.over:
 		return
 	for t in range(G.team_count()):
-		if G.mode == "laststand":
+		if G.mode == "laststand" or (G.mode == "horde" and t == 1):
 			continue          # waves are handled by the game mode
 		var missing = G.team_size - G.alive_count(t)
 		if missing <= 0:

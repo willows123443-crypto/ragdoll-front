@@ -86,10 +86,22 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 	var t_end = 240.0
 	var from = o
 	for step in range(4):
-		var hit = G.ray(from, o + d * 240.0, G.L_WORLD | G.L_BODY | G.L_VEH, exclude)
+		var hit = G.ray(from, o + d * 240.0, G.L_WORLD | G.L_BODY | G.L_VEH | Doors.L_GLASS, exclude)
 		if hit.is_empty():
 			break
 		var t = o.distance_to(hit.position)
+		# window glass breaks and the round carries on; a wooden door slows it a little
+		if hit.collider.has_meta("pane"):
+			Doors.shatter(hit.collider.get_meta("pane"))
+			exclude.append(hit.rid)
+			from = hit.position + d * 0.05
+			continue
+		if hit.collider.has_meta("door"):
+			Doors.shot(hit.collider.get_meta("door"), dmg, hit.position, d)
+			exclude.append(hit.rid)
+			from = hit.position + d * 0.12
+			dmg *= 0.75
+			continue
 		if hit.collider.has_meta("vehicle"):
 			events.append({"t": t, "veh": hit.collider.get_meta("vehicle"), "p": hit.position, "n": hit.normal, "dmg": dmg})
 			t_end = t
@@ -512,6 +524,7 @@ static func step_grenades() -> void:
 		var fuse = g.get_meta("fuse") - G.DT
 		g.set_meta("fuse", fuse)
 		var gtype: String = g.get_meta("type")
+		Doors.grenade_tick(g)
 		# sticky bombs cling to the first vehicle they touch
 		if gtype == "sticky":
 			_sticky_tick(g)
@@ -648,6 +661,7 @@ static func launch_rifle_grenade(s, origin: Vector3, target: Vector3) -> void:
 
 # ---------------------------------------------------------------- explosions
 static func explode(pos: Vector3, owner_s, power: float) -> void:
+	Doors.blast(pos, power)
 	var R = 7.0 * power
 	G.fx.explosion(pos, power)
 	G.audio.boom(pos)
@@ -672,7 +686,7 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 		if s.state != "dead":
 			s.supp = 1.5
 			if d < R:
-				s.hp -= 170.0 * (1.0 - d / R) * (1.0 if exposed else 0.3)
+				s.hp -= 170.0 * (1.0 - d / R) * (1.0 if exposed else 0.3) * ((0.0 if not Modes.rescued else 0.3) if s == Modes.pilot else 1.0)
 				if s == G.player:
 					G.ui.damage_indicator(pos)
 			if s.hp <= 0.0:

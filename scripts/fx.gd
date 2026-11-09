@@ -215,6 +215,15 @@ func impact(pos: Vector3, normal: Vector3) -> void:
 	if randf() < 0.3:
 		_fire_pool("spark", spark_pool, pos, normal)
 
+# shards of a window spraying out
+func glass(pos: Vector3, n: Vector3) -> void:
+	var p = _make_burst(Color(0.72, 0.82, 0.86), 26, 1.1, 3.2, 0.05, false)
+	p.global_position = pos
+	p.direction = (n + Vector3(0, 0.3, 0)).normalized()
+	p.spread = 70.0
+	p.emitting = true
+	get_tree().create_timer(1.5, false).timeout.connect(p.queue_free)
+
 func bleed(pos: Vector3, dir: Vector3, heavy: bool) -> void:
 	if not G.settings["blood"]:
 		_fire_pool("dust", dust_pool, pos, -dir)

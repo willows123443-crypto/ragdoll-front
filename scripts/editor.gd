@@ -20,6 +20,15 @@ var mode_opt: OptionButton
 var load_box: VBoxContainer
 var status: Label
 var tool_buttons = {}
+var armies_opt: OptionButton
+var sel = null                    # selected unit or trigger (a dictionary in data)
+var sel_kind = ""                 # "unit" or "trigger"
+var wp_mode = false               # clicks add waypoints to the selected unit
+var spot_mode = false             # the next click sets the selected trigger's action spot
+var insp: PanelContainer = null   # inspector for the selection
+var insp_box: VBoxContainer
+var veh_pick = "jeep"
+var paint_t2 = 0.0
 
 const TOOLS = [
 	["Ground", [["raise", "Raise"], ["lower", "Lower"], ["flatten", "Flatten"], ["smooth", "Smooth"], ["crater", "Crater"]]],
@@ -27,6 +36,10 @@ const TOOLS = [
 	["Cover", [["sandbags", "Sandbags"], ["crate", "Crate"], ["hedge", "Hedge"], ["hedgehog", "Tank trap"], ["trench", "Trench (drag)"]]],
 	["Props", [["tree", "Tree"], ["deadtree", "Dead tree"], ["tankwreck", "Tank wreck"], ["truckwreck", "Truck wreck"], ["ammo", "Ammo crate"], ["road", "Road (drag)"]]],
 	["Markers", [["spawnA", "Alpha spawn"], ["spawnB", "Bravo spawn"], ["point", "Control point"]]],
+	["Paint the ground", [["paint:1", "Grass"], ["paint:2", "Dry grass"], ["paint:3", "Dirt"], ["paint:4", "Mud"], ["paint:5", "Sand"],
+		["paint:6", "Rock"], ["paint:7", "Snow"], ["paint:8", "Scorched"], ["paint:9", "Tarmac"], ["paint:0", "Unpaint"]]],
+	["Units and scripting", [["squadA", "Alpha squad"], ["squadB", "Bravo squad"], ["vehA", "Alpha vehicle"], ["vehB", "Bravo vehicle"],
+		["trigger", "Trigger"], ["sel", "Select / orders"]]],
 	["", [["erase", "Erase"]]],
 ]
 const TIPS = {
@@ -35,6 +48,10 @@ const TIPS = {
 	"crater": "Click to blow a shell crater", "trench": "Drag to dig a trench with duckboards",
 	"road": "Drag a rectangle to lay a flat road", "erase": "Click an object or marker to remove it",
 	"point": "Click to add a control point (frontline mode takes them in order from west to east)",
+	"squadA": "Click to place an Alpha squad, then give it orders on the right", "squadB": "Click to place a Bravo squad, then give it orders on the right",
+	"vehA": "Click to place an Alpha vehicle (pick the type on the right)", "vehB": "Click to place a Bravo vehicle (pick the type on the right)",
+	"trigger": "Click to place a trigger area, then set what sets it off and what happens",
+	"sel": "Click a unit or trigger to edit it",
 }
 
 func _ready() -> void:
@@ -48,7 +65,10 @@ func _ready() -> void:
 	G.ui.refresh_maps()
 
 func typing() -> bool:
-	return active and name_edit != null and name_edit.has_focus()
+	if not active or root == null:
+		return false
+	var f = root.get_viewport().gui_get_focus_owner()
+	return f is LineEdit or f is SpinBox
 
 # ---------------------------------------------------------------- opening / closing
 func new_map(size: Vector2) -> void:
@@ -56,10 +76,19 @@ func new_map(size: Vector2) -> void:
 	h.resize((int(size.x) + 1) * (int(size.y) + 1))
 	h.fill(0.0)
 	data = {"name": "My map", "size": size, "ground": Color(0.46, 0.45, 0.35), "heights": h, "items": [],
-		"spawns": [Vector3(-size.x / 2.0 + 30.0, 0, 0), Vector3(size.x / 2.0 - 30.0, 0, 0)], "points": [Vector3.ZERO]}
+		"spawns": [Vector3(-size.x / 2.0 + 30.0, 0, 0), Vector3(size.x / 2.0 - 30.0, 0, 0)], "points": [Vector3.ZERO],
+		"units": [], "triggers": [], "paint": PackedByteArray()}
 	_open()
 
 func _open() -> void:
+	for k in ["units", "triggers"]:
+		if not data.has(k):
+			data[k] = []
+	if not data.has("paint"):
+		data["paint"] = PackedByteArray()
+	sel = null
+	wp_mode = false
+	spot_mode = false
 	active = true
 	G.started = false
 	G.main._clear()
@@ -125,6 +154,34 @@ func _rebuild_markers() -> void:
 		_marker(data["spawns"][t], G.team_color(t), 1.2)
 	for p in data["points"]:
 		_marker(p, Color(0.9, 0.9, 0.9), 9.0)
+	for u in data["units"]:
+		var col = G.team_color(u["team"])
+		var g = _post(Vector3(u["x"], 0, u["z"]), col, 2.2 if u["kind"] == "squad" else 1.4, Scripted.describe_unit(u), u == sel)
+		if u["kind"] == "vehicle":
+			var b = MeshInstance3D.new()
+			var bm = BoxMesh.new()
+			bm.size = Vector3(2.2, 1.2, 4.2) if u.get("rot", 0) == 1 else Vector3(4.2, 1.2, 2.2)
+			b.mesh = bm
+			b.material_override = _flat_mat(col.darkened(0.3))
+			b.position.y = 0.6
+			g.add_child(b)
+		var prev = Vector3(u["x"], 0, u["z"])
+		var k = 1
+		for w in u.get("wp", []):
+			_post(w, col.lightened(0.3), 0.6, str(k), false)
+			_line(prev, w, col)
+			prev = w
+			k += 1
+	for tr in data["triggers"]:
+		var c = Vector3(tr["x"], 0, tr["z"])
+		var tc = Color(1.0, 0.6, 0.15) if tr != sel else Color(1.0, 0.95, 0.3)
+		if tr.get("when", "") in ["enter", "clear"]:
+			_marker(c, tc, tr.get("r", 12.0))
+		_post(c, tc, 1.2, Scripted.describe_trigger(tr), tr == sel)
+		if tr.has("ax"):
+			var a = Vector3(tr["ax"], 0, tr["az"])
+			_post(a, Color(1.0, 0.3, 0.2), 0.8, "action spot", false)
+			_line(c, a, tc)
 
 func _marker(p: Vector3, col: Color, r: float) -> void:
 	var g = Node3D.new()
@@ -155,6 +212,54 @@ func _marker(p: Vector3, col: Color, r: float) -> void:
 	markers.add_child(g)
 	g.global_position = Vector3(p.x, G.world.ground_y(p.x, p.z) + 0.05, p.z)
 
+static var flat_mats = {}
+func _flat_mat(col: Color) -> StandardMaterial3D:
+	var k = col.to_html()
+	if not flat_mats.has(k):
+		var m = StandardMaterial3D.new()
+		m.albedo_color = col
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		flat_mats[k] = m
+	return flat_mats[k]
+
+# a marker post with a label floating over it
+func _post(p: Vector3, col: Color, h: float, text: String, hilite: bool) -> Node3D:
+	var g = Node3D.new()
+	var pole = MeshInstance3D.new()
+	var bm = BoxMesh.new()
+	bm.size = Vector3(0.35, h, 0.35)
+	pole.mesh = bm
+	pole.position.y = h / 2.0
+	pole.material_override = _flat_mat(col if not hilite else Color(1, 1, 0.4))
+	g.add_child(pole)
+	if text != "":
+		var l = Label3D.new()
+		l.text = text
+		l.font_size = 26
+		l.fixed_size = true
+		l.pixel_size = 0.00085
+		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		l.no_depth_test = true
+		l.outline_size = 10
+		l.modulate = Color(1, 1, 0.6) if hilite else Color.WHITE
+		l.position.y = h + 0.8
+		g.add_child(l)
+	markers.add_child(g)
+	g.global_position = Vector3(p.x, G.world.ground_y(p.x, p.z) + 0.05, p.z)
+	return g
+
+func _line(a: Vector3, b: Vector3, col: Color) -> void:
+	var n = maxi(1, int(G.dist2d(a, b) / 3.0))
+	for k in range(1, n):
+		var p = a.lerp(b, float(k) / n)
+		var d = MeshInstance3D.new()
+		var sm = BoxMesh.new()
+		sm.size = Vector3(0.3, 0.12, 0.3)
+		d.mesh = sm
+		d.material_override = _flat_mat(col)
+		markers.add_child(d)
+		d.global_position = Vector3(p.x, G.world.ground_y(p.x, p.z) + 0.15, p.z)
+
 # ---------------------------------------------------------------- input
 func _ground_at(screen: Vector2):
 	var cam: Camera3D = G.pc.cam
@@ -170,16 +275,18 @@ func handle(ev: InputEvent) -> void:
 		var p = _ground_at(ev.position)
 		if p != null and cursor:
 			cursor.global_position = p + Vector3(0, 0.15, 0)
-			var r = brush if tool in ["raise", "lower", "flatten", "smooth", "crater"] else 2.0
+			var r = brush if (tool in ["raise", "lower", "flatten", "smooth", "crater"] or tool.begins_with("paint:")) else 2.0
 			cursor.scale = Vector3(r, 1.0, r)
 	elif ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
 		var p = _ground_at(ev.position)
 		if ev.pressed:
 			if p == null:
 				return
-			if tool in ["raise", "lower", "flatten", "smooth"]:
+			if tool in ["raise", "lower", "flatten", "smooth"] or tool.begins_with("paint:"):
 				painting = true
 				flatten_h = G.world.ground_y(p.x, p.z)
+				if tool.begins_with("paint:"):
+					_paint(p)
 			elif tool in ["road", "trench"]:
 				drag_a = p
 			else:
@@ -187,7 +294,10 @@ func handle(ev: InputEvent) -> void:
 		else:
 			if painting:
 				painting = false
-				_terrain_changed()
+				if tool.begins_with("paint:"):
+					G.world.build_terrain(data["ground"])
+				else:
+					_terrain_changed()
 			if drag_a != null and p != null:
 				_drag_done(drag_a, p)
 			drag_a = null
@@ -214,7 +324,10 @@ func _process(dt: float) -> void:
 	var p = _ground_at(get_viewport().get_mouse_position())
 	if p == null:
 		return
-	_brush(p, dt)
+	if tool.begins_with("paint:"):
+		_paint(p)
+	else:
+		_brush(p, dt)
 	if paint_t <= 0.0:
 		paint_t = 0.25
 		G.world.build_terrain(data["ground"])
@@ -254,13 +367,71 @@ func _brush(p: Vector3, dt: float) -> void:
 					th[i] = lerpf(th[i], avg / maxf(1.0, n), minf(1.0, 3.0 * k * dt))
 	w.th = th
 
+# colour the ground under the brush
+func _paint(p: Vector3) -> void:
+	var w = G.world
+	if w.paint.size() != w.th.size():
+		var pa = PackedByteArray()
+		pa.resize(w.th.size())
+		pa.fill(0)
+		w.paint = pa
+	var idx = int(tool.split(":")[1])
+	var r = brush
+	var W = w.TW + 1
+	var x0 = maxi(0, int(floor(p.x - r - w.TX0)))
+	var x1 = mini(w.TW, int(ceil(p.x + r - w.TX0)))
+	var z0 = maxi(0, int(floor(p.z - r - w.TZ0)))
+	var z1 = mini(w.TH_, int(ceil(p.z + r - w.TZ0)))
+	var pa2: PackedByteArray = w.paint
+	for iz in range(z0, z1 + 1):
+		for ix in range(x0, x1 + 1):
+			var d = Vector2(w.TX0 + ix - p.x, w.TZ0 + iz - p.z).length()
+			# a ragged edge so painted patches don't look like stamped circles
+			if d < r * (0.75 + 0.25 * sin(ix * 1.7 + iz * 2.3)):
+				pa2[iz * W + ix] = idx
+	w.paint = pa2
+	data["paint"] = pa2
+
 func _terrain_changed() -> void:
 	G.world.build_terrain(data["ground"])
 	data["heights"] = G.world.th
 	_rebuild_items()
 
 func _click(p: Vector3) -> void:
+	if wp_mode and sel_kind == "unit" and sel != null:
+		if not sel.has("wp"):
+			sel["wp"] = []
+		sel["wp"].append(Vector3(snappedf(p.x, 0.5), 0, snappedf(p.z, 0.5)))
+		if sel.get("order", "hold") in ["hold", "free", "attack"]:
+			sel["order"] = "move"
+		_rebuild_markers()
+		_inspect()
+		_status("Waypoint %d added · keep clicking to add more, or press Done" % sel["wp"].size())
+		return
+	if spot_mode and sel_kind == "trigger" and sel != null:
+		sel["ax"] = snappedf(p.x, 0.5)
+		sel["az"] = snappedf(p.z, 0.5)
+		spot_mode = false
+		_rebuild_markers()
+		_inspect()
+		_status("Action spot set")
+		return
 	match tool:
+		"squadA", "squadB":
+			var u = {"kind": "squad", "team": 0 if tool == "squadA" else 1, "x": snappedf(p.x, 0.5), "z": snappedf(p.z, 0.5), "rot": rot, "size": 6, "order": "hold", "wp": []}
+			data["units"].append(u)
+			_select(u, "unit")
+		"vehA", "vehB":
+			var u2 = {"kind": "vehicle", "team": 0 if tool == "vehA" else 1, "x": snappedf(p.x, 0.5), "z": snappedf(p.z, 0.5), "rot": rot, "vtype": veh_pick, "order": "free", "wp": []}
+			data["units"].append(u2)
+			_select(u2, "unit")
+		"trigger":
+			var tr = {"when": "enter", "team": 0, "x": snappedf(p.x, 0.5), "z": snappedf(p.z, 0.5), "r": 14.0, "t": 60.0, "n": 6, "pt": 0,
+				"then": "reinforce", "ateam": 1, "text": "", "vtype": "tank"}
+			data["triggers"].append(tr)
+			_select(tr, "trigger")
+		"sel":
+			_select_at(p)
 		"erase":
 			_erase(p)
 		"crater":
@@ -301,6 +472,14 @@ func _drag_done(a: Vector3, b: Vector3) -> void:
 		_terrain_changed()
 
 func _erase(p: Vector3) -> void:
+	for arr in [data["units"], data["triggers"]]:
+		for i in range(arr.size()):
+			if G.dist2d(Vector3(arr[i]["x"], 0, arr[i]["z"]), p) < 3.0:
+				if arr[i] == sel:
+					_select(null, "")
+				arr.remove_at(i)
+				_rebuild_markers()
+				return
 	# markers first
 	for i in range(data["points"].size()):
 		if G.dist2d(data["points"][i], p) < 4.0 and data["points"].size() > 1:
@@ -348,6 +527,7 @@ func save() -> void:
 		n = "My map"
 	data["name"] = n
 	data["heights"] = G.world.th
+	data["paint"] = G.world.paint
 	DirAccess.make_dir_recursive_absolute("user://maps")
 	var f = FileAccess.open("user://maps/%s.map" % n, FileAccess.WRITE)
 	f.store_var(data)
@@ -365,8 +545,10 @@ func open_saved(n: String) -> void:
 	_status("Opened \"%s\"" % n)
 
 func play() -> void:
-	var modes = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand"]
+	var modes = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand", "koth", "commander", "horde"]
 	data["heights"] = G.world.th
+	data["paint"] = G.world.paint
+	_select(null, "")
 	G.custom_map = data.duplicate(true)
 	active = false
 	visible = false
@@ -376,7 +558,9 @@ func play() -> void:
 		markers.queue_free()
 		markers = null
 	G.ui.root.visible = true
-	G.main.start_game({"map": "custom", "mode": modes[mode_opt.selected], "size": 10, "limit": 100, "reinforce": true, "teams": 2})
+	var placed_only = armies_opt != null and armies_opt.selected == 1 and not data["units"].is_empty()
+	G.main.start_game({"map": "custom", "mode": modes[mode_opt.selected], "size": 10, "limit": 100, "reinforce": not placed_only, "teams": 2,
+		"armies": not placed_only})
 
 # ---------------------------------------------------------------- UI
 func _status(t: String) -> void:
@@ -386,6 +570,7 @@ func _status(t: String) -> void:
 func _build_ui() -> void:
 	for c in root.get_children():
 		c.queue_free()
+	insp = null
 	tool_buttons = {}
 	var ui = G.ui
 	var side = ui._panel(Color(0.09, 0.1, 0.12, 0.92))
@@ -404,10 +589,15 @@ func _build_ui() -> void:
 			flow.add_child(b)
 		v.add_child(flow)
 	v.add_child(ui._label("R rotate · [ ] brush size · right-drag look · WASD fly · Esc exit", 11, Color(0.65, 0.65, 0.65)))
-	side.add_child(v)
+	var sc = ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.custom_minimum_size = Vector2(240, minf(660.0, root.get_viewport().get_visible_rect().size.y - 40.0))
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(v)
+	side.add_child(sc)
 	root.add_child(side)
 	var top = ui._panel(Color(0.09, 0.1, 0.12, 0.92))
-	ui._place(top, Control.PRESET_CENTER_TOP, -380, 10, 760, 0)
+	ui._place(top, Control.PRESET_CENTER_TOP, -450, 10, 900, 0)
 	var h = HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
 	name_edit = LineEdit.new()
@@ -419,8 +609,10 @@ func _build_ui() -> void:
 	h.add_child(lb)
 	h.add_child(ui._button("New small", func(): new_map(Vector2(260, 190))))
 	h.add_child(ui._button("New large", func(): new_map(Vector2(560, 240))))
-	mode_opt = ui._option(["Sandbox", "Deathmatch", "Capture", "Frontline", "Assault", "Last stand"], 2)
+	mode_opt = ui._option(["Sandbox", "Deathmatch", "Capture", "Frontline", "Assault", "Last stand", "King of the hill", "Commander", "Horde"], 2)
 	h.add_child(mode_opt)
+	armies_opt = ui._option(["Armies + my units", "Only my units"], 0)
+	h.add_child(armies_opt)
 	var pb = ui._button("▶ Play", func(): play())
 	pb.modulate = Color(0.6, 1.0, 0.6)
 	h.add_child(pb)
@@ -446,6 +638,141 @@ func _build_ui() -> void:
 
 func _pick(id: String) -> void:
 	tool = id
+	wp_mode = false
+	spot_mode = false
 	for k in tool_buttons:
 		tool_buttons[k].modulate = Color(1.0, 0.85, 0.3) if k == id else Color.WHITE
 	_status(TIPS.get(id, "Click to place · R rotates"))
+	if root != null and (insp != null or id in ["vehA", "vehB"]):
+		_inspect()
+
+# ---------------------------------------------------------------- selecting units and triggers, and their settings
+func _select_at(p: Vector3) -> void:
+	var best = null
+	var bk = ""
+	var bd = 4.0
+	for u in data["units"]:
+		var d = G.dist2d(Vector3(u["x"], 0, u["z"]), p)
+		if d < bd:
+			bd = d
+			best = u
+			bk = "unit"
+	for tr in data["triggers"]:
+		var d2 = G.dist2d(Vector3(tr["x"], 0, tr["z"]), p)
+		if d2 < bd:
+			bd = d2
+			best = tr
+			bk = "trigger"
+	_select(best, bk)
+
+func _select(x, kind: String) -> void:
+	sel = x
+	sel_kind = kind if x != null else ""
+	wp_mode = false
+	spot_mode = false
+	_rebuild_markers()
+	_inspect()
+
+func _inspect() -> void:
+	if insp == null:
+		insp = G.ui._panel(Color(0.09, 0.1, 0.12, 0.94))
+		G.ui._place(insp, Control.PRESET_TOP_RIGHT, -300, 70, 290, 0)
+		insp_box = VBoxContainer.new()
+		insp_box.add_theme_constant_override("separation", 4)
+		insp.add_child(insp_box)
+		root.add_child(insp)
+	if insp.get_parent() != root:
+		root.add_child(insp)
+	for c in insp_box.get_children():
+		c.queue_free()
+	var ui = G.ui
+	if sel == null:
+		insp.visible = tool in ["vehA", "vehB"]
+		if insp.visible:
+			insp_box.add_child(ui._label("Vehicle to place", 15))
+			insp_box.add_child(_opt(Scripted.VEHICLES, Scripted.VEHICLES.find(veh_pick), func(i): veh_pick = Scripted.VEHICLES[i]))
+		return
+	insp.visible = true
+	if sel_kind == "unit":
+		var u = sel
+		insp_box.add_child(ui._label(Scripted.describe_unit(u), 14, Color(1, 0.95, 0.6)))
+		insp_box.add_child(_opt(["Alpha", "Bravo"], u["team"], func(i): u["team"] = i; _changed()))
+		if u["kind"] == "squad":
+			insp_box.add_child(_spin("Men", 1, 20, u.get("size", 6), func(v): u["size"] = int(v); _changed()))
+		else:
+			insp_box.add_child(_opt(Scripted.VEHICLES, maxi(0, Scripted.VEHICLES.find(u.get("vtype", "jeep"))), func(i): u["vtype"] = Scripted.VEHICLES[i]; _changed()))
+		insp_box.add_child(ui._label("Orders", 13, Color(0.7, 0.72, 0.74)))
+		insp_box.add_child(_opt(Scripted.ORDER_NAMES, maxi(0, Scripted.ORDERS.find(u.get("order", "hold"))), func(i): u["order"] = Scripted.ORDERS[i]; _changed()))
+		var h = HBoxContainer.new()
+		h.add_child(ui._button("Done adding" if wp_mode else "Add waypoints", func():
+			wp_mode = not wp_mode
+			_status("Click the ground to add waypoints" if wp_mode else "")
+			_inspect()))
+		h.add_child(ui._button("Clear waypoints", func(): u["wp"] = []; _changed()))
+		insp_box.add_child(h)
+	else:
+		var tr = sel
+		insp_box.add_child(ui._label(Scripted.describe_trigger(tr), 14, Color(1, 0.85, 0.5)))
+		insp_box.add_child(ui._label("When", 13, Color(0.7, 0.72, 0.74)))
+		insp_box.add_child(_opt(Scripted.WHEN_NAMES, maxi(0, Scripted.WHEN.find(tr.get("when", "enter"))), func(i): tr["when"] = Scripted.WHEN[i]; _changed(); _inspect()))
+		match tr.get("when", "enter"):
+			"time":
+				insp_box.add_child(_spin("Seconds", 5, 3600, tr.get("t", 60.0), func(v): tr["t"] = float(v); _changed()))
+			"enter", "clear":
+				insp_box.add_child(_opt(["Alpha", "Bravo"], tr.get("team", 0), func(i): tr["team"] = i; _changed()))
+				insp_box.add_child(_spin("Radius (m)", 3, 80, tr.get("r", 14.0), func(v): tr["r"] = float(v); _changed()))
+			"point":
+				insp_box.add_child(_opt(["Alpha", "Bravo"], tr.get("team", 0), func(i): tr["team"] = i; _changed()))
+				var names = []
+				for k in range(maxi(1, data["points"].size())):
+					names.append("Point " + "ABCDEFGH"[k])
+				insp_box.add_child(_opt(names, clampi(int(tr.get("pt", 0)), 0, names.size() - 1), func(i): tr["pt"] = i; _changed()))
+			"losses":
+				insp_box.add_child(_opt(["Alpha", "Bravo"], tr.get("team", 0), func(i): tr["team"] = i; _changed()))
+				insp_box.add_child(_spin("Men lost", 1, 200, tr.get("n", 10), func(v): tr["n"] = int(v); _changed()))
+		insp_box.add_child(ui._label("Then", 13, Color(0.7, 0.72, 0.74)))
+		insp_box.add_child(_opt(Scripted.THEN_NAMES, maxi(0, Scripted.THEN.find(tr.get("then", "message"))), func(i): tr["then"] = Scripted.THEN[i]; _changed(); _inspect()))
+		var th = tr.get("then", "message")
+		if th in ["reinforce", "vehicle", "airstrike", "attack", "win"]:
+			insp_box.add_child(_opt(["for Alpha", "for Bravo"], tr.get("ateam", 1), func(i): tr["ateam"] = i; _changed()))
+		if th == "reinforce":
+			insp_box.add_child(_spin("Men", 1, 20, tr.get("n", 6), func(v): tr["n"] = int(v); _changed()))
+		if th == "vehicle":
+			insp_box.add_child(_opt(Scripted.VEHICLES, maxi(0, Scripted.VEHICLES.find(tr.get("vtype", "tank"))), func(i): tr["vtype"] = Scripted.VEHICLES[i]; _changed()))
+		var te = LineEdit.new()
+		te.placeholder_text = "Message to show (optional)"
+		te.text = tr.get("text", "")
+		te.text_changed.connect(func(t): tr["text"] = t; _rebuild_markers())
+		insp_box.add_child(te)
+		if th in ["reinforce", "vehicle", "artillery", "airstrike", "smoke", "attack"]:
+			insp_box.add_child(ui._button("Click to set where it happens" if not spot_mode else "Click the map…", func():
+				spot_mode = true
+				_status("Click where it should happen")
+				_inspect()))
+	insp_box.add_child(ui._button("Delete", func():
+		if sel_kind == "unit":
+			data["units"].erase(sel)
+		else:
+			data["triggers"].erase(sel)
+		_select(null, "")))
+
+func _changed() -> void:
+	_rebuild_markers()
+	if insp_box.get_child_count() > 0 and insp_box.get_child(0) is Label:
+		insp_box.get_child(0).text = Scripted.describe_unit(sel) if sel_kind == "unit" else Scripted.describe_trigger(sel)
+
+func _opt(items: Array, selected: int, cb: Callable) -> OptionButton:
+	var o = G.ui._option(items, clampi(selected, 0, items.size() - 1))
+	o.item_selected.connect(cb)
+	return o
+
+func _spin(label: String, lo: float, hi: float, val: float, cb: Callable) -> HBoxContainer:
+	var h = HBoxContainer.new()
+	h.add_child(G.ui._label(label, 13))
+	var sp = SpinBox.new()
+	sp.min_value = lo
+	sp.max_value = hi
+	sp.value = val
+	sp.value_changed.connect(cb)
+	h.add_child(sp)
+	return h

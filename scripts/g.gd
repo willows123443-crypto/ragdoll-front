@@ -1,7 +1,7 @@
 extends Node
 # Global state and helpers shared by every script (autoload "G").
 
-const DT = 1.0 / 60.0
+var DT = 1.0 / 60.0   # far soldiers in big battles tick at half rate with a doubled step
 const GRAV = -9.8
 
 # collision layers
@@ -51,6 +51,28 @@ var orders = [{"mode": "free", "point": null}, {"mode": "free", "point": null}, 
 var squads: Array = []
 var grenades: Array = []
 var smoke_clouds: Array = []
+var sgrid = {}             # soldiers bucketed by 2 m cell, rebuilt every tick
+
+func rebuild_sgrid() -> void:
+	sgrid = {}
+	for s in soldiers:
+		if s.state == "alive":
+			var k = int(floor(s.pos.x / 2.0)) * 65536 + int(floor(s.pos.z / 2.0))
+			if not sgrid.has(k):
+				sgrid[k] = [s]
+			else:
+				sgrid[k].append(s)
+
+func soldiers_near(p: Vector3) -> Array:
+	var out = []
+	var cx = int(floor(p.x / 2.0))
+	var cz = int(floor(p.z / 2.0))
+	for dx in [-1, 0, 1]:
+		for dz in [-1, 0, 1]:
+			var a = sgrid.get((cx + dx) * 65536 + cz + dz)
+			if a != null:
+				out.append_array(a)
+	return out
 var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day"}
 
 # ---------------------------------------------------------------- teams: names, armband colours and uniforms

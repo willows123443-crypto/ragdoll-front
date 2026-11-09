@@ -24,13 +24,16 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Building:** engineers put up FOBs, sandbag walls, barbed wire, tank traps, MG nests, mortar pits, watchtowers, bunkers, field hospitals, radio masts, vehicle depots and supply dumps piece by piece; mark out sites yourself from the Build tab, and dismantle anything
 - **Destructible everything:** houses, churches, warehouses and apartment blocks come down wall by wall and floor by floor
 - **Team looks:** each side has its own vehicle style, insignia and helmet shape
-- **Modes:** sandbox, deathmatch, capture the points, frontline, assault, last stand, destroy base, breakthrough, sabotage (night raid) and siege — the menu explains each
+- **Modes:** sandbox, deathmatch, capture the points, frontline, assault, last stand, destroy base, breakthrough, sabotage (night raid), siege, convoy escort, pilot rescue, a king-of-the-hill flag that moves, a top-down commander (RTS) mode and a zombie horde — the menu explains each
+- **Daily challenge:** one battle a day picked from the date (map, mode, time of day, twists), with your best result kept
+- **Doors and windows:** soldiers kick doors open, glass shatters when shot, and grenades get lobbed in through windows
+- **Huge battles:** 100 a side or more; far-off soldiers are simplified so the battle keeps running
 - **Air war:** fighters and dive bombers you can fly, AA guns, helicopter transports and gunships
 - **Logistics:** fuel, towing, bridge layers, supply trucks that restock FOBs, ammo boxes you can carry, upgrades (concrete walls, pillboxes, huts), camo nets and rebuilding
-- **Campaign:** nine regions to take one battle at a time; survivors become veterans with stripes
+- **Campaign:** nine regions to take one battle at a time; survivors become veterans with stripes, and whatever gets wrecked in a region stays wrecked
 - **Scenario codes:** save a battle as a code and share it
 - **Commander's map** (Tab): see the whole battle and send squads around
-- **Maps:** Town ruins, Farmland, Trenches, plus two large maps (Valley offensive, Western front), and your own from the **map editor**
+- **Maps:** Town ruins, Farmland, Trenches, Forest, City blocks, a tank factory fought indoors, Beach landing, large maps (Valley offensive, Western front, River crossing, Mountain pass), the huge battlefield, random maps, and your own from the **map editor** (sculpt and paint the ground, place buildings, squads and vehicles with orders and waypoints, and triggers that set off reinforcements, barrages, messages or a win)
 - **Modes:** sandbox, deathmatch, capture the point, frontline (push across a chain of points with tickets), assault, last stand
 - **Up to four sides** with your own names, armband colours and uniforms; day, dusk or night
 - **Command:** select soldiers and send them somewhere, team orders, "follow me"

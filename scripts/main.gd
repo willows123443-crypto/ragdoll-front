@@ -46,6 +46,14 @@ func _ready() -> void:
 			_veh_test()
 		if a == "--camptest":
 			_camp_test()
+		if a == "--bigtest":
+			_big_test()
+		if a == "--doortest":
+			_door_test()
+		if a == "--ruintest":
+			_ruin_test()
+		if a.begins_with("--modetest="):
+			_mode_test(a.substr(11))
 		if a.begins_with("--edtest="):
 			_editor_test(a.substr(9))
 
@@ -227,8 +235,9 @@ func start_game(o: Dictionary) -> void:
 	_clear()
 	G.mode = o.get("mode", "sandbox")
 	G.teams = clampi(o.get("teams", G.teams), 2, 4)
-	if G.mode in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege"]:
+	if G.mode in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde"]:
 		G.teams = 2
+	G.pc.set_rts(false)
 	G.apply_teams()
 	G.score = []
 	G.cap_score = []
@@ -252,12 +261,13 @@ func start_game(o: Dictionary) -> void:
 	Commander.reset()
 	Support.reset()
 	Build.reset()
+	Modes.reset()
 	Build.setup_bases()
 	Obj.setup_mode()
 	for t in range(G.team_count()):
-		if G.mode == "laststand" and t == 1:
+		if (G.mode == "laststand" or G.mode == "horde") and t == 1:
 			continue
-		var n_here = G.team_size
+		var n_here = G.team_size if o.get("armies", true) else 0
 		if G.mode == "sabotage" and t == 0:
 			n_here = maxi(4, G.team_size / 2)
 		for i in range(n_here):
@@ -270,8 +280,14 @@ func start_game(o: Dictionary) -> void:
 			for sd in G.soldiers:
 				if sd.team == 0:
 					sd.satchels = 2
-		else:
+		elif not (G.mode == "escort" and t == 0) and o.get("armies", true):
 			_starting_vehicles(t)
+	Modes.setup()
+	Scripted.reset()
+	if G.map_id == "custom":
+		Scripted.setup(G.custom_map)
+		if not o.get("armies", true):
+			G.team_size = maxi(Scripted.placed_count(G.custom_map, 0), Scripted.placed_count(G.custom_map, 1))
 	G.started = true
 	refresh_markers()
 	G.pc.free_pos = Vector3(-62, G.world.ground_y(-62, -6) + 7.0, -6)
@@ -280,9 +296,10 @@ func start_game(o: Dictionary) -> void:
 	G.started = true
 
 func spawn_soldier(team: int, x: float, z: float, wid: String):
-	if G.soldiers.size() >= 160:
+	var cap = maxi(160, G.team_size * G.teams + 60)
+	if G.soldiers.size() >= cap:
 		cleanup_bodies(true)
-	if G.soldiers.size() >= 160:
+	if G.soldiers.size() >= cap:
 		return null
 	var p = Vector3(x, G.world.ground_y(x, z), z)
 	p = G.world.push_out_circle(p, 0.35)[0]
@@ -405,12 +422,25 @@ func _sim_step() -> void:
 		if is_instance_valid(v):
 			v.step(G.DT)
 	var tb = Time.get_ticks_usec()
+	G.rebuild_sgrid()
+	# performance: frozen far-away soldiers think and move every other tick, with a double time step
+	var big = G.soldiers.size() >= 50
+	var fr = Engine.get_physics_frames()
 	for s in G.soldiers.duplicate():
-		if is_instance_valid(s):
+		if not is_instance_valid(s):
+			continue
+		if big and s.lod_frozen and s.state == "alive":
+			if (fr + s.id) % 2 != 0:
+				continue
+			G.DT = 2.0 / 60.0
+			s.tick()
+			G.DT = 1.0 / 60.0
+		else:
 			s.tick()
 	var tc = Time.get_ticks_usec()
 	prof[0] += tb - ta
 	prof[1] += tc - tb
+	Doors.step()
 	Combat.step_grenades()
 	Combat.step_rockets()
 	Combat.step_strikes()
@@ -423,6 +453,8 @@ func _sim_step() -> void:
 	Support.step(G.DT)
 	Commander.step(G.DT)
 	Obj.step(G.DT)
+	Modes.step(G.DT)
+	Scripted.step(G.DT)
 	if randf() < 0.05:
 		cleanup_bodies(false)
 
@@ -437,6 +469,7 @@ func _process(dt: float) -> void:
 
 func on_kill(_s, _attacker) -> void:
 	Obj.on_death(_s)
+	Scripted.on_death(_s)
 	if G.mode == "deathmatch" and not G.over:
 		for t in range(2):
 			if G.score[t] >= G.limit:
@@ -449,6 +482,9 @@ func end_game(t: int) -> void:
 	if G.player != null:
 		G.pc.leave_soldier()
 	G.ui.show_win(t)
+	var dres = Modes.daily_over(t)
+	if dres != "":
+		G.ui.message(dres)
 	if Campaign.active:
 		var res = Campaign.battle_over(t)
 		G.ui.campaign_result(res)
@@ -628,7 +664,8 @@ func _autotest() -> void:
 	var scen = [["town", "capture", 30.0, "truck"], ["field", "capture", 30.0, "para"], ["trenches", "capture", 30.0, "truck"], ["valley", "capture", 60.0, "truck"],
 		["valley", "frontline", 75.0, "heli"], ["front", "assault", 50.0, "para"], ["town", "laststand", 45.0, "truck"],
 		["field", "capture", 40.0, "truck", 4, "night"], ["town", "deathmatch", 30.0, "para", 3, "dusk"],
-		["field", "destroy", 45.0, "truck"], ["town", "breakthrough", 35.0, "truck"], ["field", "sabotage", 35.0, "truck"], ["town", "siege", 35.0, "truck"]]
+		["field", "destroy", 45.0, "truck"], ["town", "breakthrough", 35.0, "truck"], ["field", "sabotage", 35.0, "truck"], ["town", "siege", 35.0, "truck"], ["factory", "capture", 35.0, "truck"],
+		["field", "horde", 30.0, "truck"], ["town", "koth", 25.0, "truck"], ["field", "escort", 30.0, "truck"], ["field", "rescue", 25.0, "truck"]]
 	var only = _arg("scen", "")
 	for sc in scen:
 		var m = sc[0]
@@ -723,8 +760,22 @@ func _shot_mode(dir: String) -> void:
 	G.ui.visible = false
 	G.pc.force_free = true
 	await _wait(0.5)
-	start_game({"map": _arg("map", "town"), "mode": "capture", "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
+	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "capture"), "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
 		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2"))})
+	if _arg("zshot", "") != "":
+		await _wait(float(_arg("zshot", "20")))
+		var zs = G.soldiers.filter(func(x): return x.zombie and x.state == "alive")
+		if not zs.is_empty():
+			var z = zs[0]
+			var f = Vector3(sin(z.body_yaw), 0, cos(z.body_yaw))
+			await _look(z.pos + f * 4.5 + Vector3(1.5, 1.6, 0), z.pos + Vector3(0, 1.0, 0))
+			await _snap(dir, "zombie")
+			if G.pc.rts or true:
+				G.pc.force_free = false
+				G.pc.set_rts(true)
+				G.pc.rts_focus = z.pos
+				await _wait(0.5)
+				await _snap(dir, "rts")
 	if _arg("vtypes", "") != "":
 		for v in G.vehicles.duplicate():
 			v.remove()
@@ -896,21 +947,63 @@ func _editor_test(dir: String) -> void:
 	ed._click(Vector3(40, 0, 0))
 	ed.tool = "erase"
 	ed._click(Vector3(22, 0, 4))
-	print("EDTEST items %d points %d" % [ed.data["items"].size(), ed.data["points"].size()])
+	# ground paint, placed units with orders, and triggers
+	ed.brush = 12.0
+	for pt in [["paint:5", -60, 30], ["paint:3", 0, 0], ["paint:7", 60, -40], ["paint:8", 20, 40]]:
+		ed.tool = pt[0]
+		for k in range(6):
+			ed._paint(Vector3(pt[1] + k * 4.0, 0, pt[2]))
+	G.world.build_terrain(ed.data["ground"])
+	ed.tool = "squadA"
+	ed._click(Vector3(-90, 0, -10))
+	ed.sel["order"] = "patrol"
+	ed.wp_mode = true
+	ed._click(Vector3(-40, 0, -20))
+	ed._click(Vector3(-40, 0, 20))
+	ed.wp_mode = false
+	ed.tool = "squadB"
+	ed._click(Vector3(40, 0, 5))
+	ed.sel["size"] = 8
+	ed.tool = "vehB"
+	ed.veh_pick = "tank"
+	ed._click(Vector3(70, 0, 20))
+	ed.sel["order"] = "move"
+	ed.sel["wp"] = [Vector3(30, 0, 20)]
+	ed.tool = "trigger"
+	ed._click(Vector3(-40, 0, 0))
+	ed.sel["when"] = "time"
+	ed.sel["t"] = 4.0
+	ed.sel["then"] = "message"
+	ed.sel["text"] = "Trigger test fired"
+	ed._click(Vector3(-40, 0, 25))
+	ed.sel["when"] = "enter"
+	ed.sel["team"] = 0
+	ed.sel["then"] = "reinforce"
+	ed.sel["ateam"] = 1
+	ed.sel["n"] = 5
+	ed.spot_mode = true
+	ed._click(Vector3(10, 0, 30))
+	ed._rebuild_markers()
+	print("EDTEST items %d points %d units %d triggers %d painted %d" % [ed.data["items"].size(), ed.data["points"].size(), ed.data["units"].size(), ed.data["triggers"].size(), Array(G.world.paint).filter(func(x): return x > 0).size()])
 	ed.name_edit.text = "Test map"
 	ed.save()
 	ed.new_map(Vector2(260, 190))
 	ed.open_saved("Test map")
-	print("EDTEST reopened items %d" % ed.data["items"].size())
+	print("EDTEST reopened items %d units %d triggers %d paint %d" % [ed.data["items"].size(), ed.data["units"].size(), ed.data["triggers"].size(), ed.data["paint"].size()])
+	ed.tool = "sel"
+	ed._click(Vector3(-40, 0, 25))
 	G.pc.free_pos = Vector3(-70, 45, -60)
 	G.pc.free_yaw = 0.7
 	G.pc.free_pitch = -0.55
 	await _wait(0.5)
 	await _snap(dir, "editor")
 	ed.mode_opt.select(3)
+	ed.armies_opt.select(1)
 	ed.play()
 	await _wait(1.0)
-	print("EDTEST playing map=%s mode=%s soldiers=%d points=%d" % [G.map_id, G.mode, G.soldiers.size(), Obj.points.size()])
+	print("EDTEST playing map=%s mode=%s soldiers=%d points=%d groups=%d vehicles=%d" % [G.map_id, G.mode, G.soldiers.size(), Obj.points.size(), Scripted.groups.size(), G.vehicles.size()])
+	await _wait(5.0)
+	print("EDTEST triggers fired %s" % [Scripted.fired.keys()])
 	G.pc.free_pos = Vector3(-70, 45, -60)
 	G.pc.free_yaw = 0.7
 	G.pc.free_pitch = -0.55
@@ -1024,6 +1117,149 @@ func _camp_test() -> void:
 	for k in range(200):
 		Build.add_work(up, 1.0)
 	print("CAMPTEST fob2 done ", up["done"], " fobs ", Build.fobs(0).size())
+	get_tree().quit()
+
+# 100 v 100 (or --size=N): how long a simulation tick takes with far soldiers simplified
+func _big_test() -> void:
+	await _wait(0.5)
+	start_game({"map": _arg("map", "valley"), "mode": "capture", "size": int(_arg("size", "100")), "limit": 9999, "reinforce": true,
+		"armor": "light", "reinf_mode": "instant", "teams": 2})
+	G.pc.free_pos = Vector3(0, 30, 0)
+	for k in range(3):
+		tick_us = 0
+		tick_n = 0
+		prof = [0, 0]
+		await _wait(8.0)
+		var frozen = 0
+		for s in G.soldiers:
+			if s.lod_frozen:
+				frozen += 1
+		print("BIGTEST %ds soldiers %d frozen %d sim %.2f ms/tick  veh %.2f soldiers %.2f" % [(k + 1) * 8, G.soldiers.size(), frozen,
+			(tick_us / 1000.0) / maxi(tick_n, 1), prof[0] / 1000.0 / maxi(tick_n, 1), prof[1] / 1000.0 / maxi(tick_n, 1)])
+	get_tree().quit()
+
+# campaign: what gets wrecked in a region stays wrecked next time
+func _ruin_test() -> void:
+	await _wait(0.5)
+	Campaign.new_campaign()
+	Campaign.attack(1)
+	await _wait(1.0)
+	var n0 = G.world.static_cols.size()
+	var c = G.world.capture
+	G.world.damage_area(c + Vector3(0, 1, 0), 14.0, 6.0)
+	await _wait(1.0)
+	var dead = 0
+	for col in G.world.static_cols:
+		if not col.alive:
+			dead += 1
+	Campaign.active = true
+	end_game(1)
+	print("RUINTEST first battle: %d pieces, %d wrecked, recorded %d" % [n0, dead, Campaign.ruins(1).size()])
+	await _wait(1.0)
+	Campaign.data["owner"][1] = 1
+	Campaign.attack(1)
+	await _wait(1.0)
+	print("RUINTEST second battle: %d pieces, ruined at start %d, doors %d" % [G.world.static_cols.size(), G.world.ruined_at_start, Doors.doors.size()])
+	get_tree().quit()
+
+# the newer modes: run one for a while and print how it is going
+func _mode_test(mode: String) -> void:
+	await _wait(0.5)
+	if mode == "daily":
+		Modes.start_daily()
+		print("MODETEST daily ", Modes.daily_text(Modes.daily))
+	else:
+		start_game({"map": _arg("map", "field"), "mode": mode, "size": int(_arg("size", "10")), "limit": 100, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	if _arg("dbg", "") != "":
+		for j in range(int(_arg("dbgn", "10"))):
+			await _wait(0.8)
+			if Modes.pilot != null and is_instance_valid(Modes.pilot):
+				var la = Modes.pilot.last_attacker
+				print("DBG pilot hp %.1f state %s attacker %s" % [Modes.pilot.hp, Modes.pilot.state, (la.sname + " t" + str(la.team)) if la != null and is_instance_valid(la) else "none"])
+			for v2 in G.vehicles:
+				if v2.mission != null and v2.mission.get("lead", false):
+					print("DBG lead car spd %.1f pos %s path %d/%d drv %s stuck %.1f rev %.1f" % [v2.speed, v2.pos, v2.path_i, v2.path.size(), v2.driver() != null, v2.stuck_t, v2.reverse_t])
+			for v in Modes.convoy:
+				if is_instance_valid(v):
+					var f = v.forward()
+					for so in G.soldiers:
+						if so.team == v.team and so.state == "alive" and so.vehicle == null:
+							var rel = G.flat(so.pos - v.pos)
+							var aa = rel.dot(f)
+							if aa > 0.0 and aa < v.spec["len"] * 0.5 + 5.0 and absf(rel.dot(Vector3(f.z, 0, -f.x))) < v.spec["wid"] * 0.5 + 0.8:
+								print("   blocker %s task %s order %s mt %s" % [so.sname, so.task, so.order, so.move_target])
+					print("DBG truck drv %s spd %.1f stage %d go %.0f pos %s path %d/%d rev %.1f yaw %.2f fuel %.2f" % [v.driver() != null, v.speed, v.mission["stage"], v.mission["go_t"], v.pos, v.path_i, v.path.size(), v.reverse_t, v.yaw, v.fuel])
+					break
+	for k in range(int(_arg("secs", "48")) / 8):
+		await _wait(8.0)
+		var z = 0
+		for s in G.soldiers:
+			if s.zombie and s.state != "dead":
+				z += 1
+		var pz = ""
+		if Modes.pilot != null and is_instance_valid(Modes.pilot):
+			pz = " pilot %s %s d_home %.0f" % [Modes.pilot.state, Modes.rescued, G.dist2d(Modes.pilot.pos, Modes._home(0))]
+		var lead = Modes._lead_truck()
+		if lead != null:
+			pz += " lead %.0f m to go" % G.dist2d(lead.pos, Modes.convoy_goal)
+		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz])
+		if G.over:
+			break
+	get_tree().quit()
+
+# doors get kicked open by people walking through them, grenades go in through windows
+func _door_test() -> void:
+	await _wait(0.5)
+	start_game({"map": _arg("map", "town"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	print("DOORTEST doors %d panes %d" % [Doors.doors.size(), Doors.panes.size()])
+	for dq in Doors.doors:
+		print("  door ", dq["c"], " n ", dq["n"])
+	if Doors.doors.is_empty():
+		get_tree().quit()
+		return
+	var d = Doors.doors[0]
+	var b = G.world.buildings[d["b"]]
+	var inside = Vector3(b["x"], 0, b["z"])
+	var outside = d["c"] + d["n"] * 5.0
+	var s = spawn_soldier(0, outside.x, outside.z, "rifle")
+	s.order = {"mode": "hold", "point": s.pos}
+	await _wait(0.5)
+	for k in range(5):
+		AI.go_to(s, inside, 1.0)
+		await _wait(1.0)
+		print("  walker ", s.pos, " task ", s.task, " mt ", s.move_target, " route ", s.route.size() if s.route != null else -1)
+	print("DOORTEST walker at %.1f from door, door goal %.2f ang %.2f, inside %s" % [G.dist2d(s.pos, d["c"]), d["goal"], d["ang"], Doors.building_at(s.pos) == d["b"]])
+	# grenade through a window
+	var p = null
+	var tp = Vector3.ZERO
+	for q in Doors.panes:
+		if q["alive"] and q["b"] != d["b"]:
+			for dd in [9.0, 7.0, 11.0, 5.0, 13.0]:
+				var cand = q["c"] + q["n"] * dd
+				var hh = Vector3(cand.x, G.world.ground_y(cand.x, cand.z) + 1.6, cand.z)
+				if G.ray(hh, q["c"] + q["n"] * 0.3, G.L_WORLD).is_empty() and not G.world.solid_at(cand.x, cand.z, 0.4, hh.y - 1.6):
+					p = q
+					tp = cand
+					break
+		if p != null:
+			break
+	if p != null:
+		var bb = G.world.buildings[p["b"]]
+		var tgt = Vector3(bb["x"], G.world.ground_y(bb["x"], bb["z"]), bb["z"])
+		var th = spawn_soldier(1, tp.x, tp.z, "rifle")
+		th.order = {"mode": "hold", "point": th.pos}
+		await _wait(0.5)
+		var aim = Doors.throw_point(th, tgt)
+		var rh = G.ray(th.head_pos(), p["c"] + p["n"] * 0.3, G.L_WORLD, th.rids)
+		if not rh.is_empty() and rh.collider.has_meta("col"):
+			var cc = rh.collider.get_meta("col")
+			print("  hit col lo ", cc.lo, " hi ", cc.hi, " pane c ", p["c"], " w ", p["w"])
+		print("DOORTEST window aim changed %s  bld %d/%d  ray %s  n %s  dist %.1f" % [aim != tgt, Doors.building_at(tgt), p["b"], rh.get("position", "clear"), p["n"], G.dist2d(th.pos, p["c"])])
+		Combat.throw_grenade(th, aim, "smoke")
+		var g = G.grenades[G.grenades.size() - 1]
+		await _wait(1.2)
+		var gp = g.global_position if is_instance_valid(g) else Vector3.ZERO
+		print("DOORTEST grenade inside %s pane broken %s" % [Doors.building_at(gp) == p["b"], not p["alive"]])
 	get_tree().quit()
 
 func _breach_test() -> void:

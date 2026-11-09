@@ -12,6 +12,8 @@ var s_hit: AudioStreamWAV
 var s_rocket: AudioStreamWAV
 var s_engine: AudioStreamWAV
 var s_hammer: AudioStreamWAV
+var s_kick: AudioStreamWAV
+var s_glass: AudioStreamWAV
 var players: Array = []
 var pi = 0
 var ui_player: AudioStreamPlayer
@@ -39,6 +41,8 @@ func _ready() -> void:
 	s_rocket = _noise(0.7, 0.25, 0.3, 1.0)
 	s_engine = _engine_loop()
 	s_hammer = _noise(0.09, 0.025, 0.55, 3.0, 30.0)
+	s_kick = _noise(0.35, 0.07, 0.12, 2.4, 70.0)
+	s_glass = _glass_sound()
 	for i in range(28):
 		var p = AudioStreamPlayer3D.new()
 		p.bus = "World"
@@ -264,6 +268,36 @@ func whistle(pos: Vector3) -> void:
 func hammer(pos: Vector3) -> void:
 	if cam_dist(pos) < 45.0:
 		play(s_hammer, pos, -6.0, randf_range(0.8, 1.25))
+
+func kick(pos: Vector3) -> void:
+	if cam_dist(pos) < 70.0:
+		play(s_kick, pos, 0.0, randf_range(0.85, 1.1))
+
+func glass(pos: Vector3) -> void:
+	if cam_dist(pos) < 80.0:
+		play(s_glass, pos, -3.0, randf_range(0.9, 1.15))
+
+# breaking glass: a bright crash and a scatter of tinkles
+func _glass_sound() -> AudioStreamWAV:
+	var n = int(0.7 * RATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var hp_prev = 0.0
+	var pings = []
+	for k in range(14):
+		pings.append([randf_range(0.0, 0.5), randf_range(2500.0, 6500.0), randf_range(0.15, 0.35)])
+	for i in range(n):
+		var t = float(i) / RATE
+		var w = randf() * 2.0 - 1.0
+		var hpv = w - hp_prev
+		hp_prev = w
+		var v = hpv * exp(-t / 0.06) * 0.7
+		for pg in pings:
+			var dt = t - pg[0]
+			if dt > 0.0 and dt < 0.12:
+				v += sin(TAU * pg[1] * dt) * exp(-dt / 0.03) * pg[2]
+		out[i] = v * minf(1.0, t * 2000.0)
+	return _wav(out)
 
 func step(pos: Vector3) -> void:
 	if cam_dist(pos) < 12.0:

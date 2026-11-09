@@ -47,7 +47,9 @@ static func step(dt: float) -> void:
 			points[t] += 1
 	# AI sides spend what they have
 	for t in range(points.size()):
-		if t == 0 and G.player != null:
+		if t == 0 and (G.player != null or G.mode == "commander"):
+			continue
+		if t == 1 and G.mode == "horde":
 			continue
 		ai_t[t] -= dt
 		if ai_t[t] > 0.0:

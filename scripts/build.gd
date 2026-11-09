@@ -741,6 +741,10 @@ static func allowed(t: int) -> Array:
 			return ["fob", "sandbags", "hospital", "supply", "mortarpit"]
 		"sabotage":
 			return []
+		"horde":
+			return ["sandbags", "wire", "traps", "mgnest", "tower", "hospital", "bunker"] if t == 0 else []
+		"rescue", "escort":
+			return ["fob", "sandbags", "hospital", "supply", "mgnest", "mortarpit"]
 	return ORDER.duplicate()
 
 # defenders dig in around the points they hold instead of setting up FOBs

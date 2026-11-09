@@ -91,6 +91,9 @@ static func objective_for(s) -> Vector3:
 	var o = order_of(s)
 	if o["mode"] == "move" and o["point"] != null:
 		return o["point"]
+	var mt = Modes.target_for(s)
+	if mt != null:
+		return mt
 	var ct = Commander.target_for(s)
 	if ct != null:
 		return ct
@@ -423,7 +426,7 @@ static func follow_route(s) -> void:
 
 # ---------------------------------------------------------------- perception
 static func perceive(s) -> void:
-	s.think = randf_range(0.25, 0.4)
+	s.think = randf_range(0.25, 0.4) if G.soldiers.size() < 90 else randf_range(0.45, 0.75)
 	if G.main.is_night():
 		var contact = s.vis_t != null or G.sim_time - s.seen_t < 6.0 or s.supp > 0.4
 		s.light_on = not contact and s.state == "alive" and s.cls != "sniper"
@@ -438,7 +441,7 @@ static func perceive(s) -> void:
 	var peek_only = false
 	var cand: Array = []
 	for o in G.soldiers:
-		if o.team != s.team and o.state != "dead":
+		if o.team != s.team and o.state != "dead" and (o != Modes.pilot or o.state != "wounded"):
 			var d2 = o.pos.distance_squared_to(s.pos)
 			if d2 < 160.0 * 160.0:
 				cand.append([d2 * (0.5 if o == s.target else 1.0), o])
@@ -624,7 +627,12 @@ static func decide(s) -> void:
 	if s.grenades > 0 and s.nade_cd <= 0.0 and known and s.target != null and is_instance_valid(s.target) and s.target.state != "dead" and s.intel.has(s.target) and dT > 11.0 and dT < 30.0 and (s.target.in_cover or s.vis_t == null):
 		if randf() < 0.5:
 			var e = s.intel[s.target]
-			Combat.throw_grenade(s, e["p"] + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5)), "frag")
+			var gp = Doors.throw_point(s, e["p"])
+			if gp == e["p"]:
+				gp += Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5))
+			elif randf() < 0.6:
+				G.fx.callout(s, G.pick(["Grenade, through the window!", "Frag in the window!", "Fire in the hole!"]))
+			Combat.throw_grenade(s, gp, "frag")
 			s.burst = 0
 			s.burst_cd = 0.8
 		s.nade_cd = randf_range(10.0, 18.0)
@@ -856,6 +864,9 @@ static func _watchdog(s) -> void:
 	s.decide_t = 3.0
 
 static func update(s) -> void:
+	if s.zombie:
+		Modes.zombie_tick(s)
+		return
 	s.think -= G.DT
 	s.decide_t -= G.DT
 	s.morale_t -= G.DT

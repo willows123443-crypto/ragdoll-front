@@ -3,7 +3,7 @@ extends CanvasLayer
 
 var tool = "ctl"
 var tab = "units"
-const MAP_IDS = ["town", "field", "trenches", "forest", "city", "beach", "valley", "front", "river", "pass", "random"]
+const MAP_IDS = ["town", "field", "trenches", "forest", "city", "factory", "beach", "valley", "front", "river", "pass", "huge", "random"]
 const TOOLS = {
 	"units": [["a1", "Alpha soldier"], ["b1", "Bravo soldier"], ["a5", "Alpha squad"], ["b5", "Bravo squad"], ["ctl", "Take control"], ["spA", "Alpha spawn"], ["spB", "Bravo spawn"]],
 	"command": [["sel", "Select"], ["mvA", "Alpha: move to"], ["mvB", "Bravo: move to"]],
@@ -83,7 +83,8 @@ var report_chart: Control
 var opt_map: OptionButton
 var opt_mode: OptionButton
 var mode_info: Label
-const MODE_IDS = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand", "destroy", "breakthrough", "sabotage", "siege"]
+const MODE_IDS = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand", "destroy", "breakthrough", "sabotage", "siege",
+	"escort", "rescue", "koth", "commander", "horde"]
 var opt_size: OptionButton
 var opt_limit: OptionButton
 var opt_reinf: OptionButton
@@ -500,7 +501,8 @@ func _build_menu() -> void:
 			G.main.preview_map("random")))
 	_row(v, "Random map seed", seed_row)
 	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the points", "Frontline — push across the map", "Assault — Alpha attacks", "Last stand — survive the waves",
-		"Destroy base", "Breakthrough — break the line", "Sabotage — night raid", "Siege — hold the town"], 0)
+		"Destroy base", "Breakthrough — break the line", "Sabotage — night raid", "Siege — hold the town",
+		"Escort — get the convoy through", "Rescue — bring the pilot home", "King of the hill — it moves", "Commander — top-down RTS", "Horde — the dead walk"], 0)
 	_row(v, "Mode", opt_mode)
 	mode_info = _label("", 13, Color(0.8, 0.82, 0.78))
 	mode_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -510,7 +512,7 @@ func _build_menu() -> void:
 	_show_mode_info()
 	opt_limit = _option(["25", "50", "100", "200"], 1)
 	_row(v, "Kills / points / tickets", opt_limit)
-	opt_size = _option(["5", "8", "10", "15", "20"], 2)
+	opt_size = _option(["5", "8", "10", "15", "20", "30", "50", "100"], 2)
 	_row(v, "Soldiers per team", opt_size)
 	opt_reinf = _option(["By truck", "Paratroopers", "By helicopter", "Appear at base", "None"], 0)
 	_row(v, "Reinforcements", opt_reinf)
@@ -537,6 +539,7 @@ func _build_menu() -> void:
 	var h2 = HBoxContainer.new()
 	h2.add_child(_button("Campaign…", func(): _show_campaign()))
 	h2.add_child(_button("Scenario code…", func(): _show_scenario()))
+	h2.add_child(_button("Daily challenge…", func(): _show_daily()))
 	v.add_child(h2)
 	menu.add_child(v)
 	root.add_child(menu)
@@ -577,6 +580,9 @@ func _show_campaign(result: String = "") -> void:
 					continue
 				var own = Campaign.data["owner"][i]
 				var txt = "%s\n%s · %s" % [r["name"], r["map"], r["mode"]]
+				var nr = Campaign.ruins(i).size()
+				if nr > 0:
+					txt += "\n%d pieces in ruins" % nr
 				var idx = i
 				var b = _button(txt, func():
 					if Campaign.can_attack(idx):
@@ -606,6 +612,34 @@ func _show_campaign(result: String = "") -> void:
 	h.add_child(_button("Close", func(): camp_panel.visible = false))
 	camp_box.add_child(h)
 	camp_panel.visible = true
+
+var daily_panel: PanelContainer
+var daily_lbl: Label
+
+# today's challenge: the same battle for everyone, picked from the date
+func _show_daily() -> void:
+	if daily_panel == null:
+		daily_panel = _panel(Color(0.11, 0.13, 0.15, 0.97))
+		_place(daily_panel, Control.PRESET_CENTER, -280, -130, 560, 260)
+		var v = VBoxContainer.new()
+		v.add_child(_label("Daily challenge", 24))
+		daily_lbl = _label("", 15, Color(0.88, 0.9, 0.85))
+		daily_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		daily_lbl.custom_minimum_size = Vector2(520, 110)
+		v.add_child(daily_lbl)
+		var h = HBoxContainer.new()
+		h.add_child(_button("Play today's battle", func():
+			daily_panel.visible = false
+			menu.visible = false
+			help.visible = false
+			Modes.start_daily()))
+		h.add_child(_button("Close", func(): daily_panel.visible = false))
+		v.add_child(h)
+		daily_panel.add_child(v)
+		root.add_child(daily_panel)
+	var c = Modes.daily_config()
+	daily_lbl.text = Modes.daily_text(c) + "\n\n" + Obj.MODE_INFO.get(c["mode"], "")
+	daily_panel.visible = true
 
 var scen_panel: PanelContainer
 var scen_text: TextEdit
@@ -649,6 +683,7 @@ func _show_scenario() -> void:
 	scen_panel.visible = true
 
 func _deploy() -> void:
+	Modes.daily = {}
 	if seed_edit != null and seed_edit.text.strip_edges() != "":
 		var t = seed_edit.text.strip_edges()
 		G.random_seed = int(t) if t.is_valid_int() else t.hash()
@@ -665,7 +700,7 @@ func _show_mode_info() -> void:
 	if mode_info != null:
 		var id = MODE_IDS[clampi(opt_mode.selected, 0, MODE_IDS.size() - 1)]
 		var extra = ""
-		if id in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege"]:
+		if id in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde"]:
 			extra = "  (two sides only)"
 		mode_info.text = Obj.MODE_INFO.get(id, "") + extra
 
@@ -684,7 +719,8 @@ func _build_help() -> void:
 		"  W A S D  fly · Space / E up · Q / C down · Shift faster · mouse wheel zoom\n" + \
 		"  Right-drag  look around · Left-click  use the selected tool · 1–9  pick a tool\n" + \
 		"  F  take control of the soldier at the centre of the screen\n" + \
-		"  T  slow-mo · P  pause · M  menu · Tab  commander's map (select squads, right-click to send them)\n\n" + \
+		"  T  slow-mo · P  pause · M  menu · Tab  commander's map (select squads, right-click to send them)\n" + \
+		"  V  top-down commander view: WASD pans, wheel zooms, Q/E turn, click a soldier to select his squad\n\n" + \
 		"CONTROLLING A SOLDIER\n" + \
 		"  Mouse  aim · Left-click  fire · Right mouse  aim down sights\n" + \
 		"  Q / E  lean · Shift  sprint · C  crouch · Z  prone · run into low walls to vault\n" + \
@@ -696,6 +732,7 @@ func _build_help() -> void:
 		"  U (hold)  help build a friendly construction site · I  dismantle what you aim at (within 6 m)\n" + \
 		"  Shift+G  cook a grenade · middle mouse  rifle grenade · Shift+K  sticky bomb · Shift+V  red smoke (calls artillery)\n" + \
 		"  T  flashlight · F next to a wounded friend: carry them · F at a crate: pick up an ammo box, F again to drop it\n" + \
+		"  Walk into a closed door to kick it open · F at a window: smash the glass · grenades go in through windows\n" + \
 		"  In a vehicle: Q tows a gun or broken vehicle (bridge layer: Q lays the bridge) · planes: mouse steers, Shift+click bombs\n" + \
 		"  F  next to a vehicle: get in · in a vehicle: WASD drive, mouse aim, click fire, 1–4 change seat, F get out\n\n" + \
 		"BATTLE\n" + \

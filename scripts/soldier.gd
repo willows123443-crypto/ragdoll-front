@@ -31,6 +31,9 @@ const UPREF = {1: [0, 0.56, 0], 0: [0, 0.77, 0.03], 3: [-0.21, 0.51, 0], 6: [0.2
 static var mats = {}
 static var camo_tex: ImageTexture = null
 static var next_id = 0
+static var zombie_next = false    # the horde: the next soldier made is one of the walking dead
+var zombie = false
+var melee_t = 0.0
 
 var id = 0
 var team = 0
@@ -220,6 +223,9 @@ func setup(team_: int, x: float, z: float, weapon_id: String) -> void:
 	phase = randf() * 6.0
 	seed_ = randf() * 100.0
 	skin = G.pick(G.SKINS)
+	zombie = zombie_next
+	if zombie:
+		skin = Color(0.5, 0.57, 0.42).lerp(Color(0.6, 0.6, 0.5), randf() * 0.5)
 	callout_cd = randf_range(0.0, 3.0)
 	burst_cd = randf_range(0.3, 1.2)
 	nade_cd = randf_range(4.0, 10.0)
@@ -350,6 +356,12 @@ func _build_body() -> void:
 	var helm = _mat("helm" + G.TEAM_HELM[team].to_html(), G.TEAM_HELM[team], false)
 	var band = _mat("band" + G.TEAM_BAND[team].to_html(), G.TEAM_BAND[team], false)
 	var sk = _mat("skin" + skin.to_html(false), skin, false)
+	if zombie:
+		# torn, filthy clothes and no helmet
+		var rag = [Color(0.55, 0.5, 0.42), Color(0.62, 0.58, 0.5), Color(0.45, 0.48, 0.52), Color(0.58, 0.47, 0.4)][id % 4]
+		uni = _mat("zuni" + str(id % 4), rag, false)
+		uni2 = _mat("zuni2" + str(id % 3), rag.darkened(0.25 + 0.1 * (id % 3)), false)
+		vest = _mat("zvest" + str(id % 4), rag.darkened(0.15).lerp(Color(0.35, 0.1, 0.08), 0.25), false)
 	var boot = _mat("boot", Color(0.16, 0.14, 0.12), false)
 	for i in range(11):
 		var b = RigidBody3D.new()
@@ -376,7 +388,8 @@ func _build_body() -> void:
 	_mesh(parts[1], Vector3(0.46, 0.32, 0.3), Vector3(0, 0.06, 0), vest)
 	_mesh(parts[1], Vector3(0.32, 0.3, 0.14), Vector3(0, 0.05, 0.19), vest)
 	_mesh(parts[2], Vector3(0.25, 0.26, 0.25), Vector3.ZERO, sk)
-	_helmet(parts[2], helm, band, uni)
+	if not zombie:
+		_helmet(parts[2], helm, band, uni)
 	for i in [3, 5]:
 		_mesh(parts[i], Vector3(0.13, 0.32, 0.13), Vector3.ZERO, uni)
 	_mesh(parts[3], Vector3(0.15, 0.08, 0.15), Vector3(0, -0.03, 0), band)
@@ -727,6 +740,9 @@ func stand_pose() -> void:
 			foot.y = gy + 0.07 + lift
 		else:
 			foot.y = G.world.surface_y(foot.x, foot.z, gy + 0.3) + 0.07 + lift
+		if side == 1 and kick_t > 0.0:
+			var kk = sin(PI * (1.0 - kick_t / 0.38))
+			foot = foot.lerp(base + kick_dir * 0.72 + r * 0.1 + Vector3(0, 0.5, 0), kk)
 		foot = _reach(P[hi], foot, 0.88)
 		P[hi + 2] = foot
 		P[hi + 1] = _ik(P[hi], foot, 0.45, 0.45, f + r * (sd * 0.15))
@@ -802,8 +818,51 @@ func _compute_targets() -> void:
 	for i in range(3, 11):
 		targets[i] = _bone_xform(P[PART_SEG[i][0]], P[PART_SEG[i][1]], right)
 
+var lod_frozen = false
+var lod_n = 0
+var kick_t = 0.0
+var kick_dir = Vector3.FORWARD
+
+# a boot to a door (or a window)
+func kick(dir: Vector3) -> void:
+	kick_t = 0.38
+	kick_dir = dir
+	stumble = 0.0
+
+# far from the camera in a big battle, a healthy soldier's body just follows its pose
+# instead of being simulated: the physics only runs for the people you can actually see
+func _lod_far() -> bool:
+	if G.soldiers.size() < 50 or is_player or state != "alive" or vault != null or dragging != null:
+		return false
+	var cam = get_viewport().get_camera_3d()
+	return cam != null and cam.global_position.distance_squared_to(pos) > 55.0 * 55.0
+
+# back to a real simulated body (falling, dying, climbing aboard)
+func lod_wake() -> void:
+	if not lod_frozen:
+		return
+	lod_frozen = false
+	for b in parts:
+		b.freeze = false
+		b.linear_velocity = vel
+
 func drive() -> void:
 	_compute_targets()
+	if _lod_far():
+		if not lod_frozen or not parts[0].freeze:
+			lod_frozen = true
+			for b in parts:
+				b.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+				b.freeze = true
+		for i in range(parts.size()):
+			parts[i].global_transform = targets[i]
+		return
+	elif lod_frozen:
+		lod_frozen = false
+		if not hidden_in_vehicle:
+			for b in parts:
+				b.freeze = false
+				b.linear_velocity = vel
 	for i in range(parts.size()):
 		var b: RigidBody3D = parts[i]
 		var k: float = strength * PART_MUS[i] * limb[PART_REG[i]]
@@ -918,6 +977,8 @@ func resupply() -> void:
 
 # squad leaders carry a radio with a tall antenna so you can pick them out
 func set_leader(v: bool) -> void:
+	if zombie:
+		return
 	if rec != null:
 		rec["leader"] = rec["leader"] or v
 	if v and leader_mark == null and parts.size() > 1:
@@ -1039,6 +1100,7 @@ func fall(t: float = -1.0) -> void:
 	if dragging:
 		dragging.dragger = null
 		dragging = null
+	lod_wake()
 	state = "down"
 	strength = 0.0
 	down_t = t if t > 0.0 else randf_range(1.2, 2.2)
@@ -1066,6 +1128,7 @@ func go_dead() -> void:
 		carrying.carried_by = null
 	carrying = null
 	set_crate(false)
+	lod_wake()
 	state = "dead"
 	strength = 0.0
 	dead_t = 0.0
@@ -1263,7 +1326,7 @@ func tick() -> void:
 			_tick_riding()
 		"chute":
 			_tick_chute()
-	if state != "dead" and not hidden_in_vehicle:
+	if state != "dead" and not hidden_in_vehicle and (not lod_frozen or lod_n % 2 == 0):
 		compute_muzzle()
 
 func _tick_down() -> void:
@@ -1316,7 +1379,8 @@ func _tick_getup() -> void:
 			decide_t = 0.0
 
 func _tick_wounded() -> void:
-	hp -= 0.45 * G.DT
+	if not has_meta("pilot"):
+		hp -= 0.45 * G.DT
 	supp = maxf(0.0, supp - 0.3 * G.DT)
 	if hp <= 0.0:
 		Combat.kill(self, last_attacker, false)
@@ -1429,7 +1493,7 @@ func _tick_alive() -> void:
 		vel.z += clampf(want.z * sm - vel.z, -12.0 * G.DT, 12.0 * G.DT)
 		pos.x += vel.x * G.DT
 		pos.z += vel.z * G.DT
-		for o in G.soldiers:
+		for o in G.soldiers_near(pos):
 			if o == self or o.state != "alive" or absf(o.pos.y - pos.y) > 1.0:
 				continue
 			var dx: float = pos.x - o.pos.x
@@ -1447,6 +1511,8 @@ func _tick_alive() -> void:
 			start_vault(hit)
 		# keep clear of vehicles
 		for v in G.vehicles:
+			if absf(pos.x - v.pos.x) > 9.0 or absf(pos.z - v.pos.z) > 9.0:
+				continue
 			var rel = G.flat(pos - v.pos)
 			var vf = v.forward()
 			var vl = Vector3(vf.z, 0, -vf.x)
@@ -1506,7 +1572,15 @@ func _tick_alive() -> void:
 	if ph0 * sin(phase) < 0.0 and (spd > 0.8 or stumble > 0.0) and not prone:
 		G.audio.step(pos)
 	stumble = maxf(0.0, stumble - G.DT)
-	check_gun_clip()
+	kick_t = maxf(0.0, kick_t - G.DT)
+	# far away in a big battle: pose and body only every third tick, and no balance checks
+	var far = _lod_far()
+	if far:
+		lod_n += 1
+		if lod_n % 2 != 0:
+			return
+	if not far:
+		check_gun_clip()
 	if prone:
 		prone_pose()
 	else:
@@ -1514,7 +1588,7 @@ func _tick_alive() -> void:
 	strength = 0.42 * (1.0 - 0.8 * minf(1.0, stun / 0.25))
 	drive()
 	# balance: if the body gets pushed away from the legs, step after it or fall
-	if not prone and vault == null and vy == 0.0:
+	if not far and not prone and vault == null and vy == 0.0:
 		var pel: Vector3 = parts[0].global_position
 		var tp: Vector3 = targets[0].origin
 		var ex = pel.x - tp.x
@@ -1543,6 +1617,7 @@ func mount(v, i: int) -> bool:
 	vehicle = v
 	seat = i
 	v.seats[i] = self
+	lod_wake()
 	v.open_door(i)
 	state = "riding"
 	task = null

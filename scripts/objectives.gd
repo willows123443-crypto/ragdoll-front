@@ -17,7 +17,7 @@ static var wave_t = 0.0
 static var wave_left = 0
 
 static func uses_points() -> bool:
-	return G.mode in ["capture", "frontline", "assault", "laststand", "breakthrough", "siege"]
+	return G.mode in ["capture", "frontline", "assault", "laststand", "breakthrough", "siege", "koth", "commander"]
 
 const MODE_INFO = {
 	"sandbox": "Free play with no way to win or lose. Drop in soldiers, vehicles and buildings and watch what happens.",
@@ -29,6 +29,11 @@ const MODE_INFO = {
 	"destroy": "Each side has an HQ and builds FOBs. Blow up an enemy's HQ and all its FOBs to knock it out; the last side with a base wins.",
 	"breakthrough": "Bravo holds a fortified line of bunkers, wire and MG nests. Alpha must take every flag on the line before its tickets run out, then hold at least one against the counter-attack.",
 	"sabotage": "At night, a small Alpha raiding party must blow up Bravo's radio mast and vehicle depot with satchel charges. The raiders get no reinforcements.",
+	"escort": "Alpha drives a convoy of trucks across the map, with an armoured car up front. Get at least two trucks to the marker; Bravo sets ambushes along the way.",
+	"rescue": "A pilot is down behind enemy lines. Alpha has to reach him, get him on his feet (or carry him) and bring him back to base before time runs out. Bravo hunts him: if they reach him first, they take him prisoner.",
+	"koth": "King of the hill: one flag, and every 90 seconds it moves somewhere else. Holding it earns points; first to the points limit wins.",
+	"commander": "A capture battle you fight from above. You can't take over soldiers: select squads, box-select or click, and right-click to send them. WASD pans, the wheel zooms.",
+	"horde": "Alpha holds out against ten waves of the walking dead. They have no guns, but there are a lot of them and they don't stop.",
 	"siege": "Alpha holds a fortified town while its supplies run down; holding the supply-road flags slows the drain. Bravo wins by taking the town, Alpha by holding out until the timer ends.",
 }
 
@@ -47,8 +52,12 @@ static func reset() -> void:
 	var src: Array = G.world.objectives
 	if G.mode == "laststand":
 		src = [{"p": G.world.capture, "name": "A"}]
-	elif G.mode == "capture":
+	elif G.mode == "capture" or G.mode == "commander":
 		src = _capture_points()
+	elif G.mode == "koth":
+		src = [{"p": _free_near(G.world.capture), "name": "K"}]
+	elif G.mode in ["escort", "rescue", "horde"]:
+		src = []
 	elif G.mode == "breakthrough":
 		src = _line_points(2)
 	elif G.mode == "siege":
@@ -325,7 +334,14 @@ static func _step_two(dt: float) -> void:
 
 static func _score(dt: float) -> void:
 	match G.mode:
-		"capture":
+		"koth":
+			var ko = points[0]["owner"]
+			if ko >= 0 and not points[0]["contested"]:
+				G.cap_score[ko] += dt * 0.5
+				if G.cap_score[ko] >= G.limit:
+					G.main.end_game(ko)
+					return
+		"capture", "commander":
 			for pt in points:
 				var o = pt["owner"]
 				if o >= 0:
@@ -487,4 +503,4 @@ static func status_text() -> String:
 				if not st["dead"]:
 					left += 1
 			return "targets left: %d" % left
-	return ""
+	return Modes.status_text()

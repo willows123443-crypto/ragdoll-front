@@ -23,6 +23,10 @@ var drag_from = null          # screen position where a selection box started
 var drag_to = Vector2.ZERO
 var r_press = Vector2.ZERO
 var r_moved = false
+var rts = false            # top-down commander camera
+var rts_focus = Vector3.ZERO
+var rts_dist = 75.0
+var rts_yaw = PI / 2.0
 var force_free = false   # development screenshots: keep the free camera while controlling a soldier
 
 func _ready() -> void:
@@ -34,7 +38,23 @@ func _ready() -> void:
 	cam.current = true
 
 # ---------------------------------------------------------------- controlling a soldier
+func set_rts(on: bool) -> void:
+	rts = on
+	if not on:
+		return
+	if G.player != null:
+		leave_soldier()
+	var W = G.world
+	var home = W.rally_point(0) if W.spawn.size() > 0 else W.capture
+	rts_focus = home.lerp(W.capture, 0.45)
+	rts_yaw = atan2(W.capture.x - home.x, W.capture.z - home.z)
+	rts_dist = 75.0
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
 func possess(s) -> void:
+	if G.mode == "commander":
+		G.ui.message("You're in command here: select soldiers and right-click to send them")
+		return
 	if s == null or s.state == "dead":
 		G.ui.message("Pick a living soldier")
 		return
@@ -214,10 +234,31 @@ func _process(dt: float) -> void:
 			free_pos = Vector3(c.x + cos(orbit) * rad, G.world.ground_y(c.x, c.z) + rad * 0.4, c.z + sin(orbit) * rad)
 			free_yaw = atan2(c.x - free_pos.x, c.z - free_pos.z)
 			free_pitch = -0.32
+		if rts and G.started:
+			# commander view: look down on a point on the ground, pan along it, zoom in and out
+			var fw = Vector3(sin(rts_yaw), 0, cos(rts_yaw))
+			var rt = Vector3(-cos(rts_yaw), 0, sin(rts_yaw))
+			if not G.ui.typing():
+				var spd = rts_dist * (1.6 if Input.is_key_pressed(KEY_SHIFT) else 0.75) * dt
+				if Input.is_key_pressed(KEY_W): rts_focus += fw * spd
+				if Input.is_key_pressed(KEY_S): rts_focus -= fw * spd
+				if Input.is_key_pressed(KEY_D): rts_focus += rt * spd
+				if Input.is_key_pressed(KEY_A): rts_focus -= rt * spd
+				if Input.is_key_pressed(KEY_Q): rts_yaw += 1.4 * dt
+				if Input.is_key_pressed(KEY_E): rts_yaw -= 1.4 * dt
+			var bb: Rect2 = G.world.bounds
+			rts_focus.x = clampf(rts_focus.x, bb.position.x, bb.end.x)
+			rts_focus.z = clampf(rts_focus.z, bb.position.y, bb.end.y)
+			rts_focus.y = G.world.ground_y(rts_focus.x, rts_focus.z)
+			free_yaw = rts_yaw
+			free_pitch = -0.98 - 0.25 * clampf((rts_dist - 30.0) / 150.0, 0.0, 1.0)
+			var cpr = cos(free_pitch)
+			var dr = Vector3(sin(free_yaw) * cpr, sin(free_pitch), cos(free_yaw) * cpr)
+			free_pos = rts_focus - dr * rts_dist
 		var cp = cos(free_pitch)
 		var d = Vector3(sin(free_yaw) * cp, sin(free_pitch), cos(free_yaw) * cp)
 		var r = Vector3(-cos(free_yaw), 0, sin(free_yaw))
-		if (G.started or G.editor.active) and not G.ui.typing() and not G.editor.typing():
+		if (G.started or G.editor.active) and not G.ui.typing() and not G.editor.typing() and not rts:
 			var sp = (40.0 if Input.is_key_pressed(KEY_SHIFT) else 14.0) * dt
 			if Input.is_key_pressed(KEY_W): free_pos += d * sp
 			if Input.is_key_pressed(KEY_S): free_pos -= d * sp
@@ -225,7 +266,7 @@ func _process(dt: float) -> void:
 			if Input.is_key_pressed(KEY_A): free_pos -= r * sp
 			if Input.is_key_pressed(KEY_E) or Input.is_key_pressed(KEY_SPACE): free_pos.y += sp
 			if Input.is_key_pressed(KEY_Q) or Input.is_key_pressed(KEY_C) or Input.is_key_pressed(KEY_CTRL): free_pos.y -= sp
-		free_pos.y = clampf(free_pos.y, G.world.ground_y(free_pos.x, free_pos.z) + 0.6, 140.0)
+		free_pos.y = clampf(free_pos.y, G.world.ground_y(free_pos.x, free_pos.z) + 0.6, 240.0 if rts else 140.0)
 		cam.global_position = free_pos
 		cam.look_at(free_pos + d, Vector3.UP)
 	if absf(cam.fov - fov_t) > 0.05:
@@ -264,7 +305,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 		elif G.player == null and drag_from != null:
 			drag_to = ev.position
 			G.ui.sel_box_changed()
-		if G.player == null and r_drag:
+		if G.player == null and r_drag and rts:
+			if ev.position.distance_to(r_press) > 6.0:
+				r_moved = true
+			rts_yaw -= ev.relative.x * 0.004 * G.settings["sens"]
+		elif G.player == null and r_drag:
 			if ev.position.distance_to(r_press) > 6.0:
 				r_moved = true
 			free_yaw -= ev.relative.x * 0.004 * G.settings["sens"]
@@ -306,6 +351,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 				G.ui.message("Rifle grenade away (%d left)" % ps.rgren)
 			else:
 				G.ui.message("No rifle grenades (riflemen carry them, on the rifle)")
+		elif (ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN) and G.player == null and ev.pressed and rts:
+			rts_dist = clampf(rts_dist * (0.88 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1.14), 14.0, 230.0)
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_UP and G.player == null and ev.pressed:
 			free_pos += Vector3(sin(free_yaw) * cos(free_pitch), sin(free_pitch), cos(free_yaw) * cos(free_pitch)) * 2.0
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN and G.player == null and ev.pressed:
@@ -424,6 +471,13 @@ func _key(k: int) -> void:
 			else:
 				G.ui.message("No satchel charges (engineers carry them)")
 	else:
+		if k == KEY_V and G.started and G.mode != "commander":
+			set_rts(not rts)
+			if rts:
+				rts_focus = G.world.ground_y(free_pos.x, free_pos.z) * Vector3.UP + Vector3(free_pos.x, 0, free_pos.z) + Vector3(sin(free_yaw), 0, cos(free_yaw)) * 30.0
+				rts_yaw = free_yaw
+			G.ui.message("Commander view: WASD pans, wheel zooms, Q/E turn, click selects a squad, right-click sends it · V to leave" if rts else "Free camera")
+			return
 		if k >= KEY_1 and k <= KEY_9:
 			G.ui.pick_tool(k - KEY_1)
 		elif k == KEY_F:
@@ -602,6 +656,17 @@ func _carry_or_crate(s) -> bool:
 			s.set_crate(true)
 			G.ui.message("Picked up an ammo box · F to drop it where your squad needs it")
 			return true
+	# kick in a window or a door
+	var pn = Doors.pane_near(s.chest(), 1.6)
+	if pn != null:
+		s.kick(G.flat(pn["c"] - s.pos).normalized())
+		Doors.shatter(pn)
+		return true
+	var dr = Doors.door_near(s.pos, 1.8)
+	if dr != null and dr["goal"] <= 0.0:
+		s.kick(G.flat(dr["c"] - s.pos).normalized())
+		Doors.open(dr, s.pos)
+		return true
 	return false
 
 func _pick_up(s) -> void:
@@ -682,15 +747,31 @@ func _finish_select(add: bool) -> void:
 		var o = cam.project_ray_origin(b)
 		var d = cam.project_ray_normal(b)
 		var s = pick_soldier(o, d)
+		if s == null and rts:
+			# from up high, a click near a soldier counts
+			var hit = G.ray(o, o + d * 600.0, G.L_WORLD)
+			if not hit.is_empty():
+				var bd = 4.0
+				for c in G.soldiers:
+					if c.state != "dead" and c.team == (0 if G.mode == "commander" else c.team):
+						var dd = G.dist2d(c.pos, hit.position)
+						if dd < bd:
+							bd = dd
+							s = c
 		if s != null and s.state != "dead":
-			if s in selection:
+			if rts and s.squad != null:
+				# commander view: a click takes the whole squad
+				for m in s.squad["members"]:
+					if is_instance_valid(m) and m.state != "dead" and not (m in selection):
+						selection.append(m)
+			elif s in selection:
 				selection.erase(s)
 			else:
 				selection.append(s)
 	else:
 		var r = Rect2(Vector2(minf(a.x, b.x), minf(a.y, b.y)), (a - b).abs())
 		for s in G.soldiers:
-			if s.state == "dead" or cam.is_position_behind(s.chest()):
+			if s.state == "dead" or cam.is_position_behind(s.chest()) or (G.mode == "commander" and s.team != 0):
 				continue
 			if r.has_point(cam.unproject_position(s.chest())) and not (s in selection):
 				selection.append(s)

@@ -178,7 +178,7 @@ static func _breach(q) -> void:
 	# someone with a grenade, close enough to throw it in
 	for m in q["members"]:
 		if m.state == "alive" and not m.is_player and m.grenades > 0 and G.dist2d(m.pos, p) < 22.0 and G.dist2d(m.pos, p) > 6.0:
-			Combat.throw_grenade(m, p, "frag")
+			Combat.throw_grenade(m, Doors.throw_point(m, p), "frag")
 			Voice.say(m, "frag_in")
 			events["breach"] += 1
 			q["breach_p"] = p

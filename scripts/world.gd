@@ -53,6 +53,8 @@ var MAPS = {
 	"beach": {"name": "Beach landing", "ground": Color(0.72, 0.66, 0.48), "seed": 1944, "size": Vector2(300, 240)},
 	"random": {"name": "Random", "ground": Color(0.44, 0.45, 0.33), "seed": 1, "size": Vector2(360, 220)},
 	"front": {"name": "Western front (large)", "ground": Color(0.41, 0.37, 0.3), "seed": 1916, "size": Vector2(560, 240)},
+	"huge": {"name": "Huge battlefield (huge)", "ground": Color(0.43, 0.46, 0.31), "seed": 5150, "size": Vector2(840, 340)},
+	"factory": {"name": "Tank factory (indoor)", "ground": Color(0.44, 0.43, 0.4), "seed": 6060, "size": Vector2(300, 200)},
 }
 
 # the map's terrain, navigation grid and playable bounds all come from its size
@@ -211,8 +213,24 @@ func flatten_rect(x0: float, z0: float, x1: float, z1: float, feather: float) ->
 		var dz = maxf(maxf(z0 - vz, 0.0), vz - z1)
 		th[i] *= G.smooth01(Vector2(dx, dz).length() / feather))
 
+# ground colours painted in the editor (index 0 = the map's own colour)
+const PAINT = [Color(0, 0, 0), Color(0.38, 0.47, 0.26), Color(0.56, 0.53, 0.34), Color(0.43, 0.35, 0.24), Color(0.3, 0.25, 0.19),
+	Color(0.74, 0.67, 0.48), Color(0.5, 0.5, 0.48), Color(0.9, 0.91, 0.93), Color(0.19, 0.17, 0.15), Color(0.32, 0.32, 0.33)]
+const PAINT_NAMES = ["Default", "Grass", "Dry grass", "Dirt", "Mud", "Sand", "Rock", "Snow", "Scorched", "Tarmac"]
+const PAINT_GRASS = [true, true, true, false, false, false, false, false, false, false]
+var paint: PackedByteArray = PackedByteArray()
+
+func paint_at(x: float, z: float) -> int:
+	if paint.is_empty():
+		return 0
+	var ix = clampi(int(round(x - TX0)), 0, TW)
+	var iz = clampi(int(round(z - TZ0)), 0, TH_)
+	var i = iz * (TW + 1) + ix
+	return paint[i] if i < paint.size() else 0
+
 func build_terrain(base: Color) -> void:
 	var W = TW + 1
+	var painted = paint.size() == th.size()
 	for iz in range(TH_ + 1):
 		for ix in range(W):
 			var e = mini(mini(ix, iz), mini(TW - ix, TH_ - iz))
@@ -241,6 +259,8 @@ func build_terrain(base: Color) -> void:
 			var hu = th[i + W] if iz < TH_ else h
 			norms[i] = Vector3(hl - hr, 2.0, hd - hu).normalized()
 			var c = base
+			if painted and paint[i] > 0 and paint[i] < PAINT.size():
+				c = PAINT[paint[i]]
 			if h < -0.2:
 				c = c.lerp(mud, minf(1.0, -h / 0.9))
 			elif h > 0.3:
@@ -320,6 +340,7 @@ func _surface_ray(x: float, z: float, cur: float) -> float:
 	return hit.position.y
 
 # ---------------------------------------------------------------- static boxes and colliders
+var openings: Array = []          # doorways and windows of intact buildings (doors and glass go in them)
 var edit_node: Node3D = null      # map editor: geometry goes into this node as separate meshes
 var dyn_mode = false             # building during a battle (engineers): separate meshes but real colliders
 var dyn_root: Node3D = null
@@ -858,6 +879,38 @@ func build_cover() -> void:
 				T["cps"].append(cp)
 
 # ---------------------------------------------------------------- destruction
+var static_cols: Array = []      # the map's own pieces, in build order (campaign damage refers to them by index)
+var ruined_at_start = 0
+
+# gone before the battle starts (destroyed in an earlier campaign battle): no debris, dust or collapse
+func ruin_col(c) -> void:
+	if not c.alive:
+		return
+	c.alive = false
+	cols.erase(c)
+	_remove_grid(c)
+	if is_instance_valid(c.body):
+		c.body.queue_free()
+	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
+	for r in c.vis:
+		if r[1] == -2:
+			if is_instance_valid(r[0]):
+				r[0].queue_free()
+			continue
+		var g = r[0]
+		if g["mm"]:
+			g["mm"].set_instance_transform(r[1], zero)
+		else:
+			g["xforms"][r[1]] = zero
+	if c.has_meta("bld") and c.lo.y - c.gy < 0.5:
+		c.get_meta("bld")["fallen"] += 1
+	# leave some rubble where it stood
+	if (c.hi.x - c.lo.x) * (c.hi.z - c.lo.z) > 0.6 and c.lo.y - c.gy < 0.5:
+		var cx = (c.lo.x + c.hi.x) * 0.5
+		var cz = (c.lo.z + c.hi.z) * 0.5
+		for k in range(2):
+			add_box(cx + rnd(-0.6, 0.6), 0.0, cz + rnd(-0.6, 0.6), rnd(0.4, 0.9), rnd(0.2, 0.4), rnd(0.4, 0.9), c.color.darkened(0.2), {"collide": false, "ry": rnd(0, 3)})
+
 func destroy_col(c, depth: int = 0) -> void:
 	if not c.alive:
 		return
@@ -928,6 +981,7 @@ func wall_run(horiz: bool, fixed: float, a0: float, a1: float, h: float, color: 
 	var L = a1 - a0
 	var s = 0.0
 	var i = 0
+	var made_door = false
 	while s < L - 0.05:
 		var seg = minf(L - s, rnd(1.5, 3.0) if not intact else 2.0)
 		if intact and L - s - seg < 1.0:
@@ -938,7 +992,9 @@ func wall_run(horiz: bool, fixed: float, a0: float, a1: float, h: float, color: 
 		var r = rng.randf()
 		var c = a0 + s + seg / 2.0
 		if intact and can_open:
-			r = 0.1 if (door_at >= 0.0 and absf(c - (a0 + door_at)) < seg * 0.6) else (0.4 if i % 2 == 1 else 0.9)
+			r = 0.1 if (door_at >= 0.0 and not made_door and absf(c - (a0 + door_at)) < seg * 0.6) else (0.4 if i % 2 == 1 else 0.9)
+			if r < 0.2:
+				made_door = true
 		if can_open and r < 0.24:
 			if ph > 2.6:
 				_wall_piece(horiz, fixed, c, seg, 2.4, ph - 2.4, color, th_, "lintel")
@@ -948,8 +1004,12 @@ func wall_run(horiz: bool, fixed: float, a0: float, a1: float, h: float, color: 
 				_door_frame(horiz, fixed, c, minf(seg, 1.6), color, th_)
 				dcol.vis.append_array(piece)
 				piece = null
+				if intact and edit_node == null and not dyn_mode:
+					openings.append({"kind": "door", "horiz": horiz, "fixed": fixed, "c": c, "w": minf(seg, 1.6), "col": dcol, "b": buildings.size() - 1})
 		elif can_open and r < 0.55:
 			_wall_piece(horiz, fixed, c, seg, 0.0, 1.0, color, th_, "sill")
+			if intact and edit_node == null and not dyn_mode:
+				openings.append({"kind": "window", "horiz": horiz, "fixed": fixed, "c": c, "w": seg, "y0": 1.0, "y1": minf(2.2, ph), "col": cols[cols.size() - 1], "b": buildings.size() - 1})
 			if ph > 2.7:
 				_wall_piece(horiz, fixed, c, seg, 2.2, ph - 2.2, color, th_, "lintel")
 		else:
@@ -963,7 +1023,7 @@ func _wall_piece(horiz: bool, fixed: float, c: float, ln: float, y0: float, h: f
 		add_box(c, y0, fixed, ln, h, th_, color, {"dest": true, "hp": 200.0})
 	else:
 		add_box(fixed, y0, c, th_, h, ln, color, {"dest": true, "hp": 200.0})
-	var col = cols[cols.size() - 1]
+	var col = cols[cols.size() - 1] if edit_node == null and not cols.is_empty() else null
 	piece_start()
 	var trim = color.lightened(0.2)
 	var dark = color.darkened(0.28)
@@ -1361,7 +1421,7 @@ func _tower_piece(horiz: bool, fixed: float, c: float, seg: float, y0: float, h:
 		add_box(c, y0, fixed, seg, h, t, color, {"dest": true, "hp": 240.0})
 	else:
 		add_box(fixed, y0, c, t, h, seg, color, {"dest": true, "hp": 240.0})
-	var col = cols[cols.size() - 1]
+	var col = cols[cols.size() - 1] if edit_node == null and not cols.is_empty() else null
 	piece_start()
 	if y0 < 0.05:
 		_trim(horiz, fixed, c, seg, 0.0, 0.42, t + 0.1, color.darkened(0.28))
@@ -2169,6 +2229,7 @@ func build_item(it: Dictionary) -> void:
 
 func build_custom(m: Dictionary) -> void:
 	th = m["heights"].duplicate()
+	paint = m.get("paint", PackedByteArray()).duplicate()
 	roads = []
 	for it in m["items"]:
 		if it["t"] == "road":
@@ -2204,9 +2265,10 @@ func begin_edit(m: Dictionary) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
+	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]
+	paint = m.get("paint", PackedByteArray())
 	build_terrain(m["ground"])
 
 # ---------------------------------------------------------------- more maps
@@ -2498,6 +2560,205 @@ func build_random(seed_v: int) -> void:
 				truck(x, z, rng.randf() < 0.5)
 	_std_end("farm", objs, W2 - 40.0)
 
+# the biggest map: five villages strung along a road across rolling farmland, woods, hedgerows and an old trench line
+func build_huge() -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	for i in range(70):
+		hill(rnd(-W2, W2), rnd(-D2, D2), rnd(14, 44), rnd(1.0, 5.5))
+	var objs = []
+	for i in range(5):
+		objs.append(Vector3(-W2 + 120.0 + i * (TW - 240.0) / 4.0, 0, rnd(-D2 * 0.35, D2 * 0.35)))
+	roads = [[-W2, W2, -3.5, 3.5]]
+	var vils = []
+	for i in range(objs.size()):
+		var o = objs[i]
+		village(o.x, o.z, 30.0 if i == 2 else 24.0, 24.0, 8 if i == 2 else rng.randi_range(5, 7), rng.randi_range(1, 2))
+		vils.append(return_village)
+	# a trench line either side of the middle village
+	for sx in [-1.0, 1.0]:
+		var tx = objs[2].x + sx * 95.0
+		var pts = []
+		for k in range(9):
+			pts.append(Vector2(tx + rnd(-4, 4), -D2 + 30.0 + k * (TH_ - 60.0) / 8.0))
+		trench_ter(pts, 2.4, 1.5)
+	for i in range(40):
+		crater_at(rnd(-W2 + 80.0, W2 - 80.0), rnd(-D2, D2), rnd(2, 4), rnd(0.8, 1.4))
+	for sx in [-1.0, 1.0]:
+		flatten_rect(sx * (W2 - 40.0) - 20.0, -24.0, sx * (W2 - 40.0) + 20.0, 24.0, 6.0)
+	_flatten_roads()
+	build_terrain(MAPS["huge"]["ground"])
+	for rd in roads:
+		flat_plane(0, 0, TW, rd[3] - rd[2], Color(0.31, 0.3, 0.3), 0.015)
+	for i in range(objs.size()):
+		_village_build(vils[i], 1 if i != 2 else 2)
+		ammo_crate(objs[i].x + 3.0, objs[i].z + 6.0, -1)
+	# woods
+	for w in range(8):
+		var wx = rnd(-W2 + 90.0, W2 - 90.0)
+		var wz = rnd(-D2 + 30.0, D2 - 30.0) if absf(wx) > 10.0 else D2 * 0.6
+		for i in range(rng.randi_range(18, 40)):
+			var x = wx + rnd(-28, 28)
+			var z = wz + rnd(-20, 20)
+			if absf(z) < D2 - 5.0 and not on_road(x, z) and not inside_any(x, z, 2.0):
+				live_tree(x, z)
+				if rng.randf() < 0.3:
+					bush(x + rnd(-3, 3), z + rnd(-3, 3))
+	for i in range(30):
+		hedge_row(rnd(-W2 + 80.0, W2 - 80.0), rnd(-D2 + 10.0, D2 - 10.0), rnd(8, 22), rng.randf() < 0.5)
+	for sx in [-1.0, 1.0]:
+		for k in range(6):
+			sandbags(objs[2].x + sx * 92.0, -D2 + 40.0 + k * 45.0, 4.0, false)
+	for i in range(12):
+		var x = rnd(-W2 + 90.0, W2 - 90.0)
+		var z = rnd(-D2 + 15.0, D2 - 15.0)
+		if not inside_any(x, z, 4.0):
+			if rng.randf() < 0.5:
+				tank(x, z)
+			else:
+				truck(x, z, rng.randf() < 0.5)
+	_std_end("farm", objs, W2 - 40.0)
+
+# a big indoor fight: a tank factory hall under a roof held up by pillars, offices, machines and storage racks
+var lamps: Array = []
+func build_factory() -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	var HX = 80.0
+	var HZ = 50.0
+	var H = 8.0
+	roads = [[-W2, -HX, -24.0, -16.0], [-W2, -HX, 16.0, 24.0], [HX, W2, -24.0, -16.0], [HX, W2, 16.0, 24.0]]
+	flatten_rect(-W2 + 10.0, -D2 + 10.0, W2 - 10.0, D2 - 10.0, 6.0)
+	for i in range(14):
+		var hx = rnd(-W2, W2)
+		var hz = D2 - rnd(2, 18) if rng.randf() < 0.5 else -D2 + rnd(2, 18)
+		hill(hx, hz, rnd(10, 22), rnd(1.0, 3.0))
+	build_terrain(MAPS["factory"]["ground"])
+	for rd in roads:
+		flat_plane((rd[0] + rd[1]) / 2.0, (rd[2] + rd[3]) / 2.0, rd[1] - rd[0], rd[3] - rd[2], Color(0.3, 0.3, 0.31), 0.015)
+	var wc = Color(0.52, 0.47, 0.42)
+	var t = 0.5
+	var bld = {"x": 0.0, "z": 0.0, "w": HX * 2.0, "d": HZ * 2.0, "h": H + 1.0, "cols": [], "walls0": 0, "fallen": 0, "hall": true}
+	buildings.append(bld)
+	var c0 = cols.size()
+	# long walls: four runs each with a door and high windows
+	for e in [-1.0, 1.0]:
+		for k in range(4):
+			var a0 = -HX + k * 40.0
+			wall_run(true, e * HZ, a0, a0 + 40.0, H, wc, t, true, 20.0)
+	# end walls: two loading bays each
+	for e in [-1.0, 1.0]:
+		var x = e * HX
+		wall_run(false, x, -HZ + t / 2.0, -24.0, H, wc, t, true)
+		wall_run(false, x, -16.0, 16.0, H, wc, t, true, 16.0)
+		wall_run(false, x, 24.0, HZ - t / 2.0, H, wc, t, true)
+		for bz in [-20.0, 20.0]:
+			_wall_piece(false, x, bz, 8.0, 4.6, H - 4.6, wc, t, "lintel")
+			add_box(x + e * 0.4, 4.4, bz, 0.25, 0.25, 8.4, Color(0.75, 0.6, 0.15), {"collide": false})
+	# concrete floor and painted walkways
+	flat_plane(0, 0, HX * 2.0 - 0.6, HZ * 2.0 - 0.6, Color(0.42, 0.42, 0.41), 0.02)
+	for zz in [-20.0, 20.0]:
+		flat_plane(0, zz, HX * 2.0 - 1.0, 0.25, Color(0.78, 0.66, 0.2), 0.03)
+		flat_plane(0, zz - 4.0, HX * 2.0 - 1.0, 0.25, Color(0.78, 0.66, 0.2), 0.03)
+	# pillars every 20 m and the roof panels resting on them (a few already holed, letting the light in)
+	for px in range(-3, 4):
+		for pz in [-30.0, -10.0, 10.0, 30.0]:
+			add_box(px * 20.0, 0.0, pz, 0.8, H, 0.8, Color(0.4, 0.4, 0.42), {"dest": true, "hp": 700.0})
+	var holes = {}
+	for i in range(5):
+		holes[Vector2i(rng.randi_range(0, 7), rng.randi_range(0, 4))] = true
+	for ix in range(8):
+		for iz in range(5):
+			if holes.has(Vector2i(ix, iz)):
+				continue
+			var cx = -HX + 10.0 + ix * 20.0
+			var cz = -HZ + 10.0 + iz * 20.0
+			add_box(cx, H, cz, 20.0, 0.45, 20.0, Color(0.33, 0.33, 0.34), {"dest": true, "hp": 520.0})
+			add_box(cx, H + 0.45, cz, 19.6, 0.12, 19.6, Color(0.42, 0.3, 0.26), {"collide": false})
+	for ix in range(9):
+		add_box(-HX + ix * 20.0, H - 0.7, 0.0, 0.35, 0.7, HZ * 2.0 - 1.0, Color(0.36, 0.33, 0.3), {"collide": false})
+	# offices in two corners: rooms with doors and glass
+	var oc = Color(0.62, 0.6, 0.55)
+	for e in [-1.0, 1.0]:
+		var ox0 = -HX + 0.3 if e < 0 else HX - 36.3
+		var oz = e * (HZ - 16.0)
+		wall_run(true, oz, ox0, ox0 + 36.0, 3.4, oc, 0.3, true, 18.0)
+		for k in range(1, 3):
+			wall_run(false, ox0 + k * 12.0, minf(oz, e * HZ) + 0.2, maxf(oz, e * HZ) - 0.2, 3.4, oc, 0.3, true, 8.0)
+		add_box(ox0 + 18.0, 3.4, (oz + e * HZ) / 2.0, 36.0, 0.3, 16.0, Color(0.5, 0.48, 0.45), {"dest": true, "hp": 220.0})
+		for k in range(3):
+			var dx = ox0 + 6.0 + k * 12.0
+			add_box(dx, 0.0, oz + e * 6.0, 2.2, 0.8, 1.0, Color(0.38, 0.28, 0.2), {"dest": true, "hp": 60.0, "mat": 1})
+	# machines: presses, furnaces, half-built hulls and conveyor lines
+	var mc = [Color(0.3, 0.36, 0.3), Color(0.35, 0.35, 0.38), Color(0.42, 0.32, 0.22)]
+	for i in range(10):
+		var x = rnd(-HX + 12.0, HX - 12.0)
+		var z = rnd(-HZ + 20.0, HZ - 20.0)
+		if absf(z - 20.0) < 3.0 or absf(z + 20.0) < 3.0 or inside_any(x, z, 4.0):
+			continue
+		var c = mc[rng.randi() % mc.size()]
+		var w = rnd(3.0, 5.0)
+		var d = rnd(2.5, 4.0)
+		var h = rnd(2.2, 4.2)
+		add_box(x, 0.0, z, w, h, d, c, {"dest": true, "hp": 900.0})
+		add_box(x, h, z, w * 0.6, 0.6, d * 0.6, c.darkened(0.2), {"collide": false})
+		add_box(x + w * 0.3, h, z, 0.5, 2.5, 0.5, Color(0.25, 0.25, 0.25), {"shape": "cyl", "collide": false})
+	for i in range(4):
+		var x = rnd(-HX + 20.0, HX - 20.0)
+		var z = [-8.0, 8.0, -36.0, 36.0][i]
+		add_box(x, 0.0, z, 18.0, 0.9, 1.4, Color(0.25, 0.27, 0.28), {"dest": true, "hp": 500.0})
+		for k in range(4):
+			add_box(x - 7.5 + k * 5.0, 0.9, z, 1.6, 0.8, 1.2, Color(0.33, 0.35, 0.27), {"collide": false})
+	for i in range(3):
+		var x = -40.0 + i * 40.0 + rnd(-6, 6)
+		tank(x, rnd(-4, 4) + (12.0 if i == 1 else -12.0))
+	smoke_sources = []
+	# storage racks
+	for r in range(4):
+		var x = 30.0 + r * 4.5
+		add_box(x, 0.0, -28.0, 1.2, 3.8, 14.0, Color(0.27, 0.36, 0.5), {"dest": true, "hp": 260.0, "mat": 1})
+		for k in range(5):
+			crate(x, -34.0 + k * 3.0, 0.9)
+	for r in range(4):
+		var x = -45.0 - r * 4.5
+		add_box(x, 0.0, 28.0, 1.2, 3.8, 14.0, Color(0.27, 0.36, 0.5), {"dest": true, "hp": 260.0, "mat": 1})
+	for i in range(30):
+		var x = rnd(-HX + 4.0, HX - 4.0)
+		var z = rnd(-HZ + 4.0, HZ - 4.0)
+		if not inside_any(x, z, 1.4):
+			crate(x, z, rnd(0.8, 1.3))
+	_claim(bld, c0)
+	# hanging lamps (the sun barely gets in)
+	lamps = []
+	for lx in [-60.0, -20.0, 20.0, 60.0]:
+		for lz in [-22.0, 22.0]:
+			var l = OmniLight3D.new()
+			l.omni_range = 34.0
+			l.omni_attenuation = 0.55
+			l.light_energy = 3.2
+			l.light_color = Color(1.0, 0.86, 0.62)
+			l.shadow_enabled = false
+			_geo().add_child(l)
+			l.position = Vector3(lx, ground_y(lx, lz) + H - 1.6, lz)
+			lamps.append(l)
+			add_box(lx, H - 1.6, lz, 1.0, 0.25, 1.0, Color(0.95, 0.85, 0.6), {"collide": false, "no_shadow": true})
+	# outside: yards with trucks, fences and sandbags at the loading bays
+	for e in [-1.0, 1.0]:
+		for bz in [-20.0, 20.0]:
+			sandbags(e * (HX + 10.0), bz + 6.0, 4.0, false)
+			sandbags(e * (HX + 10.0), bz - 6.0, 4.0, false)
+		for k in range(3):
+			truck(e * (HX + 24.0 + k * 9.0), rnd(-40, -30) if k % 2 == 0 else rnd(30, 40), true)
+	for i in range(30):
+		var x = rnd(-W2 + 10.0, W2 - 10.0)
+		var z = rnd(-D2 + 5.0, D2 - 5.0)
+		if (absf(x) > HX + 6.0 or absf(z) > HZ + 6.0) and not on_road(x, z) and not inside_any(x, z, 2.0) and absf(x) < W2 - 50.0:
+			live_tree(x, z)
+	var objs = [Vector3(-50, 0, 0), Vector3(0, 0, 0), Vector3(50, 0, 0)]
+	for o in objs:
+		ammo_crate(o.x + 2.0, o.z + 4.0, -1)
+	_std_end("urban", objs, W2 - 25.0)
+
 # roads are flat painted strips, so the ground under them must be flat too (no hills or holes hidden under the paint)
 func _flatten_roads() -> void:
 	for rd in roads:
@@ -2573,7 +2834,7 @@ func build_decor() -> void:
 		var x = rnd(bounds.position.x, bounds.end.x)
 		var z = rnd(bounds.position.y, bounds.end.y)
 		var gy = ground_y(x, z)
-		if on_road(x, z) or inside_any(x, z, 0.3) or gy < -0.4 or in_water(x, z):
+		if on_road(x, z) or inside_any(x, z, 0.3) or gy < -0.4 or in_water(x, z) or not PAINT_GRASS[paint_at(x, z)]:
 			continue
 		var inb = false
 		for b in buildings:
@@ -2662,7 +2923,8 @@ func load_map(id: String) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
+	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
+	paint = PackedByteArray()
 	if id == "random":
 		var rs = RandomNumberGenerator.new()
 		rs.seed = G.random_seed
@@ -2698,6 +2960,10 @@ func load_map(id: String) -> void:
 		build_beach()
 	elif id == "random":
 		build_random(G.random_seed)
+	elif id == "huge":
+		build_huge()
+	elif id == "factory":
+		build_factory()
 	elif id == "custom":
 		build_custom(G.custom_map)
 	else:
@@ -2710,10 +2976,18 @@ func load_map(id: String) -> void:
 		var x = capture.x
 		spawn.append(Vector3(x, 0, z))
 		camp(t, spawn[t])
+	static_cols = cols.duplicate()
+	ruined_at_start = 0
+	if Campaign.active and Campaign.current >= 0:
+		for i in Campaign.ruins(Campaign.current):
+			if i >= 0 and i < static_cols.size():
+				ruin_col(static_cols[i])
+				ruined_at_start += 1
 	finalize_static()
+	Doors.setup(self)
 	build_nav()
 	build_cover()
 	build_decor()
-	build_backdrop({"town": "urban", "field": "farm", "trenches": "war", "valley": "farm", "front": "war", "city": "urban", "river": "farm", "pass": "farm", "forest": "farm", "beach": "farm"}.get(id, "farm"))
+	build_backdrop({"factory": "urban", "huge": "farm", "town": "urban", "field": "farm", "trenches": "war", "valley": "farm", "front": "war", "city": "urban", "river": "farm", "pass": "farm", "forest": "farm", "beach": "farm"}.get(id, "farm"))
 	for s in smoke_sources:
 		G.fx.wreck_smoke(s, geo_root)

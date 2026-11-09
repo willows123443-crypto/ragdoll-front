@@ -86,7 +86,34 @@ static func attack(i: int) -> void:
 			s.set_vet(e["vet"])
 			s.set_meta("roster", k)
 			k += 1
-	G.ui.message("Battle for %s" % r["name"])
+	if G.world.ruined_at_start > 0:
+		G.ui.message("Battle for %s · the scars of earlier fighting remain (%d pieces in ruins)" % [r["name"], G.world.ruined_at_start])
+	else:
+		G.ui.message("Battle for %s" % r["name"])
+
+# which of a region's map pieces were destroyed in earlier battles there
+static func ruins(i: int) -> Array:
+	var all = data.get("ruins", {})
+	return all.get(i, [])
+
+static func _record_ruins(i: int) -> int:
+	var W = G.world
+	if not data.has("ruins"):
+		data["ruins"] = {}
+	var had: Array = data["ruins"].get(i, [])
+	var set_ = {}
+	for k in had:
+		set_[k] = true
+	var added = 0
+	for k in range(W.static_cols.size()):
+		var c = W.static_cols[k]
+		if not c.alive and c.dest and not set_.has(k):
+			set_[k] = true
+			added += 1
+	var out = set_.keys()
+	out.sort()
+	data["ruins"][i] = out
+	return added
 
 static func battle_over(winner: int) -> String:
 	if not active or current < 0:
@@ -94,6 +121,9 @@ static func battle_over(winner: int) -> String:
 	active = false
 	var r = REGIONS[current]
 	var lines = []
+	var wrecked = _record_ruins(current)
+	if wrecked > 0:
+		lines.append("%d more pieces of %s lie in ruins (they stay that way)." % [wrecked, r["name"]])
 	# survivors carry on; the fallen are struck from the roster
 	var alive_names = {}
 	var kills = {}

@@ -968,6 +968,15 @@ func _ai_drive(dt: float) -> Array:
 			var rel = G.flat(s.pos - pos)
 			var a = rel.dot(f) * signf(r[0] if r[0] != 0.0 else 1.0)
 			if a > 0.0 and a < spec["len"] * 0.5 + 5.0 and absf(rel.dot(Vector3(f.z, 0, -f.x))) < spec["wid"] * 0.5 + 0.8:
+				if mission != null and mission.get("type", "") == "escort":
+					# a convoy doesn't stop for its own escort: people ahead step off the road
+					if not s.is_player:
+						var sd = rel.dot(Vector3(f.z, 0, -f.x))
+						s.pos += Vector3(f.z, 0, -f.x) * (1.0 if sd >= 0.0 else -1.0) * 0.12
+						s.pos = G.world.push_out_circle(s.pos, 0.33)[0]
+					if a < spec["len"] * 0.5 + 1.5:
+						return [minf(r[0], 0.15), r[1]]
+					continue
 				return [0.0, r[1]]
 	# unstick: if we want to move but aren't, back up for a moment
 	if reverse_t > 0.0:
@@ -984,6 +993,11 @@ func _ai_drive(dt: float) -> Array:
 
 func _mission_target(dt: float):
 	var m = mission
+	if m.get("type", "") == "escort":
+		m["go_t"] = m.get("go_t", 0.0) + dt
+		return Modes.escort_target(self, m)
+	if m.get("type", "") == "route":
+		return Scripted.route_target(self, m)
 	if spec.get("boat", false) and m["stage"] == 0 and (absf(speed) < 0.3 and G.dist2d(pos, m["drop"]) < 40.0 and m.get("go_t", 0.0) > 6.0):
 		m["drop"] = pos     # beached short of the mark: unload here
 	m["go_t"] = m.get("go_t", 0.0) + dt

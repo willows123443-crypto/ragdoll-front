@@ -24,6 +24,9 @@ static func step(dt: float) -> void:
 		timers[t] -= dt
 		if timers[t] > 0.0:
 			continue
+		if (G.mode == "horde" and t == 1) or (G.mode == "commander" and t == 0):
+			timers[t] = 999.0
+			continue
 		var off = officer(t)
 		timers[t] = 14.0 if off != null else 30.0
 		if VehExt.has_radar(t):

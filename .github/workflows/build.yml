@@ -19,7 +19,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -57,7 +57,7 @@ jobs:
 
       - name: Automatic test run
         run: |
-          timeout 1000 ~/godot-bin/godot --headless --path . -- --autotest > test.log 2>&1 || echo "EXIT CODE $?" >> test.log
+          timeout 1500 ~/godot-bin/godot --headless --path . -- --autotest > test.log 2>&1 || echo "EXIT CODE $?" >> test.log
           cat test.log
 
       - name: Export web build

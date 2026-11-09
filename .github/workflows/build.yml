@@ -66,6 +66,13 @@ jobs:
           ~/godot-bin/godot --headless --path . --export-release "Web" build/web/index.html > export.log 2>&1 || true
           cat export.log
           cp test.log build/web/test-log.txt
+          # give the game data a new file name on every build so browsers never use a stale cached copy
+          SHORT=${GITHUB_SHA::8}
+          if [ -f build/web/index.pck ]; then
+            mv build/web/index.pck build/web/game-$SHORT.pck
+            sed -i "s/\"executable\":\"index\"/\"executable\":\"index\",\"mainPack\":\"game-$SHORT.pck\"/; s/\"index.pck\":/\"game-$SHORT.pck\":/" build/web/index.html
+            grep -o 'GODOT_CONFIG = {[^}]*}' build/web/index.html
+          fi
           touch build/web/.nojekyll
           ls -la build/web
 

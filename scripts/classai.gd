@@ -62,7 +62,7 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 				return true
 		# and enemy positions: FOBs, nests, bunkers
 		var es = Build.enemy_site_near(s.team, s.pos, 26.0)
-		if es != null and not G.blocked(s.head_pos(), es[1] + Vector3(0, 0.8, 0)):
+		if es != null and Build.sees(s.head_pos(), es[0]):
 			if G.dist2d(es[1], s.pos) < 13.0:
 				Combat.throw_grenade(s, es[1], "satchel")
 				G.fx.callout(s, G.pick(["Charge set!", "Blowing their position!"]))
@@ -70,6 +70,12 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 			AI.release_cover(s)
 			AI.go_to(s, es[1], 5.0)
 			s.task = "sapper"
+			return true
+	var far_contact = s.vis_t != null and is_instance_valid(s.vis_t) and G.dist2d(s.vis_t.pos, s.pos) > 60.0
+	if far_contact and s.job_cd <= 0.0 and s.task != "construct":
+		var ws0 = Build.work_site(s.team, s.pos, 120.0)
+		if ws0 != null and ws0["kind"] in ["fob", "hq"] and Build.helpers(ws0) < 3:
+			_start_construct(s, ws0)
 			return true
 	if s.vis_t != null or s.job_cd > 0.0:
 		return false
@@ -134,7 +140,8 @@ static func work(s) -> void:
 				s.decide_t = 0.0
 		"construct":
 			var st = s.build_site
-			if st == null or st["done"] or st["dead"] or not Build.sites.has(st) or s.vis_t != null or s.supp > 1.5:
+			var close_enemy = s.vis_t != null and is_instance_valid(s.vis_t) and G.dist2d(s.vis_t.pos, s.pos) < 45.0
+			if st == null or st["done"] or st["dead"] or not Build.sites.has(st) or close_enemy or s.supp > 1.5:
 				s.task = null
 				s.build_site = null
 				s.decide_t = 0.0
@@ -267,7 +274,7 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 			for f in G.soldiers:
 				if f.team == team and f.state != "dead":
 					var d = G.dist2d(f.pos, st["p"])
-					if d < 85.0 and not G.blocked(f.head_pos(), st["p"] + Vector3(0, 1.5, 0)):
+					if d < 85.0 and Build.sees(f.head_pos(), st):
 						spotted = true
 					if d < 20.0:
 						friends2 = true

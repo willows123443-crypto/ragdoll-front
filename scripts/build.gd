@@ -97,8 +97,13 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 	for i in range(before, G.world.cols.size()):
 		var c = G.world.cols[i]
 		c.dest = true
-		if kind == "hq" or kind == "bunker":
-			c.hp = maxf(c.hp, 520.0)
+		# headquarters and bunkers are built to take a pounding
+		if kind == "hq":
+			c.hp = maxf(c.hp, 1500.0)
+		elif kind == "bunker":
+			c.hp = maxf(c.hp, 900.0)
+		elif kind == "fob":
+			c.hp = maxf(c.hp, 600.0)
 		st["cols"].append(c)
 	var parts = []
 	for ch in root.get_children():
@@ -277,7 +282,8 @@ static func _check_alive(st: Dictionary) -> void:
 	for c in st["cols"]:
 		if c.alive:
 			left += 1
-	if float(left) / n < (0.5 if st["kind"] in ["hq", "fob"] else 0.35):
+	var keep = {"hq": 0.3, "fob": 0.4}.get(st["kind"], 0.35)
+	if float(left) / n < keep:
 		_lose(st, true)
 
 static func _lose(st: Dictionary, loud: bool) -> void:
@@ -360,6 +366,12 @@ static func enemy_site_near(team: int, from: Vector3, max_d: float):
 	if best == null:
 		return null
 	return [best, best["p"] + Vector3(0, 0.5, 0)]
+
+# can someone at `from` see this structure (hitting the structure itself counts)?
+static func sees(from: Vector3, st: Dictionary) -> bool:
+	var to: Vector3 = st["p"] + Vector3(0, 1.0, 0)
+	var hit = G.ray(from, to, G.L_WORLD)
+	return hit.is_empty() or G.dist2d(hit.position, st["p"]) < build_radius(st) + 0.5
 
 static func helpers(st: Dictionary) -> int:
 	var n = 0
@@ -521,15 +533,10 @@ static func _check_out() -> void:
 		if not has_base and not no_spawn_said[t]:
 			no_spawn_said[t] = true
 			G.ui.radio(t, "No HQ or FOB left: reinforcements can't reach us until we build a new FOB!")
-		var riding = false
 		if not has_base and G.alive_count(t) == 0:
-			for st in sites:
-				if st["team"] == t and not st["done"] and not st["dead"]:
-					riding = true
-			if not riding:
-				out[t] = true
-				G.ui.radio(t, "%s has been wiped out" % G.TEAM_NAMES[t])
-				continue
+			out[t] = true
+			G.ui.radio(t, "%s has been wiped out" % G.TEAM_NAMES[t])
+			continue
 		left.append(t)
 	if left.size() == 1 and G.team_count() > 1 and out.count(true) > 0:
 		G.main.end_game(left[0])
@@ -549,11 +556,11 @@ static func _ai_plan(t: int) -> void:
 		# a FOB part way to the objective, out of the thick of it
 		var to = G.flat(obj - home)
 		var L = to.length()
-		var at = home + to * 0.5 if L > 70.0 else home + to.normalized() * minf(L * 0.4, 25.0)
+		var at = home + to * (0.5 if L > 160.0 else 0.33) if L > 70.0 else home + to.normalized() * minf(L * 0.4, 25.0)
 		if not hq_alive(t):
-			at = home + to * 0.35
-		if G.dist2d(at, obj) < 35.0:
-			at = obj - to.normalized() * 35.0
+			at = home + to * 0.3
+		if G.dist2d(at, obj) < 45.0 and L > 60.0:
+			at = obj - to.normalized() * 45.0
 		var spot = find_spot(at, "fob", 22.0)
 		if spot != null:
 			place("fob", t, spot, to)

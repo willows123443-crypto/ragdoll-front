@@ -164,18 +164,20 @@ static func peek_pos(cp) -> Vector3:
 	if cp.type == "corner":
 		return Vector3(cp.p.x + cp.t.x * 0.7, cp.p.y + 1.45, cp.p.z + cp.t.z * 0.7)
 	if cp.type == "wall":
-		return Vector3(cp.p.x + cp.t.x * cp.side * 0.75, cp.p.y + 1.45, cp.p.z + cp.t.z * cp.side * 0.75)
+		return Vector3(cp.p.x + cp.t.x * cp.side, cp.p.y + 1.45, cp.p.z + cp.t.z * cp.side)
 	return Vector3(cp.p.x, cp.p.y + 1.55, cp.p.z)
 
 # the direction a soldier leans along a wall: toward a window, doorway, gap or broken top
 static func wall_lean_dir(cp) -> Vector3:
-	return cp.t * cp.side
+	return cp.t * signf(cp.side)
 
 static func can_fire_from(cp, threat: Vector3) -> bool:
 	var tp = Vector3(threat.x, threat.y + 1.2, threat.z)
 	if cp.type == "wall":
-		for sd in [cp.side if cp.side != 0.0 else 1.0, -cp.side if cp.side != 0.0 else -1.0]:
-			var pp = Vector3(cp.p.x + cp.t.x * sd * 0.75, cp.p.y + 1.45, cp.p.z + cp.t.z * sd * 0.75)
+		# lean (and shuffle) up to a metre and a bit either way, to a window, doorway or gap
+		var first = signf(cp.side) if cp.side != 0.0 else 1.0
+		for sd in [first * 0.8, -first * 0.8, first * 1.25, -first * 1.25]:
+			var pp = Vector3(cp.p.x + cp.t.x * sd, cp.p.y + 1.45, cp.p.z + cp.t.z * sd)
 			if not G.blocked(pp, tp):
 				cp.side = sd
 				return true
@@ -1071,6 +1073,8 @@ static func stance(s) -> void:
 				s.lean_t = 1.0 if ldir.dot(rv) >= 0.0 else -1.0
 				s.crouch_t = 0.1
 				var stp = 0.5 if s.force_peek else 0.3
+				if cp.type == "wall":
+					stp = absf(cp.side) - 0.45
 				s.want = G.flat(cp.p + ldir * stp - s.pos) * 3.0
 			else:
 				var back = G.flat(cp.p - s.pos)

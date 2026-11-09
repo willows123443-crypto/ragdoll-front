@@ -20,7 +20,10 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Morale and squad leaders:** losses and heavy fire shake soldiers; broken soldiers run until a leader rallies them
 - **Ammo and resupply**, bullet penetration through thin cover, grenades, smoke, mortars, flares
 - **Vehicles:** jeeps with mounted machine guns, troop trucks and tanks, with AI crews; you can drive them
-- **Reinforcements** arrive by truck or by paratroopers
+- **Reinforcements** arrive by truck, helicopter or paratroopers, at your HQ or a forward FOB; lose them all and nobody new comes until you build another FOB
+- **Building:** engineers put up FOBs, sandbag walls, barbed wire, tank traps, MG nests, mortar pits, watchtowers, bunkers, field hospitals, radio masts, vehicle depots and supply dumps piece by piece; mark out sites yourself from the Build tab, and dismantle anything
+- **Destructible everything:** houses, churches, warehouses and apartment blocks come down wall by wall and floor by floor
+- **Team looks:** each side has its own vehicle style, insignia and helmet shape
 - **Maps:** Town ruins, Farmland, Trenches, plus two large maps (Valley offensive, Western front), and your own from the **map editor**
 - **Modes:** sandbox, deathmatch, capture the point, frontline (push across a chain of points with tickets), assault, last stand
 - **Up to four sides** with your own names, armband colours and uniforms; day, dusk or night
@@ -30,7 +33,7 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
 **Command tab:** click or drag a box to select soldiers, right-click the ground to send them there.
-**Controlling a soldier:** mouse aim, left-click fire, right mouse aim down sights, Q/E lean, Shift sprint, C crouch, Z prone, R reload, G grenade, V smoke, L flare, 1–5 weapons, Y first person, O squad follows you, F pick up a fallen soldier's gun or get into a vehicle, X leave the soldier.
+**Controlling a soldier:** mouse aim, left-click fire, right mouse aim down sights, Q/E lean, Shift sprint, C crouch, Z prone, R reload, G grenade, V smoke, L flare, 1–5 weapons, Y first person, O squad follows you, F pick up a fallen soldier's gun or get into a vehicle, hold U to help build a friendly site, I to dismantle what you aim at, X leave the soldier.
 **In a vehicle:** WASD drive, mouse aims the turret, left-click fire, 1–4 change seat, F get out.
 **Anywhere:** M menu, H help, J battle report, P pause, T slow motion.
 

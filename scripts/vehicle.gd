@@ -581,6 +581,11 @@ func _ai_gun_target(g):
 			return best
 	var tgt = g.vis_t
 	if tgt == null or not is_instance_valid(tgt) or tgt.state == "dead":
+		# nobody to shoot: tanks and armoured cars knock down enemy positions in view
+		if (kind == "tank" or kind == "armoredcar") and cannon_cd <= 0.0:
+			var es = Build.enemy_site_near(team, pos, 110.0)
+			if es != null and Build.sees(muzzle(), es[0]):
+				return [es[1] + Vector3(0, 0.8, 0), true]
 		return null
 	var p = tgt.chest()
 	var d2 = p.distance_to(pos)

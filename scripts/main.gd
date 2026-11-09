@@ -40,6 +40,8 @@ func _ready() -> void:
 			_map_test()
 		if a == "--breachtest":
 			_breach_test()
+		if a == "--basetest":
+			_base_test()
 		if a.begins_with("--edtest="):
 			_editor_test(a.substr(9))
 
@@ -525,9 +527,13 @@ func _report(tag: String) -> void:
 	for st in Build.sites:
 		bl.append("%s%d:%s" % [st["kind"], st["team"], "dead" if st["dead"] else ("ok" if st["done"] else "%d%%" % int(100.0 * st["work"] / st["need"]))])
 	var lean_n = 0
+	var ctypes = {}
 	for o in G.soldiers:
-		if o.state == "alive" and o.in_cover and o.cover != null and o.cover.type == "wall" and o.cover.side != 0.0:
-			lean_n += 1
+		if o.state == "alive" and o.in_cover and o.cover != null:
+			ctypes[o.cover.type] = ctypes.get(o.cover.type, 0) + 1
+			if o.cover.type == "wall" and o.cover.side != 0.0:
+				lean_n += 1
+	print("AUTOTEST %s | cover types %s" % [tag, str(ctypes)])
 	print("AUTOTEST %s | builds %s | spawnable %s | wall-leaners %d" % [tag, ", ".join(bl), str([Build.can_respawn(0), Build.can_respawn(1)]), lean_n])
 	var alive = [G.alive_count(0), G.alive_count(1)]
 	var dead = G.soldiers.filter(func(s): return s.state == "dead").size()
@@ -849,6 +855,48 @@ func _editor_test(dir: String) -> void:
 	await _wait(20.0)
 	await _snap(dir, "played")
 	print("EDTEST after 20s alive %d v %d" % [G.alive_count(0), G.alive_count(1)])
+	get_tree().quit()
+
+# bases: knock out a team's HQ, check it stops getting reinforcements, then that a new FOB brings them back
+func _base_test() -> void:
+	await _wait(0.5)
+	Engine.time_scale = 4.0
+	start_game({"map": "field", "mode": "capture", "size": 8, "limit": 9999, "reinforce": true, "armor": "none", "reinf_mode": "instant", "teams": 2})
+	await _wait(2.0)
+	var h = Build.hq(1)
+	print("BASETEST hq1 ", h != null, " can_respawn ", Build.can_respawn(1))
+	for c in h["cols"]:
+		if c.alive:
+			G.world.destroy_col(c)
+	for st in Build.sites.duplicate():
+		if st["team"] == 1 and st["kind"] == "fob":
+			Build.dismantle(st)
+	await _wait(1.5)
+	print("BASETEST after hq loss: hq_alive ", Build.hq_alive(1), " can_respawn ", Build.can_respawn(1), " fob sites ", Build.sites.filter(func(st): return st["team"] == 1 and st["kind"] == "fob").size())
+	var n0 = G.alive_count(1)
+	for s in G.soldiers:
+		if s.team == 1 and s.state != "dead" and randf() < 0.5:
+			Combat.kill(s, null, false)
+	await _wait(15.0)
+	print("BASETEST alive before/after %d -> %d (should not grow)" % [n0, G.alive_count(1)])
+	# a finished FOB brings reinforcements back
+	var spot = Build.find_spot(G.world.spawn[1] * 0.6, "fob", 30.0, 40, true)
+	var f = Build.place("fob", 1, spot, Vector3(-1, 0, 0))
+	var k = 0
+	while not f["done"] and k < 200:
+		Build.add_work(f, 1.0)
+		k += 1
+	print("BASETEST fob done ", f["done"], " can_respawn ", Build.can_respawn(1), " spawn_pos ", Build.spawn_pos(1))
+	var n1 = G.alive_count(1)
+	await _wait(20.0)
+	print("BASETEST alive after fob %d -> %d (should grow)" % [n1, G.alive_count(1)])
+	# lose everything and everyone: the team is out
+	Build.dismantle(f)
+	for s in G.soldiers:
+		if s.team == 1 and s.state != "dead":
+			Combat.kill(s, null, false)
+	await _wait(3.0)
+	print("BASETEST over ", G.over, " out ", Build.out)
 	get_tree().quit()
 
 func _breach_test() -> void:

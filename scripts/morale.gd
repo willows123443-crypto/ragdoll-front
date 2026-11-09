@@ -42,6 +42,7 @@ static func on_death(dead, attacker) -> void:
 		elif d < 30.0:
 			boost(o, 3.0)
 	if lost_leader:
+		G.ui.radio(dead.team, "%s is down, squad leaderless!" % dead.sname)
 		dead.set_leader(false)
 		dead.squad["leader"] = null
 		dead.squad["promote_t"] = G.sim_time + 5.0
@@ -63,6 +64,7 @@ static func tick(s, dt: float) -> void:
 			best.flares = maxi(best.flares, 2)
 			boost(best, 15.0)
 			G.fx.callout(best, G.pick(["I'm taking command! On me!", "I've got the squad, follow me!", "Listen up, I'm in charge now!"]))
+			G.ui.radio(best.team, "%s taking command of the squad" % best.sname)
 	if s.is_player:
 		s.morale = maxf(s.morale, 60.0)
 		_leader_aura(s)

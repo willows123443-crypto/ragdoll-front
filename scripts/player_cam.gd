@@ -339,9 +339,24 @@ func _key(k: int) -> void:
 			Combat.throw_grenade(s, _throw_target(s), "frag")
 		elif k == KEY_V and s.smokes > 0 and s.state == "alive":
 			Combat.throw_grenade(s, _throw_target(s), "smoke")
-		elif k >= KEY_1 and k <= KEY_5 and s.state == "alive":
+		elif k >= KEY_1 and k <= KEY_9 and s.state == "alive":
+			s.primary = null
 			s.set_weapon(G.WEAPON_LIST[k - KEY_1])
 			G.ui.message(s.W["name"])
+		elif k == KEY_B and s.state == "alive":
+			_class_action(s)
+		elif k == KEY_N and s.state == "alive":
+			if s.mines > 0:
+				Combat.place_mine(s, s.pos + Vector3(sin(cam_yaw), 0, cos(cam_yaw)) * 1.2, "at" if Input.is_key_pressed(KEY_SHIFT) else "ap")
+				s.mines -= 1
+				G.ui.message("Mine placed (%d left). Shift+N for an anti-tank mine" % s.mines)
+			else:
+				G.ui.message("No mines (engineers carry them)")
+		elif k == KEY_K and s.state == "alive":
+			if s.satchels > 0:
+				Combat.throw_grenade(s, _throw_target(s), "satchel")
+			else:
+				G.ui.message("No satchel charges (engineers carry them)")
 	else:
 		if k >= KEY_1 and k <= KEY_9:
 			G.ui.pick_tool(k - KEY_1)
@@ -419,9 +434,9 @@ func use_tool(screen: Vector2) -> void:
 		Combat.smoke_at(p, 26.0)
 	elif tool == "flare":
 		Combat.flare(p + Vector3(0, 0, 0), p)
-	elif tool in ["jA", "jB", "tA", "tB", "trA", "trB"]:
+	elif tool in ["jA", "jB", "tA", "tB", "trA", "trB", "nA", "nB", "mA"]:
 		var team = 0 if tool.ends_with("A") else 1
-		var kind = {"j": "jeep", "t": "tank", "tr": "truck"}[tool.substr(0, tool.length() - 1)]
+		var kind = {"j": "jeep", "t": "tank", "tr": "truck", "n": "nest", "m": "mortar"}[tool.substr(0, tool.length() - 1)]
 		var en: Vector3 = G.world.rally_point((team + 1) % G.team_count())
 		G.main.spawn_vehicle(kind, team, p, atan2(en.x - p.x, en.z - p.z), kind != "truck")
 	elif tool == "spA" or tool == "spB":
@@ -588,3 +603,53 @@ func _update_rings() -> void:
 			r.global_position = Vector3(p.x, p.y + 0.06, p.z)
 		else:
 			r.visible = false
+
+# B: whatever your class is good at
+func _class_action(s) -> void:
+	match s.cls:
+		"engineer":
+			if s.kits <= 0:
+				G.ui.message("No sandbags left. Restock at an ammo crate")
+				return
+			var f = Vector3(sin(cam_yaw), 0, cos(cam_yaw))
+			var at = s.pos + f * 1.6
+			if G.world.inside_any(at.x, at.z, 0.6):
+				G.ui.message("No room to build there")
+				return
+			G.world.build_now(func(): G.world.sandbags(at.x, at.z, 3.0, absf(f.z) > absf(f.x)))
+			s.kits -= 1
+			G.ui.message("Sandbags built (%d left)" % s.kits)
+			# repair anything we're standing next to as well
+			for v in G.vehicles:
+				if v.team == s.team and not v.dead and G.dist2d(v.pos, s.pos) < v.spec["len"] * 0.5 + 2.0:
+					v.hp = minf(v.spec["hp"], v.hp + 250.0)
+					G.ui.message("Repaired the %s" % v.spec["name"].to_lower())
+		"medic":
+			var best = s
+			var bd = 2.5
+			for o in G.soldiers:
+				if o.team == s.team and o != s and (o.state == "alive" or o.state == "wounded") and G.dist2d(o.pos, s.pos) < bd:
+					bd = G.dist2d(o.pos, s.pos)
+					best = o
+			if best.state == "wounded":
+				best.heal_t = 99.0
+			best.hp = 100.0
+			Stats.healed(s)
+			G.ui.message("Patched up %s" % ("yourself" if best == s else best.sname))
+		"radio":
+			if s.radio_cd > 0.0:
+				G.ui.message("Artillery is busy, %d s" % int(s.radio_cd))
+				return
+			s.radio_cd = 30.0
+			ClassAI.call_artillery(s, aim_point)
+			G.ui.message("Fire mission called on the crosshair")
+		"sniper", "spotter":
+			var o = pick_soldier(cam.global_position, (aim_point - cam.global_position).normalized())
+			if o != null and o.team != s.team:
+				for f in G.soldiers:
+					if f.team == s.team and f.state != "dead":
+						AI.add_intel(f, o, o.pos, 0.0, true)
+				G.ui.message("Target marked for the team")
+				G.ui.radio(s.team, "%s: enemy marked at %s" % [s.sname, AI.grid_ref(o.pos)])
+		_:
+			G.ui.message("%s: no special action (engineers build, medics heal, radio calls artillery, snipers mark)" % G.CLASSES[s.cls]["name"])

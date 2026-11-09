@@ -116,9 +116,13 @@ var WEAPONS = {
 	"sniper":  {"id": "sniper", "mags": 5, "name": "Sniper rifle", "mag": 5, "rof": 1.25, "auto": false, "dmg": 96.0, "pellets": 1, "spread": 0.0015, "move_spread": 0.045, "force": 7.5, "reload": 3.2, "recoil": 0.06, "len": 1.22, "hold": 0.4, "snd_pitch": 0.7, "snd_vol": 4.0, "zoom": 14.0, "tracer": 650.0, "range": [35.0, 170.0], "burst": [1, 1], "speed": 0.95, "rocket": false},
 	"shotgun": {"id": "shotgun", "mags": 4, "name": "Shotgun", "mag": 8, "rof": 0.85, "auto": false, "dmg": 14.0, "pellets": 8, "spread": 0.055, "move_spread": 0.02, "force": 2.4, "reload": 3.4, "recoil": 0.045, "len": 0.86, "hold": 0.36, "snd_pitch": 0.6, "snd_vol": 3.0, "zoom": 52.0, "tracer": 300.0, "range": [2.0, 20.0], "burst": [1, 1], "speed": 1.05, "rocket": false},
 	"hmg":     {"id": "hmg", "mags": 0, "name": "Mounted MG", "mag": 200, "rof": 0.085, "auto": true, "dmg": 34.0, "pellets": 1, "spread": 0.012, "move_spread": 0.0, "force": 4.0, "reload": 4.0, "recoil": 0.0, "len": 1.2, "hold": 0.4, "snd_pitch": 0.75, "snd_vol": 3.0, "zoom": 40.0, "tracer": 340.0, "range": [10.0, 120.0], "burst": [6, 16], "speed": 1.0, "rocket": false},
+	"smg":     {"id": "smg", "mags": 4, "name": "Submachine gun", "mag": 32, "rof": 0.075, "auto": true, "dmg": 21.0, "pellets": 1, "spread": 0.022, "move_spread": 0.03, "force": 2.6, "reload": 2.2, "recoil": 0.009, "len": 0.62, "hold": 0.28, "snd_pitch": 1.2, "snd_vol": -1.0, "zoom": 48.0, "tracer": 300.0, "range": [3.0, 40.0], "burst": [4, 9], "speed": 1.05, "rocket": false},
+	"pistol":  {"id": "pistol", "mags": 3, "name": "Pistol", "mag": 8, "rof": 0.22, "auto": false, "dmg": 26.0, "pellets": 1, "spread": 0.018, "move_spread": 0.02, "force": 2.4, "reload": 1.6, "recoil": 0.03, "len": 0.3, "hold": 0.12, "snd_pitch": 1.4, "snd_vol": -3.0, "zoom": 50.0, "tracer": 300.0, "range": [2.0, 30.0], "burst": [1, 2], "speed": 1.05, "rocket": false},
+	"flamer":  {"id": "flamer", "mags": 1, "name": "Flamethrower", "mag": 120, "rof": 0.05, "auto": true, "dmg": 0.0, "pellets": 1, "spread": 0.06, "move_spread": 0.02, "force": 0.0, "reload": 5.0, "recoil": 0.0, "len": 0.9, "hold": 0.32, "snd_pitch": 0.4, "snd_vol": -4.0, "zoom": 55.0, "tracer": 0.0, "range": [2.0, 17.0], "burst": [12, 24], "speed": 0.9, "rocket": false, "flame": true},
+	"atrifle": {"id": "atrifle", "mags": 4, "name": "Anti-tank rifle", "mag": 5, "rof": 1.6, "auto": false, "dmg": 130.0, "pellets": 1, "spread": 0.002, "move_spread": 0.05, "force": 9.0, "reload": 3.5, "recoil": 0.08, "len": 1.5, "hold": 0.5, "snd_pitch": 0.55, "snd_vol": 5.0, "zoom": 30.0, "tracer": 600.0, "range": [20.0, 140.0], "burst": [1, 1], "speed": 0.85, "rocket": false, "ap": true},
 	"rpg":     {"id": "rpg", "mags": 2, "name": "Rocket launcher", "mag": 1, "rof": 1.0, "auto": false, "dmg": 0.0, "pellets": 1, "spread": 0.007, "move_spread": 0.03, "force": 5.0, "reload": 3.6, "recoil": 0.035, "len": 1.12, "hold": 0.42, "snd_pitch": 0.5, "snd_vol": 4.0, "zoom": 38.0, "tracer": 0.0, "range": [16.0, 85.0], "burst": [1, 1], "speed": 0.9, "rocket": true},
 }
-const WEAPON_LIST = ["rifle", "lmg", "sniper", "shotgun", "rpg"]
+const WEAPON_LIST = ["rifle", "lmg", "sniper", "shotgun", "rpg", "smg", "pistol", "flamer", "atrifle"]
 
 # gun models: [x, y, z, w, h, l, colour] along the gun (z forward from the grip)
 const C_DARK = Color(0.14, 0.15, 0.15)
@@ -135,18 +139,64 @@ var GUN_MODELS = {
 		[0, 0.075, 0.06, 0.02, 0.04, 0.02, C_DARK], [0, 0.075, 0.24, 0.02, 0.04, 0.02, C_DARK], [0.05, 0.04, 0.02, 0.05, 0.02, 0.02, C_DARK]],
 	"shotgun": [[0, -0.01, -0.15, 0.05, 0.1, 0.18, C_WOOD], [0, 0.03, 0.07, 0.06, 0.08, 0.24, C_DARK], [0, 0.05, 0.38, 0.03, 0.03, 0.5, C_DARK], [0, 0.015, 0.38, 0.028, 0.028, 0.44, C_DARK],
 		[0, 0.015, 0.32, 0.06, 0.06, 0.15, C_WOOD], [0, -0.06, 0.0, 0.04, 0.1, 0.05, C_DARK]],
+	"smg": [[0, -0.01, -0.12, 0.045, 0.09, 0.14, C_DARK], [0, 0.03, 0.08, 0.055, 0.08, 0.28, C_DARK], [0, 0.04, 0.33, 0.03, 0.03, 0.22, C_DARK], [0, -0.09, 0.1, 0.035, 0.18, 0.04, C_DARK], [0, -0.06, -0.02, 0.04, 0.1, 0.05, C_DARK]],
+	"pistol": [[0, 0.03, 0.06, 0.035, 0.05, 0.2, C_DARK], [0, -0.04, 0.0, 0.035, 0.1, 0.05, C_DARK]],
+	"flamer": [[0, 0.03, 0.15, 0.06, 0.08, 0.5, C_DARK], [0, 0.04, 0.55, 0.05, 0.05, 0.32, C_MID], [0, -0.07, 0.15, 0.04, 0.1, 0.05, C_DARK], [0, 0.04, 0.74, 0.07, 0.07, 0.06, C_DARK]],
+	"atrifle": [[0, -0.01, -0.2, 0.06, 0.12, 0.25, C_WOOD], [0, 0.02, 0.2, 0.07, 0.09, 0.6, C_DARK], [0, 0.04, 0.95, 0.04, 0.04, 0.9, C_DARK], [0, 0.04, 1.42, 0.08, 0.06, 0.1, C_DARK],
+		[0.06, -0.08, 1.1, 0.015, 0.2, 0.015, C_DARK], [-0.06, -0.08, 1.1, 0.015, 0.2, 0.015, C_DARK], [0, 0.11, 0.18, 0.045, 0.045, 0.22, C_DARK]],
 	"rpg": [[0, 0.02, 0.3, 0.11, 0.11, 1.12, C_OLIVE], [0, 0.02, 0.93, 0.15, 0.15, 0.22, C_GREEN], [0, -0.08, 0.12, 0.04, 0.11, 0.05, C_DARK], [0.07, 0.08, 0.28, 0.03, 0.07, 0.05, C_DARK], [0, -0.07, 0.36, 0.04, 0.1, 0.05, C_DARK]],
 }
+
+func _fill_weapon_defaults() -> void:
+	for k in WEAPONS:
+		var w = WEAPONS[k]
+		if not w.has("flame"):
+			w["flame"] = false
+		if not w.has("ap"):
+			w["ap"] = false
 
 func team_count() -> int:
 	return teams
 
 func _ready() -> void:
+	_fill_weapon_defaults()
 	load_prefs()
 	apply_teams()
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--knee="):
 			KNEE_SIGN = float(a.substr(7))
+
+# ---------------------------------------------------------------- classes
+const CLASSES = {
+	"rifleman": {"name": "Rifleman", "w": ["rifle"], "share": 0.3},
+	"mg": {"name": "Machine gunner", "w": ["lmg"], "share": 0.12},
+	"medic": {"name": "Medic", "w": ["smg"], "share": 0.12},
+	"at": {"name": "Anti-tank", "w": ["rpg", "rpg", "atrifle"], "share": 0.1},
+	"engineer": {"name": "Engineer", "w": ["shotgun", "smg"], "share": 0.1},
+	"assault": {"name": "Assault", "w": ["smg", "smg", "shotgun", "flamer"], "share": 0.1},
+	"radio": {"name": "Radio operator", "w": ["rifle"], "share": 0.06},
+	"sniper": {"name": "Sniper", "w": ["sniper"], "share": 0.05},
+	"spotter": {"name": "Spotter", "w": ["rifle"], "share": 0.05},
+}
+
+# the class this team is shortest of, compared with the mix above
+func pick_class(team: int) -> String:
+	var have = {}
+	var n = 0
+	for s in soldiers:
+		if s.team == team and s.state != "dead":
+			have[s.cls] = have.get(s.cls, 0) + 1
+			n += 1
+	var best = "rifleman"
+	var bd = -1e9
+	for c in CLASSES:
+		var d = CLASSES[c]["share"] * (n + 1) - have.get(c, 0) + randf() * 0.3
+		if c == "spotter" and have.get("sniper", 0) <= have.get("spotter", 0):
+			d -= 10.0
+		if d > bd:
+			bd = d
+			best = c
+	return best
 
 func random_weapon() -> String:
 	var r = randf()

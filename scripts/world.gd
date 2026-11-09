@@ -217,7 +217,22 @@ func build_terrain(base: Color) -> void:
 	add_child(terrain_body)
 
 # ---------------------------------------------------------------- walkable height (terrain, floors, stairs)
+# raycasting for the walking surface is only needed upstairs, on stairs, or on top of things;
+# out in the open the heightmap is exact and much cheaper
 func surface_y(x: float, z: float, cur: float) -> float:
+	var g = ground_y(x, z)
+	if cur < g + 0.2:
+		var in_tower = false
+		for T in towers:
+			var r = T.get("rect")
+			if r != null and x > r[0] and x < r[1] and z > r[2] and z < r[3]:
+				in_tower = true
+				break
+		if not in_tower:
+			return g
+	return _surface_ray(x, z, cur)
+
+func _surface_ray(x: float, z: float, cur: float) -> float:
 	var hit = G.ray(Vector3(x, cur + 0.75, z), Vector3(x, cur - 8.0, z), G.L_WORLD)
 	if hit.is_empty():
 		return ground_y(x, z)
@@ -225,6 +240,24 @@ func surface_y(x: float, z: float, cur: float) -> float:
 
 # ---------------------------------------------------------------- static boxes and colliders
 var edit_node: Node3D = null      # map editor: geometry goes into this node as separate meshes
+var dyn_mode = false             # building during a battle (engineers): separate meshes but real colliders
+var dyn_root: Node3D = null
+
+# put something up in the middle of a battle: it gets collision, cover points and updated navigation
+func build_now(fn: Callable) -> void:
+	if dyn_root == null or not is_instance_valid(dyn_root):
+		dyn_root = Node3D.new()
+		geo_root.add_child(dyn_root)
+	var before = cols.size()
+	edit_node = dyn_root
+	dyn_mode = true
+	fn.call()
+	edit_node = null
+	dyn_mode = false
+	for i in range(before, cols.size()):
+		var c = cols[i]
+		gen_cover_for(c)
+		update_nav_area(c.lo.x, c.lo.z, c.hi.x, c.hi.z)
 static var edit_mats = {}
 static var unit_box: BoxMesh = null
 
@@ -249,7 +282,17 @@ func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, colo
 		mi.material_override = edit_mats[key0]
 		mi.transform = xf
 		edit_node.add_child(mi)
-		return [null, -1]
+		var nref = [mi, -2]
+		if piece != null:
+			piece.append(nref)
+		if opt.get("collide", true) and not (opt.get("rx", 0.0) != 0.0 or opt.get("ry", 0.0) != 0.0 or opt.get("rz", 0.0) != 0.0) and dyn_mode:
+			var dc = add_col(cx, base + y0, cz, w, h, d)
+			dc.vis = [nref]
+			dc.color = color
+			dc.dest = opt.get("dest", false)
+			dc.hp = opt.get("hp", 160.0)
+			dc.prop = opt.get("mat", 0)
+		return nref
 	var key = color.to_html(false) + ("n" if opt.get("no_shadow", false) else "s")
 	if not groups.has(key):
 		groups[key] = {"color": color, "xforms": [], "mm": null, "no_shadow": opt.get("no_shadow", false)}
@@ -609,6 +652,10 @@ func destroy_col(c, depth: int = 0) -> void:
 		c.body.queue_free()
 	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
 	for r in c.vis:
+		if r[1] == -2:
+			if is_instance_valid(r[0]):
+				r[0].queue_free()
+			continue
 		var g = r[0]
 		if g["mm"]:
 			g["mm"].set_instance_transform(r[1], zero)
@@ -703,7 +750,7 @@ func tower(x: float, z: float, w: float, d: float) -> void:
 	var FY = 3.45
 	var H = 6.6
 	buildings.append({"x": x, "z": z, "w": w, "d": d, "h": H})
-	var T = {"x": x, "z": z, "w": w, "d": d, "floor_y": FY, "posts": [], "cps": []}
+	var T = {"x": x, "z": z, "w": w, "d": d, "floor_y": FY, "posts": [], "cps": [], "rect": [x - w / 2.0 - 0.5, x + w / 2.0 + 0.5, z - d / 2.0 - 0.5, z + d / 2.0 + 0.5]}
 	var sides = [[true, z - d / 2.0, x - w / 2.0, x + w / 2.0, 0.0, -1.0, -1], [true, z + d / 2.0, x - w / 2.0, x + w / 2.0, 0.0, 1.0, 1],
 		[false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, -1.0, 0.0, 2], [false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, 1.0, 0.0, 1]]
 	for sd in sides:

@@ -415,6 +415,16 @@ static func perceive(s) -> void:
 			peek_only = po
 	s.vis_t = vis
 	s.peek_vis = peek_only
+	# anti-tank weapons look for enemy vehicles too
+	s.vis_veh = null
+	if s.W["rocket"] or s.W["ap"]:
+		var bdv = s.W["range"][1] * 1.2
+		for v in G.vehicles:
+			if v.team != s.team and not v.dead and v.kind != "mortar":
+				var dv = G.dist2d(v.pos, s.pos)
+				if dv < bdv and dv > 12.0 and not G.blocked(eye, v.center()):
+					bdv = dv
+					s.vis_veh = v
 	if vis != null:
 		s.target = vis
 	var best = best_intel(s)
@@ -485,6 +495,8 @@ static func decide(s) -> void:
 			s.flare_cd = randf_range(18.0, 28.0)
 			Combat.flare(s.pos, s.threat)
 			G.fx.callout(s, G.pick(["Flare up!", "Light 'em up!"]))
+	if ClassAI.busy(s) or s.task == "sapper" and s.move_target != null:
+		return
 	# low on ammunition: go and get some
 	if s.task == "resupply":
 		if s.supply_target == null or (s.supply_target is Object and (not is_instance_valid(s.supply_target) or s.supply_target.reserve <= 0)):
@@ -512,12 +524,14 @@ static func decide(s) -> void:
 			s.cover.ban = G.sim_time + 20.0
 		go_downstairs(s)
 		return
-	# medic duty
+	if ClassAI.jobs(s, known, threat):
+		return
+	# medic duty (medics come from far; anyone else only helps a buddy right next to them)
 	if s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and s.patient.state == "wounded":
 		return
 	if s.vis_t == null and G.sim_time - s.seen_t > 2.0 and s.hp > 40.0:
 		for w in G.soldiers:
-			if w.team == s.team and w.state == "wounded" and w.medic == null and w.pos.distance_to(s.pos) < 22.0:
+			if w.team == s.team and w.state == "wounded" and w.medic == null and w.pos.distance_to(s.pos) < (45.0 if s.cls == "medic" else 6.0):
 				w.medic = s
 				s.patient = w
 				s.task = "medic"
@@ -745,6 +759,8 @@ static func update(s) -> void:
 			s.flee = null
 			s.decide_t = 0.0
 	s.hand_t = null
+	if ClassAI.busy(s):
+		ClassAI.work(s)
 	# climbing into a vehicle
 	if s.task == "board":
 		var v = s.board_target
@@ -876,9 +892,17 @@ static func aim_and_fire(s) -> void:
 	if W["rocket"] and (s.rockets <= 0 or (tgt != null and tgt.pos.distance_to(s.pos) < 14.0)):
 		s.set_weapon("rifle")
 		return
+	if s.mag <= 0 and s.reserve <= 0 and s.reload_t <= 0.0 and s.to_sidearm():
+		G.fx.callout(s, "Switching to pistol!")
+		return
+	var veh_t = s.vis_veh
+	if veh_t != null and (not is_instance_valid(veh_t) or veh_t.dead or not (W["rocket"] or W["ap"]) or s.task == "medic"):
+		veh_t = null
 	var point = null
 	var extra = 0.0
-	if tgt != null:
+	if veh_t != null:
+		point = veh_t.center()
+	elif tgt != null:
 		point = tgt.chest()
 	elif s.in_cover and not s.broken and W["auto"] and G.sim_time - s.seen_t < 6.0 and s.squad != null and squad_movers(s.squad) > 0 and s.task != "medic":
 		point = s.last_seen + Vector3(0, 1.0, 0)
@@ -922,6 +946,8 @@ static func aim_and_fire(s) -> void:
 						s.block_t = maxf(0.0, s.block_t - 0.1)
 						var moving = s.vel.length() > 0.6
 						var spread = W["spread"] * (0.3 if W["pellets"] > 1 else 1.0) + dist * 0.00025 + s.supp * 0.03 + (W["move_spread"] if moving else 0.0) - (0.003 if (s.crouch > 0.5 or s.prone) else 0.0) + extra + (0.02 if s.task == "charge" else 0.0) + (0.025 if s.morale < Morale.SHAKEN else 0.0)
+						if s.cls == "sniper" and s.partner != null and is_instance_valid(s.partner) and s.partner.state == "alive" and G.dist2d(s.partner.pos, s.pos) < 10.0:
+							spread *= 0.55
 						Combat.fire_weapon(s, s.muzzle, dir, spread)
 						s.burst -= 1
 						s.mag -= 1
@@ -1096,3 +1122,10 @@ static func friendly_in_line(s, from: Vector3, dir: Vector3, L: float):
 		if perp < 0.75 + t * 0.03:
 			return o
 	return null
+
+static func grid_ref(p: Vector3) -> String:
+	var cols = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	var b: Rect2 = G.world.bounds
+	var gx = clampi(int((p.x - b.position.x) / 25.0), 0, 25)
+	var gz = clampi(int((p.z - b.position.y) / 25.0), 0, 99)
+	return "%s%d" % [cols[gx], gz + 1]

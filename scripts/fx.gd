@@ -430,3 +430,41 @@ func order_marker(p: Vector3) -> void:
 	var tw = r.create_tween()
 	tw.tween_property(r, "scale", Vector3(0.3, 0.2, 0.3), 1.2)
 	tw.tween_callback(r.queue_free)
+
+# a tongue of flame (flamethrowers, burning soldiers, burning hedges)
+var flame_mat: StandardMaterial3D = null
+var flame_pool: Array = []
+var flame_i = 0
+
+func flame_puff(pos: Vector3, vel: Vector3, size: float) -> void:
+	if flame_pool.is_empty():
+		flame_mat = billboard_mat(Color(1, 1, 1, 1), true)
+		for k in range(40):
+			var p = CPUParticles3D.new()
+			p.emitting = false
+			p.one_shot = true
+			p.amount = 6
+			p.lifetime = 0.55
+			p.explosiveness = 0.85
+			p.spread = 12.0
+			p.gravity = Vector3(0, 3.0, 0)
+			p.mesh = QuadMesh.new()
+			p.material_override = flame_mat
+			var g = Gradient.new()
+			g.set_color(0, Color(1.0, 0.85, 0.4, 0.95))
+			g.set_color(1, Color(0.6, 0.12, 0.02, 0.0))
+			p.color_ramp = g
+			p.scale_amount_curve = _grow_curve(0.6, 2.2)
+			p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(p)
+			flame_pool.append(p)
+	var p: CPUParticles3D = flame_pool[flame_i]
+	flame_i = (flame_i + 1) % flame_pool.size()
+	p.global_position = pos
+	var sp = vel.length()
+	p.direction = vel / maxf(sp, 0.01)
+	p.initial_velocity_min = sp * 0.7
+	p.initial_velocity_max = sp
+	p.scale_amount_min = size * 0.6
+	p.scale_amount_max = size
+	p.restart()

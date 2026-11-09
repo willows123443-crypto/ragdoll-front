@@ -81,7 +81,7 @@ static func truck(t: int, n: int) -> void:
 		if s == null:
 			break
 		s.mount(v, i + 1)
-	G.ui.message("%s reinforcements: %d soldiers inbound by truck" % [G.TEAM_NAMES[t], n])
+	G.ui.radio(t, "%d reinforcements inbound by truck, ETA two minutes" % n)
 
 static func paradrop(t: int, n: int) -> void:
 	var home: Vector3 = G.world.rally_point(t)
@@ -95,7 +95,7 @@ static func paradrop(t: int, n: int) -> void:
 	node.look_at(end_, Vector3.UP)
 	planes.append({"node": node, "from": start, "to": end_, "t": 0.0, "team": t, "zone": zone, "left": n, "drop_t": 0.0})
 	G.audio.engine(start, 1.0, true)
-	G.ui.message("%s reinforcements: paratroopers inbound" % G.TEAM_NAMES[t])
+	G.ui.radio(t, "Paratroopers inbound, watch the skies")
 
 static func _step_planes(dt: float) -> void:
 	for i in range(planes.size() - 1, -1, -1):

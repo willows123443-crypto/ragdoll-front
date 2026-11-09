@@ -7,7 +7,7 @@ const MAP_IDS = ["town", "field", "trenches", "valley", "front"]
 const TOOLS = {
 	"units": [["a1", "Alpha soldier"], ["b1", "Bravo soldier"], ["a5", "Alpha squad"], ["b5", "Bravo squad"], ["ctl", "Take control"], ["spA", "Alpha spawn"], ["spB", "Bravo spawn"]],
 	"command": [["sel", "Select"], ["mvA", "Alpha: move to"], ["mvB", "Bravo: move to"]],
-	"vehicles": [["jA", "Alpha jeep"], ["jB", "Bravo jeep"], ["tA", "Alpha tank"], ["tB", "Bravo tank"], ["trA", "Alpha truck"], ["trB", "Bravo truck"]],
+	"vehicles": [["jA", "Alpha jeep"], ["jB", "Bravo jeep"], ["tA", "Alpha tank"], ["tB", "Bravo tank"], ["trA", "Alpha truck"], ["trB", "Bravo truck"], ["nA", "Alpha MG nest"], ["nB", "Bravo MG nest"], ["mA", "Alpha mortar"]],
 	"fun": [["boom", "Explosion"], ["mortar", "Mortar strike"], ["smoke", "Smoke"], ["flare", "Flare"], ["push", "Shove"]],
 }
 const TIPS = {"sel": "Click or drag a box to select soldiers (Shift adds), then right-click the ground to send them there",
@@ -17,6 +17,8 @@ const TIPS = {"sel": "Click or drag a box to select soldiers (Shift adds), then 
 	"ctl": "Click a soldier to take control of them (or press F)", "spA": "Click to move where Alpha reinforcements arrive",
 	"spB": "Click to move where Bravo reinforcements arrive", "boom": "Click anywhere to set off an explosion",
 	"mortar": "Click to call in a mortar barrage",
+	"nA": "Click to build an Alpha machine-gun nest (crewed)", "nB": "Click to build a Bravo machine-gun nest (crewed)",
+	"mA": "Click to set up an Alpha mortar pit (it shells enemies your team has spotted)",
 	"jA": "Click to drop an Alpha jeep with a driver and gunner", "jB": "Click to drop a Bravo jeep with a driver and gunner",
 	"tA": "Click to drop an Alpha tank with its crew", "tB": "Click to drop a Bravo tank with its crew",
 	"trA": "Click to drop an empty Alpha truck (take control of a soldier and press F next to it)", "trB": "Click to drop an empty Bravo truck", "smoke": "Click to drop a smoke screen", "flare": "Click to put up a parachute flare (lights up the area at night)", "push": "Click a soldier to shove them over"}
@@ -488,6 +490,8 @@ func _build_help() -> void:
 		"  Q / E  lean · Shift  sprint · C  crouch · Z  prone · run into low walls to vault\n" + \
 		"  R  reload · G  grenade · V  smoke · 1–5  rifle, machine gun, sniper, shotgun, rockets\n" + \
 		"  F  take the gun (or ammo) of a fallen soldier at your feet · stand at an ammo crate to restock\n" + \
+		"  B  class action (engineer: sandbags/repair · medic: heal · radio: artillery on crosshair · sniper/spotter: mark target)\n" + \
+		"  N  place a mine (Shift+N anti-tank) · K  satchel charge · 1–9  rifle, MG, sniper, shotgun, rockets, SMG, pistol, flamethrower, AT rifle\n" + \
 		"  Y  first-person / third-person view · L  fire a flare · Esc  free the mouse · X  leave the soldier\n" + \
 		"  F  next to a vehicle: get in · in a vehicle: WASD drive, mouse aim, click fire, 1–4 change seat, F get out\n\n" + \
 		"BATTLE\n" + \
@@ -644,9 +648,11 @@ func update_hud(dt: float) -> void:
 				if s.reload_t > 0.0: st = " — reloading"
 				elif s.prone: st = " — prone"
 				elif s.p_crouch: st = " — crouched"
-		p_name.text = "%s  ·  %s%s" % [s.sname, s.W["name"], st]
+		p_name.text = "%s  ·  %s  ·  %s%s" % [s.sname, G.CLASSES.get(s.cls, {"name": "?"})["name"], s.W["name"], st]
 		p_hp.value = maxf(0.0, s.hp)
 		p_ammo.text = "%d | %d     grenades %d · smoke %d" % [s.mag, s.reserve, s.grenades, s.smokes]
+		if s.cls == "engineer":
+			p_ammo.text += " · sandbags %d · mines %d · satchels %d" % [s.kits, s.mines, s.satchels]
 		if s.resupply_t > 0.0:
 			p_ammo.text += "     resupplying…"
 		tip.text = "" if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else "Click to aim — X to leave this soldier"
@@ -965,3 +971,27 @@ func _map_id(i: int) -> String:
 
 func _select_map(i: int) -> void:
 	G.main.preview_map(_map_id(i))
+
+# ---------------------------------------------------------------- radio chatter
+var radio_box: VBoxContainer = null
+
+func radio(team: int, text: String) -> void:
+	if radio_box == null:
+		radio_box = VBoxContainer.new()
+		_place(radio_box, Control.PRESET_BOTTOM_LEFT, 12, -330, 420, 180)
+		radio_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		radio_box.alignment = BoxContainer.ALIGNMENT_END
+		root.add_child(radio_box)
+	var l = _label("📻 " + G.TEAM_NAMES[team] + ": " + text if team >= 0 else "📻 " + text, 12, G.team_color(team).lightened(0.5) if team >= 0 else Color(0.9, 0.9, 0.8))
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD
+	l.custom_minimum_size = Vector2(410, 0)
+	radio_box.add_child(l)
+	while radio_box.get_child_count() > 6:
+		var c = radio_box.get_child(0)
+		radio_box.remove_child(c)
+		c.queue_free()
+	var wr = weakref(l)
+	get_tree().create_timer(12.0).timeout.connect(func():
+		var n = wr.get_ref()
+		if n != null:
+			n.queue_free())

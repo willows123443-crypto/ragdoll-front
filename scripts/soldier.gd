@@ -92,6 +92,18 @@ var board_target = null
 var hidden_in_vehicle = false
 var chute: Node3D = null
 var partial = false
+var cls = "rifleman"
+var mines = 0
+var satchels = 0
+var kits = 0            # sandbag kits (engineers)
+var radio_cd = 20.0
+var build_t = 0.0
+var burn_t = 0.0
+var burn_fx_t = 0.0
+var primary = null      # [weapon, mag, reserve] while using the sidearm
+var partner = null      # sniper <-> spotter
+var job_cd = 0.0
+var vis_veh = null
 var fired_t = -99.0
 var flares = 0
 var flare_cd = 0.0
@@ -651,6 +663,38 @@ func chest() -> Vector3:
 func head_pos() -> Vector3:
 	return parts[2].global_position
 
+# ---------------------------------------------------------------- classes
+func set_class(c: String) -> void:
+	cls = c
+	mines = 3 if c == "engineer" else 0
+	satchels = 2 if c == "engineer" else 0
+	kits = 3 if c == "engineer" else 0
+	if c == "at" and wid == "rpg":
+		rockets = 4
+	if c == "spotter" or c == "sniper":
+		for o in G.soldiers:
+			if o != self and o.team == team and o.state != "dead" and o.partner == null and ((c == "spotter" and o.cls == "sniper") or (c == "sniper" and o.cls == "spotter")):
+				partner = o
+				o.partner = self
+				var sp = o if c == "sniper" else self
+				var sn = self if c == "sniper" else o
+				sp.order = {"mode": "follow", "who": sn, "point": null}
+				break
+
+# out of ammunition for the main gun: fall back on the pistol
+func to_sidearm() -> bool:
+	if wid == "pistol" or primary != null:
+		return false
+	primary = [wid, mag, reserve]
+	set_weapon("pistol")
+	return true
+
+func from_sidearm() -> void:
+	if primary == null:
+		return
+	set_weapon(primary[0])
+	primary = null
+
 # ---------------------------------------------------------------- ammunition
 func start_reload() -> bool:
 	if reload_t > 0.0 or mag >= W["mag"] or reserve <= 0:
@@ -667,7 +711,12 @@ func ammo_frac() -> float:
 	return float(mag + reserve) / float(W["mag"] * (W["mags"] + 1))
 
 func resupply() -> void:
+	from_sidearm()
 	reserve = W["mag"] * W["mags"]
+	if cls == "engineer":
+		mines = maxi(mines, 3)
+		satchels = maxi(satchels, 2)
+		kits = maxi(kits, 3)
 	grenades = maxi(grenades, 2)
 	smokes = maxi(smokes, 1)
 	if wid == "rpg":
@@ -755,6 +804,8 @@ func compute_muzzle() -> void:
 func check_gun_clip() -> void:
 	if state != "alive" or prone:
 		gun_blocked = false
+		return
+	if (Engine.get_physics_frames() + id) % 3 != 0:
 		return
 	var a = _aim_vector(G.sim_time + seed_, 0.0)
 	var L: float = W["len"] + 0.12
@@ -909,6 +960,8 @@ func start_vault(c) -> bool:
 func tick() -> void:
 	callout_cd -= G.DT
 	hurt_t -= G.DT
+	if burn_t > 0.0 and state != "dead":
+		_burn()
 	match state:
 		"dead":
 			dead_t += G.DT
@@ -1039,6 +1092,7 @@ func _tick_wounded() -> void:
 
 func _tick_alive() -> void:
 	supp = maxf(0.0, supp - 0.3 * G.DT)
+	radio_cd = maxf(0.0, radio_cd - G.DT) if is_player else radio_cd
 	stun = maxf(0.0, stun - G.DT)
 	throw_t = maxf(0.0, throw_t - G.DT)
 	for r in range(5):
@@ -1423,3 +1477,29 @@ func _drop_chute() -> void:
 	if chute != null:
 		chute.queue_free()
 		chute = null
+
+# ---------------------------------------------------------------- on fire
+func ignite(by) -> void:
+	if state == "dead" or hidden_in_vehicle:
+		return
+	if burn_t <= 0.0 and state == "alive" and not is_player:
+		G.fx.callout(self, G.pick(["I'm on fire!", "AAAH! Get it off!", "Burning!"]))
+	burn_t = maxf(burn_t, 4.5)
+	if by != null and is_instance_valid(by):
+		last_attacker = by
+
+func _burn() -> void:
+	burn_t -= G.DT
+	hp -= 16.0 * G.DT
+	supp = 1.5
+	Morale.shock(self, 3.0 * G.DT)
+	burn_fx_t -= G.DT
+	if burn_fx_t <= 0.0:
+		burn_fx_t = 0.12
+		G.fx.flame_puff(parts[1].global_position, Vector3(0, 2.0, 0), 0.6)
+	if state == "alive" and not is_player and vehicle == null and move_target == null:
+		# panic: run anywhere
+		AI.release_cover(self)
+		AI.go_to(self, pos + Vector3(randf_range(-8, 8), 0, randf_range(-8, 8)), 6.0)
+	if hp <= 0.0:
+		Combat.kill(self, last_attacker, false)

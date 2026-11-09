@@ -9,6 +9,7 @@ var markers: Node3D
 var point_flags: Array = []
 var spawn_flags: Array = []
 var tick_us = 0
+var prof = [0, 0]
 var tick_n = 0
 
 func _ready() -> void:
@@ -210,7 +211,11 @@ func spawn_soldier(team: int, x: float, z: float, wid: String):
 	p = G.world.push_out_circle(p, 0.35)[0]
 	var s = Soldier.new()
 	add_child(s)
-	s.setup(team, p.x, p.z, wid if wid != "" else G.random_weapon())
+	var cl = "rifleman" if wid != "" else G.pick_class(team)
+	if wid == "":
+		wid = G.pick(G.CLASSES[cl]["w"])
+	s.setup(team, p.x, p.z, wid)
+	s.set_class(cl)
 	var tgt: Vector3 = G.world.capture
 	s.face(atan2(tgt.x - p.x, (tgt.z - p.z) * 0.3))
 	G.soldiers.append(s)
@@ -248,6 +253,15 @@ func _starting_vehicles(t: int) -> void:
 	spawn_vehicle("jeep", t, _free_spot(home + side * 16.0), yaw)
 	if G.armor == "heavy":
 		spawn_vehicle("tank", t, _free_spot(home - side * 18.0), yaw)
+	# a mortar pit at the base and machine-gun nests out in front of it (two-sided battles only, to keep it fast)
+	if G.team_count() > 2:
+		return
+	var fwd = G.flat(enemy - home).normalized()
+	spawn_vehicle("mortar", t, _free_spot(home - fwd * 6.0 + side * 6.0), yaw)
+	if G.mode != "laststand" or t == 0:
+		for k in [-1.0, 1.0]:
+			var np = _free_spot(home + fwd * minf(40.0, G.dist2d(home, enemy) * 0.3) + side * k * 14.0)
+			spawn_vehicle("nest", t, np, yaw)
 
 func _free_spot(p: Vector3) -> Vector3:
 	for k in range(20):
@@ -301,16 +315,23 @@ func _sim_step() -> void:
 		G.game_time += G.DT
 	G.path_budget = 4
 	Reinforce.step(G.DT)
+	var ta = Time.get_ticks_usec()
 	for v in G.vehicles.duplicate():
 		if is_instance_valid(v):
 			v.step(G.DT)
+	var tb = Time.get_ticks_usec()
 	for s in G.soldiers.duplicate():
 		if is_instance_valid(s):
 			s.tick()
+	var tc = Time.get_ticks_usec()
+	prof[0] += tb - ta
+	prof[1] += tc - tb
 	Combat.step_grenades()
 	Combat.step_rockets()
 	Combat.step_strikes()
 	Combat.step_flares()
+	Combat.step_mines()
+	Combat.step_fires()
 	G.fx.step(G.DT)
 	Stats.step(G.DT)
 	Obj.step(G.DT)
@@ -344,6 +365,7 @@ func on_point_changed(i: int, prev: int, owner: int) -> void:
 	_set_flag_color(point_flags[i] if i < point_flags.size() else null, G.TEAM_BAND[owner] if owner >= 0 else Color(0.85, 0.85, 0.85))
 	if owner >= 0:
 		G.ui.message("%s captured point %s" % [G.TEAM_NAMES[owner], pt["name"]])
+		G.ui.radio(owner, "Point %s is ours!" % pt["name"])
 		for s in G.soldiers:
 			if s.state != "dead" and s.team < 2:
 				if s.team == owner:
@@ -479,6 +501,8 @@ func _report(tag: String) -> void:
 	var kn = _knee_stats()
 	print("AUTOTEST %s | knees ok/backward: body %d/%d, target %d/%d" % [tag, kn[0], kn[1], kn[2], kn[3]])
 	print("AUTOTEST %s | teams %d alive %s" % [tag, G.team_count(), str(range(G.team_count()).map(func(t): return G.alive_count(t)))])
+	print("AUTOTEST %s | prof vehicles %.2f soldiers %.2f ms/tick" % [tag, prof[0] / 1000.0 / maxi(tick_n, 1), prof[1] / 1000.0 / maxi(tick_n, 1)])
+	prof = [0, 0]
 	print("AUTOTEST %s | alive %d v %d | dead %d | score %d-%d | sim %.2f ms/tick" % [tag, alive[0], alive[1], dead, G.score[0], G.score[1], ms])
 	tick_us = 0
 	tick_n = 0

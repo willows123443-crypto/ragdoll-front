@@ -24,6 +24,12 @@ const SPECS = {
 			{"o": Vector3(-0.8, 1.62, -1.9), "role": "pass", "pose": "sit", "face": PI / 2.0},
 			{"o": Vector3(0.8, 1.62, -2.8), "role": "pass", "pose": "sit", "face": -PI / 2.0},
 			{"o": Vector3(-0.8, 1.62, -2.8), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
+	"nest": {"name": "MG nest", "len": 3.2, "wid": 3.2, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 900.0,
+		"bullet": 0.04, "tracked": false, "standoff": 0.0, "static": true,
+		"seats": [{"o": Vector3(0.0, 0.95, -0.85), "role": "gunner", "pose": "stand", "face": 0.0}]},
+	"mortar": {"name": "Mortar", "len": 1.6, "wid": 1.6, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 260.0,
+		"bullet": 0.5, "tracked": false, "standoff": 0.0, "static": true,
+		"seats": [{"o": Vector3(0.75, 0.95, -0.2), "role": "gunner", "pose": "stand", "face": 0.0}]},
 	"tank": {"name": "Tank", "len": 6.6, "wid": 3.3, "speed": 7.5, "rev": 3.5, "accel": 3.5, "turn": 0.85, "hp": 1800.0,
 		"bullet": 0.0, "tracked": true, "standoff": 50.0,
 		"seats": [
@@ -194,6 +200,31 @@ func _build() -> void:
 			for z in [2.4, -0.4, -2.6]:
 				for x in [1.1, -1.1]:
 					_wheel(Vector3(x, 0.55, z), 0.55, 0.42)
+		"nest":
+			var bag = Color(0.66, 0.6, 0.45)
+			_box(self, Vector3(3.0, 0.9, 0.7), Vector3(0, 0.45, 0.9), bag, true)
+			for x in [1.35, -1.35]:
+				_box(self, Vector3(0.7, 0.9, 2.0), Vector3(x, 0.45, 0.0), bag.darkened(0.08), true)
+			turret = Node3D.new()
+			turret.position = Vector3(0, 1.08, 0.15)
+			add_child(turret)
+			_box(turret, Vector3(0.08, 0.6, 0.08), Vector3(0, -0.4, 0), Color(0.15, 0.15, 0.14))
+			gun_pivot = Node3D.new()
+			turret.add_child(gun_pivot)
+			_box(gun_pivot, Vector3(0.16, 0.18, 0.9), Vector3(0, 0, 0.2), Color(0.12, 0.12, 0.12))
+			_box(gun_pivot, Vector3(0.06, 0.06, 0.7), Vector3(0, 0.02, 0.9), Color(0.1, 0.1, 0.1))
+		"mortar":
+			_box(self, Vector3(0.6, 0.06, 0.6), Vector3(0, 0.03, 0), Color(0.2, 0.2, 0.19), true)
+			for k in range(6):
+				var a = k * TAU / 6.0
+				_box(self, Vector3(0.5, 0.45, 0.4), Vector3(cos(a) * 1.0, 0.22, sin(a) * 1.0), Color(0.64, 0.58, 0.44))
+			turret = Node3D.new()
+			turret.position = Vector3(0, 0.15, 0)
+			add_child(turret)
+			gun_pivot = Node3D.new()
+			gun_pivot.rotation.x = -0.95
+			turret.add_child(gun_pivot)
+			_box(gun_pivot, Vector3(0.14, 0.14, 1.2), Vector3(0, 0, 0.55), Color(0.2, 0.22, 0.18))
 		"tank":
 			_box(self, Vector3(3.3, 1.0, 6.4), Vector3(0, 0.95, 0), base_col, true)
 			_box(self, Vector3(3.0, 0.4, 5.2), Vector3(0, 1.6, -0.2), base_col.darkened(0.1), true)
@@ -288,6 +319,10 @@ func step(dt: float) -> void:
 	if dead:
 		dead_t += dt
 		speed = move_toward(speed, 0.0, 10.0 * dt)
+		return
+	if spec.get("static", false):
+		_weapons(dt)
+		_crew_tick(dt)
 		return
 	var thr = 0.0
 	var steer = 0.0
@@ -393,7 +428,7 @@ func _gun_dir() -> Vector3:
 func muzzle() -> Vector3:
 	if gun_pivot == null:
 		return center()
-	return gun_pivot.global_transform * Vector3(0, 0.02, 1.45 if kind == "jeep" else 3.7)
+	return gun_pivot.global_transform * Vector3(0, 0.02, {"jeep": 1.45, "nest": 1.3, "mortar": 1.15}.get(kind, 3.7))
 
 func _weapons(dt: float) -> void:
 	fire_cd -= dt
@@ -420,6 +455,9 @@ func _weapons(dt: float) -> void:
 			want = t[0]
 			use_cannon = t[1]
 			shoot = true
+	if kind == "mortar":
+		_mortar(controller, dt, want, shoot)
+		return
 	if want == null:
 		turret_yaw = lerp_angle(turret_yaw, 0.0, dt * 0.8)
 		gun_pitch = lerpf(gun_pitch, 0.0, dt)
@@ -469,7 +507,62 @@ func _weapons(dt: float) -> void:
 
 func _apply_turret() -> void:
 	turret.rotation.y = turret_yaw
-	gun_pivot.rotation.x = -gun_pitch
+	if kind != "mortar":
+		gun_pivot.rotation.x = -gun_pitch
+
+# mortars lob shells at enemies anyone on the team has spotted (or where the player clicks)
+func _mortar(g, dt: float, want, shoot: bool) -> void:
+	var target = null
+	if g.is_player:
+		if shoot and want != null:
+			target = want
+	elif cannon_cd > 0.0:
+		return
+	else:
+		cannon_cd = 1.0      # look for a target about once a second
+		var best = 0
+		for o in G.soldiers:
+			if o.team == team or o.state == "dead" or o.hidden_in_vehicle:
+				continue
+			var d = G.dist2d(o.pos, pos)
+			if d < 30.0 or d > 240.0:
+				continue
+			var spotted = false
+			for f in G.soldiers:
+				if f.team == team and f.state != "dead" and f.intel.has(o) and f.intel[o]["seen"] and G.sim_time - f.intel[o]["t"] < 8.0:
+					spotted = true
+					break
+			if not spotted:
+				continue
+			var near_friend = false
+			for f in G.soldiers:
+				if f.team == team and f.state != "dead" and G.dist2d(f.pos, o.pos) < 14.0:
+					near_friend = true
+					break
+			if near_friend:
+				continue
+			var n = 0
+			for o2 in G.soldiers:
+				if o2.team == o.team and o2.state != "dead" and G.dist2d(o2.pos, o.pos) < 10.0:
+					n += 1
+			if n > best:
+				best = n
+				target = o.pos
+	if target == null:
+		return
+	var local = global_transform.affine_inverse() * target
+	turret_yaw = turret_yaw + clampf(wrapf(atan2(local.x, local.z) - turret_yaw, -PI, PI), -1.5 * dt, 1.5 * dt)
+	_apply_turret()
+	gun_pivot.rotation.x = -0.95
+	if cannon_cd > 0.0:
+		return
+	cannon_cd = 5.5 if not g.is_player else 3.0
+	var dist = G.dist2d(target, pos)
+	G.fx.muzzle(muzzle(), true)
+	G.audio.boom(muzzle())
+	Combat.shell_at(target, 3.0 + dist * 0.05, 2.5 + dist / 90.0, g, 1.2)
+	if not g.is_player and randf() < 0.3:
+		G.fx.callout(g, G.pick(["Round out!", "Shot over!", "Firing for effect!"]))
 
 # what should an AI gunner shoot at? returns [point, use_cannon] or null
 func _ai_gun_target(g):

@@ -26,6 +26,7 @@ func _ready() -> void:
 	add_child(G.pc)
 	G.ui = preload("res://scripts/ui.gd").new()
 	add_child(G.ui)
+	add_child(preload("res://scripts/editor.gd").new())
 	markers = Node3D.new()
 	add_child(markers)
 	preview_map("town")
@@ -34,6 +35,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shot="):
 			_shot_mode(a.substr(7))
+		if a.begins_with("--edtest="):
+			_editor_test(a.substr(9))
 
 func _build_environment() -> void:
 	env = Environment.new()
@@ -637,3 +640,51 @@ func _knee_stats() -> Array:
 			if absf(e) > 0.25:
 				out[2 if e < 0.0 else 3] += 1
 	return out
+
+# exercises the map editor end to end: sculpt, place, save, reopen, play
+func _editor_test(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	await _wait(0.5)
+	var ed = G.editor
+	ed.new_map(Vector2(260, 190))
+	ed.tool = "raise"
+	for k in range(20):
+		ed._brush(Vector3(-20, 0, 30), 0.1)
+	ed._terrain_changed()
+	ed.tool = "road"
+	ed._drag_done(Vector3(-120, 0, -2), Vector3(120, 0, 2))
+	ed.tool = "trench"
+	ed._drag_done(Vector3(30, 0, -40), Vector3(34, 0, 40))
+	ed.tool = "crater"
+	ed._click(Vector3(-50, 0, -30))
+	for t in [["house", -10, -15], ["tower", 10, 15], ["wall", 0, -30], ["sandbags", 20, 0], ["crate", 22, 4], ["hedge", -40, 20],
+			["tree", -60, -50], ["deadtree", 60, 50], ["hedgehog", 45, -10], ["tankwreck", -30, 45], ["truckwreck", 40, -45], ["ammo", 0, 8]]:
+		ed.tool = t[0]
+		ed._click(Vector3(t[1], 0, t[2]))
+	ed.tool = "point"
+	ed._click(Vector3(-40, 0, 0))
+	ed._click(Vector3(40, 0, 0))
+	ed.tool = "erase"
+	ed._click(Vector3(22, 0, 4))
+	print("EDTEST items %d points %d" % [ed.data["items"].size(), ed.data["points"].size()])
+	ed.name_edit.text = "Test map"
+	ed.save()
+	ed.new_map(Vector2(260, 190))
+	ed.open_saved("Test map")
+	print("EDTEST reopened items %d" % ed.data["items"].size())
+	G.pc.free_pos = Vector3(-70, 45, -60)
+	G.pc.free_yaw = 0.7
+	G.pc.free_pitch = -0.55
+	await _wait(0.5)
+	await _snap(dir, "editor")
+	ed.mode_opt.select(3)
+	ed.play()
+	await _wait(1.0)
+	print("EDTEST playing map=%s mode=%s soldiers=%d points=%d" % [G.map_id, G.mode, G.soldiers.size(), Obj.points.size()])
+	G.pc.free_pos = Vector3(-70, 45, -60)
+	G.pc.free_yaw = 0.7
+	G.pc.free_pitch = -0.55
+	await _wait(20.0)
+	await _snap(dir, "played")
+	print("EDTEST after 20s alive %d v %d" % [G.alive_count(0), G.alive_count(1)])
+	get_tree().quit()

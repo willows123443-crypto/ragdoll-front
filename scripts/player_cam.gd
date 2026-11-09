@@ -184,16 +184,17 @@ func _process(dt: float) -> void:
 		if aim_point.distance_to(piv) < 2.0:
 			aim_point = want_p + d * 20.0
 	else:
-		if not G.started:
+		if not G.started and not G.editor.active:
 			orbit += dt * 0.05
 			var c = G.world.capture
-			free_pos = Vector3(c.x + cos(orbit) * 55.0, G.world.ground_y(c.x, c.z) + 22.0, c.z + sin(orbit) * 55.0)
+			var rad = maxf(55.0, G.world.TW * 0.22)
+			free_pos = Vector3(c.x + cos(orbit) * rad, G.world.ground_y(c.x, c.z) + rad * 0.4, c.z + sin(orbit) * rad)
 			free_yaw = atan2(c.x - free_pos.x, c.z - free_pos.z)
 			free_pitch = -0.32
 		var cp = cos(free_pitch)
 		var d = Vector3(sin(free_yaw) * cp, sin(free_pitch), cos(free_yaw) * cp)
 		var r = Vector3(-cos(free_yaw), 0, sin(free_yaw))
-		if G.started and not G.ui.typing():
+		if (G.started or G.editor.active) and not G.ui.typing() and not G.editor.typing():
 			var sp = (40.0 if Input.is_key_pressed(KEY_SHIFT) else 14.0) * dt
 			if Input.is_key_pressed(KEY_W): free_pos += d * sp
 			if Input.is_key_pressed(KEY_S): free_pos -= d * sp
@@ -213,6 +214,20 @@ func _process(dt: float) -> void:
 
 # ---------------------------------------------------------------- input
 func _unhandled_input(ev: InputEvent) -> void:
+	if G.editor.active:
+		# map editor: right-drag looks around, the wheel moves, everything else goes to the editor
+		if ev is InputEventMouseMotion and r_drag:
+			var inv = -1.0 if G.settings["invert_y"] else 1.0
+			free_yaw -= ev.relative.x * 0.004 * G.settings["sens"]
+			free_pitch = clampf(free_pitch - ev.relative.y * 0.004 * G.settings["sens"] * inv, -1.45, 1.45)
+		elif ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_RIGHT:
+			r_drag = ev.pressed
+		elif ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_WHEEL_UP and ev.pressed:
+			free_pos += Vector3(sin(free_yaw) * cos(free_pitch), sin(free_pitch), cos(free_yaw) * cos(free_pitch)) * 4.0
+		elif ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_WHEEL_DOWN and ev.pressed:
+			free_pos -= Vector3(sin(free_yaw) * cos(free_pitch), sin(free_pitch), cos(free_yaw) * cos(free_pitch)) * 4.0
+		G.editor.handle(ev)
+		return
 	if not G.started or G.ui.menu_open():
 		return
 	if ev is InputEventMouseMotion:

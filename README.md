@@ -15,33 +15,24 @@ The browser build uses Godot's Compatibility renderer, so it has no SSAO and no 
 
 You don't need to install anything else. Every mesh, texture and sound is generated in code. Physics uses Jolt, which is built into Godot 4.6, and the project is already set to use it.
 
-## What's in Stage 1
-- Active ragdoll soldiers: 11 rigid parts joined by joints, with muscles that pull the body toward a procedural pose. Soldiers stumble, fall, get back up, get wounded and die as ragdolls.
-- Three maps (Town, Field, Trenches), each with terrain, trenches, towers with stairs and destructible walls and buildings.
-- Three modes: Sandbox, Deathmatch and Capture. You can set the team size, the score limit and whether reinforcements are on.
-- AI:
-  - Line of sight, with knowledge shared by radio within a squad, by shouting nearby and by hearing gunfire.
-  - Cover-taking, leaning and peeking, snipers in towers and medics who drag the wounded.
-  - Grenades and smoke, plus friendly-fire and muzzle-clearance checks.
-- Weapons: rifle, LMG, sniper, shotgun and RPG. Also grenades, smoke, mortar strikes and explosions that destroy walls.
-- Effects and sound: blood, dust, sparks, decals, tracers, muzzle flashes, debris and procedural sound with reverb.
-- Tools menu: spawn soldiers or squads, take control, push, explosion, mortar, smoke and move spawn points.
+## What's in the game
+- **Active ragdoll soldiers** with AI that only knows what it has seen, heard or been told by radio; cover, peeking, medics dragging the wounded
+- **Morale and squad leaders:** losses and heavy fire shake soldiers; broken soldiers run until a leader rallies them
+- **Ammo and resupply**, bullet penetration through thin cover, grenades, smoke, mortars, flares
+- **Vehicles:** jeeps with mounted machine guns, troop trucks and tanks, with AI crews; you can drive them
+- **Reinforcements** arrive by truck or by paratroopers
+- **Maps:** Town ruins, Farmland, Trenches, plus two large maps (Valley offensive, Western front), and your own from the **map editor**
+- **Modes:** sandbox, deathmatch, capture the point, frontline (push across a chain of points with tickets), assault, last stand
+- **Up to four sides** with your own names, armband colours and uniforms; day, dusk or night
+- **Command:** select soldiers and send them somewhere, team orders, "follow me"
+- **After-action report** (J) and first-person view (Y)
 
 ## Controls
-**Free camera:** WASD to move, Space/E up, C/Q/Ctrl down, Shift for speed, right-drag to look, mouse wheel for speed.
-- 1–9 pick a tool; left click uses it.
-- F takes control of the soldier under the cursor.
-
-**Controlling a soldier:**
-- WASD to move, Shift to sprint, Q/E to lean.
-- Left click fires; right click aims (scope on the sniper).
-- R reload, C crouch, Z prone, G grenade, V smoke, 1–5 change weapon.
-- X or Esc leaves the soldier.
-
-**Anywhere:** M menu, H help, P pause, T slow motion.
-
-## Not ported yet (Stage 2)
-Vehicles, scenarios, unit selection and orders, night and flares, the build tool and the settings panel.
+**Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
+**Command tab:** click or drag a box to select soldiers, right-click the ground to send them there.
+**Controlling a soldier:** mouse aim, left-click fire, right mouse aim down sights, Q/E lean, Shift sprint, C crouch, Z prone, R reload, G grenade, V smoke, L flare, 1–5 weapons, Y first person, O squad follows you, F pick up a fallen soldier's gun or get into a vehicle, X leave the soldier.
+**In a vehicle:** WASD drive, mouse aims the turret, left-click fire, 1–4 change seat, F get out.
+**Anywhere:** M menu, H help, J battle report, P pause, T slow motion.
 
 ## I couldn't run this, so please report problems
 I couldn't run Godot where I wrote this. I checked the scripts with a static checker, but the first run will probably surface a few errors. When something breaks, send me:

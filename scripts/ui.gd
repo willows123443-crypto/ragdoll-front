@@ -423,7 +423,8 @@ func _build_menu() -> void:
 	opt_map = _option(["Town ruins", "Farmland", "Trenches", "Valley offensive (large)", "Western front (large)"], 0)
 	opt_map.item_selected.connect(func(i):
 		if not G.started:
-			G.main.preview_map(MAP_IDS[i]))
+			_select_map(i))
+	refresh_maps()
 	_row(v, "Map", opt_map)
 	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the point", "Frontline — push across the map", "Assault — Alpha attacks", "Last stand — survive the waves"], 0)
 	_row(v, "Mode", opt_mode)
@@ -447,6 +448,7 @@ func _build_menu() -> void:
 	go.add_theme_font_size_override("font_size", 20)
 	v.add_child(go)
 	var h = HBoxContainer.new()
+	h.add_child(_button("Map editor", func(): G.editor.new_map(Vector2(260, 190))))
 	h.add_child(_button("Teams…", func(): _show_teams()))
 	h.add_child(_button("Settings…", func(): _show_settings()))
 	h.add_child(_button("Controls", func(): help.visible = true))
@@ -456,7 +458,8 @@ func _build_menu() -> void:
 
 func _deploy() -> void:
 	var modes = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand"]
-	G.main.start_game({"map": MAP_IDS[opt_map.selected], "mode": modes[opt_mode.selected],
+	var mid = _map_id(opt_map.selected)
+	G.main.start_game({"map": mid, "mode": modes[opt_mode.selected],
 		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": int(opt_limit.get_item_text(opt_limit.selected)),
 		"reinforce": opt_reinf.selected != 3, "reinf_mode": ["truck", "para", "instant", "truck"][opt_reinf.selected],
 		"armor": ["none", "light", "heavy"][opt_armor.selected], "teams": opt_teams.selected + 2})
@@ -935,3 +938,30 @@ func sel_box_changed() -> void:
 	sel_rect.visible = a.distance_to(b) > 6.0
 	sel_rect.position = Vector2(minf(a.x, b.x), minf(a.y, b.y))
 	sel_rect.size = (a - b).abs()
+
+# ---------------------------------------------------------------- custom maps in the menu
+var custom_names: Array = []
+
+func refresh_maps() -> void:
+	if opt_map == null:
+		return
+	var sel = opt_map.selected
+	while opt_map.item_count > MAP_IDS.size():
+		opt_map.remove_item(opt_map.item_count - 1)
+	custom_names = G.editor.list_maps() if G.editor != null else []
+	for n in custom_names:
+		opt_map.add_item("Your map: " + n)
+	if sel < opt_map.item_count:
+		opt_map.select(sel)
+
+func _map_id(i: int) -> String:
+	if i < MAP_IDS.size():
+		return MAP_IDS[i]
+	var m = G.editor.load_file(custom_names[i - MAP_IDS.size()])
+	if m.is_empty():
+		return "town"
+	G.custom_map = m
+	return "custom"
+
+func _select_map(i: int) -> void:
+	G.main.preview_map(_map_id(i))

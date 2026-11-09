@@ -12,6 +12,8 @@ const L_DEBRIS = 4
 # if dead soldiers' knees or elbows bend the wrong way, flip these to -1.0
 var teams = 2
 var vehicles: Array = []
+var custom_map: Dictionary = {}
+var editor = null
 var reinf_mode = "truck"     # truck, para, instant
 var armor = "light"          # none, light, heavy: vehicles each side starts with
 const L_VEH = 8

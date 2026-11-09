@@ -224,10 +224,32 @@ func surface_y(x: float, z: float, cur: float) -> float:
 	return hit.position.y
 
 # ---------------------------------------------------------------- static boxes and colliders
+var edit_node: Node3D = null      # map editor: geometry goes into this node as separate meshes
+static var edit_mats = {}
+static var unit_box: BoxMesh = null
+
+func _geo() -> Node3D:
+	return edit_node if edit_node != null else geo_root
+
 func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, color: Color, opt: Dictionary = {}):
 	var base = 0.0 if opt.get("abs", false) else ground_y(cx, cz)
 	var bb = Basis.from_euler(Vector3(opt.get("rx", 0.0), opt.get("ry", 0.0), opt.get("rz", 0.0)))
 	var xf = Transform3D(bb.scaled(Vector3(w, h, d)), Vector3(cx, base + y0 + h / 2.0, cz))
+	if edit_node != null:
+		if unit_box == null:
+			unit_box = BoxMesh.new()
+		var key0 = color.to_html()
+		if not edit_mats.has(key0):
+			var em = StandardMaterial3D.new()
+			em.albedo_color = color
+			em.roughness = 0.95
+			edit_mats[key0] = em
+		var mi = MeshInstance3D.new()
+		mi.mesh = unit_box
+		mi.material_override = edit_mats[key0]
+		mi.transform = xf
+		edit_node.add_child(mi)
+		return [null, -1]
 	var key = color.to_html(false) + ("n" if opt.get("no_shadow", false) else "s")
 	if not groups.has(key):
 		groups[key] = {"color": color, "xforms": [], "mm": null, "no_shadow": opt.get("no_shadow", false)}
@@ -274,7 +296,7 @@ func add_col(cx: float, y0: float, cz: float, w: float, h: float, d: float, prop
 	b.add_child(cs)
 	b.position = Vector3(cx, y0 + h / 2.0, cz)
 	b.set_meta("col", c)
-	geo_root.add_child(b)
+	_geo().add_child(b)
 	c.body = b
 	cols.append(c)
 	_insert_grid(c)
@@ -297,7 +319,7 @@ func finalize_static() -> void:
 		mi.material_override = mat
 		if g["no_shadow"]:
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		geo_root.add_child(mi)
+		_geo().add_child(mi)
 		g["mm"] = mm
 
 func flat_plane(x: float, z: float, w: float, d: float, color: Color, y: float = 0.012) -> void:
@@ -310,7 +332,7 @@ func flat_plane(x: float, z: float, w: float, d: float, color: Color, y: float =
 	mat.roughness = 1.0
 	m.material_override = mat
 	m.position = Vector3(x, ground_y(x, z) + y, z)
-	geo_root.add_child(m)
+	_geo().add_child(m)
 
 # ---------------------------------------------------------------- collision queries (our own boxes, for movement and planning)
 func _gkey(ix: int, iz: int) -> int:
@@ -739,7 +761,7 @@ func tower(x: float, z: float, w: float, d: float) -> void:
 	ramp.add_child(rcs)
 	var ang = atan2(FY, sx1 - sx0)
 	ramp.transform = Transform3D(Basis(Vector3(0, 0, 1), ang), Vector3((sx0 + sx1) / 2.0 + sin(ang) * 0.1, FY / 2.0 - cos(ang) * 0.1, (sz0 + sz1) / 2.0))
-	geo_root.add_child(ramp)
+	_geo().add_child(ramp)
 	# upper floor around the stairwell
 	add_box(x, FY - 0.25, (sz1 + z + d / 2.0 - 0.2) / 2.0, w - 0.5, 0.25, (z + d / 2.0 - 0.2) - sz1, Color(0.52, 0.49, 0.45), {"dest": true, "hp": 260.0})
 	add_box((sx1 + x + w / 2.0 - 0.2) / 2.0, FY - 0.25, (sz0 + sz1) / 2.0, (x + w / 2.0 - 0.2) - sx1, 0.25, sz1 - sz0, Color(0.52, 0.49, 0.45), {"dest": true, "hp": 260.0})
@@ -848,8 +870,12 @@ func base(sx: float, dist: float = 96.0) -> void:
 	ammo_crate(bx + sx * 1.5, -5.0, 0 if sx < 0 else 1)
 	ammo_crate(bx + sx * 1.5, 5.0, 0 if sx < 0 else 1)
 
-func flatten_camp(x: float, z: float) -> void:
-	pass   # terrain is already built by now; camps sit on whatever is there
+# a small camp: flagpole and two ammo crates
+func camp(t: int, p: Vector3) -> void:
+	add_box(p.x, 0.0, p.z, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
+	add_box(p.x + 0.9, 5.6, p.z, 1.6, 1.0, 0.05, G.team_color(t), {"collide": false, "no_shadow": true})
+	ammo_crate(p.x - 4.0, p.z, t)
+	ammo_crate(p.x + 4.0, p.z, t)
 
 # an ammo crate: stand next to it for a second to restock
 func ammo_crate(x: float, z: float, team: int) -> void:
@@ -1248,6 +1274,89 @@ func build_front() -> void:
 	capture = objectives[1]["p"]
 	spawn = [Vector3(-(W2 - 55.0), 0, 0), Vector3(W2 - 55.0, 0, 0)]
 
+# ---------------------------------------------------------------- custom maps (from the map editor)
+const ITEM_KINDS = ["house", "tower", "wall", "sandbags", "crate", "hedge", "tree", "deadtree", "hedgehog", "tankwreck", "truckwreck", "ammo", "road", "trench"]
+
+func build_item(it: Dictionary) -> void:
+	rng.seed = it.get("seed", 1)
+	var x: float = it["x"]
+	var z: float = it["z"]
+	var ax: bool = it.get("rot", 0) == 0
+	match it["t"]:
+		"house":
+			building(x, z, 9.0 if ax else 7.0, 7.0 if ax else 9.0, 4.5)
+		"tower":
+			tower(x, z, 10.0 if ax else 8.0, 8.0 if ax else 10.0)
+		"wall":
+			add_box(x, 0.0, z, 8.0 if ax else 0.45, 2.2, 0.45 if ax else 8.0, Color(0.6, 0.57, 0.52), {"dest": true, "hp": 160.0})
+		"sandbags":
+			sandbags(x, z, 4.0, ax)
+		"crate":
+			crate(x, z, 1.0)
+		"hedge":
+			hedge_row(x, z, 8.0, ax)
+		"tree":
+			live_tree(x, z)
+		"deadtree":
+			dead_tree(x, z)
+		"hedgehog":
+			hedgehog(x, z)
+		"tankwreck":
+			tank(x, z)
+		"truckwreck":
+			truck(x, z, not ax)
+		"ammo":
+			ammo_crate(x, z, -1)
+		"road":
+			flat_plane(x, z, it["w"], it["d"], Color(0.31, 0.3, 0.3), 0.015)
+		"trench":
+			var a = Vector2(it["x"], it["z"])
+			var b = Vector2(it["x2"], it["z2"])
+			var mid = (a + b) / 2.0
+			add_box(mid.x, 0.02, mid.y, 0.9, 0.06, a.distance_to(b), Color(0.35, 0.27, 0.2), {"collide": false, "ry": atan2(b.x - a.x, b.y - a.y)})
+
+func build_custom(m: Dictionary) -> void:
+	th = m["heights"].duplicate()
+	roads = []
+	for it in m["items"]:
+		if it["t"] == "road":
+			roads.append([it["x"] - it["w"] / 2.0, it["x"] + it["w"] / 2.0, it["z"] - it["d"] / 2.0, it["z"] + it["d"] / 2.0])
+	build_terrain(m["ground"])
+	for it in m["items"]:
+		build_item(it)
+		if it["t"] == "trench":
+			var a = Vector2(it["x"], it["z"])
+			var b = Vector2(it["x2"], it["z2"])
+			var n = maxi(1, int(a.distance_to(b) / 1.6))
+			var dir = (b - a).normalized()
+			var nrm = Vector2(-dir.y, dir.x)
+			for k in range(n + 1):
+				var p = a.lerp(b, float(k) / n)
+				terrain_cover.append([p.x + nrm.x * 0.45, p.y + nrm.y * 0.45, -nrm.x, -nrm.y])
+				terrain_cover.append([p.x - nrm.x * 0.45, p.y - nrm.y * 0.45, nrm.x, nrm.y])
+	spawn = [m["spawns"][0], m["spawns"][1]]
+	for t in range(2):
+		camp(t, spawn[t])
+	objectives = []
+	var pts: Array = m["points"].duplicate()
+	pts.sort_custom(func(a, b): return a.x < b.x)
+	var names = "ABCDEFGH"
+	for i in range(pts.size()):
+		objectives.append({"p": pts[i], "name": names[i % names.length()]})
+	capture = pts[pts.size() / 2] if not pts.is_empty() else Vector3.ZERO
+	skyline([Color(0.45, 0.47, 0.42), Color(0.4, 0.42, 0.37), Color(0.5, 0.52, 0.47)], 8, 24)
+
+# the editor shows the map without nav, cover or decoration (those are built when you play it)
+func begin_edit(m: Dictionary) -> void:
+	if geo_root:
+		geo_root.queue_free()
+	geo_root = Node3D.new()
+	add_child(geo_root)
+	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []
+	_set_size(m["size"].x, m["size"].y)
+	th = m["heights"]
+	build_terrain(m["ground"])
+
 # roads are flat painted strips, so the ground under them must be flat too (no hills or holes hidden under the paint)
 func _flatten_roads() -> void:
 	for rd in roads:
@@ -1303,7 +1412,7 @@ func build_decor() -> void:
 	gm.roughness = 1.0
 	mi.material_override = gm
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	geo_root.add_child(mi)
+	_geo().add_child(mi)
 	# rubble around buildings
 	if buildings.size() > 0:
 		var nr = mini(900, buildings.size() * 60)
@@ -1329,23 +1438,25 @@ func build_decor() -> void:
 		rmat.vertex_color_use_as_albedo = true
 		rmat.vertex_color_is_srgb = true
 		ri.material_override = rmat
-		geo_root.add_child(ri)
+		_geo().add_child(ri)
 
 func load_map(id: String) -> void:
-	if not MAPS.has(id):
+	if not MAPS.has(id) and not (id == "custom" and not G.custom_map.is_empty()):
 		id = "town"
 	if geo_root:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
 	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []
-	var sz: Vector2 = MAPS[id].get("size", Vector2(260, 190))
+	var sz: Vector2 = MAPS.get(id, {}).get("size", Vector2(260, 190))
+	if id == "custom":
+		sz = G.custom_map["size"]
 	_set_size(sz.x, sz.y)
 	objectives = []
 	th = PackedFloat32Array()
 	th.resize((TW + 1) * (TH_ + 1))
 	th.fill(0.0)
-	rng.seed = MAPS[id]["seed"]
+	rng.seed = MAPS[id]["seed"] if MAPS.has(id) else 31337
 	G.map_id = id
 	spawn = [Vector3(-96, 0, 0), Vector3(96, 0, 0)]
 	if id == "town":
@@ -1356,6 +1467,8 @@ func load_map(id: String) -> void:
 		build_valley()
 	elif id == "front":
 		build_front()
+	elif id == "custom":
+		build_custom(G.custom_map)
 	else:
 		build_trenches()
 	if objectives.is_empty():
@@ -1365,11 +1478,7 @@ func load_map(id: String) -> void:
 		var z = (bounds.position.y + 22.0) if t == 2 else (bounds.end.y - 22.0)
 		var x = capture.x
 		spawn.append(Vector3(x, 0, z))
-		flatten_camp(x, z)
-		add_box(x, 0.0, z, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
-		add_box(x + 0.9, 5.6, z, 1.6, 1.0, 0.05, G.TEAM_BAND[t], {"collide": false, "no_shadow": true})
-		ammo_crate(x - 4.0, z, t)
-		ammo_crate(x + 4.0, z, t)
+		camp(t, spawn[t])
 	finalize_static()
 	build_nav()
 	build_cover()

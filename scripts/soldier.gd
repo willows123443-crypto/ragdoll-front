@@ -144,6 +144,12 @@ var heal_t = 0.0
 var medic = null
 var dragger = null
 var dragging = null
+var carrying = null         # a wounded friend over the shoulder
+var carried_by = null
+var crate = false           # lugging an ammo box
+var vet = 0                 # veteran level (campaign): steadier aim and nerves
+var kills = 0
+var crate_mesh: MeshInstance3D = null
 var gu = null
 var crawl_target = null
 var pooled = false
@@ -519,6 +525,35 @@ func _tool_visuals() -> void:
 		hammer.visible = want
 	if gun_node != null and vehicle == null and gun_body == null:
 		gun_node.visible = not want
+
+# veterans wear stripes on the left sleeve
+func set_vet(n: int) -> void:
+	vet = clampi(n, 0, 3)
+	if parts.size() < 4:
+		return
+	var m = _mat("band" + G.TEAM_BAND[team].to_html(), G.TEAM_BAND[team], false)
+	for k in range(vet):
+		var mi = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.145, 0.025, 0.145)
+		mi.mesh = bm
+		mi.material_override = m
+		mi.position = Vector3(0, 0.1 - k * 0.045, 0)
+		mi.layers = 2
+		parts[3].add_child(mi)
+
+func set_crate(on: bool) -> void:
+	crate = on
+	if on and crate_mesh == null and parts.size() > 1:
+		crate_mesh = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.55, 0.32, 0.36)
+		crate_mesh.mesh = bm
+		crate_mesh.material_override = _mat("crate", Color(0.3, 0.33, 0.2), false)
+		parts[1].add_child(crate_mesh)
+		crate_mesh.position = Vector3(0, -0.1, 0.32)
+	if crate_mesh != null:
+		crate_mesh.visible = on
 
 func _show_mag(on: bool) -> void:
 	if on and mag_mesh == null and parts.size() > 4:
@@ -1020,6 +1055,10 @@ func go_dead() -> void:
 	if dragger and is_instance_valid(dragger):
 		dragger.dragging = null
 		dragger = null
+	if carrying != null and is_instance_valid(carrying):
+		carrying.carried_by = null
+	carrying = null
+	set_crate(false)
 	state = "dead"
 	strength = 0.0
 	dead_t = 0.0
@@ -1277,6 +1316,27 @@ func _tick_wounded() -> void:
 		return
 	if randf() < 0.004:
 		G.fx.callout(self, G.pick(["Medic!", "I'm hit!", "Help!"]))
+	if carried_by != null and is_instance_valid(carried_by) and carried_by.state == "alive" and carried_by.carrying == self:
+		# slung over a shoulder in a fireman's carry
+		crawl_pose()
+		strength = 0.02
+		drive()
+		var cy = carried_by.body_yaw
+		var back = -Vector3(sin(cy), 0, cos(cy))
+		var side = Vector3(cos(cy), 0, -sin(cy))
+		var sh: Vector3 = carried_by.chest() + Vector3(0, 0.3, 0) + side * 0.12
+		for i in range(parts.size()):
+			var t = sh
+			if i in [1, 2, 3, 4, 5, 6]:
+				t = sh + back * 0.35 + Vector3(0, -0.35 - (0.25 if i in [2, 4, 6] else 0.0), 0)
+			elif i != 0:
+				t = sh - back * 0.3 + Vector3(0, -0.3 - (0.3 if i in [8, 10] else 0.0), 0)
+			var b: RigidBody3D = parts[i]
+			b.linear_velocity = b.linear_velocity.lerp((t - b.global_position) / G.DT * 0.25, 0.7)
+		pos = carried_by.pos
+		return
+	elif carried_by != null:
+		carried_by = null
 	if dragger != null and is_instance_valid(dragger) and dragger.state == "alive":
 		crawl_pose()
 		strength = 0.02

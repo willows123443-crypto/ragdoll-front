@@ -16,10 +16,13 @@ const TOOLS = {
 		["sup:fighter", "Fighter 22"], ["sup:bomber", "Dive bomber 28"], ["sup:bridger", "Bridge layer 14"]],
 	"build": [["bteam", "Team"], ["b:fob", "FOB"], ["b:sandbags", "Sandbags"], ["b:wire", "Wire"], ["b:traps", "Tank traps"], ["b:mgnest", "MG nest"],
 		["b:mortarpit", "Mortar pit"], ["b:aa", "AA gun"], ["b:tower", "Watchtower"], ["b:bunker", "Bunker"], ["b:hospital", "Hospital"], ["b:radio", "Radio mast"],
-		["b:depot", "Depot"], ["b:supply", "Supply dump"], ["dis", "Dismantle"]],
+		["b:depot", "Depot"], ["b:supply", "Supply dump"], ["up", "Upgrade"], ["camo", "Camo net"], ["rep", "Rebuild"], ["dis", "Dismantle"]],
 	"fun": [["boom", "Explosion"], ["mortar", "Mortar strike"], ["smoke", "Smoke"], ["flare", "Flare"], ["push", "Shove"]],
 }
-const TIPS = {"dis": "Click a structure, wall, building piece or emplacement to take it apart",
+const TIPS = {"up": "Click a structure to upgrade it: sandbags → concrete wall, MG nest → pillbox, FOB tent → hut",
+	"camo": "Click a structure to throw a camouflage net over it (aircraft and artillery won't see it until the enemy gets close)",
+	"rep": "Click a damaged or wrecked structure to have engineers rebuild it",
+	"dis": "Click a structure, wall, building piece or emplacement to take it apart",
 	"bteam": "Click to change which team the next construction site is for","sel": "Click or drag a box to select soldiers (Shift adds), then right-click the ground to send them there",
 	"mvA": "Click to send the whole Alpha team to a point", "mvB": "Click to send the whole Bravo team to a point",
 	"a1": "Click the ground to drop in an Alpha soldier", "b1": "Click the ground to drop in a Bravo soldier",
@@ -34,6 +37,7 @@ const TIPS = {"dis": "Click a structure, wall, building piece or emplacement to 
 	"trA": "Click to drop an empty Alpha truck (take control of a soldier and press F next to it)", "trB": "Click to drop an empty Bravo truck", "smoke": "Click to drop a smoke screen", "flare": "Click to put up a parachute flare (lights up the area at night)", "push": "Click a soldier to shove them over"}
 
 var root: Control
+var tacmap: Control
 var lbl_a: Label
 var lbl_na: Label
 var lbl_nb: Label
@@ -526,8 +530,119 @@ func _build_menu() -> void:
 	h.add_child(_button("Settings…", func(): _show_settings()))
 	h.add_child(_button("Controls", func(): help.visible = true))
 	v.add_child(h)
+	var h2 = HBoxContainer.new()
+	h2.add_child(_button("Campaign…", func(): _show_campaign()))
+	h2.add_child(_button("Scenario code…", func(): _show_scenario()))
+	v.add_child(h2)
 	menu.add_child(v)
 	root.add_child(menu)
+
+var camp_panel: PanelContainer
+var camp_box: VBoxContainer
+
+func campaign_result(text: String) -> void:
+	await get_tree().create_timer(2.5, true).timeout
+	win.visible = false
+	_show_campaign(text)
+
+func _show_campaign(result: String = "") -> void:
+	if Campaign.data.is_empty() and not Campaign.load_saved():
+		Campaign.new_campaign()
+	if camp_panel == null:
+		camp_panel = _panel(Color(0.1, 0.12, 0.13, 0.98))
+		_place(camp_panel, Control.PRESET_CENTER, -380, -300, 760, 600)
+		camp_box = VBoxContainer.new()
+		camp_panel.add_child(camp_box)
+		root.add_child(camp_panel)
+	for c in camp_box.get_children():
+		c.queue_free()
+	camp_box.add_child(_label("Campaign  ·  turn %d" % Campaign.data["turn"], 26))
+	if result != "":
+		var rl = _label(result, 15, Color(1.0, 0.85, 0.45))
+		rl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		rl.custom_minimum_size = Vector2(720, 0)
+		camp_box.add_child(rl)
+	camp_box.add_child(_label("Click a red region next to yours to attack it. Each battle is fought on that region's map.", 13, Color(0.8, 0.8, 0.8)))
+	var grid = GridContainer.new()
+	grid.columns = 3
+	for y in range(3):
+		for x in range(3):
+			for i in range(Campaign.REGIONS.size()):
+				var r = Campaign.REGIONS[i]
+				if r["x"] != x or r["y"] != y:
+					continue
+				var own = Campaign.data["owner"][i]
+				var txt = "%s\n%s · %s" % [r["name"], r["map"], r["mode"]]
+				var idx = i
+				var b = _button(txt, func():
+					if Campaign.can_attack(idx):
+						camp_panel.visible = false
+						menu.visible = false
+						Campaign.attack(idx))
+				b.custom_minimum_size = Vector2(235, 82)
+				b.modulate = G.team_color(0).lerp(Color.WHITE, 0.35) if own == 0 else (G.team_color(1).lerp(Color.WHITE, 0.2) if Campaign.can_attack(i) else G.team_color(1).darkened(0.35))
+				b.disabled = not Campaign.can_attack(i)
+				grid.add_child(b)
+	camp_box.add_child(grid)
+	var vets = []
+	for e in Campaign.data["roster"]:
+		vets.append("%s%s" % [e["name"], " " + "★".repeat(e["vet"]) if e["vet"] > 0 else ""])
+	var rl2 = _label("Your squad: " + ", ".join(vets), 13, Color(0.85, 0.9, 0.85))
+	rl2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rl2.custom_minimum_size = Vector2(720, 0)
+	camp_box.add_child(rl2)
+	var lg = _label("\n".join(Campaign.data["log"].slice(0, 5)), 12, Color(0.7, 0.72, 0.7))
+	lg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lg.custom_minimum_size = Vector2(720, 0)
+	camp_box.add_child(lg)
+	var h = HBoxContainer.new()
+	h.add_child(_button("New campaign", func():
+		Campaign.new_campaign()
+		_show_campaign()))
+	h.add_child(_button("Close", func(): camp_panel.visible = false))
+	camp_box.add_child(h)
+	camp_panel.visible = true
+
+var scen_panel: PanelContainer
+var scen_text: TextEdit
+var scen_msg: Label
+
+func _show_scenario() -> void:
+	if scen_panel == null:
+		scen_panel = _panel(Color(0.11, 0.13, 0.15, 0.97))
+		_place(scen_panel, Control.PRESET_CENTER, -300, -200, 600, 400)
+		var v = VBoxContainer.new()
+		v.add_child(_label("Scenario code", 24))
+		v.add_child(_label("Save the battle as it stands (armies, vehicles, bases and orders) as a code you can share, or paste a code to load it.", 13, Color(0.8, 0.8, 0.8)))
+		scen_text = TextEdit.new()
+		scen_text.custom_minimum_size = Vector2(560, 200)
+		scen_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+		v.add_child(scen_text)
+		scen_msg = _label("", 13, Color(1, 0.85, 0.4))
+		v.add_child(scen_msg)
+		var h = HBoxContainer.new()
+		h.add_child(_button("Make code from this battle", func():
+			if not G.started:
+				scen_msg.text = "Start a battle first"
+				return
+			var code = Scenario.encode(Scenario.capture())
+			scen_text.text = code
+			DisplayServer.clipboard_set(code)
+			scen_msg.text = "Code made and copied (%d characters). You can also select it and copy it yourself." % code.length()))
+		h.add_child(_button("Load this code", func():
+			var d = Scenario.decode(scen_text.text)
+			if d == null:
+				scen_msg.text = "That doesn't look like a scenario code"
+				return
+			scen_panel.visible = false
+			menu.visible = false
+			Scenario.apply(d)))
+		h.add_child(_button("Close", func(): scen_panel.visible = false))
+		v.add_child(h)
+		scen_panel.add_child(v)
+		root.add_child(scen_panel)
+	scen_msg.text = ""
+	scen_panel.visible = true
 
 func _deploy() -> void:
 	if seed_edit != null and seed_edit.text.strip_edges() != "":
@@ -565,7 +680,7 @@ func _build_help() -> void:
 		"  W A S D  fly · Space / E up · Q / C down · Shift faster · mouse wheel zoom\n" + \
 		"  Right-drag  look around · Left-click  use the selected tool · 1–9  pick a tool\n" + \
 		"  F  take control of the soldier at the centre of the screen\n" + \
-		"  T  slow-mo · P  pause · M  menu\n\n" + \
+		"  T  slow-mo · P  pause · M  menu · Tab  commander's map (select squads, right-click to send them)\n\n" + \
 		"CONTROLLING A SOLDIER\n" + \
 		"  Mouse  aim · Left-click  fire · Right mouse  aim down sights\n" + \
 		"  Q / E  lean · Shift  sprint · C  crouch · Z  prone · run into low walls to vault\n" + \
@@ -575,6 +690,9 @@ func _build_help() -> void:
 		"  N  place a mine (Shift+N anti-tank) · K  satchel charge · 1–9  rifle, MG, sniper, shotgun, rockets, SMG, pistol, flamethrower, AT rifle\n" + \
 		"  Y  first-person / third-person view · L  fire a flare · Esc  free the mouse · X  leave the soldier\n" + \
 		"  U (hold)  help build a friendly construction site · I  dismantle what you aim at (within 6 m)\n" + \
+		"  Shift+G  cook a grenade · middle mouse  rifle grenade · Shift+K  sticky bomb · Shift+V  red smoke (calls artillery)\n" + \
+		"  T  flashlight · F next to a wounded friend: carry them · F at a crate: pick up an ammo box, F again to drop it\n" + \
+		"  In a vehicle: Q tows a gun or broken vehicle (bridge layer: Q lays the bridge) · planes: mouse steers, Shift+click bombs\n" + \
 		"  F  next to a vehicle: get in · in a vehicle: WASD drive, mouse aim, click fire, 1–4 change seat, F get out\n\n" + \
 		"BATTLE\n" + \
 		"  Squad leaders carry a radio antenna. Soldiers who lose friends, their leader or come under heavy fire\n" + \
@@ -623,7 +741,7 @@ func show_win(team: int) -> void:
 	win.visible = true
 
 func menu_open() -> bool:
-	return menu.visible or help.visible or win.visible or (report != null and report.visible) or (teams_panel != null and teams_panel.visible) or (settings_panel != null and settings_panel.visible)
+	return menu.visible or help.visible or win.visible or (report != null and report.visible) or (scen_panel != null and scen_panel.visible) or (camp_panel != null and camp_panel.visible) or (teams_panel != null and teams_panel.visible) or (settings_panel != null and settings_panel.visible)
 
 func typing() -> bool:
 	return false
@@ -631,7 +749,12 @@ func typing() -> bool:
 # ---------------------------------------------------------------- per-frame
 func _unhandled_key_input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo:
-		if ev.keycode == KEY_M and G.started:
+		if ev.keycode == KEY_TAB and G.started and not menu_open():
+			if tacmap == null:
+				tacmap = preload("res://scripts/tacmap.gd").new()
+				root.add_child(tacmap)
+			tacmap.toggle()
+		elif ev.keycode == KEY_M and G.started:
 			show_menu()
 		elif ev.keycode == KEY_H:
 			help.visible = not help.visible

@@ -305,9 +305,9 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 	if best == null:
 		# a known enemy FOB or HQ is worth a few shells too
 		for st in Build.sites:
-			if st["team"] == team or st["dead"] or not st["done"] or not (st["kind"] in ["fob", "hq", "bunker", "mgnest", "mortarpit", "depot", "radio"]):
+			if st["team"] == team or st["dead"] or not st["done"] or not (st["kind"] in ["fob", "fob2", "hq", "bunker", "mgnest", "pillbox", "mortarpit", "depot", "radio", "aa"]):
 				continue
-			if G.dist2d(st["p"], from) < min_d:
+			if G.dist2d(st["p"], from) < min_d or not Build.spotted(st, team):
 				continue
 			var spotted = false
 			var friends2 = false

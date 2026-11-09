@@ -20,6 +20,9 @@ const KINDS = {
 	"radio": {"name": "Radio mast", "work": 28.8, "size": Vector2(4.5, 4.5)},
 	"depot": {"name": "Vehicle depot", "work": 57.6, "size": Vector2(11, 9)},
 	"aa": {"name": "AA gun", "work": 24.0, "size": Vector2(4.6, 4.6)},
+	"concrete": {"name": "Concrete wall", "work": 22.0, "size": Vector2(3.6, 1.2)},
+	"pillbox": {"name": "Pillbox", "work": 40.0, "size": Vector2(4.6, 4.6)},
+	"fob2": {"name": "FOB (hut)", "work": 60.0, "size": Vector2(11, 10)},
 	"supply": {"name": "Supply dump", "work": 25.6, "size": Vector2(6.5, 5.5)},
 }
 const ORDER = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "tower", "bunker", "hospital", "radio", "depot", "supply"]
@@ -28,6 +31,8 @@ const FOB_PLAN = [["mgnest", 0.0, 13.0], ["sandbags", -6.0, 10.0], ["sandbags", 
 	["supply", 11.0, -5.0], ["radio", -12.0, 5.0], ["mortarpit", 6.0, -12.0], ["tower", 12.0, 7.0], ["wire", 0.0, 20.0],
 	["traps", -12.0, 19.0], ["bunker", 0.0, 0.0], ["aa", -8.0, -16.0], ["depot", 0.0, -22.0]]
 
+# what each structure can be upgraded into
+const UPGRADES = {"sandbags": "concrete", "mgnest": "pillbox", "fob": "fob2"}
 const DEPOT_COST = {"jeep": 6, "truck": 6, "halftrack": 12, "armoredcar": 16}
 const DEPOT_TIME = {"jeep": 35.0, "truck": 40.0, "halftrack": 60.0, "armoredcar": 75.0}
 const CANVAS = Color(0.52, 0.5, 0.38)
@@ -74,7 +79,7 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 	var root = Node3D.new()
 	G.world.geo_root.add_child(root)
 	var st = {"kind": kind, "team": team, "p": Vector3(p.x, G.world.ground_y(p.x, p.z), p.z), "ax": ax, "fs": fs,
-		"work": 0.0, "need": KINDS[kind]["work"], "done": false, "dead": false, "root": root, "parts": [], "cols": [],
+		"work": 0.0, "need": KINDS[kind]["work"], "done": false, "born": G.sim_time, "dead": false, "root": root, "parts": [], "cols": [],
 		"hidden": [], "shown": 0, "scaf": null, "label": null, "veh": null, "player": player, "t": randf(), "ammo": null,
 		"name": KINDS[kind]["name"], "pct": -1}
 	var before = G.world.cols.size()
@@ -96,6 +101,9 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 		"depot": _geo_depot(st)
 		"supply": _geo_supply(st)
 		"aa": _geo_aa(st)
+		"concrete": _geo_concrete(st)
+		"pillbox": _geo_pillbox(st)
+		"fob2": _geo_fob2(st)
 	G.world.edit_node = null
 	G.world.dyn_mode = false
 	for i in range(before, G.world.cols.size()):
@@ -108,6 +116,8 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 			c.hp = maxf(c.hp, 900.0)
 		elif kind == "fob":
 			c.hp = maxf(c.hp, 600.0)
+		elif kind == "fob2" or kind == "concrete" or kind == "pillbox":
+			c.hp = maxf(c.hp, 900.0)
 		st["cols"].append(c)
 	var parts = []
 	for ch in root.get_children():
@@ -258,15 +268,17 @@ static func _complete(st: Dictionary, quiet: bool) -> void:
 		st["label"].queue_free()
 	var t: int = st["team"]
 	match st["kind"]:
-		"fob", "supply", "hq":
-			var a = _wv(st, 2.6 if st["kind"] == "fob" else 0.0, 1.5 if st["kind"] == "fob" else 0.0)
+		"fob", "fob2", "supply", "hq":
+			var a = _wv(st, 2.6 if st["kind"] in ["fob", "fob2"] else 0.0, 1.5 if st["kind"] in ["fob", "fob2"] else 0.0)
 			st["ammo"] = {"p": a, "team": t, "stock": 100.0 if st["kind"] != "hq" else 1e9, "site": st}
 			G.world.ammo_points.append(st["ammo"])
-		"mgnest", "mortarpit", "aa":
+		"mgnest", "mortarpit", "aa", "pillbox":
 			VModel.bare = true
 			var yaw = atan2(_front(st).x, _front(st).z)
-			st["veh"] = G.main.spawn_vehicle({"mgnest": "nest", "mortarpit": "mortar", "aa": "aagun"}[st["kind"]], t, st["p"], yaw, false)
+			st["veh"] = G.main.spawn_vehicle({"mgnest": "nest", "mortarpit": "mortar", "aa": "aagun", "pillbox": "nest"}[st["kind"]], t, st["p"], yaw, false)
 			VModel.bare = false
+	if st.get("camo_wanted", false):
+		add_camo(st)
 	if t < no_spawn_said.size():
 		no_spawn_said[t] = false
 	if not quiet:
@@ -286,7 +298,7 @@ static func _check_alive(st: Dictionary) -> void:
 	for c in st["cols"]:
 		if c.alive:
 			left += 1
-	var keep = {"hq": 0.5 if G.mode == "destroy" else 0.3, "fob": 0.4}.get(st["kind"], 0.35)
+	var keep = {"hq": 0.5 if G.mode == "destroy" else 0.3, "fob": 0.4, "fob2": 0.4}.get(st["kind"], 0.35)
 	if float(left) / n < keep:
 		_lose(st, true)
 
@@ -295,11 +307,110 @@ static func _lose(st: Dictionary, loud: bool) -> void:
 	if st["ammo"] != null:
 		G.world.ammo_points.erase(st["ammo"])
 		st["ammo"] = null
-	if loud and st["kind"] in ["hq", "fob", "hospital", "radio", "depot", "bunker", "tower"]:
+	if loud and st["kind"] in ["hq", "fob", "fob2", "hospital", "radio", "depot", "bunker", "tower"]:
 		G.ui.radio(st["team"], "%s at %s has been destroyed!" % [st["name"], AI.grid_ref(st["p"])])
 		for t in range(G.team_count()):
-			if t != st["team"] and st["kind"] in ["hq", "fob"]:
+			if t != st["team"] and st["kind"] in ["hq", "fob", "fob2"]:
 				G.ui.radio(t, "Enemy %s destroyed" % st["name"])
+
+# replace a finished structure with its stronger version, built up on the same spot
+static func upgrade(st: Dictionary):
+	if not UPGRADES.has(st["kind"]) or not st["done"] or st["dead"]:
+		return null
+	var nk: String = UPGRADES[st["kind"]]
+	var p: Vector3 = st["p"]
+	var fw = _front(st)
+	var team: int = st["team"]
+	var camo = st.get("camo", false)
+	_remove_quietly(st)
+	var plans = {}
+	for k in st.keys():
+		if str(k).begins_with("plan_"):
+			plans[k] = true
+	var ns = place(nk, team, p, fw)
+	ns.merge(plans)
+	if camo:
+		ns["camo_wanted"] = true
+	G.ui.radio(team, "Upgrading the %s to a %s" % [KINDS[UPGRADES.keys()[UPGRADES.values().find(nk)]]["name"], KINDS[nk]["name"]])
+	return ns
+
+static func _remove_quietly(st: Dictionary) -> void:
+	if st["ammo"] != null:
+		G.world.ammo_points.erase(st["ammo"])
+	for c in st["cols"]:
+		if c.alive:
+			c.alive = false
+			G.world.cols.erase(c)
+			G.world._remove_grid(c)
+			if is_instance_valid(c.body):
+				c.body.queue_free()
+			G.world.update_nav_area(c.lo.x, c.lo.z, c.hi.x, c.hi.z)
+	if st["veh"] != null and is_instance_valid(st["veh"]):
+		st["veh"].remove()
+	if is_instance_valid(st["root"]):
+		st["root"].queue_free()
+	sites.erase(st)
+
+# a damaged or wrecked structure is rebuilt in place (engineers do the work)
+static func needs_repair(st: Dictionary) -> bool:
+	if not st["done"]:
+		return false
+	var lost = 0
+	for c in st["cols"]:
+		if not c.alive:
+			lost += 1
+	return st["dead"] or (st["cols"].size() > 0 and float(lost) / st["cols"].size() > 0.25)
+
+static func rebuild(st: Dictionary):
+	var kind: String = st["kind"]
+	var p: Vector3 = st["p"]
+	var fw = _front(st)
+	var team: int = st["team"]
+	var camo = st.get("camo", false)
+	_remove_quietly(st)
+	var plans = {}
+	for k in st.keys():
+		if str(k).begins_with("plan_"):
+			plans[k] = true
+	var ns = place(kind, team, p, fw)
+	ns.merge(plans)
+	ns["work"] = ns["need"] * 0.4        # the foundations are still there
+	if camo:
+		ns["camo_wanted"] = true
+	return ns
+
+# throw a camouflage net over a structure
+static func add_camo(st: Dictionary) -> void:
+	if st.get("camo", false) or not is_instance_valid(st["root"]):
+		return
+	st["camo"] = true
+	var sz: Vector2 = KINDS[st["kind"]]["size"]
+	var net = Node3D.new()
+	st["root"].add_child(net)
+	var h = 3.2 if st["kind"] in ["fob", "fob2", "depot", "hospital", "supply"] else 2.2
+	var nc = Color(0.27, 0.31, 0.2)
+	var w = (sz.x if st["ax"] else sz.y) + 1.0
+	var d = (sz.y if st["ax"] else sz.x) + 1.0
+	for i in range(5):
+		for j in range(4):
+			var mi = MeshInstance3D.new()
+			mi.mesh = G.world.shape_mesh("blob")
+			mi.material_override = VModel.mat(nc.darkened(randf_range(0.0, 0.2)).lerp(Color(0.38, 0.33, 0.24), randf_range(0.0, 0.3)))
+			var x = st["p"].x - w / 2.0 + (i + 0.5) * w / 5.0
+			var z = st["p"].z - d / 2.0 + (j + 0.5) * d / 4.0
+			mi.position = Vector3(x, G.world.ground_y(x, z) + h + randf_range(-0.2, 0.2), z)
+			mi.scale = Vector3(w / 4.0, 0.35, d / 3.0)
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			net.add_child(mi)
+	for cx in [-1.0, 1.0]:
+		for cz in [-1.0, 1.0]:
+			var pole = MeshInstance3D.new()
+			pole.mesh = VModel.cyl_mesh(0.05, h, -1.0, 6)
+			pole.material_override = VModel.mat(WOODC)
+			var px = st["p"].x + cx * w / 2.0
+			var pz = st["p"].z + cz * d / 2.0
+			pole.position = Vector3(px, G.world.ground_y(px, pz) + h / 2.0, pz)
+			net.add_child(pole)
 
 # take a structure apart (the player's dismantle tool)
 static func dismantle(st: Dictionary) -> void:
@@ -338,7 +449,7 @@ static func work_site(team: int, from: Vector3, max_d: float):
 	var bd = max_d
 	for st in sites:
 		if st["team"] == team and not st["done"] and not st["dead"]:
-			var d = G.dist2d(st["p"], from) * (0.6 if st["kind"] == "fob" else 1.0)
+			var d = G.dist2d(st["p"], from) * (0.6 if is_fob(st) else 1.0)
 			if d < bd:
 				bd = d
 				best = st
@@ -357,11 +468,22 @@ static func work_spot(st: Dictionary, s) -> Vector3:
 	return st["p"] + d.normalized() * (minf(sz.x, sz.y) * 0.5 + 0.8)
 
 # an enemy structure close by, for sappers and artillery: [site, aim point] or null
-static func enemy_site_near(team: int, from: Vector3, max_d: float):
+# a camouflaged structure only shows up once enemy soldiers get close to it on the ground
+static func spotted(st: Dictionary, by_team: int) -> bool:
+	if not st.get("camo", false):
+		return true
+	for s in G.soldiers:
+		if s.team == by_team and s.state == "alive" and s.vehicle == null and G.dist2d(s.pos, st["p"]) < 35.0:
+			return true
+	return false
+
+static func enemy_site_near(team: int, from: Vector3, max_d: float, need_spot: bool = false):
 	var best = null
 	var bd = max_d
 	for st in sites:
 		if st["team"] == team or st["dead"] or (not st["done"] and st["shown"] == 0):
+			continue
+		if need_spot and not spotted(st, team):
 			continue
 		var d = G.dist2d(st["p"], from)
 		if d < bd:
@@ -385,8 +507,11 @@ static func helpers(st: Dictionary) -> int:
 	return n
 
 # ---------------------------------------------------------------- bases and respawning
+static func is_fob(st: Dictionary) -> bool:
+	return st["kind"] == "fob" or st["kind"] == "fob2"
+
 static func fobs(team: int) -> Array:
-	return sites.filter(func(st): return st["team"] == team and st["kind"] == "fob" and alive(st))
+	return sites.filter(func(st): return st["team"] == team and is_fob(st) and alive(st))
 
 static func hq(team: int):
 	for st in sites:
@@ -545,7 +670,7 @@ static func _effect(st: Dictionary, dt: float) -> void:
 					var p = G.main._free_spot(st["p"] + _front(st) * 7.0)
 					G.main.spawn_vehicle(k2, t, p, atan2(_front(st).x, _front(st).z), false)
 					G.ui.radio(t, "Depot: a %s is ready for crew" % Vehicle.SPECS[k2]["name"].to_lower())
-		"fob", "hq", "supply":
+		"fob", "fob2", "hq", "supply":
 			# FOBs and dumps running low call up a supply truck from HQ
 			if st["kind"] != "hq" and st.get("ammo") != null and st["ammo"]["stock"] < 55.0:
 				var tr = st.get("truck")
@@ -624,7 +749,7 @@ static func _ai_plan(t: int) -> void:
 	var unfinished = mine.filter(func(st): return not st["done"])
 	if unfinished.size() >= 2:
 		return
-	var fl = mine.filter(func(st): return st["kind"] == "fob")
+	var fl = mine.filter(func(st): return is_fob(st))
 	var obj = _objective(t)
 	var home: Vector3 = G.world.spawn[t]
 	if fl.is_empty() or (fl.size() < 2 and fobs(t).size() == fl.size() and _all_done(fl) and G.sim_time > 200.0 and randf() < 0.3):
@@ -641,6 +766,16 @@ static func _ai_plan(t: int) -> void:
 			place("fob", t, spot, to)
 			G.ui.radio(t, "Engineers: setting up a FOB at %s" % AI.grid_ref(spot))
 		return
+	# rebuild what's been knocked about, net the important stuff, then upgrade
+	for st in mine:
+		if st["done"] and needs_repair(st) and st["kind"] != "hq" and randf() < 0.5:
+			rebuild(st)
+			G.ui.radio(t, "Engineers: rebuilding the %s at %s" % [st["name"], AI.grid_ref(st["p"])])
+			return
+	for st in mine:
+		if st["done"] and not st["dead"] and not st.get("camo", false) and st["kind"] in ["fob", "fob2", "depot", "supply", "mortarpit", "aa"] and randf() < 0.4:
+			add_camo(st)
+			return
 	# extras around a finished FOB
 	for f in fl:
 		if not f["done"]:
@@ -669,6 +804,7 @@ static func _ai_plan(t: int) -> void:
 			if spot != null:
 				place(item[0], t, spot, fw)
 				return
+	_ai_upgrade(t)
 
 static func _ai_defend_plan(t: int, ok: Array) -> void:
 	var held = []
@@ -696,6 +832,13 @@ static func _ai_defend_plan(t: int, ok: Array) -> void:
 		if spot != null:
 			place(item[0], t, spot, fw)
 			return
+
+static func _ai_upgrade(t: int) -> bool:
+	for st in sites:
+		if st["team"] == t and st["done"] and not st["dead"] and UPGRADES.has(st["kind"]) and G.sim_time - st.get("born", 0.0) > 120.0 and randf() < 0.25:
+			upgrade(st)
+			return true
+	return false
 
 static func _all_done(a: Array) -> bool:
 	for st in a:
@@ -932,6 +1075,47 @@ static func _geo_mortarpit(st: Dictionary) -> void:
 	_sandbags(st, 1.5, 0.0, 2.2, false, 0.5)
 	for i in range(3):
 		_b(st, -0.8 + i * 0.35, 0.0, -0.9, 0.28, 0.2, 0.45, Color(0.28, 0.3, 0.2), {"collide": false})
+
+static func _geo_concrete(st: Dictionary) -> void:
+	_b(st, 0.0, 0.0, 0.0, 3.4, 1.35, 0.55, CONCRETE, {"hp": 700.0})
+	_b(st, 0.0, 1.35, 0.0, 3.5, 0.12, 0.65, CONCRETE.darkened(0.1), {"collide": false})
+	for x in [-1.2, 0.0, 1.2]:
+		_b(st, x, 0.15, 0.3, 0.12, 1.0, 0.06, CONCRETE.darkened(0.15), {"collide": false})
+
+static func _geo_pillbox(st: Dictionary) -> void:
+	var c = CONCRETE
+	_b(st, 0.0, 0.0, -1.9, 4.2, 2.1, 0.5, c)
+	for x in [-1.9, 1.9]:
+		_b(st, x, 0.0, 0.0, 0.5, 2.1, 3.4, c)
+	# front: low wall, wide firing slit, heavy lintel
+	_b(st, 0.0, 0.0, 1.9, 4.2, 1.05, 0.5, c)
+	_b(st, 0.0, 1.55, 1.9, 4.2, 0.55, 0.5, c)
+	_b(st, 0.0, 2.1, 0.0, 4.6, 0.45, 4.4, c.darkened(0.1))
+	# doorway at the back
+	_b(st, -1.3, 0.0, -2.35, 1.4, 2.1, 0.4, c)
+	_b(st, 1.3, 0.0, -2.35, 1.4, 2.1, 0.4, c)
+	for k in range(3):
+		_b(st, -1.4 + k * 1.4, 2.45, 0.0, 1.6, 0.4, 3.8, Color(0.42, 0.4, 0.28), {"collide": false, "shape": "blob"})
+
+static func _geo_fob2(st: Dictionary) -> void:
+	# a proper hut in place of the tent, bigger stores, sandbagged all round
+	var hut = WOODC.lightened(0.1)
+	_b(st, -2.2, 0.0, -2.0, 5.2, 2.3, 3.8, hut, {"hp": 260.0})
+	_roof(st, -2.2, 2.3, -2.0, 5.8, 1.2, 4.4, Color(0.34, 0.3, 0.26), 220.0)
+	_b(st, -1.0, 0.0, -0.08, 1.0, 1.9, 0.06, hut.darkened(0.4), {"collide": false})
+	for x in [-3.6, -2.6]:
+		_b(st, x, 1.1, -0.08, 0.6, 0.5, 0.05, Color(0.2, 0.24, 0.28), {"collide": false})
+	_cyl(st, -0.6, 2.9, -2.6, 0.12, 0.8, Color(0.3, 0.3, 0.3))
+	_flagpole(st, 2.8, -3.2, 7.5, G.team_color(st["team"]))
+	_crates(st, 2.6, 1.5, 6)
+	_crates(st, 2.6, 2.8, 3)
+	_drums(st, 4.6, -1.2, 4)
+	_sandbags(st, -2.5, 4.4, 4.5, true)
+	_sandbags(st, 2.5, 4.4, 4.5, true)
+	_sandbags(st, -5.2, 2.0, 3.5, false)
+	_sandbags(st, 5.4, 1.0, 3.5, false)
+	_b(st, -4.0, 0.0, 1.3, 1.2, 0.75, 0.7, WOODC, {"hp": 80.0})
+	_cyl(st, -4.3, 0.75, 1.3, 0.02, 3.0, METALC)
 
 static func _geo_aa(st: Dictionary) -> void:
 	_sandbags(st, 0.0, 2.1, 3.6, true, 1.0)

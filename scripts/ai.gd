@@ -559,6 +559,10 @@ static func decide(s) -> void:
 			G.fx.callout(s, G.pick(["Flare up!", "Light 'em up!"]))
 	if ClassAI.busy(s) or (s.task in ["sapper", "flank_move", "clear"] and s.move_target != null):
 		return
+	if s.task == "fetch" and s.vis_t == null:
+		return
+	if ammo_run(s):
+		return
 	# low on ammunition: go and get some
 	if s.task == "resupply":
 		if s.supply_target == null or (s.supply_target is Object and (not is_instance_valid(s.supply_target) or s.supply_target.reserve <= 0)):
@@ -864,6 +868,8 @@ static func update(s) -> void:
 			s.decide_t = 0.0
 	s.hand_t = null
 	s.tool_mode = ""
+	if s.task == "fetch":
+		fetch_tick(s)
 	if ClassAI.busy(s):
 		ClassAI.work(s)
 	# climbing into a vehicle
@@ -1053,6 +1059,7 @@ static func aim_and_fire(s) -> void:
 						var spread = W["spread"] * (0.3 if W["pellets"] > 1 else 1.0) + dist * 0.00025 + s.supp * 0.03 + (W["move_spread"] if moving else 0.0) - (0.003 if (s.crouch > 0.5 or s.prone) else 0.0) + extra + (0.02 if s.task == "charge" else 0.0) + (0.025 if s.morale < Morale.SHAKEN else 0.0)
 						if s.cls == "sniper" and s.partner != null and is_instance_valid(s.partner) and s.partner.state == "alive" and G.dist2d(s.partner.pos, s.pos) < 10.0:
 							spread *= 0.55
+						spread *= 1.0 - 0.12 * s.vet
 						Combat.fire_weapon(s, s.muzzle, dir, spread)
 						s.burst -= 1
 						s.mag -= 1
@@ -1171,6 +1178,78 @@ static func find_ammo(s):
 				best = o
 	return best
 
+# an ammo box set down near the squad becomes a small resupply point
+static func drop_crate(s) -> void:
+	s.set_crate(false)
+	var p = s.pos + Vector3(sin(s.body_yaw), 0, cos(s.body_yaw)) * 0.8
+	p.y = G.world.ground_y(p.x, p.z)
+	var mi = MeshInstance3D.new()
+	var bm = BoxMesh.new()
+	bm.size = Vector3(0.6, 0.35, 0.4)
+	mi.mesh = bm
+	var m = StandardMaterial3D.new()
+	m.albedo_color = Color(0.3, 0.33, 0.2)
+	mi.material_override = m
+	G.world.geo_root.add_child(mi)
+	mi.position = p + Vector3(0, 0.17, 0)
+	var ap = {"p": p, "team": s.team, "stock": 40.0, "box": true, "node": mi}
+	G.world.ammo_points.append(ap)
+
+# a rifleman runs back for an ammo box when his squad is running dry
+static func ammo_run(s) -> bool:
+	if s.crate or s.cls != "rifleman" or s.vis_t != null or s.squad == null or Morale.is_leader(s):
+		return false
+	var q = s.squad
+	var low = 0
+	for m in q["members"]:
+		if is_instance_valid(m) and m.state == "alive" and m.ammo_frac() < 0.35:
+			low += 1
+	if low < 2 or q.get("ammo_run_t", -99.0) > G.sim_time:
+		return false
+	var best = null
+	var bd = 110.0
+	for a in G.world.ammo_points:
+		if a["team"] == s.team and not a.get("box", false) and a.get("stock", 50.0) > 15.0:
+			var d = G.dist2d(a["p"], s.pos)
+			if d < bd and d > 15.0:
+				bd = d
+				best = a
+	if best == null:
+		return false
+	q["ammo_run_t"] = G.sim_time + 60.0
+	release_cover(s)
+	s.task = "fetch"
+	s.supply_target = best
+	go_to(s, best["p"], 5.2)
+	G.fx.callout(s, G.pick(["I'll get us more ammo!", "Running for ammo!"]))
+	return true
+
+static func fetch_tick(s) -> void:
+	if s.task != "fetch":
+		return
+	var a = s.supply_target
+	if s.crate:
+		var L = Squad.leader_of(s.squad) if s.squad != null else null
+		var goal: Vector3 = L.pos if L != null and is_instance_valid(L) and L != s else s.pos
+		if G.dist2d(goal, s.pos) < 3.0:
+			drop_crate(s)
+			s.task = null
+			s.decide_t = 0.0
+			G.fx.callout(s, G.pick(["Ammo here!", "Grab a mag!"]))
+		elif s.move_target == null or s.move_target.distance_to(goal) > 3.0:
+			go_to(s, goal, 4.2)
+		return
+	if a == null or not (a is Dictionary) or not G.world.ammo_points.has(a):
+		s.task = null
+		return
+	if G.dist2d(a["p"], s.pos) < 2.4:
+		if a.has("stock"):
+			a["stock"] -= 15.0
+		s.set_crate(true)
+		s.supply_target = null
+	elif s.move_target == null:
+		go_to(s, a["p"], 5.2)
+
 # standing at a crate (or over a body) restocks you
 static func supply_tick(s, dt: float) -> void:
 	if s.state != "alive":
@@ -1190,6 +1269,10 @@ static func supply_tick(s, dt: float) -> void:
 			s.resupply()
 			if near.has("stock"):
 				near["stock"] -= 6.0
+				if near.get("box", false) and near["stock"] <= 0.0:
+					if is_instance_valid(near.get("node")):
+						near["node"].queue_free()
+					G.world.ammo_points.erase(near)
 			if s.is_player:
 				G.ui.message("Resupplied")
 			elif s.task == "resupply":

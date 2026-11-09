@@ -44,6 +44,8 @@ func _ready() -> void:
 			_base_test()
 		if a == "--vehtest":
 			_veh_test()
+		if a == "--camptest":
+			_camp_test()
 		if a.begins_with("--edtest="):
 			_editor_test(a.substr(9))
 
@@ -445,6 +447,9 @@ func end_game(t: int) -> void:
 	if G.player != null:
 		G.pc.leave_soldier()
 	G.ui.show_win(t)
+	if Campaign.active:
+		var res = Campaign.battle_over(t)
+		G.ui.campaign_result(res)
 
 func on_point_changed(i: int, prev: int, owner: int) -> void:
 	var pt = Obj.points[i]
@@ -749,6 +754,15 @@ func _shot_mode(dir: String) -> void:
 		var av = _arg("at", "0,0,0").split(",")
 		await _look(c + Vector3(float(cv[0]), float(cv[1]), float(cv[2])), c + Vector3(float(av[0]), float(av[1]), float(av[2])))
 		await _snap(dir, "cam")
+	if _arg("tacmap", "") != "":
+		G.ui.visible = true
+		G.ui.tacmap = preload("res://scripts/tacmap.gd").new()
+		G.ui.root.add_child(G.ui.tacmap)
+		G.ui.tacmap.toggle()
+		await _wait(0.3)
+		await _snap(dir, "tacmap")
+		G.ui.tacmap.toggle()
+		G.ui.visible = false
 	if _arg("builders", "") != "":
 		var bn = 0
 		for s in G.soldiers:
@@ -960,6 +974,42 @@ func _veh_test() -> void:
 		if k >= 9 and is_instance_valid(br):
 			print("VEHTEST bridger speed %.2f yaw %.2f bstuck %.1f site %s msg %s" % [br.speed, br.yaw, br.get_meta("bstuck", 0.0), str(VehExt.bridge_site(br)), VehExt.lay_bridge(br) if k == 13 else ""])
 		print("VEHTEST t%d | %s | bridges %d | gun-tr dist %.1f" % [k, " · ".join(line), G.world.bridges.size(), G.dist2d(gun.pos, tr.pos) if is_instance_valid(gun) and is_instance_valid(tr) else -1.0])
+	get_tree().quit()
+
+# campaign battle, scenario code round trip, upgrades, carrying
+func _camp_test() -> void:
+	await _wait(0.5)
+	Campaign.new_campaign()
+	Campaign.attack(3)
+	await _wait(3.0)
+	var vets = 0
+	for s in G.soldiers:
+		if s.team == 0 and s.has_meta("roster"):
+			vets += 1
+	print("CAMPTEST battle map ", G.map_id, " mode ", G.mode, " roster soldiers ", vets)
+	var code = Scenario.encode(Scenario.capture())
+	print("CAMPTEST code length ", code.length())
+	var d = Scenario.decode(code)
+	print("CAMPTEST decoded soldiers ", d["soldiers"].size(), " vehicles ", d["vehicles"].size(), " sites ", d["sites"].size())
+	Campaign.active = true
+	end_game(0)
+	print("CAMPTEST owner after win ", Campaign.data["owner"])
+	await _wait(1.0)
+	Scenario.apply(d)
+	await _wait(2.0)
+	print("CAMPTEST after load: soldiers ", G.soldiers.size(), " vehicles ", G.vehicles.size(), " sites ", Build.sites.size())
+	# upgrades and camo
+	var fob = null
+	for st in Build.sites:
+		if st["kind"] == "hq":
+			Build.add_camo(st)
+	var sp = Build.find_spot(G.world.spawn[0] * 0.7, "fob", 30.0, 40, true)
+	fob = Build.place("fob", 0, sp, Vector3(1, 0, 0), true)
+	var up = Build.upgrade(fob)
+	print("CAMPTEST upgraded to ", up["kind"] if up != null else "none")
+	for k in range(200):
+		Build.add_work(up, 1.0)
+	print("CAMPTEST fob2 done ", up["done"], " fobs ", Build.fobs(0).size())
 	get_tree().quit()
 
 func _breach_test() -> void:

@@ -206,8 +206,8 @@ static func _ground_target(v):
 				best = o.center()
 	if best != null:
 		return best
-	var es = Build.enemy_site_near(v.team, v.pos, 400.0)
-	if es != null and es[0]["kind"] in ["hq", "fob", "depot", "bunker", "mgnest", "aa"]:
+	var es = Build.enemy_site_near(v.team, v.pos, 400.0, true)
+	if es != null and es[0]["kind"] in ["hq", "fob", "fob2", "depot", "bunker", "mgnest", "aa"]:
 		return es[1]
 	return ClassAI.artillery_target(v.team, v.pos, 0.0)
 

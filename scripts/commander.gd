@@ -130,7 +130,7 @@ static func _spread_over_points(team: int, qs: Array, home: Vector3) -> void:
 
 # destroy base: most squads go for the nearest enemy HQ or FOB, one stays home to guard the HQ
 static func _base_plan(team: int, qs: Array, home: Vector3) -> void:
-	var targets = Build.sites.filter(func(st): return st["team"] != team and not st["dead"] and st["done"] and st["kind"] in ["hq", "fob"])
+	var targets = Build.sites.filter(func(st): return st["team"] != team and not st["dead"] and st["done"] and st["kind"] in ["hq", "fob", "fob2"])
 	if targets.is_empty():
 		return
 	targets.sort_custom(func(a, b): return G.dist2d(a["p"], home) < G.dist2d(b["p"], home))

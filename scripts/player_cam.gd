@@ -95,6 +95,8 @@ func player_update(s) -> void:
 	var captured = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	s.ads = rmb_down and not sprint and captured
 	var sp = 3.0 if s.p_prone else (1.9 if s.p_crouch else (6.3 if sprint else (2.2 if s.ads else 3.6)))
+	if s.carrying != null or s.crate:
+		sp *= 0.6
 	s.want = m.normalized() * sp if m.length_squared() > 0.0 else Vector3.ZERO
 	s.crouch_t = 0.9 if s.p_crouch else 0.0
 	s.prone_t = s.p_prone
@@ -350,6 +352,8 @@ func _key(k: int) -> void:
 					b.remove_collision_exception_with(v.body)
 				s.mount(v, i)
 				G.ui.message("Seat %d: %s" % [i + 1, v.spec["seats"][i]["role"]])
+		elif k == KEY_F and s.state == "alive" and _carry_or_crate(s):
+			pass
 		elif k == KEY_F and s.state == "alive":
 			var v = _near_vehicle(s)
 			if v != null:
@@ -548,12 +552,58 @@ func use_tool(screen: Vector2) -> void:
 		G.ui.message("%s site marked out for %s" % [Build.KINDS[kind]["name"], G.TEAM_NAMES[team]])
 	elif tool == "dis":
 		dismantle_at(p, hit)
+	elif tool == "up" or tool == "camo" or tool == "rep":
+		var st = Build.site_at(p, 0.5)
+		if st == null:
+			G.ui.message("Click on a structure")
+		elif tool == "up":
+			if Build.upgrade(st) == null:
+				G.ui.message("Nothing to upgrade (sandbags, MG nests and FOBs can be upgraded once finished)")
+		elif tool == "camo":
+			if st["done"]:
+				Build.add_camo(st)
+				G.ui.message("Camouflage net over the %s" % st["name"])
+		elif Build.needs_repair(st):
+			Build.rebuild(st)
+			G.ui.message("Engineers will rebuild the %s" % st["name"])
+		else:
+			G.ui.message("The %s doesn't need rebuilding" % st["name"])
 	elif tool == "spA" or tool == "spB":
 		G.world.spawn[0 if tool == "spA" else 1] = Vector3(p.x, 0, p.z)
 		G.main.refresh_markers()
 
 # F while controlling a soldier: take the gun of a fallen soldier at your feet (with their ammo),
 # or just their spare ammo if it's the same kind of gun
+# F also picks up a wounded friend (and puts them down), or an ammo box from a crate
+func _carry_or_crate(s) -> bool:
+	if s.carrying != null:
+		var w = s.carrying
+		s.carrying = null
+		if is_instance_valid(w):
+			w.carried_by = null
+		G.ui.message("Put %s down" % (w.sname if is_instance_valid(w) else "them"))
+		return true
+	if s.crate:
+		AI.drop_crate(s)
+		G.ui.message("Ammo box dropped: your squad can restock here")
+		return true
+	for o in G.soldiers:
+		if o != s and o.team == s.team and o.state == "wounded" and o.dragger == null and o.carried_by == null and G.dist2d(o.pos, s.pos) < 1.8:
+			s.carrying = o
+			o.carried_by = s
+			G.ui.message("Carrying %s. Get them to a medic or the field hospital · F to put down" % o.sname)
+			return true
+	if _near_vehicle(s) != null:
+		return false
+	for a in G.world.ammo_points:
+		if (a["team"] == s.team or a["team"] < 0) and G.dist2d(a["p"], s.pos) < 2.4 and a.get("stock", 50.0) > 15.0 and not a.get("box", false):
+			if a.has("stock"):
+				a["stock"] -= 15.0
+			s.set_crate(true)
+			G.ui.message("Picked up an ammo box · F to drop it where your squad needs it")
+			return true
+	return false
+
 func _pick_up(s) -> void:
 	var best = null
 	var bd = 2.2

@@ -239,6 +239,8 @@ static func kill(s, attacker, head: bool) -> void:
 	if attacker != null and not is_instance_valid(attacker):
 		attacker = null
 	s.go_dead()
+	if attacker != null and attacker.team != s.team:
+		attacker.kills += 1
 	Stats.killed(s, attacker, head)
 	Morale.on_death(s, attacker)
 	if attacker != null and attacker.team != s.team:

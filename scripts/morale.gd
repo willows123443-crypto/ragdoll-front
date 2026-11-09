@@ -12,7 +12,7 @@ const RECOVER = 42.0
 static func shock(s, amount: float) -> void:
 	if s.state == "dead" or s.is_player:
 		return
-	s.morale = maxf(0.0, s.morale - amount * s.nerve)
+	s.morale = maxf(0.0, s.morale - amount * s.nerve * (1.0 - 0.15 * s.vet))
 
 static func boost(s, amount: float) -> void:
 	if s.state == "dead":

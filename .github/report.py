@@ -45,5 +45,24 @@ if errors:
     body.append("```\n</details>")
 text = "\n".join(body)
 print(text)
-issue = os.environ.get("REPORT_ISSUE", "1")
-subprocess.run(["gh", "issue", "comment", issue, "--body", text[:60000]], check=False)
+TITLE = "Automatic build reports"
+out = subprocess.run(["gh", "issue", "list", "--state", "all", "--search", TITLE + " in:title", "--json", "number,title"],
+                     capture_output=True, text=True).stdout
+import json
+num = None
+try:
+    for it in json.loads(out or "[]"):
+        if it["title"] == TITLE:
+            num = str(it["number"])
+except ValueError:
+    pass
+if num is None:
+    subprocess.run(["gh", "issue", "create", "--title", TITLE, "--body",
+                    "Each push to main builds the game, runs an automatic headless test on all three maps, and posts the results here.\n\nPlay: https://%s.github.io/%s/" % tuple(os.environ.get("GITHUB_REPOSITORY", "x/y").split("/"))], check=False)
+    out = subprocess.run(["gh", "issue", "list", "--state", "all", "--search", TITLE + " in:title", "--json", "number,title"],
+                         capture_output=True, text=True).stdout
+    for it in json.loads(out or "[]"):
+        if it["title"] == TITLE:
+            num = str(it["number"])
+if num:
+    subprocess.run(["gh", "issue", "comment", num, "--body", text[:60000]], check=False)

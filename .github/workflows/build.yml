@@ -15,7 +15,6 @@ concurrency:
 
 env:
   GODOT_VERSION: "4.6.3"
-  REPORT_ISSUE: "1"
 
 jobs:
   build:

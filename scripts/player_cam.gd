@@ -228,6 +228,8 @@ func _process(dt: float) -> void:
 		cam.look_at(free_pos + d, Vector3.UP)
 	if absf(cam.fov - fov_t) > 0.05:
 		cam.fov += (fov_t - cam.fov) * minf(1.0, dt * 14.0)
+	if G.player != null and is_instance_valid(G.player) and G.player.supp > 0.5:
+		Combat.shake = maxf(Combat.shake, (G.player.supp - 0.5) * 0.25)
 	if Combat.shake > 0.0:
 		cam.global_position += Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * Combat.shake * 0.25
 		Combat.shake = maxf(0.0, Combat.shake - dt * 2.5)
@@ -294,6 +296,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 					_finish_select(ev.shift_pressed)
 					drag_from = null
 					G.ui.sel_box_changed()
+		elif ev.button_index == MOUSE_BUTTON_MIDDLE and ev.pressed and G.player != null and G.player.state == "alive":
+			var ps = G.player
+			if ps.rgren > 0 and ps.wid == "rifle":
+				Combat.launch_rifle_grenade(ps, ps.muzzle, aim_point)
+				ps.rgren -= 1
+				G.ui.message("Rifle grenade away (%d left)" % ps.rgren)
+			else:
+				G.ui.message("No rifle grenades (riflemen carry them, on the rifle)")
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_UP and G.player == null and ev.pressed:
 			free_pos += Vector3(sin(free_yaw) * cos(free_pitch), sin(free_pitch), cos(free_yaw) * cos(free_pitch)) * 2.0
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN and G.player == null and ev.pressed:
@@ -302,8 +312,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 		_key(ev.keycode)
 
 func _key(k: int) -> void:
-	if k == KEY_T:
+	if k == KEY_T and G.player == null:
 		Engine.time_scale = 0.25 if Engine.time_scale > 0.5 else 1.0
+	elif k == KEY_T and G.player != null:
+		G.player.light_on = not G.player.light_on
+		G.ui.message("Flashlight on" if G.player.light_on else "Flashlight off")
 	elif k == KEY_P:
 		get_tree().paused = not get_tree().paused
 	if G.player != null:
@@ -357,9 +370,10 @@ func _key(k: int) -> void:
 			s.p_prone = not s.p_prone
 			s.p_crouch = false
 		elif k == KEY_G and s.grenades > 0 and s.state == "alive":
-			Combat.throw_grenade(s, _throw_target(s), "frag")
+			# Shift+G cooks it first so it goes off soon after landing
+			Combat.throw_grenade(s, _throw_target(s), "frag", 1.4 if Input.is_key_pressed(KEY_SHIFT) else 0.0)
 		elif k == KEY_V and s.smokes > 0 and s.state == "alive":
-			Combat.throw_grenade(s, _throw_target(s), "smoke")
+			Combat.throw_grenade(s, _throw_target(s), "marker" if Input.is_key_pressed(KEY_SHIFT) else "smoke")
 		elif k >= KEY_1 and k <= KEY_9 and s.state == "alive":
 			s.primary = null
 			s.set_weapon(G.WEAPON_LIST[k - KEY_1])
@@ -382,6 +396,11 @@ func _key(k: int) -> void:
 				var hit2 = G.ray(o2, o2 + (tgt - o2).normalized() * ((tgt - o2).length() + 0.5), G.L_WORLD)
 				if not dismantle_at(tgt, hit2):
 					G.ui.message("Nothing to dismantle there")
+		elif k == KEY_K and s.state == "alive" and Input.is_key_pressed(KEY_SHIFT):
+			if s.stickies > 0:
+				Combat.throw_grenade(s, _throw_target(s), "sticky")
+			else:
+				G.ui.message("No sticky bombs (anti-tank soldiers and engineers carry them)")
 		elif k == KEY_K and s.state == "alive":
 			if s.satchels > 0:
 				Combat.throw_grenade(s, _throw_target(s), "satchel")

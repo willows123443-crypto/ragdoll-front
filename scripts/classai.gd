@@ -7,6 +7,9 @@ extends RefCounted
 static func jobs(s, known: bool, threat: Vector3) -> bool:
 	s.job_cd -= 2.0
 	grenade_structure(s)
+	_rifle_grenade(s, known, threat)
+	_sticky(s)
+	_sniper_move(s)
 	if G.mode == "sabotage" and s.team == 0 and s.satchels > 0 and s.cls != "engineer":
 		var r = _satchel_site(s, 40.0)
 		if r >= 0:
@@ -280,6 +283,8 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 	return best
 
 static func call_artillery(s, target: Vector3) -> void:
+	# a red smoke marker goes down where the shells will fall
+	Combat.smoke_at(target, 14.0, Color(0.85, 0.22, 0.18), 0.4)
 	for i in range(6):
 		Combat.shell_at(target, 10.0, 6.0 + i * randf_range(0.5, 1.0), s, 1.45)
 	G.fx.callout(s, G.pick(["Fire mission, danger close!", "Artillery inbound!", "Requesting fire support!"]))
@@ -299,6 +304,63 @@ static func _satchel_site(s, reach: float) -> int:
 	AI.go_to(s, es[1], 5.0)
 	s.task = "sapper"
 	return 1
+
+# riflemen lob rifle grenades at enemies dug in behind cover
+static func _rifle_grenade(s, known: bool, threat: Vector3) -> void:
+	if s.rgren <= 0 or s.wid != "rifle" or s.job_cd > 0.0 or not known:
+		return
+	var tgt = s.vis_t
+	var p: Vector3 = threat
+	if tgt != null and is_instance_valid(tgt):
+		p = tgt.pos
+		if not tgt.in_cover and randf() < 0.7:
+			return
+	var d = G.dist2d(p, s.pos)
+	if d < 28.0 or d > 115.0 or randf() < 0.5:
+		return
+	for f in G.soldiers:
+		if f.team == s.team and f.state != "dead" and G.dist2d(f.pos, p) < 9.0:
+			return
+	s.aim_yaw = atan2(p.x - s.pos.x, p.z - s.pos.z)
+	Combat.launch_rifle_grenade(s, s.head_pos() + Vector3(0, 0.1, 0), p + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2)))
+	s.rgren -= 1
+	s.job_cd = 10.0
+	G.fx.callout(s, G.pick(["Rifle grenade out!", "Lobbing one over!"]))
+
+# anti-tank soldiers and engineers run up and slap sticky bombs on armour
+static func _sticky(s) -> void:
+	if s.stickies <= 0:
+		return
+	for v in G.vehicles:
+		if v.team == s.team or v.dead or v.spec.get("air", false):
+			continue
+		var d = G.dist2d(v.pos, s.pos)
+		if d < 11.0 and not G.blocked(s.head_pos(), v.center()):
+			Combat.throw_grenade(s, v.center(), "sticky")
+			return
+
+# snipers move to a new spot after a few shots, before they get spotted
+static func _sniper_move(s) -> void:
+	if s.cls != "sniper" or s.shots_here < 3:
+		return
+	s.shots_here = 0
+	var from: Vector3 = s.pos
+	var best = null
+	var bs = 1e9
+	for cp in G.world.cover_near(from, 32.0):
+		var d = G.dist2d(cp.p, from)
+		if d < 12.0 or not AI.cover_free(cp, s) or cp.ban > G.sim_time:
+			continue
+		var sc = absf(d - 20.0) + randf() * 6.0
+		if s.has_threat and AI.cover_safe(cp, s.threat):
+			sc -= 5.0
+		if sc < bs:
+			bs = sc
+			best = cp
+	if best != null:
+		AI.release_cover(s)
+		AI.take_cover(s, best)
+		G.fx.callout(s, G.pick(["Relocating.", "Moving to a new nest.", "Time to move."]))
 
 static func _rocket_structure(s) -> bool:
 	if s.wid != "rpg" or s.rockets <= 0 or s.vis_t != null or s.job_cd > 0.0:

@@ -314,7 +314,30 @@ func pick_tool(i: int) -> void:
 		_render_tools()
 
 # ---------------------------------------------------------------- crosshair, hit marker, damage arrows, scope, messages
+var vignette: ColorRect
+
+# darkened, shaking edges when bullets are cracking past you
+func _build_vignette() -> void:
+	vignette = ColorRect.new()
+	vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sh = Shader.new()
+	sh.code = """shader_type canvas_item;
+uniform float amount = 0.0;
+void fragment() {
+	vec2 d = UV - vec2(0.5);
+	float r = length(d * vec2(1.25, 1.0));
+	float v = smoothstep(0.32, 0.78, r) * amount;
+	COLOR = vec4(0.03, 0.02, 0.02, v);
+}"""
+	var mat = ShaderMaterial.new()
+	mat.shader = sh
+	vignette.material = mat
+	root.add_child(vignette)
+	root.move_child(vignette, 0)
+
 func _build_center() -> void:
+	_build_vignette()
 	cross = Control.new()
 	cross.set_anchors_preset(Control.PRESET_FULL_RECT)
 	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -620,6 +643,14 @@ func _unhandled_key_input(ev: InputEvent) -> void:
 			help.visible = false
 
 func update_hud(dt: float) -> void:
+	if vignette != null:
+		var want = 0.0
+		if G.player != null and is_instance_valid(G.player) and G.player.state != "dead":
+			want = clampf(G.player.supp / 1.2, 0.0, 1.0) * 0.85 + (0.35 if G.player.hp < 35.0 else 0.0)
+		var m: ShaderMaterial = vignette.material
+		var cv = m.get_shader_parameter("amount")
+		var cur: float = cv if cv != null else 0.0
+		m.set_shader_parameter("amount", lerpf(cur, want, minf(1.0, dt * 5.0)))
 	var cap = G.mode == "capture"
 	var tick = G.mode == "frontline"
 	lbl_sa.text = str(int(G.cap_score[0])) if cap else (str(Obj.tickets[0]) if tick and not Obj.tickets.is_empty() else str(G.score[0]))
@@ -710,6 +741,12 @@ func update_hud(dt: float) -> void:
 		p_name.text = "%s  ·  %s  ·  %s%s" % [s.sname, G.CLASSES.get(s.cls, {"name": "?"})["name"], s.W["name"], st]
 		p_hp.value = maxf(0.0, s.hp)
 		p_ammo.text = "%d | %d     grenades %d · smoke %d" % [s.mag, s.reserve, s.grenades, s.smokes]
+		if s.rgren > 0:
+			p_ammo.text += " · rifle grenades %d (middle mouse)" % s.rgren
+		if s.stickies > 0:
+			p_ammo.text += " · sticky bombs %d (Shift+K)" % s.stickies
+		if s.W["id"] == "lmg":
+			p_ammo.text += " · barrel %d%%" % int(s.heat * 100.0)
 		if s.cls == "engineer":
 			p_ammo.text += " · sandbags %d · mines %d · satchels %d" % [s.kits, s.mines, s.satchels]
 		if s.resupply_t > 0.0:

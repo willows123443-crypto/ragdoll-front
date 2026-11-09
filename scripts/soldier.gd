@@ -115,6 +115,13 @@ var burst_cd = 0.5
 var grenades = 2
 var smokes = 1
 var rockets = 3
+var stickies = 0
+var rgren = 0             # rifle grenades
+var heat = 0.0            # machine gun barrel heat (0..1)
+var barrel_t = 0.0        # changing an overheated barrel
+var shots_here = 0        # snipers move after a few shots from one spot
+var light_on = false
+var flashlight: Node3D = null
 var nade_cd = 6.0
 var throw_t = 0.0
 var hand_t = null
@@ -513,9 +520,24 @@ func _tool_visuals() -> void:
 	if gun_node != null and vehicle == null and gun_body == null:
 		gun_node.visible = not want
 
+func _show_mag(on: bool) -> void:
+	if on and mag_mesh == null and parts.size() > 4:
+		mag_mesh = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.05, 0.16, 0.08)
+		mag_mesh.mesh = bm
+		mag_mesh.material_override = _mat("magz", Color(0.13, 0.13, 0.12), false)
+		parts[4].add_child(mag_mesh)
+		mag_mesh.position = Vector3(0, 0.22, 0.02)
+		mag_mesh.rotation.x = 0.4
+	if mag_mesh != null:
+		mag_mesh.visible = on
+
 func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vector3) -> void:
 	if tool_mode != "" or (hammer != null and hammer.visible):
 		_tool_visuals()
+	if mag_mesh != null and mag_mesh.visible and reload_t <= 0.0:
+		mag_mesh.visible = false
 	var reloading = reload_t > 0.0
 	var rk = 1.0 - reload_t / W["reload"] if reloading else 0.0
 	var shoulder = ready_ and not reloading and not sprint and not gun_blocked and (ads or burst > 0 or fire_cd > -0.8 or prone)
@@ -586,6 +608,7 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 			lh = pp.lerp(pm, (rk - 0.55) / 0.3)
 		else:
 			lh = pm.lerp(home, (rk - 0.85) / 0.15)
+		_show_mag(rk > 0.12 and rk < 0.88 and W["mag"] > 1 and not W["rocket"])
 		if rk > 0.3 and not mag_drop:
 			mag_drop = true
 			if wid != "rpg":
@@ -794,6 +817,10 @@ func set_class(c: String) -> void:
 	mines = 3 if c == "engineer" else 0
 	satchels = 2 if c == "engineer" else 0
 	kits = 3 if c == "engineer" else 0
+	stickies = 2 if c == "at" else (1 if c == "engineer" else 0)
+	rgren = 3 if c == "rifleman" and wid == "rifle" else 0
+	if c == "radio":
+		smokes = 3
 	if c == "at" and wid == "rpg":
 		rockets = 4
 	if c == "spotter" or c == "sniper":
@@ -1082,7 +1109,92 @@ func start_vault(c) -> bool:
 	return true
 
 # ---------------------------------------------------------------- per-tick update
+static var beam_mat: StandardMaterial3D = null
+
+# a torch clipped under the barrel: a faint beam you can see, and a real light for the nearest few
+func _flashlight_tick() -> void:
+	var want = light_on and (state == "alive" or state == "riding") and gun_node != null and gun_node.visible and vehicle == null
+	if want and flashlight == null:
+		flashlight = Node3D.new()
+		gun_node.add_child(flashlight)
+		flashlight.position = Vector3(0.05, -0.04, 0.45)
+		var body = MeshInstance3D.new()
+		var cm = CylinderMesh.new()
+		cm.top_radius = 0.035
+		cm.bottom_radius = 0.03
+		cm.height = 0.14
+		cm.radial_segments = 8
+		body.mesh = cm
+		body.rotation.x = PI / 2.0
+		body.material_override = _mat("torch", Color(0.12, 0.12, 0.12), false)
+		flashlight.add_child(body)
+		if beam_mat == null:
+			beam_mat = StandardMaterial3D.new()
+			beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			beam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			beam_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+			beam_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+			beam_mat.albedo_color = Color(1.0, 0.95, 0.75, 0.07)
+		var beam = MeshInstance3D.new()
+		var bm = CylinderMesh.new()
+		bm.top_radius = 1.4
+		bm.bottom_radius = 0.04
+		bm.height = 9.0
+		bm.radial_segments = 10
+		bm.cap_top = false
+		bm.cap_bottom = false
+		beam.mesh = bm
+		beam.rotation.x = PI / 2.0
+		beam.position = Vector3(0, 0, 4.6)
+		beam.material_override = beam_mat
+		beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		flashlight.add_child(beam)
+	if flashlight != null:
+		flashlight.visible = want
+
+var glint: MeshInstance3D = null
+var mag_mesh: MeshInstance3D = null
+
+# snipers' scopes flash in the sun when they're pointed your way
+func _glint_tick() -> void:
+	var cam = get_viewport().get_camera_3d()
+	if cam == null or gun_node == null:
+		return
+	if glint == null:
+		glint = MeshInstance3D.new()
+		var q = QuadMesh.new()
+		q.size = Vector2(0.5, 0.5)
+		glint.mesh = q
+		var m = StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		m.albedo_texture = G.fx.soft_tex
+		m.albedo_color = Color(1.0, 0.97, 0.85, 1.0)
+		m.no_depth_test = false
+		glint.material_override = m
+		glint.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		gun_node.add_child(glint)
+		glint.position = Vector3(0, 0.09, 0.25)
+	var to_cam = (cam.global_position - muzzle).normalized()
+	var facing = gun_dir.dot(to_cam)
+	var show = state == "alive" and ready_ and not G.main.is_night() and facing > 0.93 and not is_player
+	glint.visible = show
+	if show:
+		var k = (facing - 0.93) / 0.07
+		var d = cam.global_position.distance_to(muzzle)
+		glint.scale = Vector3.ONE * clampf(d / 25.0, 0.6, 5.0) * (0.4 + k) * (0.85 + 0.3 * sin(G.sim_time * 9.0))
+
 func tick() -> void:
+	if heat > 0.0:
+		heat = maxf(0.0, heat - 0.16 * G.DT)
+	if cls == "sniper" and wid == "sniper":
+		_glint_tick()
+	elif glint != null:
+		glint.visible = false
+	if light_on or flashlight != null:
+		_flashlight_tick()
 	callout_cd -= G.DT
 	hurt_t -= G.DT
 	if burn_t > 0.0 and state != "dead":

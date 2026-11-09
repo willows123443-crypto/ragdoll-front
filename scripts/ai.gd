@@ -424,6 +424,11 @@ static func follow_route(s) -> void:
 # ---------------------------------------------------------------- perception
 static func perceive(s) -> void:
 	s.think = randf_range(0.25, 0.4)
+	if G.main.is_night():
+		var contact = s.vis_t != null or G.sim_time - s.seen_t < 6.0 or s.supp > 0.4
+		s.light_on = not contact and s.state == "alive" and s.cls != "sniper"
+	elif s.light_on:
+		s.light_on = false
 	var eye = s.head_pos()
 	var in_c = s.in_cover and s.cover != null
 	if in_c and s.cover.type == "wall" and s.has_threat:
@@ -444,7 +449,7 @@ static func perceive(s) -> void:
 		var rng = G.view_range
 		if rng < 100.0:
 			# in the dark you see what's lit by flares, or the flash of someone firing
-			if Combat.lit(o.pos) or G.sim_time - o.fired_t < 1.2:
+			if Combat.lit(o.pos) or G.sim_time - o.fired_t < 1.2 or o.light_on:
 				rng = 150.0
 		if d > rng:
 			continue

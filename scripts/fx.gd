@@ -298,7 +298,40 @@ func tracer(o: Vector3, dir: Vector3, ln: float, speed: float, on_hit: Callable,
 				break
 	tracers.append(t)
 
+var torch_lights: Array = []
+
+# a handful of real spotlights go to the switched-on torches nearest the camera
+func _torches() -> void:
+	if torch_lights.is_empty():
+		for i in range(5):
+			var l = SpotLight3D.new()
+			l.light_color = Color(1.0, 0.95, 0.8)
+			l.light_energy = 0.0
+			l.spot_range = 22.0
+			l.spot_angle = 24.0
+			l.shadow_enabled = false
+			add_child(l)
+			torch_lights.append(l)
+	var cam = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var lit = []
+	for s in G.soldiers:
+		if s.light_on and s.flashlight != null and s.flashlight.visible:
+			lit.append([s.pos.distance_squared_to(cam.global_position), s])
+	lit.sort_custom(func(a, b): return a[0] < b[0])
+	for i in range(torch_lights.size()):
+		var l: SpotLight3D = torch_lights[i]
+		if i < lit.size() and lit[i][0] < 90.0 * 90.0:
+			var f: Node3D = lit[i][1].flashlight
+			l.global_transform = f.global_transform * Transform3D(Basis(Vector3.UP, PI), Vector3.ZERO)
+			l.light_energy = 3.0
+		else:
+			l.light_energy = 0.0
+
 func step(dt: float) -> void:
+	if G.main.is_night() or not torch_lights.is_empty():
+		_torches()
 	for i in range(tracers.size() - 1, -1, -1):
 		var t = tracers[i]
 		t["d"] += t["speed"] * dt

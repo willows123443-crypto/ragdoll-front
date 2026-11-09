@@ -139,6 +139,9 @@ var orbit_a = 0.0
 var life_t = -1.0             # gunships called in for a while
 var ramp: Node3D = null
 var doors: Array = []          # {"n", "open"/"shut" or "slide", "t", "c"}
+var shells = 20                # mortar and field-gun rounds
+var gun_heat = 0.0             # mounted machine guns overheat
+var supply_t = 0.0
 
 static var mats = {}
 
@@ -288,6 +291,16 @@ func _place(dt: float) -> void:
 func step(dt: float) -> void:
 	if not doors.is_empty():
 		_doors_tick(dt)
+	gun_heat = maxf(0.0, gun_heat - 0.12 * dt)
+	# mortars and field guns restock from nearby ammo crates, FOBs and supply dumps
+	if (kind == "mortar" or kind == "artillery") and shells < 20:
+		supply_t += dt
+		if supply_t > 8.0:
+			supply_t = 0.0
+			for a in G.world.ammo_points:
+				if (a["team"] == team or a["team"] < 0) and G.dist2d(a["p"], pos) < 40.0:
+					shells = mini(20, shells + 4)
+					break
 	if dead:
 		dead_t += dt
 		speed = move_toward(speed, 0.0, 10.0 * dt)
@@ -508,6 +521,16 @@ func _weapons(dt: float) -> void:
 		if fire_cd <= 0.0:
 			fire_cd = 0.085
 			burst -= 1
+			gun_heat += 0.007
+			if gun_heat >= 1.0:
+				# overheated: wait for the barrel to be swapped
+				fire_cd = 5.0
+				gun_heat = 0.35
+				if controller.is_player:
+					G.ui.message("Gun overheated, changing the barrel…")
+				else:
+					G.fx.callout(controller, G.pick(["Barrel's glowing! Changing it!", "Overheated!"]))
+				return
 			var W = G.WEAPONS["hmg"]
 			var spread = W["spread"] + (0.008 if absf(speed) > 1.0 else 0.0)
 			Combat.fire_ray(controller, muzzle(), Combat.spread_dir(_gun_dir(), spread), W, true, [body.get_rid()])
@@ -566,6 +589,14 @@ func _mortar(g, dt: float, want, shoot: bool) -> void:
 	if cannon_cd > 0.0:
 		return
 	var arty = kind == "artillery"
+	if shells <= 0:
+		cannon_cd = 6.0
+		if g.is_player:
+			G.ui.message("Out of rounds. Bring the gun near an ammo crate, FOB or supply dump")
+		elif randf() < 0.3:
+			G.fx.callout(g, G.pick(["Out of rounds!", "Need more shells here!"]))
+		return
+	shells -= 1
 	cannon_cd = (9.0 if arty else 5.5) if not g.is_player else (5.0 if arty else 3.0)
 	var dist = G.dist2d(target, pos)
 	G.fx.muzzle(muzzle(), true)

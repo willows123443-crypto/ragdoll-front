@@ -24,6 +24,19 @@ static func spread_dir(base: Vector3, spread: float) -> Vector3:
 static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void:
 	var W = s.W
 	s.fired_t = G.sim_time
+	if s.cls == "sniper":
+		s.shots_here += 1
+	if W["id"] == "lmg":
+		s.heat += 0.012
+		if s.heat >= 1.0:
+			# too hot to fire: swap the barrel (shown as a reload)
+			s.heat = 0.3
+			s.fire_cd = 4.5
+			s.reload_t = W["reload"]
+			if s == G.player:
+				G.ui.message("Barrel overheated! Changing it…")
+			else:
+				G.fx.callout(s, G.pick(["Changing barrel!", "Barrel's cooked!"]))
 	if W["flame"]:
 		flame(s, origin, dir)
 		return
@@ -127,6 +140,12 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 				var v = ev["veh"]
 				if is_instance_valid(v):
 					v.take_damage(ev["dmg"] * (0.9 if W["ap"] else v.spec["bullet"]), shooter, ev["p"])
+					# rounds that can't get through whine off the armour
+					if not W["ap"] and v.spec["bullet"] < 0.2 and randf() < 0.5:
+						var rd = d.bounce(ev["n"]).normalized()
+						rd = (rd + Vector3(randf_range(-0.3, 0.3), randf_range(0.0, 0.4), randf_range(-0.3, 0.3))).normalized()
+						G.fx.tracer(ev["p"], rd, randf_range(6.0, 25.0), 260.0, Callable(), true)
+						G.audio.ricochet(ev["p"])
 				G.fx.impact(ev["p"], ev["n"])
 				if randf() < 0.4:
 					G.audio.ricochet(ev["p"])
@@ -197,10 +216,15 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 		s.limb[Soldier.PART_REG[part]] = 0.05
 		if kind == "torso" or kind == "head":
 			s.stun = maxf(s.stun, 0.18 + force * 0.03)
-		if kind == "leg" and randf() < 0.3:
+		var running = s.state == "alive" and s.want.length() > 3.5
+		if kind == "leg" and randf() < (0.55 if running else 0.3):
 			s.fall()
 		elif force > 6.0 and randf() < 0.5:
 			s.fall()
+		elif running and randf() < 0.35:
+			# stumble: hit mid-stride, they go down hard and scramble up
+			s.fall(randf_range(0.6, 1.1))
+			s.push(1, dir * 2.5 + Vector3(0, 0.5, 0), 0.4)
 		if s.state == "alive" and randf() < 0.4:
 			G.fx.callout(s, G.pick(["I'm hit!", "Argh!", "Taking fire!"]))
 	else:
@@ -260,7 +284,7 @@ static func step_rockets() -> void:
 	for i in range(rockets.size() - 1, -1, -1):
 		var r = rockets[i]
 		r["life"] -= G.DT
-		r["v"].y += G.GRAV * 0.15 * G.DT
+		r["v"].y += G.GRAV * r.get("g", 0.15) * G.DT
 		var stepv: Vector3 = r["v"] * G.DT
 		var ex: Array = []
 		if is_instance_valid(r["owner"]):
@@ -272,6 +296,21 @@ static func step_rockets() -> void:
 			var at: Vector3 = r["p"] if hit.is_empty() else hit.position
 			if not hit.is_empty() and hit.collider.has_meta("vehicle"):
 				var hv = hit.collider.get_meta("vehicle")
+				# shells glance off sloped armour at a shallow angle
+				var cosang = absf(stepv.normalized().dot(hit.normal))
+				if r.get("veh") != null and hv.spec["tracked"] and cosang < 0.38 and not r.get("bounced", false) and randf() < 0.65:
+					r["bounced"] = true
+					r["v"] = r["v"].bounce(hit.normal) * 0.55
+					r["p"] = hit.position + hit.normal * 0.15
+					r["life"] = minf(r["life"], 0.8)
+					hv.take_damage(r.get("vdmg", 560.0) * 0.12, r["owner"] if is_instance_valid(r["owner"]) else null, hit.position)
+					G.fx.impact(hit.position, hit.normal)
+					G.fx.impact(hit.position, hit.normal)
+					G.audio.ricochet(hit.position)
+					G.audio.play(G.audio.s_boom, hit.position, -6.0, 2.2)
+					if hv.driver() != null:
+						G.fx.callout(hv.driver(), G.pick(["Bounced off!", "Ricochet! Armour held!"]))
+					continue
 				hv.take_damage(r.get("vdmg", 560.0), r["owner"] if is_instance_valid(r["owner"]) else null, hit.position)
 			if not hit.is_empty() and hit.collider.has_meta("soldier"):
 				var hs = hit.collider.get_meta("soldier")
@@ -394,7 +433,7 @@ static func step_strikes() -> void:
 			strikes.remove_at(i)
 
 # ---------------------------------------------------------------- grenades and smoke
-static func throw_grenade(s, target: Vector3, type: String) -> void:
+static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -> void:
 	var start = s.head_pos() + Vector3(0, 0.1, 0)
 	var dist = G.dist2d(target, start)
 	var T = clampf(0.6 + dist * 0.035, 0.7, 1.6)
@@ -414,11 +453,15 @@ static func throw_grenade(s, target: Vector3, type: String) -> void:
 	bm.size = bs.size
 	m.mesh = bm
 	var mat = StandardMaterial3D.new()
-	mat.albedo_color = Color(0.55, 0.57, 0.53) if type == "smoke" else Color(0.18, 0.21, 0.14)
+	mat.albedo_color = Color(0.55, 0.57, 0.53) if type == "smoke" else (Color(0.7, 0.2, 0.15) if type == "marker" else Color(0.18, 0.21, 0.14))
 	m.material_override = mat
 	g.add_child(m)
 	g.set_meta("type", type)
-	g.set_meta("fuse", 1.6 if type == "smoke" else (4.0 if type == "satchel" else 2.6))
+	var fuse = {"smoke": 1.6, "marker": 1.4, "satchel": 4.0, "sticky": 3.2}.get(type, 2.6)
+	if type == "frag":
+		fuse = maxf(0.7, fuse - cook)
+	g.set_meta("fuse", fuse)
+	g.set_meta("seen", {})
 	g.set_meta("owner", s)
 	G.fx.add_child(g)
 	g.global_position = start
@@ -429,14 +472,20 @@ static func throw_grenade(s, target: Vector3, type: String) -> void:
 		bs.size = Vector3(0.3, 0.18, 0.22)
 		bm.size = bs.size
 		mat.albedo_color = Color(0.4, 0.33, 0.2)
-	if type == "smoke":
+	elif type == "sticky":
+		bs.size = Vector3(0.2, 0.2, 0.2)
+		bm.size = bs.size
+		mat.albedo_color = Color(0.25, 0.22, 0.18)
+	if type == "smoke" or type == "marker":
 		s.smokes -= 1
 	elif type == "satchel":
 		s.satchels -= 1
+	elif type == "sticky":
+		s.stickies -= 1
 	else:
 		s.grenades -= 1
 	s.throw_t = 0.55
-	G.fx.callout(s, {"smoke": "Popping smoke!", "satchel": "Satchel charge! Get back!"}.get(type, "Grenade out!"))
+	G.fx.callout(s, {"smoke": "Popping smoke!", "satchel": "Satchel charge! Get back!", "sticky": "Sticky bomb!", "marker": "Marking the target!"}.get(type, "Grenade out!"))
 
 static func smoke_at(p: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.83), big: float = 1.0) -> void:
 	var sc = SmokeCloud.new()
@@ -455,14 +504,28 @@ static func step_grenades() -> void:
 			continue
 		var fuse = g.get_meta("fuse") - G.DT
 		g.set_meta("fuse", fuse)
+		var gtype: String = g.get_meta("type")
+		# sticky bombs cling to the first vehicle they touch
+		if gtype == "sticky":
+			_sticky_tick(g)
+		if gtype in ["frag", "sticky", "satchel"] and fuse > 0.3:
+			_grenade_reactions(g, fuse)
 		if fuse <= 0.0:
 			var owner_s = g.get_meta("owner")
 			if owner_s != null and not is_instance_valid(owner_s):
 				owner_s = null
-			if g.get_meta("type") == "smoke":
+			if gtype == "smoke":
 				smoke_at(g.global_position, 32.0)
-			elif g.get_meta("type") == "satchel":
+			elif gtype == "marker":
+				smoke_at(g.global_position, 18.0, Color(0.85, 0.22, 0.18), 0.45)
+				_marker_popped(g.global_position, owner_s)
+			elif gtype == "satchel":
 				explode(g.global_position, owner_s, 2.1)
+			elif gtype == "sticky":
+				var sv = g.get_meta("stuck_v") if g.has_meta("stuck_v") else null
+				if sv != null and is_instance_valid(sv) and not sv.dead:
+					sv.take_damage(1100.0, owner_s, g.global_position)
+				explode(g.global_position, owner_s, 0.9)
 			else:
 				explode(g.global_position, owner_s, 1.0)
 			g.queue_free()
@@ -475,6 +538,106 @@ static func step_grenades() -> void:
 			c.r = maxf(0.0, c.r - G.DT * 1.3)
 		if c.t <= 0.0:
 			G.smoke_clouds.remove_at(i)
+
+static func _sticky_tick(g: RigidBody3D) -> void:
+	if g.has_meta("stuck_v"):
+		var v = g.get_meta("stuck_v")
+		if is_instance_valid(v):
+			g.global_position = v.global_transform * g.get_meta("stuck_o")
+		return
+	for v in G.vehicles:
+		if v.dead:
+			continue
+		var lp: Vector3 = v.global_transform.affine_inverse() * g.global_position
+		if absf(lp.x) < v.spec["wid"] * 0.55 + 0.2 and absf(lp.z) < v.spec["len"] * 0.5 + 0.2 and lp.y > -0.2 and lp.y < 3.2:
+			g.set_meta("stuck_v", v)
+			g.set_meta("stuck_o", lp)
+			g.freeze = true
+			G.audio.hammer(g.global_position)
+			return
+
+# soldiers who see a grenade land near them dive away, or grab it and throw it back
+static func _grenade_reactions(g: RigidBody3D, fuse: float) -> void:
+	var gp = g.global_position
+	if g.linear_velocity.length() > 4.0 and not g.has_meta("stuck_v"):
+		return       # still in the air
+	var seen: Dictionary = g.get_meta("seen")
+	var owner_s = g.get_meta("owner")
+	for s in G.soldiers:
+		if s.state != "alive" or s.is_player or seen.has(s):
+			continue
+		var d = G.dist2d(s.pos, gp)
+		if d > 7.0 or absf(s.pos.y - gp.y) > 2.5:
+			continue
+		seen[s] = true
+		if G.blocked(s.head_pos(), gp + Vector3(0, 0.15, 0)):
+			continue
+		if randf() < 0.25:
+			continue      # didn't notice it
+		var throw_back = g.get_meta("type") == "frag" and d < 2.4 and fuse > 1.5 and s.stun <= 0.0 and randf() < 0.45 and not g.has_meta("stuck_v")
+		if throw_back:
+			var back_to: Vector3 = owner_s.pos if owner_s != null and is_instance_valid(owner_s) else s.pos + G.flat(gp - s.pos).normalized() * -12.0
+			back_to = s.pos + G.flat(back_to - s.pos).normalized() * minf(G.dist2d(back_to, s.pos), 22.0)
+			var start = s.head_pos() + Vector3(0, 0.2, 0)
+			var T = clampf(0.6 + G.dist2d(back_to, start) * 0.035, 0.7, 1.4)
+			g.global_position = start
+			g.linear_velocity = Vector3((back_to.x - start.x) / T, (back_to.y + 0.2 - start.y) / T - 0.5 * G.GRAV * T, (back_to.z - start.z) / T)
+			g.set_meta("owner", s)
+			g.set_meta("seen", {})
+			s.throw_t = 0.55
+			G.fx.callout(s, G.pick(["Throwing it back!", "Return to sender!", "Get it out of here!"]))
+			return
+		# dive flat away from it
+		var away = G.flat(s.pos - gp)
+		if away.length_squared() < 0.01:
+			away = Vector3(randf() - 0.5, 0, randf() - 0.5)
+		away = away.normalized()
+		s.fall(randf_range(1.4, 2.2))
+		s.push(0, away * 4.5 + Vector3(0, 1.6, 0), 0.8)
+		G.fx.callout(s, G.pick(["Grenade!", "Grenade, get down!", "Down!"]))
+
+# a red smoke marker: the nearest free radio operator calls the guns onto it
+static func _marker_popped(at: Vector3, owner_s) -> void:
+	if owner_s == null:
+		return
+	var best = null
+	for o in G.soldiers:
+		if o.team == owner_s.team and o.state == "alive" and o.cls == "radio" and o.radio_cd <= 0.0:
+			best = o
+			break
+	if best == null and owner_s.cls == "radio":
+		best = owner_s
+	if best != null:
+		best.radio_cd = 45.0
+		ClassAI.call_artillery(best, at)
+	elif owner_s == G.player:
+		G.ui.message("No radio operator free to call in the marker")
+
+# rifle grenades: a lobbed round on a ballistic arc, solved for the distance to the target
+static func launch_rifle_grenade(s, origin: Vector3, target: Vector3) -> void:
+	var speed = 46.0
+	var d = G.dist2d(target, origin)
+	var dy = target.y - origin.y
+	var g = -G.GRAV
+	var v2 = speed * speed
+	var disc = v2 * v2 - g * (g * d * d + 2.0 * dy * v2)
+	var ang = 0.6
+	if disc > 0.0:
+		ang = atan2(v2 - sqrt(disc), g * d)
+	var flat = G.flat(target - origin).normalized()
+	var dir = (flat * cos(ang) + Vector3(0, sin(ang), 0)).normalized()
+	var m = MeshInstance3D.new()
+	var bm = BoxMesh.new()
+	bm.size = Vector3(0.07, 0.07, 0.24)
+	m.mesh = bm
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.3, 0.33, 0.25)
+	m.material_override = mat
+	G.fx.add_child(m)
+	m.global_position = origin
+	rockets.append({"p": origin, "v": dir * speed, "owner": s, "veh": null, "mesh": m, "life": 8.0, "trail": 1.0, "power": 0.75, "vdmg": 260.0, "g": 1.0})
+	G.audio.shot(origin, G.WEAPONS["shotgun"])
+	G.fx.muzzle(origin, false)
 
 # ---------------------------------------------------------------- explosions
 static func explode(pos: Vector3, owner_s, power: float) -> void:

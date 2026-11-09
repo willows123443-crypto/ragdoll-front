@@ -73,6 +73,10 @@ static func assign_squad(s) -> void:
 		G.squads.append(q)
 	q["members"].append(s)
 	s.squad = q
+	var ld = q.get("leader")
+	if ld == null or not is_instance_valid(ld) or ld.state == "dead":
+		q["leader"] = s
+		s.set_leader(true)
 	s.role = "flanker" if q["members"].size() == 3 else "rifleman"
 
 static func squad_movers(q) -> int:
@@ -408,6 +412,36 @@ static func decide(s) -> void:
 	s.decide_t = randf_range(1.6, 2.6)
 	if s.task == "flee" or s.route != null:
 		return
+	# routed: keep running to the rear, then cower in cover until morale comes back
+	if s.broken:
+		var home: Vector3 = G.world.rally_point(s.team)
+		if G.dist2d(s.pos, home) > 12.0:
+			if s.move_target == null:
+				release_cover(s)
+				go_to(s, home + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6)), 5.8)
+		elif s.cover == null:
+			var hc = find_cover(s, s.threat, "hold")
+			if hc != null:
+				take_cover(s, hc)
+		s.task = "rout"
+		return
+	if s.task == "rout":
+		s.task = null
+	# low on ammunition: go and get some
+	if s.task == "resupply":
+		if s.supply_target == null or (s.supply_target is Object and (not is_instance_valid(s.supply_target) or s.supply_target.reserve <= 0)):
+			s.task = null
+		else:
+			return
+	if s.ammo_frac() < 0.3 and (s.vis_t == null or s.mag == 0):
+		var src = find_ammo(s)
+		if src != null:
+			release_cover(s)
+			s.supply_target = src
+			s.task = "resupply"
+			go_to(s, src.pos if src is Object else src["p"], 4.8)
+			G.fx.callout(s, G.pick(["I need ammo!", "Running low, going for ammo!", "Out of mags!"]))
+			return
 	var order = order_of(s)
 	var known = s.has_seen and G.sim_time - s.seen_t < 12.0
 	var threat: Vector3 = s.threat
@@ -548,7 +582,7 @@ static func decide(s) -> void:
 					take_cover(s, cr)
 					s.task = "retreat"
 				return
-			if can_move2 and (s.supp < 0.5 or (too_far and s.supp < 0.9)) and ((s.vis_t == null and s.cover_time > 5.0) or too_far):
+			if can_move2 and s.morale >= Morale.SHAKEN and (s.supp < 0.5 or (too_far and s.supp < 0.9)) and ((s.vis_t == null and s.cover_time > 5.0) or too_far):
 				var ca = find_cover(s, threat, "flank" if s.role == "flanker" else "advance")
 				if ca != null:
 					take_cover(s, ca)
@@ -587,7 +621,7 @@ static func decide(s) -> void:
 		s.task = "advance"
 		go_to(s, goal2, 3.6)
 		return
-	var mode = "defend" if (s.supp > 0.45 or s.hp < 55.0 or s.vis_t != null) else ("flank" if s.role == "flanker" else "advance")
+	var mode = "defend" if (s.supp > 0.45 or s.hp < 55.0 or s.vis_t != null or s.morale < Morale.SHAKEN) else ("flank" if s.role == "flanker" else "advance")
 	var c3 = find_cover(s, threat, mode)
 	if c3 != null:
 		take_cover(s, c3)
@@ -610,6 +644,11 @@ static func decide(s) -> void:
 static func update(s) -> void:
 	s.think -= G.DT
 	s.decide_t -= G.DT
+	s.morale_t -= G.DT
+	if s.morale_t <= 0.0:
+		s.morale_t = 0.5
+		Morale.tick(s, 0.5)
+		supply_tick(s, 0.5)
 	if s.think <= 0.0:
 		perceive(s)
 	if s.decide_t <= 0.0:
@@ -726,7 +765,7 @@ static func aim_and_fire(s) -> void:
 	if s.reload_t > 0.0:
 		s.reload_t -= G.DT
 		if s.reload_t <= 0.0:
-			s.mag = W["mag"]
+			s.finish_reload()
 	s.fire_cd -= G.DT
 	if s.dragging != null or (s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and G.dist2d(s.patient.pos, s.pos) < 1.3):
 		s.burst = 0
@@ -734,6 +773,8 @@ static func aim_and_fire(s) -> void:
 	var tgt = null
 	if s.vis_t != null and is_instance_valid(s.vis_t) and s.vis_t.state != "dead" and s.task != "medic":
 		tgt = s.vis_t
+		if s.broken and tgt.pos.distance_to(s.pos) > 12.0:
+			tgt = null
 	# rocket launchers swap to a rifle up close or when out of rockets
 	if W["rocket"] and (s.rockets <= 0 or (tgt != null and tgt.pos.distance_to(s.pos) < 14.0)):
 		s.set_weapon("rifle")
@@ -742,7 +783,7 @@ static func aim_and_fire(s) -> void:
 	var extra = 0.0
 	if tgt != null:
 		point = tgt.chest()
-	elif s.in_cover and W["auto"] and G.sim_time - s.seen_t < 6.0 and s.squad != null and squad_movers(s.squad) > 0 and s.task != "medic":
+	elif s.in_cover and not s.broken and W["auto"] and G.sim_time - s.seen_t < 6.0 and s.squad != null and squad_movers(s.squad) > 0 and s.task != "medic":
 		point = s.last_seen + Vector3(0, 1.0, 0)
 		extra = 0.045
 	if point != null:
@@ -761,11 +802,7 @@ static func aim_and_fire(s) -> void:
 					var clear = hit.is_empty() or (tgt == null and s.muzzle.distance_to(hit.position) > L * 0.8)
 					var ff = null
 					if clear:
-						var fh = G.ray(s.muzzle, s.muzzle + dir * maxf(0.1, L - 0.6), G.L_BODY, s.rids)
-						if not fh.is_empty() and fh.collider.has_meta("soldier"):
-							var o = fh.collider.get_meta("soldier")
-							if o.team == s.team and o.state != "dead":
-								ff = o
+						ff = friendly_in_line(s, s.muzzle, dir, L)
 					if not clear:
 						s.block_t += 0.15
 						s.fire_cd = 0.15
@@ -787,16 +824,19 @@ static func aim_and_fire(s) -> void:
 					else:
 						s.block_t = maxf(0.0, s.block_t - 0.1)
 						var moving = s.vel.length() > 0.6
-						var spread = W["spread"] * (0.3 if W["pellets"] > 1 else 1.0) + dist * 0.00025 + s.supp * 0.03 + (W["move_spread"] if moving else 0.0) - (0.003 if (s.crouch > 0.5 or s.prone) else 0.0) + extra + (0.02 if s.task == "charge" else 0.0)
+						var spread = W["spread"] * (0.3 if W["pellets"] > 1 else 1.0) + dist * 0.00025 + s.supp * 0.03 + (W["move_spread"] if moving else 0.0) - (0.003 if (s.crouch > 0.5 or s.prone) else 0.0) + extra + (0.02 if s.task == "charge" else 0.0) + (0.025 if s.morale < Morale.SHAKEN else 0.0)
 						Combat.fire_weapon(s, s.muzzle, dir, spread)
 						s.burst -= 1
 						s.mag -= 1
 						s.fire_cd = W["rof"]
 						if s.mag <= 0:
-							s.reload_t = W["reload"]
 							s.burst = 0
-							if s.vis_t != null or G.sim_time - s.seen_t < 3.0:
-								G.fx.callout(s, "Reloading!")
+							if s.start_reload():
+								if s.vis_t != null or G.sim_time - s.seen_t < 3.0:
+									G.fx.callout(s, "Reloading!")
+							else:
+								G.fx.callout(s, "I'm out!")
+								s.decide_t = 0.0
 			elif s.fire_cd <= 0.0:
 				s.burst_cd -= G.DT
 				if s.burst_cd <= 0.0:
@@ -835,8 +875,8 @@ static func aim_and_fire(s) -> void:
 			s.ready_ = G.sim_time - s.seen_t < 12.0
 		s.aim_yaw = G.turn_to(s.aim_yaw, yaw, 3.5 * G.DT)
 		s.aim_pitch *= 0.95
-		if s.mag < W["mag"] * 0.5 and s.reload_t <= 0.0 and s.vis_t == null:
-			s.reload_t = W["reload"]
+		if s.mag < W["mag"] * 0.5 and s.vis_t == null:
+			s.start_reload()
 
 static func stance(s) -> void:
 	s.lean_t = 0.0
@@ -875,3 +915,87 @@ static func stance(s) -> void:
 		s.crouch_t = 0.3 if s.supp > 0.8 else 0.0
 	else:
 		s.crouch_t = 0.85 if s.kneel else 0.0
+
+# ---------------------------------------------------------------- ammunition
+# nearest place to restock: a friendly ammo crate, or a fallen soldier's pouches close by
+static func find_ammo(s):
+	var best = null
+	var bd = 1e9
+	for a in G.world.ammo_points:
+		if a["team"] >= 0 and a["team"] != s.team:
+			continue
+		var d = G.dist2d(a["p"], s.pos)
+		if d < bd and d < 140.0:
+			bd = d
+			best = a
+	for o in G.soldiers:
+		if o.state == "dead" and o.reserve > 0 and o != s:
+			var d2 = G.dist2d(o.pos, s.pos)
+			if d2 < 30.0 and d2 * 2.0 < bd:
+				bd = d2 * 2.0
+				best = o
+	return best
+
+# standing at a crate (or over a body) restocks you
+static func supply_tick(s, dt: float) -> void:
+	if s.state != "alive":
+		return
+	if s.ammo_frac() >= 0.999 and s.grenades >= 2:
+		s.resupply_t = 0.0
+		return
+	var near = false
+	for a in G.world.ammo_points:
+		if (a["team"] < 0 or a["team"] == s.team) and G.dist2d(a["p"], s.pos) < 2.6:
+			near = true
+			break
+	if near:
+		s.resupply_t += dt
+		if s.resupply_t >= 1.0:
+			s.resupply_t = 0.0
+			s.resupply()
+			if s.is_player:
+				G.ui.message("Resupplied")
+			elif s.task == "resupply":
+				s.task = null
+				s.supply_target = null
+				s.decide_t = 0.0
+				G.fx.callout(s, G.pick(["Got ammo!", "Restocked!"]))
+		return
+	s.resupply_t = 0.0
+	if s.task == "resupply" and s.supply_target is Object and is_instance_valid(s.supply_target) and G.dist2d(s.supply_target.pos, s.pos) < 1.8:
+		scavenge(s, s.supply_target)
+		s.task = null
+		s.supply_target = null
+		s.decide_t = 0.0
+
+static func scavenge(s, body) -> void:
+	# a fallen soldier's rounds only fit if it's the same kind of gun; otherwise take a couple of generic mags
+	var got = body.reserve if body.wid == s.wid else mini(body.reserve, s.W["mag"] * 2)
+	s.reserve = mini(s.reserve + got, s.W["mag"] * s.W["mags"])
+	body.reserve = 0
+	if body.grenades > 0:
+		s.grenades += 1
+		body.grenades -= 1
+	if s.is_player:
+		G.ui.message("Picked up ammo from %s" % body.sname)
+	else:
+		G.fx.callout(s, "Took his ammo.")
+
+# would this shot (or its spread, or a rocket's blast) endanger a friend?
+static func friendly_in_line(s, from: Vector3, dir: Vector3, L: float):
+	var rocket = s.W["rocket"]
+	var end = from + dir * L
+	for o in G.soldiers:
+		if o == s or o.team != s.team or o.state == "dead":
+			continue
+		var c = o.chest()
+		if rocket and c.distance_to(end) < 8.0:
+			return o
+		var v = c - from
+		var t = v.dot(dir)
+		if t < 0.0 or t > L + 4.0:
+			continue
+		var perp = (v - dir * t).length()
+		if perp < 0.75 + t * 0.03:
+			return o
+	return null

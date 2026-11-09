@@ -23,6 +23,7 @@ var buildings: Array = []
 var roads: Array = []
 var spawn = [Vector3(-96, 0, 0), Vector3(96, 0, 0)]
 var capture = Vector3.ZERO
+var ammo_points: Array = []   # {"p": Vector3, "team": int (-1 = anyone)}
 var geo_root: Node3D
 var rng = RandomNumberGenerator.new()
 
@@ -224,6 +225,7 @@ func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, colo
 		c.dest = opt.get("dest", false)
 		c.hp = opt.get("hp", 160.0)
 		c.no_move = opt.get("no_move", false)
+		c.prop = opt.get("mat", 0)
 	return ref
 
 func piece_start() -> void:
@@ -768,7 +770,7 @@ func hedgehog(x: float, z: float) -> void:
 	add_col(x, ground_y(x, z), z, 1.1, 0.9, 1.1)
 
 func crate(x: float, z: float, s: float) -> void:
-	add_box(x, 0.0, z, s, s, s, Color(0.43, 0.35, 0.23), {"dest": true, "hp": 70.0})
+	add_box(x, 0.0, z, s, s, s, Color(0.43, 0.35, 0.23), {"dest": true, "hp": 70.0, "mat": 1})
 
 func truck(x: float, z: float, along_z: bool) -> void:
 	var c = Color(0.23, 0.22, 0.2)
@@ -824,6 +826,18 @@ func base(sx: float) -> void:
 		add_box(bx + sx * 7.0, 0.0, -22.0 + i * 22.0, 6.0, 2.4, 4.0, Color(0.33, 0.38, 0.24) if sx < 0 else Color(0.42, 0.39, 0.28), {"dest": true, "hp": 120.0})
 	add_box(bx + sx * 3.0, 0.0, 0.0, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
 	add_box(bx + sx * 3.9, 5.6, 0.0, 1.6, 1.0, 0.05, G.TEAM_BAND[0] if sx < 0 else G.TEAM_BAND[1], {"collide": false, "no_shadow": true})
+	ammo_crate(bx + sx * 1.5, -5.0, 0 if sx < 0 else 1)
+	ammo_crate(bx + sx * 1.5, 5.0, 0 if sx < 0 else 1)
+
+# an ammo crate: stand next to it for a second to restock
+func ammo_crate(x: float, z: float, team: int) -> void:
+	add_box(x, 0.0, z, 1.3, 0.7, 0.8, Color(0.24, 0.29, 0.18), {"mat": 1})
+	add_box(x, 0.7, z, 1.32, 0.06, 0.2, Color(0.82, 0.7, 0.2), {"collide": false})
+	ammo_points.append({"p": Vector3(x, ground_y(x, z), z), "team": team})
+
+# where a beaten soldier runs back to
+func rally_point(team: int) -> Vector3:
+	return spawn[team]
 
 func crater_at(x: float, z: float, r: float, d: float) -> void:
 	for rd in roads:
@@ -836,7 +850,7 @@ func crater_at(x: float, z: float, r: float, d: float) -> void:
 
 func hedge_row(x: float, z: float, ln: float, along_x: bool) -> void:
 	if along_x:
-		add_box(x, 0.0, z, ln, 1.35, 1.1, Color(0.31, 0.35, 0.2), {"dest": true, "hp": 180.0})
+		add_box(x, 0.0, z, ln, 1.35, 1.1, Color(0.31, 0.35, 0.2), {"dest": true, "hp": 180.0, "mat": 2})
 	else:
 		add_box(x, 0.0, z, 1.1, 1.35, ln, Color(0.31, 0.35, 0.2), {"dest": true, "hp": 180.0})
 	var c = cols[cols.size() - 1]
@@ -1096,7 +1110,7 @@ func load_map(id: String) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []
+	cols = []; grid = {}; groups = {}; cover = []; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []
 	th = PackedFloat32Array()
 	th.resize((TW + 1) * (TH_ + 1))
 	th.fill(0.0)

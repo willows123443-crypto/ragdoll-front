@@ -107,6 +107,7 @@ func start_game(o: Dictionary) -> void:
 	G.limit = o.get("limit", 50)
 	G.reinforce = o.get("reinforce", true)
 	G.world.load_map(o.get("map", "town"))
+	Stats.reset()
 	for t in range(2):
 		for i in range(G.team_size):
 			base_spawn(t)
@@ -129,6 +130,7 @@ func spawn_soldier(team: int, x: float, z: float, wid: String):
 	var tgt: Vector3 = G.world.spawn[1 - team]
 	s.face(atan2(tgt.x - p.x, (tgt.z - p.z) * 0.3))
 	G.soldiers.append(s)
+	Stats.register(s)
 	AI.assign_squad(s)
 	return s
 
@@ -185,6 +187,7 @@ func _sim_step() -> void:
 	Combat.step_rockets()
 	Combat.step_strikes()
 	G.fx.step(G.DT)
+	Stats.step(G.DT)
 	_update_capture()
 	if randf() < 0.05:
 		cleanup_bodies(false)
@@ -299,6 +302,23 @@ func _report(tag: String) -> void:
 	var alive = [G.alive_count(0), G.alive_count(1)]
 	var dead = G.soldiers.filter(func(s): return s.state == "dead").size()
 	var ms = (tick_us / 1000.0) / maxi(tick_n, 1)
+	var mor = [0.0, 0.0]
+	var brk = [0, 0]
+	var low = [0, 0]
+	var cnt = [0, 0]
+	for o in G.soldiers:
+		if o.state == "alive" and o.team < 2:
+			mor[o.team] += o.morale
+			cnt[o.team] += 1
+			if o.broken:
+				brk[o.team] += 1
+			if o.ammo_frac() < 0.3:
+				low[o.team] += 1
+	var leaders = 0
+	for q in G.squads:
+		if q.get("leader") != null and is_instance_valid(q["leader"]) and q["leader"].state != "dead":
+			leaders += 1
+	print("AUTOTEST %s | morale %d/%d broken %d/%d lowammo %d/%d leaders %d/%d squads | routs %d/%d shots %d/%d hits %d/%d" % [tag, int(mor[0] / maxi(cnt[0], 1)), int(mor[1] / maxi(cnt[1], 1)), brk[0], brk[1], low[0], low[1], leaders, G.squads.size(), Stats.teams[0]["routs"], Stats.teams[1]["routs"], Stats.teams[0]["shots"], Stats.teams[1]["shots"], Stats.teams[0]["hits"], Stats.teams[1]["hits"]])
 	var kn = _knee_stats()
 	print("AUTOTEST %s | knees ok/backward: body %d/%d, target %d/%d" % [tag, kn[0], kn[1], kn[2], kn[3]])
 	print("AUTOTEST %s | alive %d v %d | dead %d | score %d-%d | sim %.2f ms/tick" % [tag, alive[0], alive[1], dead, G.score[0], G.score[1], ms])
@@ -325,6 +345,9 @@ func _autotest() -> void:
 		Combat.mortar_strike(G.world.capture, 4)
 		await _wait(15.0)
 		_report(m + " 30s")
+		if m == "town":
+			await _wait(60.0)
+			_report(m + " 90s")
 	print("AUTOTEST done")
 	get_tree().quit()
 
@@ -358,6 +381,20 @@ func _shot_mode(dir: String) -> void:
 	var c: Vector3 = G.world.capture
 	await _look(c + Vector3(-40, 25, -10), c)
 	await _snap(dir, "overview")
+	if _arg("fp", "") != "":
+		for s in G.soldiers:
+			if s.state == "alive":
+				G.pc.first_person = _arg("fp", "") == "1"
+				G.pc.possess(s)
+				G.pc.force_free = false
+				await _wait(1.5)
+				await _snap(dir, "player_view")
+				G.ui.visible = true
+				await _wait(0.2)
+				await _snap(dir, "player_view_hud")
+				G.ui.visible = false
+				G.pc.force_free = true
+				break
 	var pose = _arg("pose", "")
 	if pose != "":
 		for s in G.soldiers:

@@ -36,55 +36,95 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 		if d < 45.0:
 			AI.add_intel(o, s, origin, 1.5 if d < 15.0 else d * 0.12, false)
 
+# how much material a bullet can punch through (metres of plain wall); wood and foliage count for much less
+const PEN = {"rifle": 0.34, "lmg": 0.42, "sniper": 0.75, "shotgun": 0.08, "rpg": 0.0}
+const MAT_FACTOR = [1.0, 0.3, 0.1]   # solid, wood, foliage
+
+# metres of the ray o + d*t inside an axis-aligned box, starting from entry distance t0
+static func _box_exit(o: Vector3, d: Vector3, lo: Vector3, hi: Vector3) -> float:
+	var t_exit = 1e9
+	for k in range(3):
+		var dk = d[k]
+		if absf(dk) < 1e-6:
+			continue
+		var t1 = (lo[k] - o[k]) / dk
+		var t2 = (hi[k] - o[k]) / dk
+		t_exit = minf(t_exit, maxf(t1, t2))
+	return t_exit
+
 static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool) -> void:
-	var hit = G.ray(o, o + d * 240.0, G.L_WORLD | G.L_BODY, shooter.rids)
-	var t = 240.0
-	var hit_s = null
-	var part = -1
-	var col = null
-	var normal = -d
-	if not hit.is_empty():
-		t = o.distance_to(hit.position)
-		normal = hit.normal
+	var exclude: Array = shooter.rids.duplicate()
+	var dmg = W["dmg"]
+	var pen = PEN.get(W["id"], 0.3)
+	var events: Array = []
+	var t_end = 240.0
+	var from = o
+	for step in range(4):
+		var hit = G.ray(from, o + d * 240.0, G.L_WORLD | G.L_BODY, exclude)
+		if hit.is_empty():
+			break
+		var t = o.distance_to(hit.position)
+		if W["id"] == "shotgun" and t > 15.0:
+			dmg = W["dmg"] * maxf(0.25, 1.0 - (t - 15.0) / 20.0)
 		if hit.collider.has_meta("soldier"):
-			hit_s = hit.collider.get_meta("soldier")
-			part = hit.collider.get_meta("part")
-		elif hit.collider.has_meta("col"):
-			col = hit.collider.get_meta("col")
+			events.append({"t": t, "s": hit.collider.get_meta("soldier"), "part": hit.collider.get_meta("part"), "p": hit.position, "dmg": dmg})
+			t_end = t
+			break
+		var col = hit.collider.get_meta("col") if hit.collider.has_meta("col") else null
+		events.append({"t": t, "p": hit.position, "n": hit.normal, "col": col, "dmg": dmg})
+		t_end = t
+		if col == null or not col.alive or pen <= 0.0:
+			break
+		# thin enough to punch through?
+		var t_out = _box_exit(o, d, col.lo, col.hi)
+		var thick = maxf(0.0, t_out - t)
+		var eff = thick * MAT_FACTOR[clampi(col.prop, 0, 2)]
+		if thick <= 0.0 or eff >= pen:
+			break
+		dmg *= 1.0 - 0.7 * eff / pen
+		pen -= eff
+		exclude.append(hit.rid)
+		from = o + d * (t_out + 0.02)
+		events.append({"t": t_out, "p": o + d * t_out, "n": d, "col": null, "dmg": 0.0, "exit": true})
+		t_end = 240.0
 	# suppression: bullets passing close make people keep their heads down
 	for s in G.soldiers:
 		if s == shooter or s.state == "dead":
 			continue
 		var c = s.chest()
-		var tt = clampf((c - o).dot(d), 0.0, t)
+		var tt = clampf((c - o).dot(d), 0.0, t_end)
 		var dd = (o + d * tt).distance_to(c)
 		if dd < 3.0:
-			s.supp = minf(1.5, s.supp + 0.22 * (1.0 - dd / 3.0) * (1.4 if W["id"] == "lmg" else 1.0))
+			var add = 0.22 * (1.0 - dd / 3.0) * (1.4 if W["id"] == "lmg" else 1.0)
+			s.supp = minf(1.5, s.supp + add)
 			if shooter.team != s.team:
 				AI.add_intel(s, shooter, shooter.pos, 5.0, false)
+				Morale.shock(s, add * 9.0)
 	var cam = G.main.get_viewport().get_camera_3d()
 	if shooter != G.player and cam:
 		var tc = (cam.global_position - o).dot(d)
-		if tc > 2.0 and tc < t and (o + d * tc).distance_to(cam.global_position) < 2.5 and randf() < 0.6:
+		if tc > 2.0 and tc < t_end and (o + d * tc).distance_to(cam.global_position) < 2.5 and randf() < 0.6:
 			G.audio.whizz(o + d * tc)
-	var hp = o + d * t
-	var dmg = W["dmg"]
-	if W["id"] == "shotgun" and t > 15.0:
-		dmg *= maxf(0.25, 1.0 - (t - 15.0) / 20.0)
 	var force = W["force"]
+	Stats.shot(shooter)
 	var on_hit = func():
-		if hit_s != null:
-			if is_instance_valid(hit_s):
-				hit_soldier(hit_s, part, hp, d, dmg, shooter, force)
-		elif t < 239.0:
-			G.fx.impact(hp, normal)
-			if randf() < 0.25 and hp.y > G.world.ground_y(hp.x, hp.z) + 0.1:
-				G.audio.ricochet(hp)
-			if col != null and col.alive and col.dest and col.hp < 100.0:
-				col.hp -= W["dmg"] * 0.08
-				if col.hp <= 0.0:
-					G.world.destroy_col(col)
-	G.fx.tracer(o, d, t, W["tracer"], on_hit, vis)
+		for ev in events:
+			if ev.has("s"):
+				var hs = ev["s"]
+				if is_instance_valid(hs):
+					hit_soldier(hs, ev["part"], ev["p"], d, ev["dmg"], shooter, force)
+			else:
+				G.fx.impact(ev["p"], ev["n"])
+				if ev.has("exit"):
+					continue
+				if randf() < 0.25 and ev["p"].y > G.world.ground_y(ev["p"].x, ev["p"].z) + 0.1:
+					G.audio.ricochet(ev["p"])
+				var col = ev["col"]
+				if col != null and col.alive and col.dest and col.hp < 100.0:
+					col.hp -= W["dmg"] * 0.08
+					if col.hp <= 0.0:
+						G.world.destroy_col(col)
+	G.fx.tracer(o, d, t_end, W["tracer"], on_hit, vis)
 
 static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, attacker, force: float) -> void:
 	if attacker != null and not is_instance_valid(attacker):
@@ -104,6 +144,8 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 	elif kind == "leg":
 		mult = 0.6
 	s.hp -= dmg * mult
+	Stats.hit(attacker, s, dmg * mult)
+	Morale.shock(s, 10.0)
 	s.last_attacker = attacker
 	s.hurt_t = 3.0
 	s.supp = minf(1.5, s.supp + 0.6)
@@ -141,6 +183,8 @@ static func kill(s, attacker, head: bool) -> void:
 	if attacker != null and not is_instance_valid(attacker):
 		attacker = null
 	s.go_dead()
+	Stats.killed(s, attacker, head)
+	Morale.on_death(s, attacker)
 	if attacker != null and attacker.team != s.team:
 		G.score[attacker.team] += 1
 	G.main.on_kill(s, attacker)

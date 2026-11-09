@@ -75,6 +75,17 @@ var muzzle = Vector3.ZERO
 var gun_blocked = false
 var anchor_l = false
 var mag = 30
+var reserve = 120       # rounds carried besides the loaded magazine
+var resupply_t = 0.0
+var supply_target = null
+var morale = 70.0
+var nerve = 1.0         # how hard bad news hits this soldier
+var nerve_cap = 80.0    # morale they settle at when things are calm
+var broken = false
+var rally_cd = 0.0
+var morale_t = 0.0
+var rec = null          # stats record (see Stats)
+var leader_mark: Node3D = null
 var reload_t = 0.0
 var fire_cd = 0.0
 var burst = 0
@@ -153,6 +164,11 @@ func setup(team_: int, x: float, z: float, weapon_id: String) -> void:
 	wid = weapon_id
 	W = G.WEAPONS[wid]
 	mag = W["mag"]
+	reserve = W["mag"] * W["mags"]
+	nerve = randf_range(0.75, 1.3)
+	nerve_cap = randf_range(68.0, 88.0)
+	morale = nerve_cap - randf_range(0.0, 10.0)
+	morale_t = randf() * 0.5
 	pos = Vector3(x, G.world.ground_y(x, z), z)
 	body_yaw = PI / 2.0 if team == 0 else -PI / 2.0
 	aim_yaw = body_yaw
@@ -339,6 +355,7 @@ func set_weapon(new_id: String) -> void:
 	wid = new_id
 	W = G.WEAPONS[new_id]
 	mag = W["mag"]
+	reserve = W["mag"] * W["mags"]
 	reload_t = 0.0
 	fire_cd = 0.3
 	burst = 0
@@ -624,6 +641,62 @@ func chest() -> Vector3:
 
 func head_pos() -> Vector3:
 	return parts[2].global_position
+
+# ---------------------------------------------------------------- ammunition
+func start_reload() -> bool:
+	if reload_t > 0.0 or mag >= W["mag"] or reserve <= 0:
+		return false
+	reload_t = W["reload"]
+	return true
+
+func finish_reload() -> void:
+	var take = mini(W["mag"] - mag, reserve)
+	mag += take
+	reserve -= take
+
+func ammo_frac() -> float:
+	return float(mag + reserve) / float(W["mag"] * (W["mags"] + 1))
+
+func resupply() -> void:
+	reserve = W["mag"] * W["mags"]
+	grenades = maxi(grenades, 2)
+	smokes = maxi(smokes, 1)
+	if wid == "rpg":
+		rockets = 3
+
+# squad leaders carry a radio with a tall antenna so you can pick them out
+func set_leader(v: bool) -> void:
+	if rec != null:
+		rec["leader"] = rec["leader"] or v
+	if v and leader_mark == null and parts.size() > 1:
+		leader_mark = Node3D.new()
+		var box = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.2, 0.24, 0.1)
+		box.mesh = bm
+		box.material_override = _mat("radio", Color(0.2, 0.22, 0.17), false)
+		box.layers = 2
+		leader_mark.add_child(box)
+		var ant = MeshInstance3D.new()
+		var am = BoxMesh.new()
+		am.size = Vector3(0.018, 0.75, 0.018)
+		ant.mesh = am
+		ant.material_override = _mat("antenna", Color(0.1, 0.1, 0.1), false)
+		ant.position = Vector3(0.06, 0.45, 0)
+		ant.layers = 2
+		leader_mark.add_child(ant)
+		leader_mark.position = Vector3(0, 0.08, -0.2)
+		parts[1].add_child(leader_mark)
+	elif not v and leader_mark != null:
+		leader_mark.queue_free()
+		leader_mark = null
+
+func set_head_hidden(v: bool) -> void:
+	if parts.size() < 3:
+		return
+	for c in parts[2].get_children():
+		if c is MeshInstance3D:
+			c.layers = 8 if v else 2
 
 func is_up() -> bool:
 	return state == "alive" or state == "riding"

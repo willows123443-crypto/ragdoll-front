@@ -46,6 +46,9 @@ var menu: PanelContainer
 var help: PanelContainer
 var win: PanelContainer
 var win_title: Label
+var report: PanelContainer
+var report_body: VBoxContainer
+var report_chart: Control
 var opt_map: OptionButton
 var opt_mode: OptionButton
 var opt_size: OptionButton
@@ -193,6 +196,7 @@ func _build_side() -> void:
 	side.add_child(_button("Slow-mo (T)", func(): Engine.time_scale = 0.25 if Engine.time_scale > 0.5 else 1.0))
 	side.add_child(_button("Pause (P)", func(): get_tree().paused = not get_tree().paused))
 	side.add_child(_button("Clear bodies", func(): G.main.clear_bodies()))
+	side.add_child(_button("Battle report (J)", func(): show_report()))
 	side.add_child(_button("Controls (H)", func(): help.visible = true))
 
 # ---------------------------------------------------------------- tool bar
@@ -429,7 +433,12 @@ func _build_help() -> void:
 		"  Mouse  aim · Left-click  fire · Right mouse  aim down sights\n" + \
 		"  Q / E  lean · Shift  sprint · C  crouch · Z  prone · run into low walls to vault\n" + \
 		"  R  reload · G  grenade · V  smoke · 1–5  rifle, machine gun, sniper, shotgun, rockets\n" + \
-		"  Esc  free the mouse · X  leave the soldier"
+		"  F  take the gun (or ammo) of a fallen soldier at your feet · stand at an ammo crate to restock\n" + \
+		"  Y  first-person / third-person view · Esc  free the mouse · X  leave the soldier\n\n" + \
+		"BATTLE\n" + \
+		"  Squad leaders carry a radio antenna. Soldiers who lose friends, their leader or come under heavy fire\n" + \
+		"  get shaken, and may break and run to the rear until a leader rallies them.\n" + \
+		"  Bullets go through thin walls, crates and hedges. J  battle report"
 	var l = _label(t, 14, Color(0.88, 0.88, 0.88))
 	v.add_child(l)
 	v.add_child(_button("Close", func(): help.visible = false))
@@ -453,6 +462,7 @@ func _build_win() -> void:
 		G.mode = "sandbox"
 		G.over = false
 		win.visible = false))
+	h.add_child(_button("Battle report", func(): show_report()))
 	h.add_child(_button("Main menu", func():
 		win.visible = false
 		show_menu()))
@@ -467,7 +477,7 @@ func show_win(team: int) -> void:
 	win.visible = true
 
 func menu_open() -> bool:
-	return menu.visible or help.visible or win.visible
+	return menu.visible or help.visible or win.visible or (report != null and report.visible)
 
 func typing() -> bool:
 	return false
@@ -479,6 +489,11 @@ func _unhandled_key_input(ev: InputEvent) -> void:
 			show_menu()
 		elif ev.keycode == KEY_H:
 			help.visible = not help.visible
+		elif ev.keycode == KEY_J and G.started:
+			if report != null and report.visible:
+				report.visible = false
+			else:
+				show_report()
 		elif ev.keycode == KEY_ESCAPE and G.started and G.player == null:
 			menu.visible = false
 			help.visible = false
@@ -529,7 +544,9 @@ func update_hud(dt: float) -> void:
 				elif s.p_crouch: st = " — crouched"
 		p_name.text = "%s  ·  %s%s" % [s.sname, s.W["name"], st]
 		p_hp.value = maxf(0.0, s.hp)
-		p_ammo.text = "%d / %d     grenades %d · smoke %d" % [s.mag, s.W["mag"], s.grenades, s.smokes]
+		p_ammo.text = "%d | %d     grenades %d · smoke %d" % [s.mag, s.reserve, s.grenades, s.smokes]
+		if s.resupply_t > 0.0:
+			p_ammo.text += "     resupplying…"
 		tip.text = "" if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else "Click to aim — X to leave this soldier"
 	else:
 		tip.text = TIPS.get(tool, "") if show_game else ""
@@ -548,3 +565,136 @@ func update_hud(dt: float) -> void:
 		msg_t -= dt
 		if msg_t <= 0.0:
 			msg.text = ""
+
+# ---------------------------------------------------------------- after-action report
+func _build_report() -> void:
+	report = _panel(Color(0.09, 0.11, 0.13, 0.97))
+	_place(report, Control.PRESET_CENTER, -430, -300, 860, 600)
+	var scroll = ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(840, 580)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	report_body = VBoxContainer.new()
+	report_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(report_body)
+	report.add_child(scroll)
+	report.visible = false
+	root.add_child(report)
+
+func _cell(text: String, w: float, col: Color = Color(0.85, 0.87, 0.88), size: int = 14) -> Label:
+	var l = _label(text, size, col)
+	l.custom_minimum_size = Vector2(w, 0)
+	l.clip_text = true
+	return l
+
+func show_report() -> void:
+	if report == null:
+		_build_report()
+	for c in report_body.get_children():
+		report_body.remove_child(c)
+		c.queue_free()
+	var t = int(G.game_time)
+	var head = HBoxContainer.new()
+	head.add_child(_label("After-action report", 24))
+	var sp = Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(sp)
+	head.add_child(_button("Close (J)", func(): report.visible = false))
+	report_body.add_child(head)
+	var map_name = G.world.MAPS.get(G.map_id, {}).get("name", G.map_id)
+	report_body.add_child(_label("%s · %s · %02d:%02d of fighting" % [map_name, G.mode, t / 60, t % 60], 14, Color(0.7, 0.72, 0.74)))
+	# team summary
+	var grid = GridContainer.new()
+	grid.columns = 1 + G.team_count()
+	grid.add_theme_constant_override("h_separation", 24)
+	grid.add_child(_cell("", 170))
+	for ti in range(G.team_count()):
+		grid.add_child(_cell(G.TEAM_NAMES[ti], 150, G.TEAM_BAND[ti].lightened(0.35), 16))
+	var rows = [["Soldiers deployed", "spawned"], ["Killed in action", "deaths"], ["Enemies killed", "kills"], ["Headshots", "heads"],
+		["Shots fired", "shots"], ["Accuracy", "acc"], ["Times a soldier broke and ran", "routs"], ["Friendly-fire kills", "teamkills"]]
+	for r in rows:
+		grid.add_child(_cell(r[0], 170, Color(0.7, 0.72, 0.74)))
+		for ti in range(G.team_count()):
+			var d = Stats.teams[ti] if ti < Stats.teams.size() else {}
+			var v = ""
+			if r[1] == "acc":
+				v = "%d%%" % int(100.0 * d.get("hits", 0) / maxf(1.0, d.get("shots", 0)))
+			else:
+				v = str(int(d.get(r[1], 0)))
+			grid.add_child(_cell(v, 150))
+	report_body.add_child(grid)
+	# strength over time
+	report_body.add_child(_label("Soldiers alive over time", 16))
+	report_chart = Control.new()
+	report_chart.custom_minimum_size = Vector2(820, 140)
+	report_chart.draw.connect(_draw_report_chart)
+	report_body.add_child(report_chart)
+	# best performers
+	var m = Stats.mvp()
+	if m != null:
+		report_body.add_child(_label("Most valuable soldier: %s (%s, %s) — %d kills, %d damage dealt%s" % [m["name"], G.TEAM_NAMES[m["team"]], m["weapon"], m["kills"], int(m["dmg"]), (", %d wounded treated" % m["heals"]) if m["heals"] > 0 else ""], 15, Color(1.0, 0.86, 0.45)))
+	var you = []
+	for r in Stats.roster:
+		if r["player"]:
+			you.append(r)
+	if not you.is_empty():
+		var k = 0
+		var h = 0
+		var sh = 0
+		for r in you:
+			k += r["kills"]
+			h += r["hits"]
+			sh += r["shots"]
+		report_body.add_child(_label("You controlled %d soldier%s: %d kills, %d%% accuracy" % [you.size(), "" if you.size() == 1 else "s", k, int(100.0 * h / maxf(1.0, sh))], 15, Color(0.6, 0.85, 1.0)))
+	for ti in range(G.team_count()):
+		report_body.add_child(_label("Top soldiers · " + G.TEAM_NAMES[ti], 16, G.TEAM_BAND[ti].lightened(0.35)))
+		var list = Stats.roster.filter(func(r): return r["team"] == ti)
+		list.sort_custom(func(a, b): return a["kills"] * 100.0 + a["dmg"] > b["kills"] * 100.0 + b["dmg"])
+		var tg = GridContainer.new()
+		tg.columns = 7
+		for hdr in [["Name", 150], ["Weapon", 120], ["Kills", 60], ["Damage", 70], ["Accuracy", 80], ["Status", 160], ["", 120]]:
+			tg.add_child(_cell(hdr[0], hdr[1], Color(0.6, 0.62, 0.64), 13))
+		for i in range(mini(6, list.size())):
+			var r = list[i]
+			var status = "alive"
+			if r["death_t"] >= 0.0:
+				var dt_ = int(r["death_t"])
+				status = "killed at %02d:%02d" % [dt_ / 60, dt_ % 60]
+			var notes = []
+			if r["leader"]:
+				notes.append("leader")
+			if r["player"]:
+				notes.append("you")
+			if r["routs"] > 0:
+				notes.append("ran %dx" % r["routs"])
+			tg.add_child(_cell(r["name"], 150))
+			tg.add_child(_cell(r["weapon"], 120))
+			tg.add_child(_cell(str(r["kills"]), 60))
+			tg.add_child(_cell(str(int(r["dmg"])), 70))
+			tg.add_child(_cell("%d%%" % int(100.0 * r["hits"] / maxf(1.0, r["shots"])), 80))
+			tg.add_child(_cell(status, 160))
+			tg.add_child(_cell(", ".join(notes), 120, Color(0.75, 0.75, 0.6)))
+		report_body.add_child(tg)
+	report.visible = true
+
+func _draw_report_chart() -> void:
+	var c = report_chart
+	var w = c.size.x
+	var h = c.size.y
+	c.draw_rect(Rect2(0, 0, w, h), Color(1, 1, 1, 0.04))
+	var tl = Stats.timeline
+	if tl.size() < 2:
+		c.draw_string(ThemeDB.fallback_font, Vector2(10, h / 2.0), "Not enough time has passed yet", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 0.6, 0.6))
+		return
+	var t0 = tl[0][0]
+	var t1 = maxf(tl[tl.size() - 1][0], t0 + 1.0)
+	var top = 1.0
+	for e in tl:
+		for v in e[1]:
+			top = maxf(top, v)
+	for ti in range(G.team_count()):
+		var pts = PackedVector2Array()
+		for e in tl:
+			if ti < e[1].size():
+				pts.append(Vector2((e[0] - t0) / (t1 - t0) * (w - 10.0) + 5.0, h - 6.0 - e[1][ti] / top * (h - 16.0)))
+		if pts.size() > 1:
+			c.draw_polyline(pts, G.TEAM_BAND[ti].lightened(0.2), 2.0, true)

@@ -15,6 +15,7 @@ var r_drag = false
 var bloom = 0.0
 var kick = 0.0
 var orbit = 0.0
+var first_person = false
 var force_free = false   # development screenshots: keep the free camera while controlling a soldier
 
 func _ready() -> void:
@@ -34,6 +35,10 @@ func possess(s) -> void:
 		G.player.is_player = false
 	G.player = s
 	s.is_player = true
+	s.broken = false
+	if s.rec != null:
+		s.rec["player"] = true
+	_apply_view(s)
 	AI.release_cover(s)
 	AI.stop_move(s)
 	s.task = null
@@ -53,6 +58,7 @@ func leave_soldier() -> void:
 	if G.player == null:
 		return
 	if is_instance_valid(G.player):
+		G.player.set_head_hidden(false)
 		G.player.is_player = false
 		G.player.ads = false
 		G.player.decide_t = 0.0
@@ -65,6 +71,11 @@ func leave_soldier() -> void:
 
 func player_update(s) -> void:
 	var W = s.W
+	s.morale_t -= G.DT
+	if s.morale_t <= 0.0:
+		s.morale_t = 0.5
+		Morale.tick(s, 0.5)
+		AI.supply_tick(s, 0.5)
 	var f = Vector3(sin(cam_yaw), 0, cos(cam_yaw))
 	var r = Vector3(-cos(cam_yaw), 0, sin(cam_yaw))
 	var m = Vector3.ZERO
@@ -91,7 +102,7 @@ func player_update(s) -> void:
 	if s.reload_t > 0.0:
 		s.reload_t -= G.DT
 		if s.reload_t <= 0.0:
-			s.mag = W["mag"]
+			s.finish_reload()
 	s.fire_cd -= G.DT
 	var pull = mouse_down and captured and (W["auto"] or not trig_latch)
 	if pull and not sprint and s.fire_cd <= 0.0 and s.mag > 0 and s.reload_t <= 0.0 and not s.gun_blocked:
@@ -106,8 +117,8 @@ func player_update(s) -> void:
 		cam_yaw += randf_range(-0.5, 0.5) * rc * 0.6
 		bloom = minf(0.05, bloom + rc * 0.5)
 		kick = minf(0.25, kick + 0.06 + rc)
-		if s.mag <= 0:
-			s.reload_t = W["reload"]
+		if s.mag <= 0 and not s.start_reload():
+			G.ui.message("Out of ammo. Find an ammo crate, or press F over a fallen soldier")
 	if not mouse_down:
 		trig_latch = false
 
@@ -138,11 +149,22 @@ func _process(dt: float) -> void:
 			side = 0.3
 		back += kick * 0.6
 		var want_p = piv - d * back + r * side + Vector3(0, 0.12, 0)
+		if first_person and s.state == "alive":
+			# eyes: where the pose puts the head, carried by the real chest (steady, but moves with the body)
+			var eye: Vector3 = s.parts[1].global_position + (s.targets[2].origin - s.targets[1].origin)
+			want_p = eye + d * 0.12 + Vector3(0, 0.06, 0) - Vector3(0, kick * 0.05, 0)
+			piv = want_p
 		var hit = G.ray(piv, want_p, G.L_WORLD)
 		if not hit.is_empty():
 			want_p = piv + (want_p - piv).normalized() * maxf(0.2, piv.distance_to(hit.position) - 0.2)
 		cam.global_position = want_p
 		cam.look_at(want_p + d, Vector3.UP)
+		if first_person and s.state == "alive" and s.gun_node != null:
+			# first person: hold the gun in front of the camera, centred when aiming down the sights
+			var up = r.cross(d).normalized()
+			var off = Vector3(0.0, -0.13, 0.42) if s.ads else Vector3(0.2, -0.22, 0.48)
+			off.y -= kick * 0.1
+			s.gun_node.global_transform = Transform3D(Basis(up.cross(d), up, d), want_p + r * off.x + up * off.y + d * off.z - d * kick * 0.15)
 		var ah = G.ray(want_p, want_p + d * 300.0, G.L_WORLD | G.L_BODY, s.rids)
 		aim_point = want_p + d * 300.0 if ah.is_empty() else ah.position
 		if aim_point.distance_to(piv) < 2.0:
@@ -223,8 +245,15 @@ func _key(k: int) -> void:
 			leave_soldier()
 		elif k == KEY_ESCAPE:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-		elif k == KEY_R and s.mag < s.W["mag"] and s.reload_t <= 0.0 and s.state == "alive":
-			s.reload_t = s.W["reload"]
+		elif k == KEY_R and s.state == "alive":
+			if not s.start_reload() and s.reserve <= 0:
+				G.ui.message("No spare magazines")
+		elif k == KEY_F and s.state == "alive":
+			_pick_up(s)
+		elif k == KEY_Y:
+			first_person = not first_person
+			_apply_view(s)
+			G.ui.message("First-person view" if first_person else "Third-person view")
 		elif k == KEY_C:
 			s.p_crouch = not s.p_crouch
 			s.p_prone = false
@@ -305,3 +334,37 @@ func use_tool(screen: Vector2) -> void:
 	elif tool == "spA" or tool == "spB":
 		G.world.spawn[0 if tool == "spA" else 1] = Vector3(p.x, 0, p.z)
 		G.main.refresh_markers()
+
+# F while controlling a soldier: take the gun of a fallen soldier at your feet (with their ammo),
+# or just their spare ammo if it's the same kind of gun
+func _pick_up(s) -> void:
+	var best = null
+	var bd = 2.2
+	for o in G.soldiers:
+		if o.state == "dead" and o != s:
+			var d = G.dist2d(o.parts[0].global_position, s.pos)
+			if d < bd:
+				bd = d
+				best = o
+	if best == null:
+		G.ui.message("Nothing to pick up here")
+		return
+	if best.wid == s.wid:
+		AI.scavenge(s, best)
+		return
+	var their = [best.wid, best.mag, best.reserve]
+	var mine = [s.wid, s.mag, s.reserve]
+	s.set_weapon(their[0])
+	s.mag = their[1]
+	s.reserve = their[2]
+	best.set_weapon(mine[0])
+	best.mag = mine[1]
+	best.reserve = mine[2]
+	G.ui.message("Picked up %s's %s" % [best.sname, s.W["name"]])
+
+# first-person view hides your own head so it doesn't block the camera
+func _apply_view(s) -> void:
+	if s == null or not is_instance_valid(s):
+		return
+	s.set_head_hidden(first_person)
+	cam.set_cull_mask_value(4, not first_person)

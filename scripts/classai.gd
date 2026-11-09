@@ -37,7 +37,7 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 		return false
 	# repair damaged friendly vehicles
 	for v in G.vehicles:
-		if v.team == s.team and not v.dead and v.hp < v.spec["hp"] * 0.75 and G.dist2d(v.pos, s.pos) < 40.0:
+		if v.team == s.team and not v.dead and not v.spec.get("air", false) and (v.hp < v.spec["hp"] * 0.75 or v.tracks_broken or v.burning) and G.dist2d(v.pos, s.pos) < 40.0:
 			AI.release_cover(s)
 			s.task = "repair"
 			s.board_target = v
@@ -93,7 +93,7 @@ static func work(s) -> void:
 				s.decide_t = 0.0
 		"repair":
 			var v = s.board_target
-			if v == null or not is_instance_valid(v) or v.dead or v.hp >= v.spec["hp"]:
+			if v == null or not is_instance_valid(v) or v.dead or (v.hp >= v.spec["hp"] and not v.tracks_broken and not v.burning):
 				s.task = null
 				s.decide_t = 0.0
 				return
@@ -102,7 +102,10 @@ static func work(s) -> void:
 				s.crouch_t = 0.6
 				s.hand_t = v.center()
 				s.aim_yaw = G.turn_to(s.aim_yaw, atan2(v.pos.x - s.pos.x, v.pos.z - s.pos.z), 4.0 * G.DT)
-				v.hp = minf(v.spec["hp"], v.hp + 40.0 * G.DT)
+				v.repair(40.0 * G.DT)
+				if v.hp >= v.spec["hp"]:
+					v.tracks_broken = false
+					v.burning = false
 				if randf() < 0.05:
 					G.fx.impact(v.center() + Vector3(randf_range(-1, 1), 0, randf_range(-1, 1)), Vector3.UP)
 			elif s.move_target == null:

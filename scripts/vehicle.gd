@@ -24,6 +24,45 @@ const SPECS = {
 			{"o": Vector3(-0.8, 1.62, -1.9), "role": "pass", "pose": "sit", "face": PI / 2.0},
 			{"o": Vector3(0.8, 1.62, -2.8), "role": "pass", "pose": "sit", "face": -PI / 2.0},
 			{"o": Vector3(-0.8, 1.62, -2.8), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
+	"halftrack": {"name": "Half-track", "len": 6.2, "wid": 2.4, "speed": 10.5, "rev": 4.0, "accel": 4.5, "turn": 1.0, "hp": 900.0,
+		"bullet": 0.12, "tracked": false, "standoff": 30.0, "gun": "mg",
+		"seats": [
+			{"o": Vector3(0.5, 1.55, 1.7), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.0, 2.05, 0.6), "role": "gunner", "pose": "stand", "face": 0.0},
+			{"o": Vector3(0.75, 1.5, -0.4), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.75, 1.5, -0.4), "role": "pass", "pose": "sit", "face": PI / 2.0},
+			{"o": Vector3(0.75, 1.5, -1.3), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.75, 1.5, -1.3), "role": "pass", "pose": "sit", "face": PI / 2.0},
+			{"o": Vector3(0.75, 1.5, -2.2), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.75, 1.5, -2.2), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
+	"armoredcar": {"name": "Armoured car", "len": 5.2, "wid": 2.4, "speed": 16.0, "rev": 6.0, "accel": 6.5, "turn": 1.2, "hp": 1000.0,
+		"bullet": 0.06, "tracked": false, "standoff": 40.0, "gun": "autocannon",
+		"seats": [
+			{"o": Vector3(0.5, 1.2, 1.3), "role": "driver", "pose": "hidden", "face": 0.0},
+			{"o": Vector3(0.0, 2.1, -0.3), "role": "gunner", "pose": "hidden", "face": 0.0}]},
+	"motorbike": {"name": "Motorbike", "len": 2.6, "wid": 1.9, "speed": 19.0, "rev": 4.0, "accel": 9.0, "turn": 2.0, "hp": 200.0,
+		"bullet": 0.6, "tracked": false, "standoff": 30.0, "gun": "mg",
+		"seats": [
+			{"o": Vector3(-0.45, 1.25, -0.1), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.55, 1.0, 0.0), "role": "gunner", "pose": "sit", "face": 0.0}]},
+	"artillery": {"name": "Field gun", "len": 4.5, "wid": 2.4, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 600.0,
+		"bullet": 0.15, "tracked": false, "standoff": 0.0, "static": true,
+		"seats": [{"o": Vector3(0.9, 0.95, -1.6), "role": "gunner", "pose": "stand", "face": 0.0}]},
+	"heli": {"name": "Transport helicopter", "len": 11.0, "wid": 3.0, "speed": 26.0, "rev": 8.0, "accel": 8.0, "turn": 1.0, "hp": 700.0,
+		"bullet": 0.3, "tracked": false, "standoff": 0.0, "air": true,
+		"seats": [
+			{"o": Vector3(0.5, 1.55, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.7, 1.4, 0.6), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.7, 1.4, 0.6), "role": "pass", "pose": "sit", "face": PI / 2.0},
+			{"o": Vector3(0.7, 1.4, -0.3), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.7, 1.4, -0.3), "role": "pass", "pose": "sit", "face": PI / 2.0},
+			{"o": Vector3(0.7, 1.4, -1.2), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.7, 1.4, -1.2), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
+	"gunship": {"name": "Gunship", "len": 10.0, "wid": 2.4, "speed": 30.0, "rev": 8.0, "accel": 9.0, "turn": 1.2, "hp": 900.0,
+		"bullet": 0.2, "tracked": false, "standoff": 0.0, "air": true, "gun": "mg",
+		"seats": [
+			{"o": Vector3(0.0, 1.5, 1.6), "role": "driver", "pose": "hidden", "face": 0.0},
+			{"o": Vector3(0.0, 1.5, 2.6), "role": "gunner", "pose": "hidden", "face": 0.0}]},
 	"nest": {"name": "MG nest", "len": 3.2, "wid": 3.2, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 900.0,
 		"bullet": 0.04, "tracked": false, "standoff": 0.0, "static": true,
 		"seats": [{"o": Vector3(0.0, 0.95, -0.85), "role": "gunner", "pose": "stand", "face": 0.0}]},
@@ -75,6 +114,17 @@ var reverse_t = 0.0
 var crew_t = 0.0
 var smoke_node = null
 var engine_t = 0.0
+# damage zones
+var tracks_broken = false
+var burning = false
+var burn_fx = 0.0
+var bailed = false
+# aircraft
+var alt = 0.0                 # height above the ground
+var air_vel = Vector3.ZERO
+var rotor: Node3D = null
+var orbit_a = 0.0
+var life_t = -1.0             # gunships called in for a while
 
 static var mats = {}
 
@@ -89,7 +139,13 @@ static func make(kind_: String, team_: int, p: Vector3, yaw_: float) -> Vehicle:
 	G.main.add_child(v)
 	v._build()
 	G.vehicles.append(v)
-	v._place(0.0)
+	if v.spec.get("air", false):
+		v.alt = 35.0
+		v.pos.y = v._ground(p.x, p.z) + v.alt
+		v.global_transform = Transform3D(Basis(Vector3.UP, yaw_), v.pos)
+		v.body.global_transform = v.global_transform
+	else:
+		v._place(0.0)
 	return v
 
 static func _m(key: String, c: Color) -> StandardMaterial3D:
@@ -200,6 +256,97 @@ func _build() -> void:
 			for z in [2.4, -0.4, -2.6]:
 				for x in [1.1, -1.1]:
 					_wheel(Vector3(x, 0.55, z), 0.55, 0.42)
+		"halftrack":
+			_box(self, Vector3(2.3, 0.9, 6.0), Vector3(0, 1.05, 0), base_col, true)
+			_box(self, Vector3(2.2, 0.7, 1.8), Vector3(0, 1.4, 2.2), base_col.darkened(0.08))
+			for x in [1.12, -1.12]:
+				_box(self, Vector3(0.08, 0.8, 4.0), Vector3(x, 1.85, -0.8), base_col)
+			_box(self, Vector3(2.3, 0.8, 0.08), Vector3(0, 1.85, -2.85), base_col)
+			_box(self, Vector3(2.3, 0.5, 0.08), Vector3(0, 1.75, 1.2), base_col.darkened(0.1))
+			_box(self, Vector3(2.0, 0.1, 0.3), Vector3(0, 2.3, -2.85), band)
+			for x in [1.1, -1.1]:
+				_box(self, Vector3(0.45, 0.8, 4.2), Vector3(x, 0.45, -0.9), Color(0.13, 0.13, 0.12))
+				_wheel(Vector3(x, 0.45, 2.3), 0.45, 0.35)
+			turret = Node3D.new()
+			turret.position = Vector3(0, 2.4, 0.9)
+			add_child(turret)
+			_box(turret, Vector3(0.7, 0.45, 0.06), Vector3(0, 0.0, 0.35), dark)
+			gun_pivot = Node3D.new()
+			turret.add_child(gun_pivot)
+			_box(gun_pivot, Vector3(0.16, 0.18, 0.9), Vector3(0, 0, 0.25), Color(0.12, 0.12, 0.12))
+			_box(gun_pivot, Vector3(0.06, 0.06, 0.7), Vector3(0, 0.02, 0.95), Color(0.1, 0.1, 0.1))
+		"armoredcar":
+			_box(self, Vector3(2.3, 1.1, 5.0), Vector3(0, 1.15, 0), base_col, true)
+			_box(self, Vector3(2.0, 0.5, 1.2), Vector3(0, 1.4, 2.4), base_col.darkened(0.06))
+			_box(self, Vector3(2.0, 0.1, 0.3), Vector3(0, 1.75, -2.4), band)
+			for z in [1.7, 0.0, -1.7]:
+				for x in [1.2, -1.2]:
+					_wheel(Vector3(x, 0.55, z), 0.55, 0.4)
+			turret = Node3D.new()
+			turret.position = Vector3(0, 1.95, -0.2)
+			add_child(turret)
+			_box(turret, Vector3(1.5, 0.6, 1.8), Vector3(0, 0.3, 0), base_col.darkened(0.04))
+			gun_pivot = Node3D.new()
+			gun_pivot.position = Vector3(0, 0.3, 0.9)
+			turret.add_child(gun_pivot)
+			_box(gun_pivot, Vector3(0.14, 0.14, 1.6), Vector3(0, 0, 0.8), dark)
+		"motorbike":
+			_box(self, Vector3(0.3, 0.45, 1.9), Vector3(-0.45, 0.75, 0), base_col, true)
+			_box(self, Vector3(0.9, 0.5, 1.5), Vector3(0.55, 0.6, 0.0), base_col.darkened(0.1), true)
+			_box(self, Vector3(0.7, 0.06, 0.06), Vector3(-0.45, 1.25, 0.7), Color(0.1, 0.1, 0.1))
+			_wheel(Vector3(-0.45, 0.35, 0.8), 0.35, 0.15)
+			_wheel(Vector3(-0.45, 0.35, -0.8), 0.35, 0.15)
+			_wheel(Vector3(0.85, 0.3, 0.0), 0.3, 0.15)
+			turret = Node3D.new()
+			turret.position = Vector3(0.55, 1.15, 0.6)
+			add_child(turret)
+			gun_pivot = Node3D.new()
+			turret.add_child(gun_pivot)
+			_box(gun_pivot, Vector3(0.12, 0.14, 0.8), Vector3(0, 0, 0.2), Color(0.12, 0.12, 0.12))
+		"artillery":
+			_box(self, Vector3(2.0, 0.15, 0.4), Vector3(0, 0.6, 0.2), dark, true)
+			for x in [1.05, -1.05]:
+				_wheel(Vector3(x, 0.6, 0.2), 0.6, 0.18)
+			for x in [0.4, -0.4]:
+				_box(self, Vector3(0.12, 0.12, 2.6), Vector3(x, 0.35, -1.2), dark)
+			turret = Node3D.new()
+			turret.position = Vector3(0, 0.95, 0.3)
+			add_child(turret)
+			_box(turret, Vector3(1.4, 1.0, 0.08), Vector3(0, 0.1, 0.5), base_col)
+			gun_pivot = Node3D.new()
+			gun_pivot.rotation.x = -0.5
+			turret.add_child(gun_pivot)
+			_box(gun_pivot, Vector3(0.3, 0.3, 1.0), Vector3(0, 0, 0.2), dark)
+			_box(gun_pivot, Vector3(0.16, 0.16, 2.8), Vector3(0, 0, 1.9), dark)
+		"heli", "gunship":
+			var hc = base_col.darkened(0.05)
+			var big = kind == "heli"
+			_box(self, Vector3(2.4 if big else 1.4, 1.9 if big else 1.4, 5.0 if big else 4.2), Vector3(0, 1.4, 0.6 if big else 1.0), hc, true)
+			_box(self, Vector3(1.6 if big else 1.0, 1.0, 1.2), Vector3(0, 1.35, 3.6 if big else 3.5), Color(0.45, 0.55, 0.6))
+			_box(self, Vector3(0.5, 0.5, 5.0), Vector3(0, 1.8, -3.9), hc)
+			_box(self, Vector3(0.1, 1.4, 0.9), Vector3(0, 2.4, -6.2), hc)
+			_box(self, Vector3(2.6 if big else 1.6, 0.08, 0.12), Vector3(0, 0.25, 0.6), dark)
+			for x in ([1.2, -1.2] if big else [0.75, -0.75]):
+				_box(self, Vector3(0.08, 0.08, 3.2), Vector3(x, 0.15, 0.6), dark)
+				_box(self, Vector3(0.08, 0.4, 0.08), Vector3(x, 0.35, 0.6), dark)
+			_box(self, Vector3(1.4, 0.08, 0.4), Vector3(0, 2.35, -1.0), band)
+			if not big:
+				for x in [1.0, -1.0]:
+					_box(self, Vector3(0.9, 0.08, 0.5), Vector3(x * 0.9, 1.3, 0.8), dark)
+					_box(self, Vector3(0.25, 0.25, 1.2), Vector3(x * 1.3, 1.15, 0.8), Color(0.2, 0.22, 0.18))
+			rotor = Node3D.new()
+			rotor.position = Vector3(0, 2.55 if big else 2.2, 0.5)
+			add_child(rotor)
+			for k in range(2):
+				var blade = _box(rotor, Vector3(0.25, 0.04, 13.0 if big else 11.0), Vector3.ZERO, Color(0.1, 0.1, 0.1))
+				blade.rotation.y = k * PI / 2.0
+			if not big:
+				turret = Node3D.new()
+				turret.position = Vector3(0, 0.75, 3.3)
+				add_child(turret)
+				gun_pivot = Node3D.new()
+				turret.add_child(gun_pivot)
+				_box(gun_pivot, Vector3(0.14, 0.14, 1.0), Vector3(0, 0, 0.4), Color(0.1, 0.1, 0.1))
 		"nest":
 			var bag = Color(0.66, 0.6, 0.45)
 			_box(self, Vector3(3.0, 0.9, 0.7), Vector3(0, 0.45, 0.9), bag, true)
@@ -320,6 +467,13 @@ func step(dt: float) -> void:
 		dead_t += dt
 		speed = move_toward(speed, 0.0, 10.0 * dt)
 		return
+	if burning:
+		_burn_tick(dt)
+		if dead:
+			return
+	if spec.get("air", false):
+		_air_step(dt)
+		return
 	if spec.get("static", false):
 		_weapons(dt)
 		_crew_tick(dt)
@@ -335,6 +489,9 @@ func step(dt: float) -> void:
 			var r = _ai_drive(dt)
 			thr = r[0]
 			steer = r[1]
+	if tracks_broken:
+		thr = 0.0
+		steer *= 0.3 if spec["tracked"] else 1.0
 	var top = spec["speed"] if thr >= 0.0 else spec["rev"]
 	var target = thr * top
 	if thr == 0.0:
@@ -366,7 +523,7 @@ func step(dt: float) -> void:
 			np += res[0] - c
 			bumped = true
 	for o in G.vehicles:
-		if o == self:
+		if o == self or (o.spec.get("air", false) and o.alt > 3.0):
 			continue
 		var dv = G.flat(np - o.pos)
 		var md = (spec["len"] + o.spec["len"]) * 0.3
@@ -428,7 +585,7 @@ func _gun_dir() -> Vector3:
 func muzzle() -> Vector3:
 	if gun_pivot == null:
 		return center()
-	return gun_pivot.global_transform * Vector3(0, 0.02, {"jeep": 1.45, "nest": 1.3, "mortar": 1.15}.get(kind, 3.7))
+	return gun_pivot.global_transform * Vector3(0, 0.02, {"jeep": 1.45, "nest": 1.3, "mortar": 1.15, "halftrack": 1.35, "motorbike": 0.65, "armoredcar": 1.7, "artillery": 3.4, "gunship": 0.95}.get(kind, 3.7))
 
 func _weapons(dt: float) -> void:
 	fire_cd -= dt
@@ -438,7 +595,7 @@ func _weapons(dt: float) -> void:
 	var g = gunner()
 	var controller = g
 	var drv = driver()
-	if g == null and drv != null and is_instance_valid(drv) and drv.is_player and kind == "tank":
+	if g == null and drv != null and is_instance_valid(drv) and drv.is_player and kind in ["tank", "gunship", "armoredcar"]:
 		controller = drv          # a lone player in a tank works the gun too
 	if controller == null or not is_instance_valid(controller) or controller.state != "riding":
 		return
@@ -448,14 +605,14 @@ func _weapons(dt: float) -> void:
 	if controller.is_player:
 		want = player_inputs["aim"]
 		shoot = player_inputs["fire"]
-		use_cannon = kind == "tank" and not Input.is_key_pressed(KEY_SHIFT)
+		use_cannon = (kind == "tank" and not Input.is_key_pressed(KEY_SHIFT)) or kind == "armoredcar"
 	else:
 		var t = _ai_gun_target(controller)
 		if t != null:
 			want = t[0]
 			use_cannon = t[1]
 			shoot = true
-	if kind == "mortar":
+	if kind == "mortar" or kind == "artillery":
 		_mortar(controller, dt, want, shoot)
 		return
 	if want == null:
@@ -481,7 +638,13 @@ func _weapons(dt: float) -> void:
 	if not controller.is_player:
 		if AI.friendly_in_line(controller, muzzle(), dir, muzzle().distance_to(want)) != null:
 			return
-	if use_cannon:
+	if use_cannon and kind == "armoredcar":
+		if cannon_cd <= 0.0:
+			cannon_cd = 0.45
+			Combat.launch_shell(self, controller, muzzle(), Combat.spread_dir(_gun_dir(), 0.008), 0.5, 140.0, 110.0)
+			G.fx.muzzle(muzzle(), false)
+			G.audio.shot(muzzle(), G.WEAPONS["atrifle"])
+	elif use_cannon:
 		if cannon_cd <= 0.0:
 			cannon_cd = 4.5
 			Combat.launch_shell(self, controller, muzzle(), _gun_dir())
@@ -507,7 +670,7 @@ func _weapons(dt: float) -> void:
 
 func _apply_turret() -> void:
 	turret.rotation.y = turret_yaw
-	if kind != "mortar":
+	if kind != "mortar" and kind != "artillery":
 		gun_pivot.rotation.x = -gun_pitch
 
 # mortars lob shells at enemies anyone on the team has spotted (or where the player clicks)
@@ -525,7 +688,7 @@ func _mortar(g, dt: float, want, shoot: bool) -> void:
 			if o.team == team or o.state == "dead" or o.hidden_in_vehicle:
 				continue
 			var d = G.dist2d(o.pos, pos)
-			if d < 30.0 or d > 240.0:
+			if d < (60.0 if kind == "artillery" else 30.0) or d > (900.0 if kind == "artillery" else 240.0):
 				continue
 			var spotted = false
 			for f in G.soldiers:
@@ -553,14 +716,15 @@ func _mortar(g, dt: float, want, shoot: bool) -> void:
 	var local = global_transform.affine_inverse() * target
 	turret_yaw = turret_yaw + clampf(wrapf(atan2(local.x, local.z) - turret_yaw, -PI, PI), -1.5 * dt, 1.5 * dt)
 	_apply_turret()
-	gun_pivot.rotation.x = -0.95
+	gun_pivot.rotation.x = -0.95 if kind == "mortar" else -0.5
 	if cannon_cd > 0.0:
 		return
-	cannon_cd = 5.5 if not g.is_player else 3.0
+	var arty = kind == "artillery"
+	cannon_cd = (9.0 if arty else 5.5) if not g.is_player else (5.0 if arty else 3.0)
 	var dist = G.dist2d(target, pos)
 	G.fx.muzzle(muzzle(), true)
 	G.audio.boom(muzzle())
-	Combat.shell_at(target, 3.0 + dist * 0.05, 2.5 + dist / 90.0, g, 1.2)
+	Combat.shell_at(target, (5.0 + dist * 0.03) if arty else (3.0 + dist * 0.05), (4.0 + dist / 160.0) if arty else (2.5 + dist / 90.0), g, 1.9 if arty else 1.2)
 	if not g.is_player and randf() < 0.3:
 		G.fx.callout(g, G.pick(["Round out!", "Shot over!", "Firing for effect!"]))
 
@@ -569,7 +733,7 @@ func _ai_gun_target(g):
 	var best = null
 	var bd = 1e9
 	# enemy vehicles first for the cannon
-	if kind == "tank":
+	if kind == "tank" or kind == "armoredcar":
 		for o in G.vehicles:
 			if o.team != team and not o.dead and o.pos.distance_to(pos) < 160.0 and not G.blocked(muzzle(), o.center()):
 				var d = o.pos.distance_to(pos)
@@ -583,6 +747,8 @@ func _ai_gun_target(g):
 		return null
 	var p = tgt.chest()
 	var d2 = p.distance_to(pos)
+	if kind == "armoredcar":
+		return [p, true]
 	if kind == "tank":
 		# shell groups and soldiers in cover; machine gun the rest
 		var near = 0
@@ -629,6 +795,15 @@ func take_damage(amount: float, attacker, at: Vector3) -> void:
 	if dead:
 		return
 	hp -= amount
+	# where it was hit matters: tracks and running gear along the sides, the engine up front
+	if amount >= 120.0 and not spec.get("air", false) and not spec.get("static", false):
+		var local = global_transform.affine_inverse() * at
+		if (spec["tracked"] or kind == "halftrack") and absf(local.x) > spec["wid"] * 0.36 and local.y < 1.3 and randf() < 0.5 and not tracks_broken:
+			tracks_broken = true
+			G.ui.radio(team, "%s tracks knocked out!" % spec["name"])
+		if not burning and randf() < (0.35 if local.z > spec["len"] * 0.15 else 0.15):
+			burning = true
+			G.ui.radio(team, "%s on fire!" % spec["name"])
 	if hp < spec["hp"] * 0.35 and smoke_node == null:
 		G.fx.wreck_smoke(center(), self)
 		smoke_node = true
@@ -640,6 +815,7 @@ func destroy(attacker) -> void:
 		return
 	dead = true
 	hp = 0.0
+	burning = false
 	G.fx.explosion(center(), 1.4)
 	G.audio.boom(center())
 	if smoke_node == null:
@@ -726,6 +902,22 @@ func _ai_drive(dt: float) -> Array:
 			target = obj
 		if hp < spec["hp"] * 0.3 and enemy != null:
 			target = G.world.rally_point(team)
+		var riders = 0
+		for i in range(1, seats.size()):
+			if seats[i] != null and spec["seats"][i]["role"] == "pass":
+				riders += 1
+		if riders > 0:
+			for i in range(1, seats.size()):
+				var ps = seats[i]
+				if ps != null and spec["seats"][i]["role"] == "pass" and not ps.is_player:
+					target = AI.objective_for(ps)
+					break
+			if G.dist2d(target, pos) < 35.0 or (enemy != null and G.dist2d(enemy, pos) < 45.0):
+				for i in range(1, seats.size()):
+					var ps2 = seats[i]
+					if ps2 != null and spec["seats"][i]["role"] == "pass" and not ps2.is_player:
+						ps2.dismount(false)
+				return [0.0, 0.0]
 		if G.dist2d(target, pos) < 8.0:
 			return [0.0, 0.0]
 	_set_goal(target)
@@ -799,3 +991,181 @@ func _mission_target(dt: float):
 			d.queue_free()
 		return null
 	return m["exit"]
+
+# ---------------------------------------------------------------- engine fires and bailing out
+func _burn_tick(dt: float) -> void:
+	hp -= 14.0 * dt
+	burn_fx -= dt
+	if burn_fx <= 0.0:
+		burn_fx = 0.15
+		G.fx.flame_puff(center() + Vector3(randf_range(-0.6, 0.6), 0.9, spec["len"] * 0.25), Vector3(0, 3.0, 0), 1.2)
+	if not bailed and hp < spec["hp"] * 0.25:
+		bailed = true
+		for i in range(seats.size()):
+			var s = seats[i]
+			if s != null and is_instance_valid(s):
+				s.dismount(false)
+				s.hp = minf(s.hp, 70.0)
+				if not s.is_player:
+					if randf() < 0.3:
+						s.ignite(null)
+					G.fx.callout(s, G.pick(["Bail out! Bail out!", "She's gonna blow!", "Get out, get out!"]))
+	if hp <= 0.0:
+		destroy(null)
+
+func repair(amount: float) -> void:
+	hp = minf(spec["hp"], hp + amount)
+	if hp > spec["hp"] * 0.5:
+		burning = false
+		tracks_broken = false
+		bailed = false
+
+# ---------------------------------------------------------------- aircraft
+func _air_step(dt: float) -> void:
+	if rotor != null:
+		rotor.rotation.y += dt * (18.0 if not dead else 4.0)
+	var gy = _ground(pos.x, pos.z)
+	if dead:
+		# going down
+		alt = maxf(0.0, alt - 11.0 * dt)
+		yaw += 2.5 * dt
+		pos += air_vel * dt
+		air_vel *= 0.98
+		pos.y = gy + alt
+		global_transform = Transform3D(Basis.from_euler(Vector3(0.3, yaw, 0.4)), pos)
+		body.global_transform = global_transform
+		if alt <= 0.0 and air_vel.length() > 0.1:
+			G.fx.explosion(pos + Vector3(0, 1, 0), 1.6)
+			G.audio.boom(pos)
+			air_vel = Vector3.ZERO
+		return
+	var fwd = 0.0
+	var turn = 0.0
+	var climb = 0.0
+	var d = driver()
+	if d != null and is_instance_valid(d) and d.state == "riding":
+		if d.is_player:
+			fwd = player_inputs["thr"]
+			turn = player_inputs["steer"]
+			climb = player_inputs.get("climb", 0.0)
+		else:
+			var r = _ai_fly(dt)
+			fwd = r[0]
+			turn = r[1]
+			climb = r[2]
+	else:
+		climb = -0.6     # nobody flying it: settle to the ground
+	yaw += turn * spec["turn"] * dt
+	var f = forward()
+	var want_v = f * fwd * (spec["speed"] if fwd >= 0.0 else spec["rev"])
+	air_vel = air_vel.move_toward(want_v, spec["accel"] * dt)
+	var np = pos + air_vel * dt
+	var b = G.world.bounds
+	if mission == null and life_t < 0.0:
+		np.x = clampf(np.x, b.position.x - 60.0, b.end.x + 60.0)
+		np.z = clampf(np.z, b.position.y - 60.0, b.end.y + 60.0)
+	alt = clampf(alt + climb * 8.0 * dt, 0.0, 90.0)
+	# don't fly through the scenery: stay clear of whatever is underneath
+	var floor_y = gy
+	var hit = G.ray(Vector3(np.x, gy + alt + 6.0, np.z), Vector3(np.x, gy - 1.0, np.z), G.L_WORLD)
+	if not hit.is_empty():
+		floor_y = maxf(gy, hit.position.y)
+	if gy + alt < floor_y + 0.3:
+		alt = floor_y - gy + 0.3
+	pos = Vector3(np.x, gy + alt, np.z)
+	var lv = global_transform.basis.inverse() * air_vel
+	pitch = lerpf(pitch, clampf(lv.z * 0.012, -0.3, 0.3), dt * 3.0)
+	roll = lerpf(roll, clampf(-turn * 0.25, -0.35, 0.35), dt * 3.0)
+	global_transform = Transform3D(Basis.from_euler(Vector3(pitch, yaw, roll)), pos)
+	body.global_transform = global_transform
+	if turret != null:
+		_weapons(dt)
+	if kind == "gunship":
+		_gunship_rockets(dt)
+	_crew_tick(dt)
+	engine_t -= dt
+	if engine_t <= 0.0:
+		engine_t = 0.3
+		G.audio.engine(pos, 1.0, true)
+	if life_t > 0.0:
+		life_t -= dt
+		if life_t <= 0.0 and mission == null:
+			mission = {"type": "leave", "exit": Reinforce.entry_point(team) + Vector3(0, 0, 0) * 1.0, "stage": 3, "wait": 0.0, "drop": pos}
+
+func landed() -> bool:
+	return spec.get("air", false) and alt < 1.0 and air_vel.length() < 1.0
+
+# AI pilots: transports deliver troops; gunships circle over the enemy
+func _ai_fly(dt: float) -> Array:
+	var target: Vector3
+	var want_alt = 38.0
+	if mission != null:
+		var m = mission
+		if m["stage"] == 0:
+			target = m["drop"]
+			var dd = G.dist2d(pos, target)
+			if dd < 25.0:
+				want_alt = 0.0
+			if dd < 6.0 and alt < 1.2:
+				m["stage"] = 1
+				m["wait"] = 3.0
+				for i in range(1, seats.size()):
+					var s = seats[i]
+					if s != null and is_instance_valid(s):
+						s.dismount(false)
+				if driver() != null:
+					G.fx.callout(driver(), G.pick(["Go, go! Out!", "LZ is hot, move!", "Everybody off!"]))
+				return [0.0, 0.0, -1.0]
+		elif m["stage"] == 1:
+			m["wait"] -= dt
+			if m["wait"] <= 0.0:
+				m["stage"] = 2
+			return [0.0, 0.0, -1.0]
+		else:
+			target = m["exit"]
+			if G.dist2d(pos, target) < 30.0:
+				var dr = driver()
+				remove()
+				if dr != null and is_instance_valid(dr):
+					G.soldiers.erase(dr)
+					dr.queue_free()
+				return [0.0, 0.0, 0.0]
+	else:
+		# gunship: orbit what the team knows about the enemy, otherwise the objective
+		var c = Commander._enemy_center(team)
+		if c == null:
+			c = G.world.capture
+		orbit_a += dt * 0.25
+		target = c + Vector3(cos(orbit_a), 0, sin(orbit_a)) * 55.0
+		want_alt = 42.0
+		if hp < spec["hp"] * 0.35:
+			target = G.world.spawn[team]
+			want_alt = 20.0
+	var to = G.flat(target - pos)
+	var ang = wrapf(atan2(to.x, to.z) - yaw, -PI, PI)
+	var fwd = clampf(to.length() / 30.0, 0.0, 1.0) * (1.0 if absf(ang) < 1.2 else 0.3)
+	var climb = clampf((want_alt - alt) / 6.0, -1.0, 1.0)
+	return [fwd, clampf(ang * 1.5, -1.0, 1.0), climb]
+
+var rocket_cd = 4.0
+
+func _gunship_rockets(dt: float) -> void:
+	rocket_cd -= dt
+	if rocket_cd > 0.0:
+		return
+	var p = null
+	var d = driver()
+	if d != null and is_instance_valid(d) and d.is_player:
+		if Input.is_key_pressed(KEY_SHIFT) and player_inputs["fire"]:
+			p = player_inputs["aim"]
+	else:
+		p = ClassAI.artillery_target(team, pos, 25.0)
+	if p == null:
+		return
+	rocket_cd = 6.0 if (d == null or not d.is_player) else 1.2
+	var shooter = d if d != null and is_instance_valid(d) else gunner()
+	if shooter == null:
+		return
+	for side in [-1.0, 1.0]:
+		var o = global_transform * Vector3(side * 1.3, 1.15, 1.5)
+		Combat.launch_rocket(shooter, o, Combat.spread_dir((p - o).normalized(), 0.03), self)

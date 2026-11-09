@@ -7,7 +7,11 @@ const MAP_IDS = ["town", "field", "trenches", "valley", "front"]
 const TOOLS = {
 	"units": [["a1", "Alpha soldier"], ["b1", "Bravo soldier"], ["a5", "Alpha squad"], ["b5", "Bravo squad"], ["ctl", "Take control"], ["spA", "Alpha spawn"], ["spB", "Bravo spawn"]],
 	"command": [["sel", "Select"], ["mvA", "Alpha: move to"], ["mvB", "Bravo: move to"]],
-	"vehicles": [["jA", "Alpha jeep"], ["jB", "Bravo jeep"], ["tA", "Alpha tank"], ["tB", "Bravo tank"], ["trA", "Alpha truck"], ["trB", "Bravo truck"], ["nA", "Alpha MG nest"], ["nB", "Bravo MG nest"], ["mA", "Alpha mortar"]],
+	"vehicles": [["v:jeep:0", "Jeep A"], ["v:jeep:1", "Jeep B"], ["v:tank:0", "Tank A"], ["v:tank:1", "Tank B"], ["v:halftrack:0", "Half-track A"],
+		["v:armoredcar:1", "Armoured car B"], ["v:motorbike:0", "Motorbike A"], ["v:gunship:0", "Gunship A"], ["v:gunship:1", "Gunship B"],
+		["v:truck:0", "Truck A"], ["v:nest:0", "MG nest A"], ["v:nest:1", "MG nest B"], ["v:mortar:0", "Mortar A"], ["v:artillery:0", "Field gun A"]],
+	"support": [["sup:artillery", "Artillery 10"], ["sup:airstrike", "Air strike 16"], ["sup:paradrop", "Paras 12"], ["sup:heli", "Heli 16"],
+		["sup:jeep", "Jeep 8"], ["sup:halftrack", "Half-track 14"], ["sup:armoredcar", "Arm. car 20"], ["sup:tank", "Tank 30"], ["sup:gunship", "Gunship 34"]],
 	"fun": [["boom", "Explosion"], ["mortar", "Mortar strike"], ["smoke", "Smoke"], ["flare", "Flare"], ["push", "Shove"]],
 }
 const TIPS = {"sel": "Click or drag a box to select soldiers (Shift adds), then right-click the ground to send them there",
@@ -246,7 +250,7 @@ func _build_side() -> void:
 # ---------------------------------------------------------------- tool bar
 func _build_tools() -> void:
 	tabs_box = HBoxContainer.new()
-	_place(tabs_box, Control.PRESET_CENTER_BOTTOM, -190, -96, 380, 32)
+	_place(tabs_box, Control.PRESET_CENTER_BOTTOM, -230, -96, 460, 32)
 	root.add_child(tabs_box)
 	tool_box = HBoxContainer.new()
 	_place(tool_box, Control.PRESET_CENTER_BOTTOM, -420, -56, 840, 40)
@@ -262,7 +266,7 @@ func _render_tools() -> void:
 		c.queue_free()
 	for c in tool_box.get_children():
 		c.queue_free()
-	for t in [["units", "Units"], ["command", "Command"], ["vehicles", "Vehicles"], ["fun", "Effects"]]:
+	for t in [["units", "Units"], ["command", "Command"], ["vehicles", "Vehicles"], ["support", "Support"], ["fun", "Effects"]]:
 		var key = t[0]
 		var b = _button(t[1], func():
 			tab = key
@@ -281,8 +285,8 @@ func _render_tools() -> void:
 			b2.modulate = Color(1.0, 0.85, 0.3)
 		tool_box.add_child(b2)
 		i += 1
-	tool_box.offset_left = -TOOLS[tab].size() * 66.0
-	tool_box.offset_right = TOOLS[tab].size() * 66.0
+	tool_box.offset_left = -minf(TOOLS[tab].size() * 62.0, 780.0)
+	tool_box.offset_right = minf(TOOLS[tab].size() * 62.0, 780.0)
 	tip.text = TIPS.get(tool, "")
 
 func pick_tool(i: int) -> void:
@@ -434,7 +438,7 @@ func _build_menu() -> void:
 	_row(v, "Kills / points / tickets", opt_limit)
 	opt_size = _option(["5", "8", "10", "15", "20"], 2)
 	_row(v, "Soldiers per team", opt_size)
-	opt_reinf = _option(["By truck", "Paratroopers", "Appear at base", "None"], 0)
+	opt_reinf = _option(["By truck", "Paratroopers", "By helicopter", "Appear at base", "None"], 0)
 	_row(v, "Reinforcements", opt_reinf)
 	opt_armor = _option(["None", "Jeeps", "Jeeps and tanks"], 1)
 	_row(v, "Vehicles", opt_armor)
@@ -463,7 +467,7 @@ func _deploy() -> void:
 	var mid = _map_id(opt_map.selected)
 	G.main.start_game({"map": mid, "mode": modes[opt_mode.selected],
 		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": int(opt_limit.get_item_text(opt_limit.selected)),
-		"reinforce": opt_reinf.selected != 3, "reinf_mode": ["truck", "para", "instant", "truck"][opt_reinf.selected],
+		"reinforce": opt_reinf.selected != 4, "reinf_mode": ["truck", "para", "heli", "instant", "truck"][opt_reinf.selected],
 		"armor": ["none", "light", "heavy"][opt_armor.selected], "teams": opt_teams.selected + 2})
 	G.save_prefs()
 	menu.visible = false
@@ -658,6 +662,10 @@ func update_hud(dt: float) -> void:
 		tip.text = "" if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else "Click to aim — X to leave this soldier"
 	else:
 		tip.text = TIPS.get(tool, "") if show_game else ""
+		if show_game and tab == "support" and not Support.points.is_empty():
+			tip.text = "Supply points: %d  (earned over time, for kills and for capturing points) · click a call-in, then the map for strikes" % Support.points[0]
+		elif show_game and tool.begins_with("v:"):
+			tip.text = "Click the ground to drop this vehicle with its crew"
 	scope.visible = ctl and G.player.ads and G.player.wid == "sniper" and G.pc.cam.fov < 24.0
 	cross.queue_redraw()
 	if hit_t > 0.0:

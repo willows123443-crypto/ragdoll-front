@@ -36,6 +36,10 @@ static func step(dt: float) -> void:
 				if timers[t] > (10.0 if missing >= 4 else 22.0):
 					timers[t] = -8.0
 					paradrop(t, mini(missing, 6))
+			"heli":
+				if timers[t] > (12.0 if missing >= 4 else 24.0):
+					timers[t] = -10.0
+					heli(t, mini(missing, 6))
 			_:
 				if timers[t] > (8.0 if missing >= 4 else 20.0):
 					timers[t] = -6.0
@@ -82,6 +86,24 @@ static func truck(t: int, n: int) -> void:
 			break
 		s.mount(v, i + 1)
 	G.ui.radio(t, "%d reinforcements inbound by truck, ETA two minutes" % n)
+
+# a transport helicopter flies troops in and lands them at the rally point
+static func heli(t: int, n: int) -> void:
+	var entry = entry_point(t)
+	var drop = G.main._free_spot(G.world.rally_point(t) + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6)))
+	var v = Vehicle.make("heli", t, entry, atan2(drop.x - entry.x, drop.z - entry.z))
+	v.mission = {"type": "deliver", "drop": drop, "exit": entry, "stage": 0, "wait": 0.0}
+	var drv = G.main.spawn_soldier(t, entry.x, entry.z, "rifle")
+	if drv == null:
+		v.remove()
+		return
+	drv.mount(v, 0)
+	for i in range(mini(n, v.seats.size() - 1)):
+		var s = G.main.spawn_soldier(t, entry.x, entry.z, "")
+		if s == null:
+			break
+		s.mount(v, i + 1)
+	G.ui.radio(t, "Helicopter inbound with %d troops" % n)
 
 static func paradrop(t: int, n: int) -> void:
 	var home: Vector3 = G.world.rally_point(t)

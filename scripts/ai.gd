@@ -712,6 +712,16 @@ static func decide(s) -> void:
 		var k3 = (s.id * 37) % 11 - 5
 		var k4 = (s.id * 13) % 7 - 3
 		var goal2 = obj + Vector3(k4 * 1.5, 0, k3 * 1.6)
+		# a long walk: hop on a friendly vehicle heading up
+		if G.dist2d(s.pos, obj) > 110.0 and s.vehicle == null:
+			for v in G.vehicles:
+				if v.team == s.team and not v.dead and v.mission == null and not v.spec.get("static", false) and not v.spec.get("air", false) and v.driver() != null and not v.driver().is_player and G.dist2d(v.pos, s.pos) < 25.0:
+					var fsi = v.free_seat("pass")
+					if fsi >= 0 and v.spec["seats"][fsi]["role"] == "pass":
+						s.task = "board"
+						s.board_target = v
+						go_to(s, v.pos, 5.0)
+						return
 		var fs = Squad.slot(s)
 		if fs != null and G.dist2d(s.pos, obj) > 12.0:
 			# keep formation on the squad leader while moving up
@@ -780,7 +790,7 @@ static func update(s) -> void:
 			s.task = null
 			s.board_target = null
 		elif G.dist2d(v.pos, s.pos) < v.spec["len"] * 0.5 + 1.5:
-			var want = "driver" if v.driver() == null else "gunner"
+			var want = "driver" if v.driver() == null else ("gunner" if v.gunner_seat() >= 0 and v.seats[v.gunner_seat()] == null else "pass")
 			if s.mount(v, v.free_seat(want)):
 				return
 		elif s.move_target == null or G.dist2d(s.move_target, v.pos) > 3.0:

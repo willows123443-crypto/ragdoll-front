@@ -208,6 +208,7 @@ static func kill(s, attacker, head: bool) -> void:
 	Morale.on_death(s, attacker)
 	if attacker != null and attacker.team != s.team:
 		G.score[attacker.team] += 1
+		Support.earn(attacker.team, 2)
 	G.main.on_kill(s, attacker)
 	G.ui.feed(attacker, s, head)
 	G.fx.decal(s.parts[0].global_position, randf_range(0.6, 1.0), false)
@@ -228,7 +229,7 @@ static func kill(s, attacker, head: bool) -> void:
 				G.pc.leave_soldier())
 
 # ---------------------------------------------------------------- rockets
-static func launch_rocket(s, origin: Vector3, dir: Vector3) -> void:
+static func launch_rocket(s, origin: Vector3, dir: Vector3, veh = null) -> void:
 	var m = MeshInstance3D.new()
 	var bm = BoxMesh.new()
 	bm.size = Vector3(0.1, 0.1, 0.5)
@@ -238,10 +239,10 @@ static func launch_rocket(s, origin: Vector3, dir: Vector3) -> void:
 	m.material_override = mat
 	G.fx.add_child(m)
 	m.global_position = origin
-	rockets.append({"p": origin, "v": dir * 48.0, "owner": s, "mesh": m, "life": 5.0, "trail": 0.0})
+	rockets.append({"p": origin, "v": dir * 48.0, "owner": s, "veh": veh, "mesh": m, "life": 5.0, "trail": 0.0})
 	G.fx.dust_cloud(origin - dir * 1.4, 1.5)
 	G.audio.rocket(origin)
-	if not s.is_player:
+	if not s.is_player and veh == null:
 		s.rockets -= 1
 
 static func step_rockets() -> void:
@@ -280,7 +281,7 @@ static func step_rockets() -> void:
 			G.fx.dust_cloud(r["p"], 0.5)
 
 # tank cannon: a fast, flat shell
-static func launch_shell(veh, s, origin: Vector3, dir: Vector3) -> void:
+static func launch_shell(veh, s, origin: Vector3, dir: Vector3, power: float = 1.5, vdmg: float = 650.0, speed: float = 140.0) -> void:
 	var m = MeshInstance3D.new()
 	var bm = BoxMesh.new()
 	bm.size = Vector3(0.12, 0.12, 0.6)
@@ -291,7 +292,7 @@ static func launch_shell(veh, s, origin: Vector3, dir: Vector3) -> void:
 	m.material_override = mat
 	G.fx.add_child(m)
 	m.global_position = origin
-	rockets.append({"p": origin, "v": dir * 140.0, "owner": s, "veh": veh, "mesh": m, "life": 3.0, "trail": 0.0, "power": 1.5, "vdmg": 650.0})
+	rockets.append({"p": origin, "v": dir * speed, "owner": s, "veh": veh, "mesh": m, "life": 3.0, "trail": 0.0, "power": power, "vdmg": vdmg})
 	G.fx.dust_cloud(origin + dir * 0.5, 2.0)
 
 # ---------------------------------------------------------------- flares

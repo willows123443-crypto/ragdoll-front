@@ -189,6 +189,7 @@ func start_game(o: Dictionary) -> void:
 	Reinforce.reset()
 	Obj.reset()
 	Commander.reset()
+	Support.reset()
 	for t in range(G.team_count()):
 		if G.mode == "laststand" and t == 1:
 			continue
@@ -338,6 +339,7 @@ func _sim_step() -> void:
 	G.fx.step(G.DT)
 	Stats.step(G.DT)
 	Squad.step(G.DT)
+	Support.step(G.DT)
 	Commander.step(G.DT)
 	Obj.step(G.DT)
 	if randf() < 0.05:
@@ -369,6 +371,7 @@ func on_point_changed(i: int, prev: int, owner: int) -> void:
 	var pt = Obj.points[i]
 	_set_flag_color(point_flags[i] if i < point_flags.size() else null, G.TEAM_BAND[owner] if owner >= 0 else Color(0.85, 0.85, 0.85))
 	if owner >= 0:
+		Support.earn(owner, 10)
 		G.ui.message("%s captured point %s" % [G.TEAM_NAMES[owner], pt["name"]])
 		G.ui.radio(owner, "Point %s is ours!" % pt["name"])
 		for s in G.soldiers:
@@ -521,7 +524,7 @@ func _report(tag: String) -> void:
 func _autotest() -> void:
 	print("AUTOTEST start")
 	var scen = [["town", "capture", 30.0, "truck"], ["field", "capture", 30.0, "para"], ["trenches", "capture", 30.0, "truck"],
-		["valley", "frontline", 75.0, "truck"], ["front", "assault", 50.0, "para"], ["town", "laststand", 45.0, "truck"],
+		["valley", "frontline", 75.0, "heli"], ["front", "assault", 50.0, "para"], ["town", "laststand", 45.0, "truck"],
 		["field", "capture", 40.0, "truck", 4, "night"], ["town", "deathmatch", 30.0, "para", 3, "dusk"]]
 	var only = _arg("scen", "")
 	for sc in scen:
@@ -561,6 +564,15 @@ func _autotest() -> void:
 			G.pc._toggle_follow(lead)
 		Combat.explode(G.world.capture + Vector3(0, 0.5, 0), null, 1.0)
 		Combat.mortar_strike(G.world.capture, 4)
+		if sc.size() <= 4:
+			for t in range(2):
+				Support.points[t] = 200
+			Support.call_in(0, "gunship", G.world.capture)
+			Support.call_in(0, "airstrike", G.world.capture)
+			Support.call_in(1, "armoredcar", G.world.capture)
+			Support.call_in(1, "halftrack", G.world.capture)
+			Support.call_in(0, "motorbike", G.world.capture)
+			Support.call_in(1, "artillery", G.world.capture)
 		await _wait(10.0)
 		var dd = []
 		for o in picked:
@@ -610,6 +622,14 @@ func _shot_mode(dir: String) -> void:
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": "capture", "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
 		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2"))})
+	if _arg("vtypes", "") != "":
+		for v in G.vehicles.duplicate():
+			v.remove()
+		var c0: Vector3 = G.world.capture
+		var k = 0
+		for kind in ["halftrack", "armoredcar", "motorbike", "artillery", "gunship", "heli"]:
+			spawn_vehicle(kind, k % 2, _free_spot(c0 + Vector3(-30 + k * 12, 0, 22)), 0.4)
+			k += 1
 	if _arg("smoke", "") != "":
 		Combat.smoke_at(G.world.capture + Vector3(0, 0, 10), 30.0)
 		Combat.throw_grenade(G.soldiers[0], G.world.capture + Vector3(4, 0, 12), "smoke")

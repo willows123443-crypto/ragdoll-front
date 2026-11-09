@@ -146,7 +146,7 @@ func _process(dt: float) -> void:
 		var piv: Vector3
 		if s.state == "riding" and s.vehicle != null:
 			piv = s.vehicle.center() + Vector3(0, 1.6 if s.vehicle.kind != "jeep" else 1.1, 0)
-			back = {"jeep": 6.5, "truck": 10.0, "tank": 9.5}.get(s.vehicle.kind, 8.0)
+			back = {"jeep": 6.5, "truck": 10.0, "tank": 9.5, "heli": 16.0, "gunship": 14.0, "halftrack": 9.0, "motorbike": 5.0}.get(s.vehicle.kind, 8.0)
 			side = 0.0
 		elif s.state == "alive":
 			piv = Vector3(s.pos.x, s.pos.y + (0.55 if s.prone else 1.55 - 0.45 * s.crouch), s.pos.z) + r * s.lean * 0.4
@@ -434,9 +434,16 @@ func use_tool(screen: Vector2) -> void:
 		Combat.smoke_at(p, 26.0)
 	elif tool == "flare":
 		Combat.flare(p + Vector3(0, 0, 0), p)
-	elif tool in ["jA", "jB", "tA", "tB", "trA", "trB", "nA", "nB", "mA"]:
-		var team = 0 if tool.ends_with("A") else 1
-		var kind = {"j": "jeep", "t": "tank", "tr": "truck", "n": "nest", "m": "mortar"}[tool.substr(0, tool.length() - 1)]
+	elif tool.begins_with("sup:"):
+		var what = tool.substr(4)
+		if Support.call_in(0, what, p):
+			G.ui.message("%s called in" % Support.NAMES[what])
+		else:
+			G.ui.message("Not enough supply points (%d needed, %d available)" % [Support.COSTS[what], Support.points[0]])
+	elif tool.begins_with("v:"):
+		var parts = tool.split(":")
+		var kind: String = parts[1]
+		var team = int(parts[2])
 		var en: Vector3 = G.world.rally_point((team + 1) % G.team_count())
 		G.main.spawn_vehicle(kind, team, p, atan2(en.x - p.x, en.z - p.z), kind != "truck")
 	elif tool == "spA" or tool == "spB":
@@ -481,7 +488,7 @@ func _near_vehicle(s):
 	var best = null
 	var bd = 1e9
 	for v in G.vehicles:
-		if v.dead or (v.team != s.team and v.driver() != null):
+		if v.dead or (v.team != s.team and v.driver() != null) or (v.spec.get("air", false) and not v.landed()):
 			continue
 		var d = G.dist2d(v.pos, s.pos) - v.spec["len"] * 0.5
 		if d < 2.2 and d < bd:
@@ -503,8 +510,13 @@ func rider_update(s) -> void:
 		if Input.is_key_pressed(KEY_D): steer -= 1.0
 	v.player_inputs["thr"] = thr
 	v.player_inputs["steer"] = steer
+	var climb = 0.0
+	if role == "driver" and v.spec.get("air", false):
+		if Input.is_key_pressed(KEY_SPACE): climb += 1.0
+		if Input.is_key_pressed(KEY_C) or Input.is_key_pressed(KEY_CTRL): climb -= 1.0
+	v.player_inputs["climb"] = climb
 	v.player_inputs["aim"] = aim_point
-	v.player_inputs["fire"] = mouse_down and captured and (role == "gunner" or (role == "driver" and v.kind == "tank" and v.gunner() == null))
+	v.player_inputs["fire"] = mouse_down and captured and (role == "gunner" or (role == "driver" and v.kind in ["tank", "gunship", "armoredcar"] and v.gunner() == null))
 	s.aim_yaw = atan2(aim_point.x - s.pos.x, aim_point.z - s.pos.z)
 	s.morale = maxf(s.morale, 60.0)
 
@@ -622,7 +634,7 @@ func _class_action(s) -> void:
 			# repair anything we're standing next to as well
 			for v in G.vehicles:
 				if v.team == s.team and not v.dead and G.dist2d(v.pos, s.pos) < v.spec["len"] * 0.5 + 2.0:
-					v.hp = minf(v.spec["hp"], v.hp + 250.0)
+					v.repair(250.0)
 					G.ui.message("Repaired the %s" % v.spec["name"].to_lower())
 		"medic":
 			var best = s

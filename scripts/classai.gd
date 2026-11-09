@@ -6,6 +6,8 @@ extends RefCounted
 
 static func jobs(s, known: bool, threat: Vector3) -> bool:
 	s.job_cd -= 2.0
+	if s.cls != "engineer" and _help_build(s):
+		return true
 	match s.cls:
 		"engineer":
 			return _engineer(s, known, threat)
@@ -18,7 +20,32 @@ static func jobs(s, known: bool, threat: Vector3) -> bool:
 	return false
 
 static func busy(s) -> bool:
-	return s.task in ["repair", "build", "mine", "patch"]
+	return s.task in ["repair", "build", "mine", "patch", "construct"]
+
+static func _start_construct(s, st) -> void:
+	AI.release_cover(s)
+	s.task = "construct"
+	s.build_site = st
+	AI.go_to(s, Build.work_spot(st, s), 4.6)
+
+# riflemen and the like lend a hand on the bigger jobs when it's quiet
+static func _help_build(s) -> bool:
+	if s.vis_t != null or s.job_cd > 0.0 or Morale.is_leader(s) or s.cls in ["officer", "medic", "sniper", "spotter", "mg"] or randf() > 0.15:
+		return false
+	var no_eng = true
+	for o in G.soldiers:
+		if o.team == s.team and o.cls == "engineer" and o.state == "alive":
+			no_eng = false
+			break
+	var st = Build.work_site(s.team, s.pos, 90.0 if no_eng else 45.0)
+	if st == null or not (st["kind"] in ["fob", "hq", "bunker", "hospital", "depot", "radio", "tower"] or no_eng):
+		return false
+	if Build.helpers(st) >= (5 if no_eng else 3):
+		return false
+	_start_construct(s, st)
+	if randf() < 0.4:
+		G.fx.callout(s, G.pick(["Giving them a hand.", "I'll help build.", "Grab a shovel!"]))
+	return true
 
 # ---------------------------------------------------------------- engineers
 static func _engineer(s, known: bool, threat: Vector3) -> bool:
@@ -33,6 +60,17 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 				AI.go_to(s, v.pos, 5.4)
 				s.task = "sapper"
 				return true
+		# and enemy positions: FOBs, nests, bunkers
+		var es = Build.enemy_site_near(s.team, s.pos, 26.0)
+		if es != null and not G.blocked(s.head_pos(), es[1] + Vector3(0, 0.8, 0)):
+			if G.dist2d(es[1], s.pos) < 13.0:
+				Combat.throw_grenade(s, es[1], "satchel")
+				G.fx.callout(s, G.pick(["Charge set!", "Blowing their position!"]))
+				return false
+			AI.release_cover(s)
+			AI.go_to(s, es[1], 5.0)
+			s.task = "sapper"
+			return true
 	if s.vis_t != null or s.job_cd > 0.0:
 		return false
 	# repair damaged friendly vehicles
@@ -44,17 +82,27 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 			AI.go_to(s, v.pos + G.flat(s.pos - v.pos).normalized() * (v.spec["len"] * 0.5 + 0.8), 4.8)
 			G.fx.callout(s, G.pick(["I'll fix her up!", "Repairing!"]))
 			return true
+	# build: our own sites first
+	var ws = Build.work_site(s.team, s.pos, 160.0)
+	if ws != null and Build.helpers(ws) < 4:
+		_start_construct(s, ws)
+		G.fx.callout(s, G.pick(["On my way to build.", "Engineer moving to the site.", "I'll get it built."]))
+		return true
 	# dig in: sandbags where we're holding and there's no cover, and mines on the way in
 	var holding = s.task in ["hold", "defend", "objective"] or (Obj.uses_points() and not Obj.points.is_empty() and G.dist2d(s.pos, AI.objective_for(s)) < 14.0)
 	if not holding:
 		return false
 	if s.kits > 0 and s.cover == null and randf() < 0.6:
-		s.task = "build"
-		s.build_t = 2.5
-		s.board_target = threat
-		AI.stop_move(s)
-		G.fx.callout(s, G.pick(["Digging in!", "Putting up sandbags!"]))
-		return true
+		var dir = G.flat(threat - s.pos)
+		if dir.length_squared() < 0.01:
+			dir = Vector3(0, 0, 1)
+		var at = s.pos + dir.normalized() * 1.5
+		if not G.world.inside_any(at.x, at.z, 0.8) and Build.site_at(at, 1.0) == null:
+			s.kits -= 1
+			var st = Build.place("sandbags", s.team, at, dir)
+			_start_construct(s, st)
+			G.fx.callout(s, G.pick(["Digging in!", "Putting up sandbags!"]))
+			return true
 	if s.mines > 0 and known and randf() < 0.5:
 		var dir = G.flat(threat - s.pos).normalized()
 		var spot = s.pos + dir * randf_range(8.0, 14.0) + Vector3(-dir.z, 0, dir.x) * randf_range(-6.0, 6.0)
@@ -84,6 +132,26 @@ static func work(s) -> void:
 				s.task = null
 				s.job_cd = 10.0
 				s.decide_t = 0.0
+		"construct":
+			var st = s.build_site
+			if st == null or st["done"] or st["dead"] or not Build.sites.has(st) or s.vis_t != null or s.supp > 1.5:
+				s.task = null
+				s.build_site = null
+				s.decide_t = 0.0
+				s.job_cd = 4.0
+				return
+			if G.dist2d(s.pos, st["p"]) < Build.build_radius(st) + 0.7:
+				AI.stop_move(s)
+				s.want = Vector3.ZERO
+				s.crouch_t = 0.75
+				var to = G.flat(st["p"] - s.pos)
+				s.aim_yaw = G.turn_to(s.aim_yaw, atan2(to.x, to.z), 4.0 * G.DT)
+				s.hand_t = s.pos + to.normalized() * 0.6 + Vector3(0, 0.2 + absf(sin(G.sim_time * 7.0)) * 0.35, 0)
+				Build.add_work(st, (1.0 if s.cls == "engineer" else 0.55) * G.DT)
+				if randf() < G.DT * 2.2:
+					G.audio.hammer(s.pos)
+			elif s.move_target == null:
+				AI.go_to(s, Build.work_spot(st, s), 4.6)
 		"mine":
 			if s.move_target == null:
 				Combat.place_mine(s, s.pos + G.flat(s.board_target - s.pos) * 0.2, "ap")
@@ -187,6 +255,24 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 		if n > bn and not friends:
 			bn = n
 			best = o.pos
+	if best == null:
+		# a known enemy FOB or HQ is worth a few shells too
+		for st in Build.sites:
+			if st["team"] == team or st["dead"] or not st["done"] or not (st["kind"] in ["fob", "hq", "bunker", "mgnest", "mortarpit", "depot", "radio"]):
+				continue
+			if G.dist2d(st["p"], from) < min_d:
+				continue
+			var spotted = false
+			var friends2 = false
+			for f in G.soldiers:
+				if f.team == team and f.state != "dead":
+					var d = G.dist2d(f.pos, st["p"])
+					if d < 85.0 and not G.blocked(f.head_pos(), st["p"] + Vector3(0, 1.5, 0)):
+						spotted = true
+					if d < 20.0:
+						friends2 = true
+			if spotted and not friends2:
+				return st["p"]
 	return best
 
 static func call_artillery(s, target: Vector3) -> void:

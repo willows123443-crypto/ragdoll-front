@@ -138,6 +138,7 @@ var rotor: Node3D = null
 var orbit_a = 0.0
 var life_t = -1.0             # gunships called in for a while
 var ramp: Node3D = null
+var doors: Array = []          # {"n", "open"/"shut" or "slide", "t", "c"}
 
 static var mats = {}
 
@@ -209,214 +210,7 @@ func _build() -> void:
 	body.sync_to_physics = false
 	body.set_meta("vehicle", self)
 	G.main.add_child(body)
-	var base_col = G.TEAM_UNI[team].lerp(Color(0.35, 0.36, 0.3), 0.55)
-	var dark = base_col.darkened(0.35)
-	var band = G.TEAM_BAND[team]
-	match kind:
-		"jeep":
-			# open-topped: floor, low sides, bonnet, windscreen frame and seats, so the crew is visible
-			var col = CollisionShape3D.new()
-			var cb = BoxShape3D.new()
-			cb.size = Vector3(1.9, 0.9, 4.0)
-			col.shape = cb
-			col.position = Vector3(0, 0.85, 0)
-			body.add_child(col)
-			_box(self, Vector3(1.9, 0.22, 4.0), Vector3(0, 0.62, 0), base_col)
-			_box(self, Vector3(1.85, 0.5, 1.25), Vector3(0, 0.98, 1.38), base_col)
-			for x in [0.92, -0.92]:
-				_box(self, Vector3(0.08, 0.42, 2.7), Vector3(x, 0.94, -0.62), base_col)
-			_box(self, Vector3(1.9, 0.42, 0.08), Vector3(0, 0.94, -1.96), base_col)
-			_box(self, Vector3(1.7, 0.08, 0.12), Vector3(0, 1.18, -1.98), band)
-			_box(self, Vector3(1.6, 0.06, 0.06), Vector3(0, 1.72, 0.7), dark)
-			for x in [0.8, -0.8]:
-				_box(self, Vector3(0.06, 0.55, 0.06), Vector3(x, 1.45, 0.7), dark)
-			_box(self, Vector3(1.5, 0.46, 0.02), Vector3(0, 1.46, 0.7), Color(0.55, 0.65, 0.7))
-			for x in [0.45, -0.45]:
-				_box(self, Vector3(0.55, 0.18, 0.55), Vector3(x, 0.82, 0.1), dark)
-				_box(self, Vector3(0.55, 0.5, 0.12), Vector3(x, 1.05, -0.2), dark)
-			_box(self, Vector3(1.3, 0.18, 0.55), Vector3(-0.2, 0.82, -0.9), dark)
-			_box(self, Vector3(0.36, 0.06, 0.04), Vector3(0.45, 1.25, 0.55), Color(0.1, 0.1, 0.1))
-			for z in [1.35, -1.3]:
-				for x in [0.95, -0.95]:
-					_wheel(Vector3(x, 0.42, z), 0.42, 0.32)
-			turret = Node3D.new()
-			turret.position = Vector3(0, 1.6, -0.62)
-			add_child(turret)
-			_box(turret, Vector3(0.12, 0.85, 0.12), Vector3(0, -0.42, 0), dark)
-			gun_pivot = Node3D.new()
-			gun_pivot.position = Vector3(0, 0.15, 0)
-			turret.add_child(gun_pivot)
-			_box(gun_pivot, Vector3(0.18, 0.2, 0.9), Vector3(0, 0, 0.25), Color(0.12, 0.12, 0.12))
-			_box(gun_pivot, Vector3(0.07, 0.07, 0.8), Vector3(0, 0.02, 1.0), Color(0.1, 0.1, 0.1))
-			_box(gun_pivot, Vector3(0.6, 0.4, 0.04), Vector3(0, 0.1, 0.45), dark)
-		"truck":
-			_box(self, Vector3(2.4, 0.5, 7.0), Vector3(0, 0.95, 0), dark, true)
-			# cab with windows so the driver shows
-			_box(self, Vector3(2.3, 0.75, 1.8), Vector3(0, 1.55, 2.5), base_col, true)
-			_box(self, Vector3(2.3, 0.12, 1.8), Vector3(0, 2.62, 2.5), base_col)
-			for x in [1.12, -1.12]:
-				for z in [1.65, 3.35]:
-					_box(self, Vector3(0.08, 0.95, 0.1), Vector3(x, 2.1, z), base_col)
-			_box(self, Vector3(2.2, 0.85, 0.08), Vector3(0, 2.12, 1.62), base_col)
-			_box(self, Vector3(2.1, 0.6, 0.02), Vector3(0, 2.2, 3.38), Color(0.55, 0.65, 0.7))
-			_box(self, Vector3(2.3, 0.8, 0.9), Vector3(0, 1.4, 3.75), base_col.darkened(0.1))
-			_box(self, Vector3(0.55, 0.2, 0.5), Vector3(0.5, 1.95, 2.3), Color(0.15, 0.15, 0.14))
-			_box(self, Vector3(2.4, 0.6, 4.6), Vector3(0, 1.5, -1.2), base_col)
-			_box(self, Vector3(2.45, 0.1, 4.7), Vector3(0, 2.75, -1.2), base_col.darkened(0.15))
-			for x in [1.18, -1.18]:
-				_box(self, Vector3(0.06, 1.2, 4.6), Vector3(x, 2.15, -1.2), base_col.darkened(0.15))
-			_box(self, Vector3(2.4, 0.1, 0.4), Vector3(0, 2.7, 3.3), band)
-			for z in [2.4, -0.4, -2.6]:
-				for x in [1.1, -1.1]:
-					_wheel(Vector3(x, 0.55, z), 0.55, 0.42)
-		"halftrack":
-			_box(self, Vector3(2.3, 0.9, 6.0), Vector3(0, 1.05, 0), base_col, true)
-			_box(self, Vector3(2.2, 0.7, 1.8), Vector3(0, 1.4, 2.2), base_col.darkened(0.08))
-			for x in [1.12, -1.12]:
-				_box(self, Vector3(0.08, 0.8, 4.0), Vector3(x, 1.85, -0.8), base_col)
-			_box(self, Vector3(2.3, 0.8, 0.08), Vector3(0, 1.85, -2.85), base_col)
-			_box(self, Vector3(2.3, 0.5, 0.08), Vector3(0, 1.75, 1.2), base_col.darkened(0.1))
-			_box(self, Vector3(2.0, 0.1, 0.3), Vector3(0, 2.3, -2.85), band)
-			for x in [1.1, -1.1]:
-				_box(self, Vector3(0.45, 0.8, 4.2), Vector3(x, 0.45, -0.9), Color(0.13, 0.13, 0.12))
-				_wheel(Vector3(x, 0.45, 2.3), 0.45, 0.35)
-			turret = Node3D.new()
-			turret.position = Vector3(0, 2.4, 0.9)
-			add_child(turret)
-			_box(turret, Vector3(0.7, 0.45, 0.06), Vector3(0, 0.0, 0.35), dark)
-			gun_pivot = Node3D.new()
-			turret.add_child(gun_pivot)
-			_box(gun_pivot, Vector3(0.16, 0.18, 0.9), Vector3(0, 0, 0.25), Color(0.12, 0.12, 0.12))
-			_box(gun_pivot, Vector3(0.06, 0.06, 0.7), Vector3(0, 0.02, 0.95), Color(0.1, 0.1, 0.1))
-		"armoredcar":
-			_box(self, Vector3(2.3, 1.1, 5.0), Vector3(0, 1.15, 0), base_col, true)
-			_box(self, Vector3(2.0, 0.5, 1.2), Vector3(0, 1.4, 2.4), base_col.darkened(0.06))
-			_box(self, Vector3(2.0, 0.1, 0.3), Vector3(0, 1.75, -2.4), band)
-			for z in [1.7, 0.0, -1.7]:
-				for x in [1.2, -1.2]:
-					_wheel(Vector3(x, 0.55, z), 0.55, 0.4)
-			turret = Node3D.new()
-			turret.position = Vector3(0, 1.95, -0.2)
-			add_child(turret)
-			_box(turret, Vector3(1.5, 0.6, 1.8), Vector3(0, 0.3, 0), base_col.darkened(0.04))
-			gun_pivot = Node3D.new()
-			gun_pivot.position = Vector3(0, 0.3, 0.9)
-			turret.add_child(gun_pivot)
-			_box(gun_pivot, Vector3(0.14, 0.14, 1.6), Vector3(0, 0, 0.8), dark)
-		"motorbike":
-			_box(self, Vector3(0.3, 0.45, 1.9), Vector3(-0.45, 0.75, 0), base_col, true)
-			_box(self, Vector3(0.9, 0.5, 1.5), Vector3(0.55, 0.6, 0.0), base_col.darkened(0.1), true)
-			_box(self, Vector3(0.7, 0.06, 0.06), Vector3(-0.45, 1.25, 0.7), Color(0.1, 0.1, 0.1))
-			_wheel(Vector3(-0.45, 0.35, 0.8), 0.35, 0.15)
-			_wheel(Vector3(-0.45, 0.35, -0.8), 0.35, 0.15)
-			_wheel(Vector3(0.85, 0.3, 0.0), 0.3, 0.15)
-			turret = Node3D.new()
-			turret.position = Vector3(0.55, 1.15, 0.6)
-			add_child(turret)
-			gun_pivot = Node3D.new()
-			turret.add_child(gun_pivot)
-			_box(gun_pivot, Vector3(0.12, 0.14, 0.8), Vector3(0, 0, 0.2), Color(0.12, 0.12, 0.12))
-		"artillery":
-			_box(self, Vector3(2.0, 0.15, 0.4), Vector3(0, 0.6, 0.2), dark, true)
-			for x in [1.05, -1.05]:
-				_wheel(Vector3(x, 0.6, 0.2), 0.6, 0.18)
-			for x in [0.4, -0.4]:
-				_box(self, Vector3(0.12, 0.12, 2.6), Vector3(x, 0.35, -1.2), dark)
-			turret = Node3D.new()
-			turret.position = Vector3(0, 0.95, 0.3)
-			add_child(turret)
-			_box(turret, Vector3(1.4, 1.0, 0.08), Vector3(0, 0.1, 0.5), base_col)
-			gun_pivot = Node3D.new()
-			gun_pivot.rotation.x = -0.5
-			turret.add_child(gun_pivot)
-			_box(gun_pivot, Vector3(0.3, 0.3, 1.0), Vector3(0, 0, 0.2), dark)
-			_box(gun_pivot, Vector3(0.16, 0.16, 2.8), Vector3(0, 0, 1.9), dark)
-		"heli", "gunship":
-			var hc = base_col.darkened(0.05)
-			var big = kind == "heli"
-			_box(self, Vector3(2.4 if big else 1.4, 1.9 if big else 1.4, 5.0 if big else 4.2), Vector3(0, 1.4, 0.6 if big else 1.0), hc, true)
-			_box(self, Vector3(1.6 if big else 1.0, 1.0, 1.2), Vector3(0, 1.35, 3.6 if big else 3.5), Color(0.45, 0.55, 0.6))
-			_box(self, Vector3(0.5, 0.5, 5.0), Vector3(0, 1.8, -3.9), hc)
-			_box(self, Vector3(0.1, 1.4, 0.9), Vector3(0, 2.4, -6.2), hc)
-			_box(self, Vector3(2.6 if big else 1.6, 0.08, 0.12), Vector3(0, 0.25, 0.6), dark)
-			for x in ([1.2, -1.2] if big else [0.75, -0.75]):
-				_box(self, Vector3(0.08, 0.08, 3.2), Vector3(x, 0.15, 0.6), dark)
-				_box(self, Vector3(0.08, 0.4, 0.08), Vector3(x, 0.35, 0.6), dark)
-			_box(self, Vector3(1.4, 0.08, 0.4), Vector3(0, 2.35, -1.0), band)
-			if not big:
-				for x in [1.0, -1.0]:
-					_box(self, Vector3(0.9, 0.08, 0.5), Vector3(x * 0.9, 1.3, 0.8), dark)
-					_box(self, Vector3(0.25, 0.25, 1.2), Vector3(x * 1.3, 1.15, 0.8), Color(0.2, 0.22, 0.18))
-			rotor = Node3D.new()
-			rotor.position = Vector3(0, 2.55 if big else 2.2, 0.5)
-			add_child(rotor)
-			for k in range(2):
-				var blade = _box(rotor, Vector3(0.25, 0.04, 13.0 if big else 11.0), Vector3.ZERO, Color(0.1, 0.1, 0.1))
-				blade.rotation.y = k * PI / 2.0
-			if not big:
-				turret = Node3D.new()
-				turret.position = Vector3(0, 0.75, 3.3)
-				add_child(turret)
-				gun_pivot = Node3D.new()
-				turret.add_child(gun_pivot)
-				_box(gun_pivot, Vector3(0.14, 0.14, 1.0), Vector3(0, 0, 0.4), Color(0.1, 0.1, 0.1))
-		"boat":
-			var bc = Color(0.38, 0.42, 0.4)
-			_box(self, Vector3(3.3, 0.3, 8.8), Vector3(0, 0.35, 0), bc, true)
-			for x in [1.6, -1.6]:
-				_box(self, Vector3(0.12, 1.6, 8.6), Vector3(x, 1.1, 0), bc)
-			_box(self, Vector3(3.3, 1.6, 0.15), Vector3(0, 1.1, -4.35), bc)
-			_box(self, Vector3(1.2, 0.6, 1.0), Vector3(0, 2.0, -3.6), bc.darkened(0.2))
-			turret = null
-			ramp = Node3D.new()
-			ramp.position = Vector3(0, 0.3, 4.35)
-			add_child(ramp)
-			_box(ramp, Vector3(3.2, 1.7, 0.15), Vector3(0, 0.85, 0), bc.darkened(0.1))
-		"nest":
-			var bag = Color(0.66, 0.6, 0.45)
-			_box(self, Vector3(3.0, 0.9, 0.7), Vector3(0, 0.45, 0.9), bag, true)
-			for x in [1.35, -1.35]:
-				_box(self, Vector3(0.7, 0.9, 2.0), Vector3(x, 0.45, 0.0), bag.darkened(0.08), true)
-			turret = Node3D.new()
-			turret.position = Vector3(0, 1.08, 0.15)
-			add_child(turret)
-			_box(turret, Vector3(0.08, 0.6, 0.08), Vector3(0, -0.4, 0), Color(0.15, 0.15, 0.14))
-			gun_pivot = Node3D.new()
-			turret.add_child(gun_pivot)
-			_box(gun_pivot, Vector3(0.16, 0.18, 0.9), Vector3(0, 0, 0.2), Color(0.12, 0.12, 0.12))
-			_box(gun_pivot, Vector3(0.06, 0.06, 0.7), Vector3(0, 0.02, 0.9), Color(0.1, 0.1, 0.1))
-		"mortar":
-			_box(self, Vector3(0.6, 0.06, 0.6), Vector3(0, 0.03, 0), Color(0.2, 0.2, 0.19), true)
-			for k in range(6):
-				var a = k * TAU / 6.0
-				_box(self, Vector3(0.5, 0.45, 0.4), Vector3(cos(a) * 1.0, 0.22, sin(a) * 1.0), Color(0.64, 0.58, 0.44))
-			turret = Node3D.new()
-			turret.position = Vector3(0, 0.15, 0)
-			add_child(turret)
-			gun_pivot = Node3D.new()
-			gun_pivot.rotation.x = -0.95
-			turret.add_child(gun_pivot)
-			_box(gun_pivot, Vector3(0.14, 0.14, 1.2), Vector3(0, 0, 0.55), Color(0.2, 0.22, 0.18))
-		"tank":
-			_box(self, Vector3(3.3, 1.0, 6.4), Vector3(0, 0.95, 0), base_col, true)
-			_box(self, Vector3(3.0, 0.4, 5.2), Vector3(0, 1.6, -0.2), base_col.darkened(0.1), true)
-			for x in [1.45, -1.45]:
-				_box(self, Vector3(0.7, 0.95, 6.6), Vector3(x, 0.5, 0), Color(0.13, 0.13, 0.12))
-			for z in range(5):
-				for x in [1.45, -1.45]:
-					_wheel(Vector3(x, 0.42, -2.4 + z * 1.2), 0.4, 0.74)
-			turret = Node3D.new()
-			turret.position = Vector3(0, 1.8, -0.3)
-			add_child(turret)
-			_box(turret, Vector3(2.3, 0.85, 2.7), Vector3(0, 0.42, 0), base_col)
-			_box(turret, Vector3(0.6, 0.18, 0.6), Vector3(0.5, 0.92, -0.4), dark)
-			_box(turret, Vector3(1.4, 0.1, 0.3), Vector3(0, 0.88, -1.2), band)
-			gun_pivot = Node3D.new()
-			gun_pivot.position = Vector3(0, 0.45, 1.3)
-			turret.add_child(gun_pivot)
-			_box(gun_pivot, Vector3(0.5, 0.5, 0.5), Vector3(0, 0, 0.2), dark)
-			_box(gun_pivot, Vector3(0.2, 0.2, 3.2), Vector3(0, 0, 1.9), dark)
-			_box(gun_pivot, Vector3(0.3, 0.3, 0.5), Vector3(0, 0, 3.4), dark)
+	VModel.build(self)
 	for s in spec["seats"]:
 		seats.append(null)
 
@@ -490,6 +284,8 @@ func _place(dt: float) -> void:
 
 # ---------------------------------------------------------------- per physics tick
 func step(dt: float) -> void:
+	if not doors.is_empty():
+		_doors_tick(dt)
 	if dead:
 		dead_t += dt
 		speed = move_toward(speed, 0.0, 10.0 * dt)
@@ -862,13 +658,7 @@ func destroy(attacker) -> void:
 	if smoke_node == null:
 		G.fx.wreck_smoke(center(), self)
 		smoke_node = true
-	for m in get_children():
-		if m is MeshInstance3D:
-			m.material_override = _m("wreck", Color(0.12, 0.11, 0.1))
-	if turret:
-		for m in turret.get_children():
-			if m is MeshInstance3D:
-				m.material_override = _m("wreck", Color(0.12, 0.11, 0.1))
+	_wreck_paint(self)
 	for i in range(seats.size()):
 		var s = seats[i]
 		if s != null and is_instance_valid(s):
@@ -880,6 +670,41 @@ func destroy(attacker) -> void:
 	if attacker != null and is_instance_valid(attacker) and attacker.team != team:
 		G.ui.feed(attacker, null, false, spec["name"])
 	Stats.vehicle_lost(team)
+
+func _wreck_paint(n: Node) -> void:
+	for m in n.get_children():
+		if m is MeshInstance3D:
+			m.material_override = _m("wreck", Color(0.12, 0.11, 0.1))
+		if m.get_child_count() > 0:
+			_wreck_paint(m)
+
+# swing open the door nearest a seat for a moment
+func open_door(i: int) -> void:
+	if doors.is_empty() or i < 0 or i >= spec["seats"].size():
+		return
+	var o: Vector3 = spec["seats"][i]["o"]
+	var best = null
+	var bd = 1e9
+	for d in doors:
+		var c: Vector3 = d["c"]
+		var dd = Vector2(c.x - o.x, c.z - o.z).length()
+		if dd < bd:
+			bd = dd
+			best = d
+	if best != null and bd < 3.0:
+		best["t"] = 1.6
+
+func _doors_tick(dt: float) -> void:
+	for d in doors:
+		if d["t"] > 0.0:
+			d["t"] -= dt
+		var n: Node3D = d["n"]
+		if not is_instance_valid(n):
+			continue
+		if d.has("slide"):
+			n.position.z = lerpf(n.position.z, d["c"].z + 0.7 - (d["slide"] if d["t"] > 0.0 else 0.0), minf(1.0, dt * 6.0))
+		else:
+			n.rotation.y = lerp_angle(n.rotation.y, d["open"] if d["t"] > 0.0 else d["shut"], minf(1.0, dt * 7.0))
 
 func remove() -> void:
 	for i in range(seats.size()):
@@ -1072,6 +897,8 @@ func repair(amount: float) -> void:
 func _air_step(dt: float) -> void:
 	if rotor != null:
 		rotor.rotation.y += dt * (18.0 if not dead else 4.0)
+		if has_meta("tail_rotor"):
+			get_meta("tail_rotor").rotation.x += dt * (40.0 if not dead else 6.0)
 	var gy = _ground(pos.x, pos.z)
 	if dead:
 		# going down

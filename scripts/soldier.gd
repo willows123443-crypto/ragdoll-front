@@ -103,6 +103,7 @@ var burn_fx_t = 0.0
 var primary = null      # [weapon, mag, reserve] while using the sidearm
 var partner = null      # sniper <-> spotter
 var job_cd = 0.0
+var build_site = null       # the construction site this soldier is working on
 var vis_veh = null
 var fired_t = -99.0
 var flares = 0
@@ -258,6 +259,66 @@ func _mesh(parent: Node3D, size: Vector3, offset: Vector3, mat: Material) -> voi
 	mi.layers = 2
 	parent.add_child(mi)
 
+static var helm_meshes = {}
+
+static func _hm(key: String) -> Mesh:
+	if helm_meshes.has(key):
+		return helm_meshes[key]
+	var m: Mesh
+	match key:
+		"dome":
+			var sm = SphereMesh.new()
+			sm.radius = 0.5
+			sm.height = 0.5
+			sm.is_hemisphere = true
+			sm.radial_segments = 12
+			sm.rings = 4
+			m = sm
+		"flare":
+			var cm = CylinderMesh.new()
+			cm.top_radius = 0.48
+			cm.bottom_radius = 0.56
+			cm.height = 1.0
+			cm.radial_segments = 12
+			cm.rings = 1
+			m = cm
+		_:
+			var cy = CylinderMesh.new()
+			cy.top_radius = 0.5
+			cy.bottom_radius = 0.5
+			cy.height = 1.0
+			cy.radial_segments = 12
+			cy.rings = 1
+			m = cy
+	helm_meshes[key] = m
+	return m
+
+func _hpart(parent: Node3D, key: String, sc: Vector3, at: Vector3, mat: Material) -> void:
+	var mi = MeshInstance3D.new()
+	mi.mesh = _hm(key)
+	mi.scale = sc
+	mi.position = at
+	mi.material_override = mat
+	mi.layers = 2
+	parent.add_child(mi)
+
+# each team wears a differently shaped helmet, with a band in the team colour
+func _helmet(head: Node3D, helm: Material, band: Material, cloth: Material) -> void:
+	match team % 4:
+		0:  # round dome with a narrow rim
+			_hpart(head, "dome", Vector3(0.33, 0.5, 0.35), Vector3(0, 0.07, 0), helm)
+			_hpart(head, "cyl", Vector3(0.37, 0.025, 0.39), Vector3(0, 0.07, 0), helm)
+		1:  # deep helmet flaring out over the neck and ears
+			_hpart(head, "dome", Vector3(0.32, 0.5, 0.34), Vector3(0, 0.08, 0), helm)
+			_hpart(head, "flare", Vector3(0.33, 0.1, 0.35), Vector3(0, 0.035, -0.015), helm)
+		2:  # shallow bowl with a wide flat brim
+			_hpart(head, "dome", Vector3(0.28, 0.38, 0.3), Vector3(0, 0.08, 0), helm)
+			_hpart(head, "cyl", Vector3(0.44, 0.022, 0.46), Vector3(0, 0.075, 0), helm)
+		_:  # soft field cap with a brim
+			_hpart(head, "cyl", Vector3(0.29, 0.13, 0.3), Vector3(0, 0.13, 0), cloth)
+			_hpart(head, "cyl", Vector3(0.4, 0.02, 0.42), Vector3(0, 0.075, 0), cloth)
+	_hpart(head, "cyl", Vector3(0.335, 0.035, 0.355), Vector3(0, 0.09, 0), band)
+
 func _build_body() -> void:
 	_compute_targets()
 	var uni = _mat("uni" + G.TEAM_UNI[team].to_html(), G.TEAM_UNI[team], true)
@@ -292,7 +353,7 @@ func _build_body() -> void:
 	_mesh(parts[1], Vector3(0.46, 0.32, 0.3), Vector3(0, 0.06, 0), vest)
 	_mesh(parts[1], Vector3(0.32, 0.3, 0.14), Vector3(0, 0.05, 0.19), vest)
 	_mesh(parts[2], Vector3(0.25, 0.26, 0.25), Vector3.ZERO, sk)
-	_mesh(parts[2], Vector3(0.31, 0.14, 0.32), Vector3(0, 0.1, 0), helm)
+	_helmet(parts[2], helm, band, uni)
 	for i in [3, 5]:
 		_mesh(parts[i], Vector3(0.13, 0.32, 0.13), Vector3.ZERO, uni)
 	_mesh(parts[3], Vector3(0.15, 0.08, 0.15), Vector3(0, -0.03, 0), band)
@@ -670,8 +731,12 @@ func set_class(c: String) -> void:
 		# officers wear a peaked cap instead of a helmet
 		for m in parts[2].get_children():
 			if m is MeshInstance3D and m.position.y > 0.05:
-				m.material_override = _mat("cap", Color(0.42, 0.12, 0.1), false)
-				m.scale = Vector3(1.0, 0.7, 1.15)
+				m.visible = false
+		var capm = _mat("cap", Color(0.42, 0.12, 0.1), false)
+		_hpart(parts[2], "cyl", Vector3(0.3, 0.09, 0.31), Vector3(0, 0.12, 0), capm)
+		_hpart(parts[2], "cyl", Vector3(0.36, 0.03, 0.37), Vector3(0, 0.17, 0.01), capm)
+		_hpart(parts[2], "cyl", Vector3(0.2, 0.015, 0.14), Vector3(0, 0.075, 0.13), _mat("boot", Color(0.16, 0.14, 0.12), false))
+		_hpart(parts[2], "cyl", Vector3(0.31, 0.03, 0.32), Vector3(0, 0.09, 0), _mat("band" + G.TEAM_BAND[team].to_html(), G.TEAM_BAND[team], false))
 	mines = 3 if c == "engineer" else 0
 	satchels = 2 if c == "engineer" else 0
 	kits = 3 if c == "engineer" else 0
@@ -1245,6 +1310,7 @@ func mount(v, i: int) -> bool:
 	vehicle = v
 	seat = i
 	v.seats[i] = self
+	v.open_door(i)
 	state = "riding"
 	task = null
 	route = null
@@ -1285,6 +1351,8 @@ func dismount(eject: bool) -> void:
 	var start: Vector3 = pos
 	if is_instance_valid(v) and seat >= 0 and seat < v.seats.size() and v.seats[seat] == self:
 		v.seats[seat] = null
+		if not v.dead:
+			v.open_door(seat)
 	var out: Vector3 = pos
 	if is_instance_valid(v):
 		var side = Vector3(cos(v.yaw), 0, -sin(v.yaw))

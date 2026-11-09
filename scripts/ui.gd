@@ -12,9 +12,13 @@ const TOOLS = {
 		["v:truck:0", "Truck A"], ["v:nest:0", "MG nest A"], ["v:nest:1", "MG nest B"], ["v:mortar:0", "Mortar A"], ["v:artillery:0", "Field gun A"]],
 	"support": [["sup:artillery", "Artillery 10"], ["sup:airstrike", "Air strike 16"], ["sup:paradrop", "Paras 12"], ["sup:heli", "Heli 16"],
 		["sup:jeep", "Jeep 8"], ["sup:halftrack", "Half-track 14"], ["sup:armoredcar", "Arm. car 20"], ["sup:tank", "Tank 30"], ["sup:gunship", "Gunship 34"]],
+	"build": [["bteam", "Team"], ["b:fob", "FOB"], ["b:sandbags", "Sandbags"], ["b:wire", "Wire"], ["b:traps", "Tank traps"], ["b:mgnest", "MG nest"],
+		["b:mortarpit", "Mortar pit"], ["b:tower", "Watchtower"], ["b:bunker", "Bunker"], ["b:hospital", "Hospital"], ["b:radio", "Radio mast"],
+		["b:depot", "Depot"], ["b:supply", "Supply dump"], ["dis", "Dismantle"]],
 	"fun": [["boom", "Explosion"], ["mortar", "Mortar strike"], ["smoke", "Smoke"], ["flare", "Flare"], ["push", "Shove"]],
 }
-const TIPS = {"sel": "Click or drag a box to select soldiers (Shift adds), then right-click the ground to send them there",
+const TIPS = {"dis": "Click a structure, wall, building piece or emplacement to take it apart",
+	"bteam": "Click to change which team the next construction site is for","sel": "Click or drag a box to select soldiers (Shift adds), then right-click the ground to send them there",
 	"mvA": "Click to send the whole Alpha team to a point", "mvB": "Click to send the whole Bravo team to a point",
 	"a1": "Click the ground to drop in an Alpha soldier", "b1": "Click the ground to drop in a Bravo soldier",
 	"a5": "Click to drop in five Alpha soldiers", "b5": "Click to drop in five Bravo soldiers",
@@ -44,6 +48,7 @@ var feed_box: VBoxContainer
 var side: VBoxContainer
 var btn_reinf: Button
 var tabs_box: HBoxContainer
+var build_team = 0
 var tool_box: HBoxContainer
 var tip: Label
 var msg: Label
@@ -267,11 +272,11 @@ func _render_tools() -> void:
 		c.queue_free()
 	for c in tool_box.get_children():
 		c.queue_free()
-	for t in [["units", "Units"], ["command", "Command"], ["vehicles", "Vehicles"], ["support", "Support"], ["fun", "Effects"]]:
+	for t in [["units", "Units"], ["command", "Command"], ["vehicles", "Vehicles"], ["support", "Support"], ["build", "Build"], ["fun", "Effects"]]:
 		var key = t[0]
 		var b = _button(t[1], func():
 			tab = key
-			tool = TOOLS[key][0][0]
+			tool = TOOLS[key][0][0] if key != "build" else "b:fob"
 			_render_tools())
 		if tab == key:
 			b.modulate = Color(1.0, 0.85, 0.3)
@@ -279,9 +284,17 @@ func _render_tools() -> void:
 	var i = 1
 	for t in TOOLS[tab]:
 		var id = t[0]
-		var b2 = _button("%d  %s" % [i, t[1]], func():
-			tool = id
+		var label: String = t[1]
+		if id == "bteam":
+			label = "Team: %s" % G.TEAM_NAMES[build_team] if build_team < G.TEAM_NAMES.size() else "Team"
+		var b2 = _button("%d  %s" % [i, label], func():
+			if id == "bteam":
+				build_team = (build_team + 1) % maxi(1, G.team_count())
+			else:
+				tool = id
 			_render_tools())
+		if id == "bteam" and build_team < G.TEAM_BAND.size():
+			b2.modulate = G.team_color(build_team).lightened(0.4)
 		if tool == id:
 			b2.modulate = Color(1.0, 0.85, 0.3)
 		tool_box.add_child(b2)
@@ -292,7 +305,10 @@ func _render_tools() -> void:
 
 func pick_tool(i: int) -> void:
 	if i < TOOLS[tab].size():
-		tool = TOOLS[tab][i][0]
+		if TOOLS[tab][i][0] == "bteam":
+			build_team = (build_team + 1) % maxi(1, G.team_count())
+		else:
+			tool = TOOLS[tab][i][0]
 		_render_tools()
 
 # ---------------------------------------------------------------- crosshair, hit marker, damage arrows, scope, messages
@@ -506,7 +522,7 @@ func _build_help() -> void:
 	v.add_child(_label("Controls", 26))
 	var t = "FREE CAMERA\n" + \
 		"  W A S D  fly · Space / E up · Q / C down · Shift faster · mouse wheel zoom\n" + \
-		"  Right-drag  look around · Left-click  use the selected tool · 1–7  pick a tool\n" + \
+		"  Right-drag  look around · Left-click  use the selected tool · 1–9  pick a tool\n" + \
 		"  F  take control of the soldier at the centre of the screen\n" + \
 		"  T  slow-mo · P  pause · M  menu\n\n" + \
 		"CONTROLLING A SOLDIER\n" + \
@@ -517,11 +533,14 @@ func _build_help() -> void:
 		"  B  class action (engineer: sandbags/repair · medic: heal · radio: artillery on crosshair · sniper/spotter: mark target)\n" + \
 		"  N  place a mine (Shift+N anti-tank) · K  satchel charge · 1–9  rifle, MG, sniper, shotgun, rockets, SMG, pistol, flamethrower, AT rifle\n" + \
 		"  Y  first-person / third-person view · L  fire a flare · Esc  free the mouse · X  leave the soldier\n" + \
+		"  U (hold)  help build a friendly construction site · I  dismantle what you aim at (within 6 m)\n" + \
 		"  F  next to a vehicle: get in · in a vehicle: WASD drive, mouse aim, click fire, 1–4 change seat, F get out\n\n" + \
 		"BATTLE\n" + \
 		"  Squad leaders carry a radio antenna. Soldiers who lose friends, their leader or come under heavy fire\n" + \
 		"  get shaken, and may break and run to the rear until a leader rallies them.\n" + \
-		"  Bullets go through thin walls, crates and hedges. J  battle report"
+		"  Bullets go through thin walls, crates and hedges. Every building can be blown apart. J  battle report\n" + \
+		"  Engineers build FOBs, nests, bunkers and more piece by piece (Build tab to mark out sites).\n" + \
+		"  Reinforcements arrive at your HQ or FOBs: lose them all and nobody new comes until you build a FOB."
 	var l = _label(t, 14, Color(0.88, 0.88, 0.88))
 	v.add_child(l)
 	v.add_child(_button("Close", func(): help.visible = false))
@@ -686,6 +705,8 @@ func update_hud(dt: float) -> void:
 			tip.text = "Supply points: %d  (earned over time, for kills and for capturing points) · click a call-in, then the map for strikes" % Support.points[0]
 		elif show_game and tool.begins_with("v:"):
 			tip.text = "Click the ground to drop this vehicle with its crew"
+		elif show_game and tool.begins_with("b:"):
+			tip.text = "Click to mark out a %s site for %s — their engineers will come and build it" % [Build.KINDS[tool.substr(2)]["name"], G.TEAM_NAMES[build_team] if build_team < G.TEAM_NAMES.size() else "?"]
 	scope.visible = ctl and G.player.ads and G.player.wid == "sniper" and G.pc.cam.fov < 24.0
 	cross.queue_redraw()
 	if hit_t > 0.0:

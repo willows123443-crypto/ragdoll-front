@@ -26,23 +26,28 @@ static func step(dt: float) -> void:
 		if missing <= 0:
 			timers[t] = minf(timers[t], 0.0)
 			continue
+		# no HQ and no FOB: nobody can come in until one is built
+		if not Build.can_respawn(t):
+			timers[t] = minf(timers[t], 0.0)
+			continue
 		timers[t] += dt
+		# fresh troops are gathered and sent forward in groups, which takes a while
 		match G.reinf_mode:
 			"instant":
-				if timers[t] > 2.2:
+				if timers[t] > 7.0:
 					timers[t] = 0.0
 					G.main.base_spawn(t)
 			"para":
-				if timers[t] > (10.0 if missing >= 4 else 22.0):
-					timers[t] = -8.0
+				if timers[t] > (35.0 if missing >= 4 else 55.0):
+					timers[t] = -20.0
 					paradrop(t, mini(missing, 6))
 			"heli":
-				if timers[t] > (12.0 if missing >= 4 else 24.0):
-					timers[t] = -10.0
+				if timers[t] > (38.0 if missing >= 4 else 58.0):
+					timers[t] = -20.0
 					heli(t, mini(missing, 6))
 			_:
-				if timers[t] > (8.0 if missing >= 4 else 20.0):
-					timers[t] = -6.0
+				if timers[t] > (30.0 if missing >= 4 else 50.0):
+					timers[t] = -20.0
 					truck(t, mini(missing, 8))
 
 # where a team's trucks come in from: the team's own edge of the map, on a road if there is one

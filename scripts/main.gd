@@ -240,6 +240,8 @@ func start_game(o: Dictionary) -> void:
 	Obj.reset()
 	Commander.reset()
 	Support.reset()
+	Build.reset()
+	Build.setup_bases()
 	for t in range(G.team_count()):
 		if G.mode == "laststand" and t == 1:
 			continue
@@ -331,6 +333,11 @@ func _free_spot(p: Vector3) -> Vector3:
 
 func base_spawn(team: int) -> void:
 	var b: Vector3 = G.world.spawn[team]
+	if Build.bases_matter():
+		var sp = Build.spawn_pos(team)
+		if sp == null:
+			return
+		b = sp
 	for k in range(6):
 		var x = b.x + randf_range(-8, 8)
 		var z = b.z + randf_range(-14, 14)
@@ -369,6 +376,7 @@ func _sim_step() -> void:
 		G.game_time += G.DT
 	G.path_budget = 4
 	Reinforce.step(G.DT)
+	Build.step(G.DT)
 	var ta = Time.get_ticks_usec()
 	for v in G.vehicles.duplicate():
 		if is_instance_valid(v):
@@ -513,6 +521,14 @@ func _wait(sec: float) -> void:
 	await get_tree().create_timer(sec, true, true).timeout
 
 func _report(tag: String) -> void:
+	var bl = []
+	for st in Build.sites:
+		bl.append("%s%d:%s" % [st["kind"], st["team"], "dead" if st["dead"] else ("ok" if st["done"] else "%d%%" % int(100.0 * st["work"] / st["need"]))])
+	var lean_n = 0
+	for o in G.soldiers:
+		if o.state == "alive" and o.in_cover and o.cover != null and o.cover.type == "wall" and o.cover.side != 0.0:
+			lean_n += 1
+	print("AUTOTEST %s | builds %s | spawnable %s | wall-leaners %d" % [tag, ", ".join(bl), str([Build.can_respawn(0), Build.can_respawn(1)]), lean_n])
 	var alive = [G.alive_count(0), G.alive_count(1)]
 	var dead = G.soldiers.filter(func(s): return s.state == "dead").size()
 	var ms = (tick_us / 1000.0) / maxi(tick_n, 1)
@@ -682,6 +698,12 @@ func _shot_mode(dir: String) -> void:
 		for kind in ["halftrack", "armoredcar", "motorbike", "artillery", "gunship", "heli"]:
 			spawn_vehicle(kind, k % 2, _free_spot(c0 + Vector3(-30 + k * 12, 0, 22)), 0.4)
 			k += 1
+	if _arg("builds", "") != "":
+		var k = 0
+		for kind in Build.ORDER:
+			var bp = G.world.capture + Vector3(-36 + (k % 4) * 16, 0, -40 + (k / 4) * 16)
+			Build.place(kind, k % 2, bp, Vector3(0, 0, 1), _arg("builds", "") == "1")
+			k += 1
 	if _arg("smoke", "") != "":
 		Combat.smoke_at(G.world.capture + Vector3(0, 0, 10), 30.0)
 		Combat.throw_grenade(G.soldiers[0], G.world.capture + Vector3(4, 0, 12), "smoke")
@@ -691,6 +713,18 @@ func _shot_mode(dir: String) -> void:
 	var c: Vector3 = G.world.capture
 	await _look(c + Vector3(-40, 25, -10), c)
 	await _snap(dir, "overview")
+	if _arg("cam", "") != "":
+		var cv = _arg("cam", "").split(",")
+		var av = _arg("at", "0,0,0").split(",")
+		await _look(c + Vector3(float(cv[0]), float(cv[1]), float(cv[2])), c + Vector3(float(av[0]), float(av[1]), float(av[2])))
+		await _snap(dir, "cam")
+	if _arg("cams", "") != "":
+		var ci = 0
+		for spec in _arg("cams", "").split(";"):
+			var v = spec.split(",")
+			await _look(c + Vector3(float(v[0]), float(v[1]), float(v[2])), c + Vector3(float(v[3]), float(v[4]), float(v[5])))
+			await _snap(dir, "cam%d" % ci)
+			ci += 1
 	if _arg("smoke", "") != "":
 		await _look(c + Vector3(-14, 4, 4), c + Vector3(0, 1, 11))
 		await _snap(dir, "smoke")

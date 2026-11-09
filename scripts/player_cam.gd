@@ -1,6 +1,7 @@
 extends Node3D
 # Free camera, taking control of soldiers, aiming, recoil, and the sandbox tools.
 
+var build_msg_t = 0.0
 var cam: Camera3D
 var free_pos = Vector3(-62, 7, -6)
 var free_yaw = PI / 2.0 + 0.12
@@ -101,6 +102,23 @@ func player_update(s) -> void:
 	if not sprint and not s.p_prone:
 		lean = (1.0 if Input.is_key_pressed(KEY_E) else 0.0) - (1.0 if Input.is_key_pressed(KEY_Q) else 0.0)
 	s.lean_t = lean
+	# hold U next to a friendly construction site to help build it
+	if Input.is_key_pressed(KEY_U) and m.length_squared() == 0.0:
+		var st = Build.work_site(s.team, s.pos, 30.0)
+		if st != null and G.dist2d(s.pos, st["p"]) < Build.build_radius(st) + 1.0:
+			s.crouch_t = 0.75
+			Build.add_work(st, (1.6 if s.cls == "engineer" else 1.0) * G.DT)
+			if randf() < G.DT * 3.0:
+				G.audio.hammer(s.pos)
+			build_msg_t -= G.DT
+			if build_msg_t <= 0.0:
+				build_msg_t = 0.5
+				G.ui.message("Building %s: %d%%" % [st["name"], int(100.0 * st["work"] / st["need"])])
+		else:
+			build_msg_t -= G.DT
+			if build_msg_t <= 0.0:
+				build_msg_t = 2.0
+				G.ui.message("No friendly construction site here")
 	var oy = s.pos.y + (0.3 if s.prone else 1.45 - 0.45 * s.crouch)
 	s.aim_yaw = atan2(aim_point.x - s.pos.x, aim_point.z - s.pos.z)
 	s.aim_pitch = clampf(atan2(aim_point.y - oy, G.dist2d(aim_point, s.pos)), -1.1, 1.1)
@@ -352,6 +370,15 @@ func _key(k: int) -> void:
 				G.ui.message("Mine placed (%d left). Shift+N for an anti-tank mine" % s.mines)
 			else:
 				G.ui.message("No mines (engineers carry them)")
+		elif k == KEY_I and s.state == "alive":
+			var tgt = aim_point
+			if G.dist2d(tgt, s.pos) > 6.0:
+				G.ui.message("Get closer to dismantle something (within 6 m)")
+			else:
+				var o2 = cam.global_position
+				var hit2 = G.ray(o2, o2 + (tgt - o2).normalized() * ((tgt - o2).length() + 0.5), G.L_WORLD)
+				if not dismantle_at(tgt, hit2):
+					G.ui.message("Nothing to dismantle there")
 		elif k == KEY_K and s.state == "alive":
 			if s.satchels > 0:
 				Combat.throw_grenade(s, _throw_target(s), "satchel")
@@ -364,6 +391,33 @@ func _key(k: int) -> void:
 			var cp = cos(free_pitch)
 			var d = Vector3(sin(free_yaw) * cp, sin(free_pitch), cos(free_yaw) * cp)
 			possess(pick_soldier(cam.global_position, d))
+
+# take apart whatever is at a point: a whole construction, an emplacement, or one piece of a building
+func dismantle_at(p: Vector3, hit: Dictionary) -> bool:
+	for v in G.vehicles:
+		if v.spec.get("static", false) and G.dist2d(v.pos, p) < 2.2:
+			for st in Build.sites:
+				if st["veh"] == v:
+					Build.dismantle(st)
+					G.ui.message("Dismantled the %s" % st["name"])
+					return true
+			v.remove()
+			G.fx.dust_cloud(v.pos + Vector3(0, 0.5, 0), 2.0)
+			G.ui.message("Dismantled the %s" % v.spec["name"])
+			return true
+	var st = Build.site_at(p, 0.3)
+	if st != null:
+		var nm = st["name"]
+		Build.dismantle(st)
+		G.ui.message("Dismantled the %s" % nm)
+		return true
+	if not hit.is_empty() and hit.has("collider") and is_instance_valid(hit["collider"]) and hit["collider"].has_meta("col"):
+		var c = hit["collider"].get_meta("col")
+		if c.alive:
+			G.world.destroy_col(c)
+			G.ui.message("Piece taken down")
+			return true
+	return false
 
 func _throw_target(s) -> Vector3:
 	var t = aim_point
@@ -446,6 +500,19 @@ func use_tool(screen: Vector2) -> void:
 		var team = int(parts[2])
 		var en: Vector3 = G.world.rally_point((team + 1) % G.team_count())
 		G.main.spawn_vehicle(kind, team, p, atan2(en.x - p.x, en.z - p.z), kind != "truck")
+	elif tool.begins_with("b:"):
+		var kind = tool.substr(2)
+		var team: int = G.ui.build_team
+		if team >= G.team_count():
+			team = 0
+		var to = G.flat(Build._objective(team) - p)
+		if not Build.clear_at(p, kind):
+			G.ui.message("No room for a %s there" % Build.KINDS[kind]["name"])
+			return
+		Build.place(kind, team, p, to, false, true)
+		G.ui.message("%s site marked out for %s" % [Build.KINDS[kind]["name"], G.TEAM_NAMES[team]])
+	elif tool == "dis":
+		dismantle_at(p, hit)
 	elif tool == "spA" or tool == "spB":
 		G.world.spawn[0 if tool == "spA" else 1] = Vector3(p.x, 0, p.z)
 		G.main.refresh_markers()

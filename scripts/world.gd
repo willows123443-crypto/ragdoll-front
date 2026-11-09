@@ -327,6 +327,77 @@ func build_now(fn: Callable) -> void:
 		update_nav_area(c.lo.x, c.lo.z, c.hi.x, c.hi.z)
 static var edit_mats = {}
 static var unit_box: BoxMesh = null
+static var shape_meshes = {}
+
+# unit-sized meshes for non-box shapes (blob = lumpy foliage clump)
+static func shape_mesh(shape: String) -> Mesh:
+	if shape_meshes.has(shape):
+		return shape_meshes[shape]
+	var m: Mesh
+	match shape:
+		"blob":
+			var sm = SphereMesh.new()
+			sm.radius = 0.5
+			sm.height = 1.0
+			sm.radial_segments = 9
+			sm.rings = 5
+			var arr = sm.get_mesh_arrays()
+			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+			var st = SurfaceTool.new()
+			st.begin(Mesh.PRIMITIVE_TRIANGLES)
+			for i in idx:
+				var v: Vector3 = verts[i]
+				var hsh = sin(v.x * 37.1 + v.y * 17.3 + v.z * 29.7) * 0.5 + 0.5
+				st.add_vertex(v * (0.86 + hsh * 0.26))
+			st.generate_normals()
+			m = st.commit()
+		"cyl":
+			var cm = CylinderMesh.new()
+			cm.top_radius = 0.5
+			cm.bottom_radius = 0.5
+			cm.height = 1.0
+			cm.radial_segments = 10
+			cm.rings = 1
+			m = cm
+		"cone":
+			var cn = CylinderMesh.new()
+			cn.top_radius = 0.0
+			cn.bottom_radius = 0.5
+			cn.height = 1.0
+			cn.radial_segments = 8
+			cn.rings = 1
+			m = cn
+		"prism":
+			var pm = PrismMesh.new()
+			pm.size = Vector3.ONE
+			m = pm
+		"pillow":
+			var pl = SphereMesh.new()
+			pl.radius = 0.5
+			pl.height = 1.0
+			pl.radial_segments = 10
+			pl.rings = 5
+			m = pl
+		"bag":
+			var cp = CapsuleMesh.new()
+			cp.radius = 0.25
+			cp.height = 1.0
+			cp.radial_segments = 8
+			cp.rings = 2
+			m = cp
+		"wheel":
+			var wm = CylinderMesh.new()
+			wm.top_radius = 0.5
+			wm.bottom_radius = 0.5
+			wm.height = 1.0
+			wm.radial_segments = 14
+			wm.rings = 1
+			m = wm
+		_:
+			m = BoxMesh.new()
+	shape_meshes[shape] = m
+	return m
 
 func _geo() -> Node3D:
 	return edit_node if edit_node != null else geo_root
@@ -345,7 +416,7 @@ func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, colo
 			em.roughness = 0.95
 			edit_mats[key0] = em
 		var mi = MeshInstance3D.new()
-		mi.mesh = unit_box
+		mi.mesh = unit_box if opt.get("shape", "") == "" else shape_mesh(opt["shape"])
 		mi.material_override = edit_mats[key0]
 		mi.transform = xf
 		edit_node.add_child(mi)
@@ -356,13 +427,14 @@ func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, colo
 			var dc = add_col(cx, base + y0, cz, w, h, d)
 			dc.vis = [nref]
 			dc.color = color
-			dc.dest = opt.get("dest", false)
-			dc.hp = opt.get("hp", 160.0)
+			dc.dest = opt.get("dest", true)
+			dc.hp = opt.get("hp", 160.0 if opt.has("dest") else 300.0)
 			dc.prop = opt.get("mat", 0)
 		return nref
-	var key = color.to_html(false) + ("n" if opt.get("no_shadow", false) else "s")
+	var shp: String = opt.get("shape", "")
+	var key = color.to_html(false) + ("n" if opt.get("no_shadow", false) else "s") + shp
 	if not groups.has(key):
-		groups[key] = {"color": color, "xforms": [], "mm": null, "no_shadow": opt.get("no_shadow", false)}
+		groups[key] = {"color": color, "xforms": [], "mm": null, "no_shadow": opt.get("no_shadow", false), "shape": shp}
 	var g = groups[key]
 	g["xforms"].append(xf)
 	var ref = [g, g["xforms"].size() - 1]
@@ -373,8 +445,8 @@ func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, colo
 		var c = add_col(cx, base + y0, cz, w, h, d)
 		c.vis = [ref]
 		c.color = color
-		c.dest = opt.get("dest", false)
-		c.hp = opt.get("hp", 160.0)
+		c.dest = opt.get("dest", true)
+		c.hp = opt.get("hp", 160.0 if opt.has("dest") else 300.0)
 		c.no_move = opt.get("no_move", false)
 		c.prop = opt.get("mat", 0)
 	return ref
@@ -417,7 +489,7 @@ func finalize_static() -> void:
 		var g = groups[key]
 		var mm = MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = BoxMesh.new()
+		mm.mesh = BoxMesh.new() if g.get("shape", "") == "" else shape_mesh(g["shape"])
 		mm.instance_count = g["xforms"].size()
 		for i in range(g["xforms"].size()):
 			mm.set_instance_transform(i, g["xforms"][i])
@@ -699,7 +771,7 @@ func gen_cover_for(c) -> void:
 				var n2 = roundi((L - 1.2) / 2.2)
 				for i in range(n2):
 					var p = _face_pt(f, f["a"] + 0.6 + (i + 0.5) * (L - 1.2) / n2)
-					add_cp(p.x, p.y, f["n"], Vector3.ZERO, "wall", c)
+					add_cp(p.x, p.y, f["n"], Vector3(1, 0, 0) if f["ax"] == "x" else Vector3(0, 0, 1), "wall", c)
 
 func _face_pt(f: Dictionary, s: float) -> Vector2:
 	if f["ax"] == "x":
@@ -777,32 +849,74 @@ func damage_area(pos: Vector3, R: float, power: float) -> void:
 				destroy_col(c)
 
 # ---------------------------------------------------------------- map pieces
-func wall_run(horiz: bool, fixed: float, a0: float, a1: float, h: float, color: Color, th_: float) -> void:
+func wall_run(horiz: bool, fixed: float, a0: float, a1: float, h: float, color: Color, th_: float, intact: bool = false, door_at: float = -1.0) -> void:
 	var L = a1 - a0
 	var s = 0.0
+	var i = 0
 	while s < L - 0.05:
-		var seg = minf(L - s, rnd(1.5, 3.0))
-		var ruined = rng.randf() < 0.35
-		var ph = h * rnd(0.25, 0.75) if ruined else h * rnd(0.85, 1.0)
+		var seg = minf(L - s, rnd(1.5, 3.0) if not intact else 2.0)
+		if intact and L - s - seg < 1.0:
+			seg = L - s
+		var ruined = rng.randf() < 0.35 and not intact
+		var ph = h * rnd(0.25, 0.75) if ruined else (h * rnd(0.85, 1.0) if not intact else h)
 		var can_open = seg > 1.4 and s > 0.6 and (L - s - seg) > 0.6
 		var r = rng.randf()
 		var c = a0 + s + seg / 2.0
+		if intact and can_open:
+			r = 0.1 if (door_at >= 0.0 and absf(c - (a0 + door_at)) < seg * 0.6) else (0.4 if i % 2 == 1 else 0.9)
 		if can_open and r < 0.24:
 			if ph > 2.6:
-				_wall_piece(horiz, fixed, c, seg, 2.4, ph - 2.4, color, th_)
+				_wall_piece(horiz, fixed, c, seg, 2.4, ph - 2.4, color, th_, "lintel")
+			_door_frame(horiz, fixed, c, minf(seg, 1.6), color, th_)
 		elif can_open and r < 0.55:
-			_wall_piece(horiz, fixed, c, seg, 0.0, 1.0, color, th_)
+			_wall_piece(horiz, fixed, c, seg, 0.0, 1.0, color, th_, "sill")
 			if ph > 2.7:
-				_wall_piece(horiz, fixed, c, seg, 2.2, ph - 2.2, color, th_)
+				_wall_piece(horiz, fixed, c, seg, 2.2, ph - 2.2, color, th_, "lintel")
 		else:
-			_wall_piece(horiz, fixed, c, seg, 0.0, maxf(ph, 1.1), color, th_)
+			_wall_piece(horiz, fixed, c, seg, 0.0, maxf(ph, 1.1), color, th_, "full" if not ruined else "ruin")
 		s += seg
+		i += 1
 
-func _wall_piece(horiz: bool, fixed: float, c: float, ln: float, y0: float, h: float, color: Color, th_: float) -> void:
+# a wall section, with a plinth, window sill or lintel and a string course that come down with it
+func _wall_piece(horiz: bool, fixed: float, c: float, ln: float, y0: float, h: float, color: Color, th_: float, kind: String = "full") -> void:
 	if horiz:
 		add_box(c, y0, fixed, ln, h, th_, color, {"dest": true, "hp": 200.0})
 	else:
 		add_box(fixed, y0, c, th_, h, ln, color, {"dest": true, "hp": 200.0})
+	var col = cols[cols.size() - 1]
+	piece_start()
+	var trim = color.lightened(0.2)
+	var dark = color.darkened(0.28)
+	if y0 < 0.05:
+		_trim(horiz, fixed, c, ln, 0.0, 0.42, th_ + 0.1, dark)
+	if kind == "sill":
+		_trim(horiz, fixed, c, ln + 0.1, y0 + h - 0.02, 0.1, th_ + 0.22, trim)
+	elif kind == "lintel":
+		_trim(horiz, fixed, c, ln, y0, 0.2, th_ + 0.08, trim)
+	if y0 < 3.2 and y0 + h > 3.5 and kind != "ruin":
+		_trim(horiz, fixed, c, ln, 3.2, 0.16, th_ + 0.1, trim)
+	if kind == "full" and h > 2.0:
+		_trim(horiz, fixed, c, ln, y0 + h - 0.18, 0.18, th_ + 0.14, trim)
+	piece_end(col, color, 200.0)
+
+func _trim(horiz: bool, fixed: float, c: float, ln: float, y0: float, h: float, th_: float, color: Color) -> void:
+	if horiz:
+		add_box(c, y0, fixed, ln, h, th_, color, {"collide": false})
+	else:
+		add_box(fixed, y0, c, th_, h, ln, color, {"collide": false})
+
+func _door_frame(horiz: bool, fixed: float, c: float, w: float, color: Color, th_: float) -> void:
+	var fc = Color(0.36, 0.27, 0.18)
+	for e in [-1.0, 1.0]:
+		if horiz:
+			add_box(c + e * (w / 2.0 - 0.06), 0.0, fixed, 0.12, 2.4, th_ + 0.12, fc, {"collide": false})
+		else:
+			add_box(fixed, 0.0, c + e * (w / 2.0 - 0.06), th_ + 0.12, 2.4, 0.12, fc, {"collide": false})
+	# a step
+	if horiz:
+		add_box(c, 0.0, fixed, w, 0.15, th_ + 0.6, color.darkened(0.3), {"collide": false})
+	else:
+		add_box(fixed, 0.0, c, th_ + 0.6, 0.15, w, color.darkened(0.3), {"collide": false})
 
 func building(x: float, z: float, w: float, d: float, h: float) -> void:
 	var color: Color = WALLC[rng.randi() % WALLC.size()]
@@ -824,6 +938,203 @@ func building(x: float, z: float, w: float, d: float, h: float) -> void:
 		add_box(x, h - 0.1, z - d / 2.0 + rd / 2.0, w + 0.2, 0.3, rd, Color(0.36, 0.29, 0.25), {"dest": true, "hp": 140.0})
 	for i in range(5):
 		add_box(x + rnd(-w / 2.0, w / 2.0), 0.0, z + rnd(-d / 2.0, d / 2.0), rnd(0.5, 1.4), rnd(0.2, 0.5), rnd(0.5, 1.4), Color(0.54, 0.52, 0.47), {"ry": rnd(0.0, 3.0), "collide": false})
+	_claim(bld, c0)
+
+const ROOFC = [Color(0.5, 0.25, 0.2), Color(0.36, 0.3, 0.27), Color(0.42, 0.22, 0.17), Color(0.33, 0.34, 0.36)]
+
+# an intact house: regular windows and a door, a pitched tiled roof and a chimney
+func house(x: float, z: float, w: float, d: float, h: float = 3.4) -> void:
+	var color: Color = WALLC[rng.randi() % WALLC.size()]
+	var t = 0.35
+	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h + 1.8, "cols": [], "walls0": 0, "fallen": 0}
+	buildings.append(bld)
+	var c0 = cols.size()
+	var door_side = rng.randi() % 4
+	wall_run(true, z - d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true, w / 2.0 if door_side == 0 else -1.0)
+	wall_run(true, z + d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true, w / 2.0 if door_side == 1 else -1.0)
+	wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true, d / 2.0 if door_side == 2 else -1.0)
+	wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true, d / 2.0 if door_side == 3 else -1.0)
+	flat_plane(x, z, w - 0.4, d - 0.4, Color(0.44, 0.42, 0.38), 0.02)
+	_pitched_roof(x, z, w, d, h, ROOFC[rng.randi() % ROOFC.size()], true)
+	for i in range(3):
+		add_box(x + rnd(-w / 2.0 + 1.0, w / 2.0 - 1.0), 0.0, z + rnd(-d / 2.0 + 1.0, d / 2.0 - 1.0), rnd(0.6, 1.2), rnd(0.5, 0.9), rnd(0.5, 0.9), Color(0.4, 0.3, 0.2), {"collide": false})
+	_claim(bld, c0)
+
+# a pitched roof over a box of walls; it rests on the walls and falls in when they go
+func _pitched_roof(x: float, z: float, w: float, d: float, h: float, rc: Color, chimney: bool, rh: float = -1.0) -> void:
+	var gy = ground_y(x, z)
+	var along_x = w >= d
+	if rh < 0.0:
+		rh = minf(w, d) * 0.32 + 0.4
+	var ref
+	if along_x:
+		ref = add_box(x, gy + h, z, w + 0.6, rh, d + 0.7, rc, {"shape": "prism", "ry": PI / 2.0, "abs": true, "collide": false})
+	else:
+		ref = add_box(x, gy + h, z, w + 0.7, rh, d + 0.6, rc, {"shape": "prism", "abs": true, "collide": false})
+	var c = add_col(x, gy + h, z, w, minf(rh, 0.6), d)
+	c.vis = [ref]
+	c.dest = true
+	c.hp = 160.0
+	c.color = rc
+	piece_start()
+	# eaves boards and gable ends
+	if along_x:
+		for e in [-1.0, 1.0]:
+			add_box(x, gy + h - 0.1, z + e * (d / 2.0 + 0.3), w + 0.6, 0.12, 0.1, rc.darkened(0.3), {"abs": true, "collide": false})
+	else:
+		for e in [-1.0, 1.0]:
+			add_box(x + e * (w / 2.0 + 0.3), gy + h - 0.1, z, 0.1, 0.12, d + 0.6, rc.darkened(0.3), {"abs": true, "collide": false})
+	if chimney:
+		var cx = x + (w * 0.25 if along_x else rnd(-0.4, 0.4))
+		var cz = z + (rnd(-0.4, 0.4) if along_x else d * 0.25)
+		add_box(cx, gy + h, cz, 0.6, rh + 0.7, 0.6, Color(0.5, 0.36, 0.3), {"abs": true, "collide": false})
+		add_box(cx, gy + h + rh + 0.7, cz, 0.75, 0.12, 0.75, Color(0.42, 0.32, 0.27), {"abs": true, "collide": false})
+	c.vis.append_array(piece)
+	piece = null
+
+# bigger buildings: a warehouse, a church with a steeple, or an apartment block
+func big_building(x: float, z: float, w: float, d: float) -> void:
+	var r = rng.randf()
+	if r < 0.34:
+		warehouse(x, z, w, d)
+	elif r < 0.67:
+		church(x, z, w, d)
+	else:
+		apartment(x, z, w, d)
+
+func warehouse(x: float, z: float, w: float, d: float) -> void:
+	var color = Color(0.55, 0.5, 0.44) if rng.randf() < 0.5 else Color(0.5, 0.3, 0.24)
+	var t = 0.4
+	var h = 5.2
+	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h + 2.0, "cols": [], "walls0": 0, "fallen": 0}
+	buildings.append(bld)
+	var c0 = cols.size()
+	var along_x = w >= d
+	# big loading doors at both ends
+	for e in [-1.0, 1.0]:
+		if along_x:
+			_wall_piece(false, x + e * w / 2.0, z - d / 2.0 + 1.1, 2.2, 0.0, h, color, t)
+			_wall_piece(false, x + e * w / 2.0, z + d / 2.0 - 1.1, 2.2, 0.0, h, color, t)
+			_wall_piece(false, x + e * w / 2.0, z, d - 4.4, 3.6, h - 3.6, color, t, "lintel")
+		else:
+			_wall_piece(true, z + e * d / 2.0, x - w / 2.0 + 1.1, 2.2, 0.0, h, color, t)
+			_wall_piece(true, z + e * d / 2.0, x + w / 2.0 - 1.1, 2.2, 0.0, h, color, t)
+			_wall_piece(true, z + e * d / 2.0, x, w - 4.4, 3.6, h - 3.6, color, t, "lintel")
+	# long sides: high windows in a row
+	if along_x:
+		wall_run(true, z - d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true)
+		wall_run(true, z + d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true)
+	else:
+		wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true)
+		wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true)
+	flat_plane(x, z, w - 0.4, d - 0.4, Color(0.4, 0.39, 0.37), 0.02)
+	_pitched_roof(x, z, w, d, h, Color(0.38, 0.4, 0.4), false, 1.6)
+	for i in range(6):
+		crate(x + rnd(-w / 2.0 + 2.0, w / 2.0 - 2.0), z + rnd(-d / 2.0 + 1.5, d / 2.0 - 1.5), rnd(0.9, 1.3))
+	_claim(bld, c0)
+
+func church(x: float, z: float, w: float, d: float) -> void:
+	var color = Color(0.74, 0.72, 0.66)
+	var t = 0.5
+	var h = 6.0
+	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h + 3.0, "cols": [], "walls0": 0, "fallen": 0}
+	buildings.append(bld)
+	var c0 = cols.size()
+	var along_x = w >= d
+	if along_x:
+		wall_run(true, z - d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true)
+		wall_run(true, z + d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true)
+		wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true)
+		wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true, (d - t) / 2.0)
+	else:
+		wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true)
+		wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true)
+		wall_run(true, z + d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true)
+		wall_run(true, z - d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true, w / 2.0)
+	flat_plane(x, z, w - 0.5, d - 0.5, Color(0.5, 0.48, 0.44), 0.02)
+	_pitched_roof(x, z, w, d, h, Color(0.3, 0.31, 0.34), false, minf(w, d) * 0.55)
+	# pews
+	for i in range(5):
+		var o = -0.3 + i * 0.13
+		if along_x:
+			add_box(x + w * o, 0.0, z, 0.5, 0.8, d * 0.6, Color(0.36, 0.25, 0.16), {"hp": 60.0})
+		else:
+			add_box(x, 0.0, z + d * o, w * 0.6, 0.8, 0.5, Color(0.36, 0.25, 0.16), {"hp": 60.0})
+	_claim(bld, c0)
+	# the steeple at the entrance end, a separate tower that can come down on its own
+	var sx = x - w / 2.0 - 1.6 if along_x else x
+	var sz = z if along_x else z - d / 2.0 - 1.6
+	var c1 = cols.size()
+	var sb = {"x": sx, "z": sz, "w": 3.4, "d": 3.4, "h": 15.0, "cols": [], "walls0": 0, "fallen": 0}
+	buildings.append(sb)
+	for k in range(3):
+		var y0 = k * 4.0
+		for e in [-1.0, 1.0]:
+			# an archway through the bottom of the tower, in line with the church door
+			if not (k == 0 and along_x):
+				add_box(sx + e * 1.45, y0, sz, 0.5, 4.0, 3.4, color.darkened(0.04), {"dest": true, "hp": 320.0})
+			if not (k == 0 and not along_x):
+				add_box(sx, y0, sz + e * 1.45, 2.4, 4.0, 0.5, color.darkened(0.04), {"dest": true, "hp": 320.0})
+		if k == 0:
+			for e in [-1.0, 1.0]:
+				if along_x:
+					add_box(sx + e * 1.45, 0.0, sz + 1.2, 0.5, 4.0, 1.0, color.darkened(0.04), {"dest": true, "hp": 320.0})
+					add_box(sx + e * 1.45, 0.0, sz - 1.2, 0.5, 4.0, 1.0, color.darkened(0.04), {"dest": true, "hp": 320.0})
+					add_box(sx + e * 1.45, 2.6, sz, 0.5, 1.4, 1.4, color.darkened(0.04), {"dest": true, "hp": 320.0})
+				else:
+					add_box(sx + 1.2, 0.0, sz + e * 1.45, 1.0, 4.0, 0.5, color.darkened(0.04), {"dest": true, "hp": 320.0})
+					add_box(sx - 1.2, 0.0, sz + e * 1.45, 1.0, 4.0, 0.5, color.darkened(0.04), {"dest": true, "hp": 320.0})
+					add_box(sx, 2.6, sz + e * 1.45, 1.4, 1.4, 0.5, color.darkened(0.04), {"dest": true, "hp": 320.0})
+	add_box(sx, 12.0, sz, 3.8, 0.4, 3.8, color.lightened(0.1), {"dest": true, "hp": 200.0})
+	var spire = add_box(sx, ground_y(sx, sz) + 12.4, sz, 3.2, 5.5, 3.2, Color(0.3, 0.31, 0.34), {"shape": "cone", "abs": true, "collide": false})
+	cols[cols.size() - 1].vis.append(spire)
+	add_box(sx, ground_y(sx, sz) + 17.6, sz, 0.12, 1.4, 0.12, Color(0.6, 0.55, 0.35), {"abs": true, "collide": false})
+	_claim(sb, c1)
+
+func apartment(x: float, z: float, w: float, d: float) -> void:
+	var color: Color = [Color(0.68, 0.64, 0.58), Color(0.6, 0.48, 0.4), Color(0.62, 0.62, 0.6)][rng.randi() % 3]
+	var t = 0.4
+	var h = 3.3
+	var floors = 3
+	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h * floors + 0.5, "cols": [], "walls0": 0, "fallen": 0}
+	buildings.append(bld)
+	var c0 = cols.size()
+	# ground floor you can walk into; upper floors are solid walls with dark window panes
+	wall_run(true, z - d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true, w / 2.0)
+	wall_run(true, z + d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true, w / 2.0)
+	wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true)
+	wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true)
+	flat_plane(x, z, w - 0.4, d - 0.4, Color(0.44, 0.42, 0.38), 0.02)
+	var glass = Color(0.16, 0.19, 0.22)
+	for f in range(1, floors):
+		var y0 = f * h
+		add_box(x, y0 - 0.25, z, w - 0.3, 0.3, d - 0.3, Color(0.5, 0.48, 0.45), {"dest": true, "hp": 260.0})
+		for sd in [[true, -1.0], [true, 1.0], [false, -1.0], [false, 1.0]]:
+			var horiz: bool = sd[0]
+			var L = w if horiz else d - t
+			var n = maxi(2, roundi(L / 2.6))
+			for i in range(n):
+				var c = (x if horiz else z) - L / 2.0 + (i + 0.5) * L / n
+				var fixed = (z + sd[1] * d / 2.0) if horiz else (x + sd[1] * w / 2.0)
+				_wall_piece(horiz, fixed, c, L / n, y0, h, color, t, "full")
+				# a window: dark pane, sill and shutters, on the outside face
+				var out = fixed + sd[1] * (t / 2.0 + 0.02)
+				if horiz:
+					add_box(c, y0 + 0.9, out, 1.1, 1.4, 0.04, glass, {"collide": false})
+					add_box(c, y0 + 0.82, out + sd[1] * 0.06, 1.3, 0.1, 0.16, color.lightened(0.2), {"collide": false})
+					for e in [-1.0, 1.0]:
+						add_box(c + e * 0.75, y0 + 0.9, out + sd[1] * 0.03, 0.38, 1.4, 0.05, Color(0.3, 0.38, 0.3), {"collide": false})
+				else:
+					add_box(out, y0 + 0.9, c, 0.04, 1.4, 1.1, glass, {"collide": false})
+					add_box(out + sd[1] * 0.06, y0 + 0.82, c, 0.16, 0.1, 1.3, color.lightened(0.2), {"collide": false})
+					for e in [-1.0, 1.0]:
+						add_box(out + sd[1] * 0.03, y0 + 0.9, c + e * 0.75, 0.05, 1.4, 0.38, Color(0.3, 0.38, 0.3), {"collide": false})
+	var top = floors * h
+	add_box(x, top - 0.25, z, w + 0.3, 0.35, d + 0.3, color.darkened(0.15), {"dest": true, "hp": 260.0})
+	for e in [-1.0, 1.0]:
+		add_box(x, top + 0.1, z + e * (d / 2.0), w + 0.3, 0.6, 0.25, color.darkened(0.1), {"collide": false})
+		add_box(x + e * (w / 2.0), top + 0.1, z, 0.25, 0.6, d + 0.3, color.darkened(0.1), {"collide": false})
+	add_box(x + w * 0.25, top + 0.1, z, 1.6, 1.4, 1.6, Color(0.45, 0.45, 0.43), {"collide": false})
 	_claim(bld, c0)
 
 # remember which colliders belong to a building so it can come down floor by floor
@@ -962,23 +1273,39 @@ func _tower_piece(horiz: bool, fixed: float, c: float, seg: float, y0: float, h:
 		add_box(c, y0, fixed, seg, h, t, color, {"dest": true, "hp": 240.0})
 	else:
 		add_box(fixed, y0, c, t, h, seg, color, {"dest": true, "hp": 240.0})
+	var col = cols[cols.size() - 1]
+	piece_start()
+	if y0 < 0.05:
+		_trim(horiz, fixed, c, seg, 0.0, 0.42, t + 0.1, color.darkened(0.28))
+	if absf(h - 1.0) < 0.01 or (y0 > 3.0 and absf(h - 1.0) < 0.01):
+		_trim(horiz, fixed, c, seg + 0.1, y0 + h - 0.02, 0.1, t + 0.22, color.lightened(0.2))
+	if y0 + h > 6.5:
+		_trim(horiz, fixed, c, seg, y0 + h - 0.2, 0.2, t + 0.16, color.lightened(0.2))
+	if y0 < 3.2 and y0 + h > 3.5:
+		_trim(horiz, fixed, c, seg, 3.25, 0.16, t + 0.1, color.lightened(0.2))
+	piece_end(col, color, 240.0)
 
 func sandbags(x: float, z: float, ln: float, along_x: bool, h: float = 1.0) -> void:
 	var rows = roundi(h / 0.5)
-	var n = maxi(1, roundi(ln / 0.9))
-	piece_start()
-	for i in range(n):
-		var o = -ln / 2.0 + (i + 0.5) * ln / n
-		for k in range(rows):
-			var bx = x + o if along_x else x
-			var bz = z if along_x else z + o
-			add_box(bx, k * 0.5, bz, 0.92 if along_x else 0.62, 0.5, 0.62 if along_x else 0.92, Color(0.69, 0.64, 0.48) if k % 2 == 1 else Color(0.64, 0.58, 0.44), {"collide": false})
+	var layers = maxi(1, roundi(rows * 0.5 / 0.25))
 	var gy = ground_y(x, z)
 	var c
 	if along_x:
 		c = add_col(x, gy, z, ln, rows * 0.5, 0.65)
 	else:
 		c = add_col(x, gy, z, 0.65, rows * 0.5, ln)
+	piece_start()
+	var n = maxi(1, roundi(ln / 0.86))
+	for k in range(layers):
+		var stag = 0.5 if k % 2 == 1 else 0.0
+		for i in range(n + (1 if k % 2 == 1 else 0)):
+			var o = -ln / 2.0 + (i + 0.5 - stag) * ln / n
+			if absf(o) > ln / 2.0 - 0.15:
+				o = clampf(o, -ln / 2.0 + 0.3, ln / 2.0 - 0.3)
+			var bx = x + o if along_x else x + rnd(-0.03, 0.03)
+			var bz = z + rnd(-0.03, 0.03) if along_x else z + o
+			var bc = Color(0.69, 0.64, 0.48) if (i + k) % 3 == 0 else (Color(0.64, 0.58, 0.44) if (i + k) % 3 == 1 else Color(0.6, 0.55, 0.41))
+			add_box(bx, k * 0.25 - 0.04, bz, 0.95 if along_x else 0.62, 0.34, 0.62 if along_x else 0.95, bc, {"collide": false, "shape": "pillow", "ry": rnd(-0.08, 0.08)})
 	piece_end(c, Color(0.66, 0.6, 0.45), 150.0)
 
 func hedgehog(x: float, z: float) -> void:
@@ -1026,12 +1353,27 @@ func dead_tree(x: float, z: float) -> void:
 
 func live_tree(x: float, z: float) -> void:
 	var h = rnd(3.0, 5.0)
-	add_box(x, 0.0, z, 0.4, h, 0.4, Color(0.29, 0.23, 0.16), {"collide": false})
+	var trunk = Color(0.29, 0.23, 0.16)
+	add_box(x, 0.0, z, 0.42, h, 0.42, trunk, {"collide": false, "shape": "cyl"})
 	add_col(x, ground_y(x, z), z, 0.45, h, 0.45)
-	var leaf = [Color(0.27, 0.35, 0.18), Color(0.25, 0.32, 0.16), Color(0.32, 0.39, 0.23)]
-	for i in range(3):
-		var s = rnd(2.0, 3.4)
-		add_box(x + rnd(-0.7, 0.7), h - 0.6 + i * 0.7, z + rnd(-0.7, 0.7), s, s * 0.8, s, leaf[i], {"ry": rnd(0, 1), "collide": false})
+	# a couple of branches
+	for i in range(2):
+		var a = rnd(0, TAU)
+		add_box(x + cos(a) * 0.5, h * rnd(0.55, 0.75), z + sin(a) * 0.5, 0.14, 1.3, 0.14, trunk, {"collide": false, "shape": "cyl", "rz": cos(a) * 0.9, "rx": -sin(a) * 0.9})
+	var leaf = [Color(0.27, 0.35, 0.18), Color(0.25, 0.32, 0.16), Color(0.32, 0.39, 0.23), Color(0.29, 0.37, 0.19)]
+	var nb = rng.randi_range(5, 7)
+	for i in range(nb):
+		var s = rnd(1.6, 2.6) if i > 0 else rnd(2.6, 3.2)
+		var a = float(i) / nb * TAU + rnd(-0.4, 0.4)
+		var r = 0.0 if i == 0 else rnd(0.8, 1.4)
+		add_box(x + cos(a) * r, h - 1.1 + rnd(0.0, 1.2) - (0.0 if i == 0 else 0.4), z + sin(a) * r, s, s * 0.85, s, leaf[i % leaf.size()], {"ry": rnd(0, 3), "collide": false, "shape": "blob"})
+
+# a rounded bush clump (visual only)
+func bush(x: float, z: float, sc: float = 1.0) -> void:
+	var cl = [Color(0.26, 0.33, 0.17), Color(0.3, 0.37, 0.2), Color(0.23, 0.3, 0.15)]
+	for i in range(rng.randi_range(2, 4)):
+		var s = rnd(0.8, 1.4) * sc
+		add_box(x + rnd(-0.6, 0.6) * sc, -0.15, z + rnd(-0.6, 0.6) * sc, s * rnd(1.0, 1.3), s * 0.8, s, cl[i % 3], {"ry": rnd(0, 3), "collide": false, "shape": "blob"})
 
 func skyline(colors: Array, hmin: float, hmax: float) -> void:
 	return
@@ -1090,13 +1432,18 @@ func fallback_point(team: int, from: Vector3) -> Vector3:
 
 # (reinforcements gather behind the most forward control point the team holds, otherwise at base)
 func rally_point(team: int) -> Vector3:
+	var r: Vector3 = spawn[team]
 	if Obj.chain() or G.mode == "laststand":
 		var i = Obj.forward_held(team)
 		if i >= 0:
 			var p: Vector3 = Obj.points[i]["p"]
 			var back = G.flat(spawn[team] - p).normalized()
-			return p + back * 14.0
-	return spawn[team]
+			r = p + back * 14.0
+	# a FOB further forward (or the only base left) is where reinforcements gather
+	var f = Build.forward_fob(team, r)
+	if f != null:
+		return f
+	return r
 
 func crater_at(x: float, z: float, r: float, d: float) -> void:
 	for rd in roads:
@@ -1108,18 +1455,24 @@ func crater_at(x: float, z: float, r: float, d: float) -> void:
 		terrain_cover.append([x + cos(a) * r * 0.55, z + sin(a) * r * 0.55, -cos(a), -sin(a)])
 
 func hedge_row(x: float, z: float, ln: float, along_x: bool) -> void:
-	if along_x:
-		add_box(x, 0.0, z, ln, 1.35, 1.1, Color(0.31, 0.35, 0.2), {"dest": true, "hp": 180.0, "mat": 2})
-	else:
-		add_box(x, 0.0, z, 1.1, 1.35, ln, Color(0.31, 0.35, 0.2), {"dest": true, "hp": 180.0})
-	var c = cols[cols.size() - 1]
+	var hc = Color(0.31, 0.35, 0.2)
+	# collider only; the visible hedge is a row of leafy clumps
+	var c = add_col(x, ground_y(x, z), z, ln if along_x else 0.9, 1.3, 0.9 if along_x else ln)
+	c.vis = []
+	c.dest = true
+	c.hp = 180.0
+	c.prop = 2
+	c.color = hc
 	piece_start()
-	for i in range(int(ln / 2.0)):
-		var o = -ln / 2.0 + i * 2.0 + 1.0
-		add_box(x + o if along_x else x + rnd(-0.2, 0.2), 1.2, z + rnd(-0.2, 0.2) if along_x else z + o, 1.4, rnd(0.4, 0.8), 1.4, Color(0.34, 0.39, 0.23), {"collide": false, "ry": rnd(0, 1)})
-	piece_end(c, Color(0.31, 0.35, 0.2), 180.0)
-
-# ---------------------------------------------------------------- maps
+	var cl = [Color(0.34, 0.39, 0.23), Color(0.29, 0.35, 0.19), Color(0.32, 0.37, 0.21)]
+	var n = maxi(2, int(ln / 0.9))
+	for i in range(n):
+		var o = -ln / 2.0 + (i + 0.5) * ln / n
+		var s = rnd(1.15, 1.45)
+		var j = rnd(-0.12, 0.12)
+		add_box(x + o if along_x else x + j, -0.1, z + j if along_x else z + o, s * 0.95, s * 0.85, s * 0.95, cl[(i + 1) % 3], {"collide": false, "ry": rnd(0, 3), "shape": "blob"})
+		add_box(x + o if along_x else x - j, rnd(0.45, 0.7), z - j if along_x else z + o, s, s * rnd(0.75, 0.9), s, cl[i % 3], {"collide": false, "ry": rnd(0, 3), "shape": "blob"})
+	piece_end(c, hc, 180.0)
 func build_town() -> void:
 	for i in range(16):
 		var sz = -1.0 if rng.randf() < 0.5 else 1.0
@@ -1137,7 +1490,10 @@ func build_town() -> void:
 	flat_plane(0, 0, 260, 9, Color(0.29, 0.29, 0.3), 0.015); flat_plane(-14, 0, 7, 90, Color(0.32, 0.31, 0.32), 0.013)
 	for b in [[-25, -12, 9, 9, 5], [-24, 30, 9, 9, 4.5], [-4, -30, 9, 8, 5], [-5, -14, 7, 7, 4], [-4, 15, 8, 7, 6], [-5, 31, 10, 9, 5],
 			[11, -12, 7, 8, 4.5], [12, 14, 9, 8, 5], [12, 30, 8, 8, 6], [28, -20, 8, 12, 5], [27, 32, 7, 7, 4]]:
-		building(b[0], b[1], b[2], b[3], b[4])
+		if rng.randf() < 0.4:
+			house(b[0], b[1], b[2], b[3])
+		else:
+			building(b[0], b[1], b[2], b[3], b[4])
 	tower(-24, -29, 10, 8); tower(-24, 13, 11, 8); tower(12, -28, 9, 10); tower(28, 14, 10, 9)
 	skyline([Color(0.54, 0.56, 0.57), Color(0.49, 0.51, 0.53), Color(0.6, 0.62, 0.62)], 10, 45)
 	for sx in [-1.0, 1.0]:
@@ -1484,8 +1840,9 @@ func village(cx: float, cz: float, rx: float, rz: float, n: int, towers_: int) -
 	while placed.size() < n + towers_ and tries < 200:
 		tries += 1
 		var tw = placed.size() < towers_
-		var w = rnd(8, 11) if tw else rnd(6, 10)
-		var d = rnd(7, 9) if tw else rnd(6, 9)
+		var big = placed.size() == towers_ and n >= 5
+		var w = rnd(8, 11) if tw else (rnd(13, 16) if big else rnd(6, 10))
+		var d = rnd(7, 9) if tw else (rnd(9, 11) if big else rnd(6, 9))
 		var x = cx + rnd(-rx, rx)
 		var z = cz + rnd(-rz, rz)
 		var ok = true
@@ -1509,6 +1866,10 @@ func _village_build(placed: Array, towers_: int) -> void:
 	for q in placed:
 		if i < towers_:
 			tower(q[0], q[1], q[2], q[3])
+		elif q[2] >= 12.5:
+			big_building(q[0], q[1], q[2], q[3])
+		elif rng.randf() < 0.45:
+			house(q[0], q[1], q[2], q[3])
 		else:
 			building(q[0], q[1], q[2], q[3], rnd(3.5, 6.0))
 		i += 1
@@ -1888,8 +2249,13 @@ func build_city() -> void:
 			for k in range(-1, 2):
 				var hx = bx + k * 15.0
 				var hz = bz + rnd(-2, 2)
-				if rng.randf() < 0.25:
+				var rr = rng.randf()
+				if rr < 0.22:
 					tower(hx, hz - 7.0, 11.0, 9.0)
+				elif rr < 0.42:
+					big_building(hx, hz - 7.0, 13.0, 10.0)
+				elif rr < 0.6:
+					house(hx, hz - 7.0, 12.0, 10.0, 3.6)
 				else:
 					building(hx, hz - 7.0, 12.0, 10.0, rnd(4.0, 7.5))
 				if rng.randf() < 0.7:
@@ -2053,40 +2419,88 @@ func on_road(x: float, z: float) -> bool:
 			return true
 	return false
 
+static var grass_tex: ImageTexture = null
+
+# a texture of tapered grass blades (white, tinted per instance)
+static func _grass_texture() -> ImageTexture:
+	if grass_tex != null:
+		return grass_tex
+	var W = 64
+	var H = 64
+	var img = Image.create(W, H, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var r = RandomNumberGenerator.new()
+	r.seed = 77
+	for k in range(14):
+		var bx = r.randf_range(4, W - 4)
+		var hgt = r.randf_range(0.45, 1.0) * H
+		var lean = r.randf_range(-14, 14)
+		var wid = r.randf_range(2.2, 3.6)
+		for yy in range(int(hgt)):
+			var t = float(yy) / hgt
+			var cx = bx + lean * t * t
+			var hw = wid * (1.0 - t) + 0.4
+			var shade = 0.55 + 0.45 * t
+			for xx in range(int(cx - hw), int(cx + hw) + 1):
+				if xx >= 0 and xx < W:
+					img.set_pixel(xx, H - 1 - yy, Color(shade, shade, shade * 0.9, 1.0))
+	img.generate_mipmaps()
+	grass_tex = ImageTexture.create_from_image(img)
+	return grass_tex
+
+# three crossed quads, normals pointing up so tufts light like the ground
+static func _tuft_mesh(w: float, h: float) -> ArrayMesh:
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in range(3):
+		var a = i * PI / 3.0
+		var dx = Vector3(cos(a), 0, sin(a)) * w * 0.5
+		var p0 = -dx
+		var p1 = dx
+		var p2 = dx + Vector3(0, h, 0)
+		var p3 = -dx + Vector3(0, h, 0)
+		var uv = [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
+		var ps = [p0, p1, p2, p3]
+		for k in [0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2]:
+			st.set_normal(Vector3.UP)
+			st.set_uv(uv[k])
+			st.add_vertex(ps[k])
+	return st.commit()
+
 func build_decor() -> void:
-	# grass
-	var n = int(4000.0 * TW * TH_ / (260.0 * 190.0)) if G.settings["grass"] else 0
+	# grass tufts
+	var n = int(7000.0 * TW * TH_ / (260.0 * 190.0)) if G.settings["grass"] else 0
 	var mm = MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
-	var cm = CylinderMesh.new()
-	cm.top_radius = 0.0
-	cm.bottom_radius = 0.09
-	cm.height = 0.45
-	cm.radial_segments = 4
-	cm.rings = 1
-	mm.mesh = cm
+	mm.mesh = _tuft_mesh(0.75, 0.55)
 	mm.instance_count = n
 	var k = 0
 	var tries = 0
+	var bush_spots = []
 	while k < n and tries < n * 3:
 		tries += 1
 		var x = rnd(bounds.position.x, bounds.end.x)
 		var z = rnd(bounds.position.y, bounds.end.y)
 		var gy = ground_y(x, z)
-		if on_road(x, z) or inside_any(x, z, 0.3) or gy < -0.4:
+		if on_road(x, z) or inside_any(x, z, 0.3) or gy < -0.4 or in_water(x, z):
 			continue
 		var inb = false
 		for b in buildings:
-			if absf(x - b["x"]) < b["w"] / 2.0 and absf(z - b["z"]) < b["d"] / 2.0:
+			if absf(x - b["x"]) < b["w"] / 2.0 + 0.5 and absf(z - b["z"]) < b["d"] / 2.0 + 0.5:
 				inb = true
 				break
 		if inb:
 			continue
-		var s = rnd(0.6, 1.5)
-		var bs = Basis.from_euler(Vector3(rnd(-0.3, 0.3), rnd(0, 6), rnd(-0.3, 0.3))).scaled(Vector3(s, s * rnd(0.7, 1.4), s))
-		mm.set_instance_transform(k, Transform3D(bs, Vector3(x, gy + 0.2 * s, z)))
-		mm.set_instance_color(k, Color.from_hsv(rnd(0.14, 0.2), rnd(0.3, 0.45), rnd(0.32, 0.45)))
+		var sc = rnd(0.7, 1.5)
+		var bs = Basis.from_euler(Vector3(rnd(-0.12, 0.12), rnd(0, 6), rnd(-0.12, 0.12))).scaled(Vector3(sc, sc * rnd(0.7, 1.3), sc))
+		mm.set_instance_transform(k, Transform3D(bs, Vector3(x, gy - 0.04, z)))
+		var col = Color.from_hsv(rnd(0.15, 0.22), rnd(0.35, 0.5), rnd(0.42, 0.58))
+		if rng.randf() < 0.04:
+			col = Color.from_hsv(rnd(0.13, 0.15), 0.38, 0.6)
+		mm.set_instance_color(k, col)
+		if k % 70 == 0:
+			bush_spots.append(Vector3(x, gy, z))
 		k += 1
 	mm.visible_instance_count = k
 	var mi = MultiMeshInstance3D.new()
@@ -2094,10 +2508,36 @@ func build_decor() -> void:
 	var gm = StandardMaterial3D.new()
 	gm.vertex_color_use_as_albedo = true
 	gm.vertex_color_is_srgb = true
+	gm.albedo_texture = _grass_texture()
+	gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	gm.alpha_scissor_threshold = 0.5
 	gm.roughness = 1.0
 	mi.material_override = gm
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_geo().add_child(mi)
+	# rounded bushes and flowers among the grass
+	var nb = 0
+	var bm = MultiMesh.new()
+	bm.transform_format = MultiMesh.TRANSFORM_3D
+	bm.use_colors = true
+	bm.mesh = shape_mesh("blob")
+	bm.instance_count = bush_spots.size() * 3
+	for sp in bush_spots:
+		var bsz = rnd(0.6, 1.3)
+		for j in range(3):
+			var ss = bsz * rnd(0.6, 1.0)
+			var off = Vector3(rnd(-0.5, 0.5), 0, rnd(-0.5, 0.5)) * bsz
+			bm.set_instance_transform(nb, Transform3D(Basis.from_euler(Vector3(0, rnd(0, 3), 0)).scaled(Vector3(ss * 1.2, ss * 0.8, ss)), sp + off + Vector3(0, ss * 0.25, 0)))
+			bm.set_instance_color(nb, Color.from_hsv(rnd(0.19, 0.26), rnd(0.4, 0.55), rnd(0.28, 0.4)))
+			nb += 1
+	var bmi = MultiMeshInstance3D.new()
+	bmi.multimesh = bm
+	var bmat = StandardMaterial3D.new()
+	bmat.vertex_color_use_as_albedo = true
+	bmat.vertex_color_is_srgb = true
+	bmat.roughness = 1.0
+	bmi.material_override = bmat
+	_geo().add_child(bmi)
 	# rubble around buildings
 	if buildings.size() > 0:
 		var nr = mini(900, buildings.size() * 60)

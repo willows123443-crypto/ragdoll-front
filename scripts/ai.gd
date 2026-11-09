@@ -163,12 +163,25 @@ static func cover_safe(cp, threat: Vector3) -> bool:
 static func peek_pos(cp) -> Vector3:
 	if cp.type == "corner":
 		return Vector3(cp.p.x + cp.t.x * 0.7, cp.p.y + 1.45, cp.p.z + cp.t.z * 0.7)
+	if cp.type == "wall":
+		return Vector3(cp.p.x + cp.t.x * cp.side * 0.75, cp.p.y + 1.45, cp.p.z + cp.t.z * cp.side * 0.75)
 	return Vector3(cp.p.x, cp.p.y + 1.55, cp.p.z)
 
+# the direction a soldier leans along a wall: toward a window, doorway, gap or broken top
+static func wall_lean_dir(cp) -> Vector3:
+	return cp.t * cp.side
+
 static func can_fire_from(cp, threat: Vector3) -> bool:
+	var tp = Vector3(threat.x, threat.y + 1.2, threat.z)
 	if cp.type == "wall":
+		for sd in [cp.side if cp.side != 0.0 else 1.0, -cp.side if cp.side != 0.0 else -1.0]:
+			var pp = Vector3(cp.p.x + cp.t.x * sd * 0.75, cp.p.y + 1.45, cp.p.z + cp.t.z * sd * 0.75)
+			if not G.blocked(pp, tp):
+				cp.side = sd
+				return true
+		cp.side = 0.0
 		return false
-	return not G.blocked(peek_pos(cp), Vector3(threat.x, threat.y + 1.2, threat.z))
+	return not G.blocked(peek_pos(cp), tp)
 
 static func cover_free(cp, s) -> bool:
 	return cp.owner_s == null or cp.owner_s == s or not is_instance_valid(cp.owner_s) or cp.owner_s.state == "dead"
@@ -234,7 +247,11 @@ static func find_cover(s, threat: Vector3, mode: String):
 		var cp = cands[k][1]
 		if not cover_safe(cp, threat):
 			continue
-		var sc2 = cands[k][0] + (6.0 if cp.type != "wall" and not can_fire_from(cp, threat) else 0.0)
+		var sc2 = cands[k][0]
+		if cp.type == "wall":
+			sc2 += -1.0 if can_fire_from(cp, threat) else 2.0
+		elif not can_fire_from(cp, threat):
+			sc2 += 6.0
 		if sc2 < bs:
 			bs = sc2
 			best = cp
@@ -381,6 +398,8 @@ static func perceive(s) -> void:
 	s.think = randf_range(0.25, 0.4)
 	var eye = s.head_pos()
 	var in_c = s.in_cover and s.cover != null
+	if in_c and s.cover.type == "wall" and s.has_threat:
+		can_fire_from(s.cover, s.threat)
 	var pe = peek_pos(s.cover) if in_c else Vector3.ZERO
 	var vis = null
 	var peek_only = false
@@ -406,7 +425,7 @@ static func perceive(s) -> void:
 		var po = false
 		if not G.blocked(eye, ch, true):
 			seen = true
-		elif in_c and s.cover.type != "wall" and not G.blocked(pe, ch, true):
+		elif in_c and (s.cover.type != "wall" or s.cover.side != 0.0) and not G.blocked(pe, ch, true):
 			seen = true
 			po = true
 		if not seen:
@@ -891,7 +910,7 @@ static func exposed_for_shot(s) -> bool:
 	var t = s.cover.type
 	if t == "low":
 		return not (s.peek_vis or s.force_peek) or s.crouch < 0.35
-	if t == "corner":
+	if t == "corner" or (t == "wall" and s.cover.side != 0.0):
 		return not (s.peek_vis or s.force_peek) or absf(s.lean) > 0.6
 	return not s.peek_vis
 
@@ -1001,7 +1020,11 @@ static func aim_and_fire(s) -> void:
 		if s.in_cover and s.cover != null:
 			var cp = s.cover
 			var ty = atan2(s.threat.x - s.pos.x, s.threat.z - s.pos.z)
-			if cp.type == "wall":
+			if cp.type == "wall" and cp.side != 0.0:
+				var ld = wall_lean_dir(cp)
+				yaw = atan2(ld.x * 0.5 + sin(ty) * 0.5, ld.z * 0.5 + cos(ty) * 0.5)
+				s.ready_ = true
+			elif cp.type == "wall":
 				yaw = atan2(cp.n.x, cp.n.z)
 				s.ready_ = false
 			elif cp.type == "corner":
@@ -1040,14 +1063,15 @@ static func stance(s) -> void:
 		var peek = s.want_peek and (s.peek_vis or s.force_peek)
 		if cp.type == "low":
 			s.crouch_t = 0.0 if peek else 1.0
-		elif cp.type == "corner":
-			s.crouch_t = 0.45
+		elif cp.type == "corner" or (cp.type == "wall" and cp.side != 0.0):
+			var ldir: Vector3 = cp.t if cp.type == "corner" else wall_lean_dir(cp)
+			s.crouch_t = 0.45 if cp.type == "corner" else 0.3
 			if peek:
 				var rv = Vector3(-cos(s.body_yaw), 0, sin(s.body_yaw))
-				s.lean_t = 1.0 if cp.t.dot(rv) >= 0.0 else -1.0
+				s.lean_t = 1.0 if ldir.dot(rv) >= 0.0 else -1.0
 				s.crouch_t = 0.1
 				var stp = 0.5 if s.force_peek else 0.3
-				s.want = G.flat(cp.p + cp.t * stp - s.pos) * 3.0
+				s.want = G.flat(cp.p + ldir * stp - s.pos) * 3.0
 			else:
 				var back = G.flat(cp.p - s.pos)
 				if back.length_squared() > 0.01:

@@ -11,6 +11,7 @@ var s_step: AudioStreamWAV
 var s_hit: AudioStreamWAV
 var s_rocket: AudioStreamWAV
 var s_engine: AudioStreamWAV
+var s_hammer: AudioStreamWAV
 var players: Array = []
 var pi = 0
 var ui_player: AudioStreamPlayer
@@ -35,6 +36,7 @@ func _ready() -> void:
 	s_hit = _sweep(1400.0, 1200.0, 0.05, 0.25)
 	s_rocket = _noise(0.7, 0.25, 0.3, 1.0)
 	s_engine = _engine_loop()
+	s_hammer = _noise(0.09, 0.025, 0.55, 3.0, 30.0)
 	for i in range(28):
 		var p = AudioStreamPlayer3D.new()
 		p.bus = "World"
@@ -125,6 +127,10 @@ func ricochet(pos: Vector3) -> void:
 
 func whistle(pos: Vector3) -> void:
 	play(s_whistle, pos, 2.0, 1.0)
+
+func hammer(pos: Vector3) -> void:
+	if cam_dist(pos) < 45.0:
+		play(s_hammer, pos, -6.0, randf_range(0.8, 1.25))
 
 func step(pos: Vector3) -> void:
 	if cam_dist(pos) < 12.0:

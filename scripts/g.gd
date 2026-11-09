@@ -169,11 +169,11 @@ func _ready() -> void:
 
 # ---------------------------------------------------------------- classes
 const CLASSES = {
-	"rifleman": {"name": "Rifleman", "w": ["rifle"], "share": 0.3},
+	"rifleman": {"name": "Rifleman", "w": ["rifle"], "share": 0.26},
 	"mg": {"name": "Machine gunner", "w": ["lmg"], "share": 0.12},
 	"medic": {"name": "Medic", "w": ["smg"], "share": 0.12},
 	"at": {"name": "Anti-tank", "w": ["rpg", "rpg", "atrifle"], "share": 0.1},
-	"engineer": {"name": "Engineer", "w": ["shotgun", "smg"], "share": 0.1},
+	"engineer": {"name": "Engineer", "w": ["shotgun", "smg"], "share": 0.14},
 	"assault": {"name": "Assault", "w": ["smg", "smg", "shotgun", "flamer"], "share": 0.1},
 	"radio": {"name": "Radio operator", "w": ["rifle"], "share": 0.06},
 	"sniper": {"name": "Sniper", "w": ["sniper"], "share": 0.05},

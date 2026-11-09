@@ -60,6 +60,7 @@ static func tick(s, dt: float) -> void:
 		if best != null:
 			q["leader"] = best
 			best.set_leader(true)
+			best.flares = maxi(best.flares, 2)
 			boost(best, 15.0)
 			G.fx.callout(best, G.pick(["I'm taking command! On me!", "I've got the squad, follow me!", "Listen up, I'm in charge now!"]))
 	if s.is_player:

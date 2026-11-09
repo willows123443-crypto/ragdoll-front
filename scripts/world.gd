@@ -844,9 +844,12 @@ func base(sx: float, dist: float = 96.0) -> void:
 	for i in range(3):
 		add_box(bx + sx * 7.0, 0.0, -22.0 + i * 22.0, 6.0, 2.4, 4.0, Color(0.33, 0.38, 0.24) if sx < 0 else Color(0.42, 0.39, 0.28), {"dest": true, "hp": 120.0})
 	add_box(bx + sx * 3.0, 0.0, 0.0, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
-	add_box(bx + sx * 3.9, 5.6, 0.0, 1.6, 1.0, 0.05, G.TEAM_BAND[0] if sx < 0 else G.TEAM_BAND[1], {"collide": false, "no_shadow": true})
+	add_box(bx + sx * 3.9, 5.6, 0.0, 1.6, 1.0, 0.05, G.team_color(0 if sx < 0 else 1), {"collide": false, "no_shadow": true})
 	ammo_crate(bx + sx * 1.5, -5.0, 0 if sx < 0 else 1)
 	ammo_crate(bx + sx * 1.5, 5.0, 0 if sx < 0 else 1)
+
+func flatten_camp(x: float, z: float) -> void:
+	pass   # terrain is already built by now; camps sit on whatever is there
 
 # an ammo crate: stand next to it for a second to restock
 func ammo_crate(x: float, z: float, team: int) -> void:
@@ -1258,7 +1261,7 @@ func on_road(x: float, z: float) -> bool:
 
 func build_decor() -> void:
 	# grass
-	var n = int(4000.0 * TW * TH_ / (260.0 * 190.0))
+	var n = int(4000.0 * TW * TH_ / (260.0 * 190.0)) if G.settings["grass"] else 0
 	var mm = MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
@@ -1357,6 +1360,16 @@ func load_map(id: String) -> void:
 		build_trenches()
 	if objectives.is_empty():
 		objectives = [{"p": capture, "name": "A"}]
+	# third and fourth teams get a small camp at the north and south edges
+	for t in range(2, G.team_count()):
+		var z = (bounds.position.y + 22.0) if t == 2 else (bounds.end.y - 22.0)
+		var x = capture.x
+		spawn.append(Vector3(x, 0, z))
+		flatten_camp(x, z)
+		add_box(x, 0.0, z, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
+		add_box(x + 0.9, 5.6, z, 1.6, 1.0, 0.05, G.TEAM_BAND[t], {"collide": false, "no_shadow": true})
+		ammo_crate(x - 4.0, z, t)
+		ammo_crate(x + 4.0, z, t)
 	finalize_static()
 	build_nav()
 	build_cover()

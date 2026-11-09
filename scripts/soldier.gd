@@ -92,6 +92,9 @@ var board_target = null
 var hidden_in_vehicle = false
 var chute: Node3D = null
 var partial = false
+var fired_t = -99.0
+var flares = 0
+var flare_cd = 0.0
 var reload_t = 0.0
 var fire_cd = 0.0
 var burst = 0
@@ -245,11 +248,11 @@ func _mesh(parent: Node3D, size: Vector3, offset: Vector3, mat: Material) -> voi
 
 func _build_body() -> void:
 	_compute_targets()
-	var uni = _mat("uni%d" % team, G.TEAM_UNI[team], true)
-	var uni2 = _mat("uni2%d" % team, G.TEAM_UNI2[team], true)
-	var vest = _mat("vest%d" % team, G.TEAM_VEST[team], true)
-	var helm = _mat("helm%d" % team, G.TEAM_HELM[team], false)
-	var band = _mat("band%d" % team, G.TEAM_BAND[team], false)
+	var uni = _mat("uni" + G.TEAM_UNI[team].to_html(), G.TEAM_UNI[team], true)
+	var uni2 = _mat("uni2" + G.TEAM_UNI2[team].to_html(), G.TEAM_UNI2[team], true)
+	var vest = _mat("vest" + G.TEAM_VEST[team].to_html(), G.TEAM_VEST[team], true)
+	var helm = _mat("helm" + G.TEAM_HELM[team].to_html(), G.TEAM_HELM[team], false)
+	var band = _mat("band" + G.TEAM_BAND[team].to_html(), G.TEAM_BAND[team], false)
 	var sk = _mat("skin" + skin.to_html(false), skin, false)
 	var boot = _mat("boot", Color(0.16, 0.14, 0.12), false)
 	for i in range(11):
@@ -1315,7 +1318,7 @@ func start_chute(at: Vector3) -> void:
 	sm.height = 2.0
 	sm.is_hemisphere = true
 	canopy.mesh = sm
-	canopy.material_override = _mat("canopy%d" % team, G.TEAM_UNI[team].lerp(Color(0.8, 0.8, 0.75), 0.4), false)
+	canopy.material_override = _mat("canopy" + G.TEAM_UNI[team].to_html(), G.TEAM_UNI[team].lerp(Color(0.8, 0.8, 0.75), 0.4), false)
 	canopy.position = Vector3(0, 4.2, 0)
 	chute.add_child(canopy)
 	for k in range(4):

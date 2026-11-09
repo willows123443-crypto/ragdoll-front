@@ -29,7 +29,7 @@ static func reset() -> void:
 		src = [{"p": G.world.capture, "name": "A"}]
 	for o in src:
 		points.append({"p": Vector3(o["p"].x, G.world.ground_y(o["p"].x, o["p"].z), o["p"].z), "name": o["name"],
-			"owner": -1, "prog": 0.0, "contested": false, "n": [0, 0]})
+			"owner": -1, "prog": 0.0, "contested": false, "n": _zeros(), "amt": 0.0, "ct": -1})
 	if G.mode == "assault":
 		for pt in points:
 			pt["owner"] = 1
@@ -83,12 +83,59 @@ static func step(dt: float) -> void:
 	if points.is_empty() or G.over:
 		return
 	for pt in points:
-		pt["n"] = [0, 0]
+		pt["n"] = _zeros()
 	for s in G.soldiers:
-		if (s.state == "alive" or s.state == "riding") and s.team < 2:
+		if (s.state == "alive" or s.state == "riding") and s.team < G.team_count():
 			for pt in points:
 				if G.dist2d(s.pos, pt["p"]) < RADIUS and absf(s.pos.y - pt["p"].y) < 6.0:
 					pt["n"][s.team] += 1
+	if G.team_count() > 2:
+		_step_multi(dt)
+	else:
+		_step_two(dt)
+	_score(dt)
+
+static func _zeros() -> Array:
+	var z = []
+	for t in range(G.team_count()):
+		z.append(0)
+	return z
+
+# three or four teams: whoever is alone on a point takes it over
+static func _step_multi(dt: float) -> void:
+	for i in range(points.size()):
+		var pt = points[i]
+		var present = []
+		for t in range(G.team_count()):
+			if pt["n"][t] > 0:
+				present.append(t)
+		pt["contested"] = present.size() > 1
+		if present.size() != 1:
+			continue
+		var k = present[0]
+		var rate = 0.09 * mini(pt["n"][k], 4) * dt
+		if pt["owner"] >= 0 and pt["owner"] != k:
+			pt["amt"] -= rate
+			if pt["amt"] <= 0.0:
+				var prev = pt["owner"]
+				pt["owner"] = -1
+				pt["amt"] = 0.0
+				pt["ct"] = k
+				G.main.on_point_changed(i, prev, -1)
+		elif pt["owner"] == k:
+			pt["amt"] = minf(1.0, pt["amt"] + rate)
+		else:
+			if pt["ct"] != k:
+				pt["ct"] = k
+				pt["amt"] = 0.0
+			pt["amt"] += rate
+			if pt["amt"] >= 1.0:
+				pt["amt"] = 1.0
+				pt["owner"] = k
+				G.main.on_point_changed(i, -1, k)
+		pt["prog"] = pt["amt"] * (1.0 if (pt["owner"] if pt["owner"] >= 0 else pt["ct"]) % 2 == 0 else -1.0)
+
+static func _step_two(dt: float) -> void:
 	for i in range(points.size()):
 		var pt = points[i]
 		var a = pt["n"][0]
@@ -113,7 +160,8 @@ static func step(dt: float) -> void:
 			var prev = pt["owner"]
 			pt["owner"] = owner
 			G.main.on_point_changed(i, prev, owner)
-	# scoring
+
+static func _score(dt: float) -> void:
 	match G.mode:
 		"capture":
 			var o = points[0]["owner"]

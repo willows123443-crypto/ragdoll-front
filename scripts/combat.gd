@@ -5,6 +5,7 @@ extends RefCounted
 static var rockets: Array = []
 static var strikes: Array = []
 static var shake = 0.0
+static var flares: Array = []
 
 static func spread_dir(base: Vector3, spread: float) -> Vector3:
 	var d = base.normalized()
@@ -20,6 +21,7 @@ static func spread_dir(base: Vector3, spread: float) -> Vector3:
 # one trigger pull
 static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void:
 	var W = s.W
+	s.fired_t = G.sim_time
 	if W["rocket"]:
 		launch_rocket(s, origin, spread_dir(dir, spread))
 	else:
@@ -287,6 +289,64 @@ static func launch_shell(veh, s, origin: Vector3, dir: Vector3) -> void:
 	rockets.append({"p": origin, "v": dir * 140.0, "owner": s, "veh": veh, "mesh": m, "life": 3.0, "trail": 0.0, "power": 1.5, "vdmg": 650.0})
 	G.fx.dust_cloud(origin + dir * 0.5, 2.0)
 
+# ---------------------------------------------------------------- flares
+# a parachute flare: rises over the target, pops, and drifts down lighting up everything around it
+static func flare(from: Vector3, target: Vector3) -> void:
+	var node = Node3D.new()
+	var ball = MeshInstance3D.new()
+	var sm = SphereMesh.new()
+	sm.radius = 0.25
+	sm.height = 0.5
+	ball.mesh = sm
+	var m = StandardMaterial3D.new()
+	m.albedo_color = Color(1.0, 0.95, 0.8)
+	m.emission_enabled = true
+	m.emission = Color(1.0, 0.9, 0.7)
+	m.emission_energy_multiplier = 6.0
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ball.material_override = m
+	node.add_child(ball)
+	var light = OmniLight3D.new()
+	light.light_color = Color(1.0, 0.9, 0.75)
+	light.light_energy = 0.0
+	light.omni_range = 75.0
+	light.omni_attenuation = 0.8
+	light.shadow_enabled = false
+	node.add_child(light)
+	G.fx.add_child(node)
+	node.global_position = from + Vector3(0, 1.5, 0)
+	flares.append({"node": node, "light": light, "a": from + Vector3(0, 1.5, 0), "b": target + Vector3(0, 42.0, 0), "t": 0.0, "lit": false})
+	G.audio.rocket(from)
+
+static func step_flares() -> void:
+	for i in range(flares.size() - 1, -1, -1):
+		var f = flares[i]
+		f["t"] += G.DT
+		var n: Node3D = f["node"]
+		if not f["lit"]:
+			var k = minf(1.0, f["t"] / 2.2)
+			var p: Vector3 = f["a"].lerp(f["b"], k)
+			p.y += sin(k * PI) * 8.0
+			n.global_position = p
+			if k >= 1.0:
+				f["lit"] = true
+				f["t"] = 0.0
+				G.audio.whistle(p)
+		else:
+			n.global_position += Vector3(0.4, -1.6, 0.2) * G.DT
+			var life = f["t"]
+			f["light"].light_energy = clampf(life * 4.0, 0.0, 1.0) * clampf((26.0 - life) / 4.0, 0.0, 1.0) * (9.0 if G.main.is_night() else 2.0) * (0.85 + randf() * 0.3)
+			if life > 26.0 or n.global_position.y < G.world.ground_y(n.global_position.x, n.global_position.z) + 1.0:
+				n.queue_free()
+				flares.remove_at(i)
+
+# is this spot lit up (by a flare, a fire or a muzzle flash)?
+static func lit(p: Vector3) -> bool:
+	for f in flares:
+		if f["lit"] and G.dist2d(f["node"].global_position, p) < 60.0:
+			return true
+	return false
+
 # ---------------------------------------------------------------- mortar strikes
 static func mortar_strike(center: Vector3, n: int) -> void:
 	for i in range(n):
@@ -427,6 +487,10 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 			d["b"].apply_central_impulse(aw.normalized() * 6.0 * d["b"].mass * (1.0 - aw.length() / R) + Vector3(0, 3, 0))
 
 static func clear_all() -> void:
+	for f in flares:
+		if is_instance_valid(f["node"]):
+			f["node"].queue_free()
+	flares = []
 	for r in rockets:
 		if is_instance_valid(r["mesh"]):
 			r["mesh"].queue_free()

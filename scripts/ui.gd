@@ -7,7 +7,7 @@ const MAP_IDS = ["town", "field", "trenches", "valley", "front"]
 const TOOLS = {
 	"units": [["a1", "Alpha soldier"], ["b1", "Bravo soldier"], ["a5", "Alpha squad"], ["b5", "Bravo squad"], ["ctl", "Take control"], ["spA", "Alpha spawn"], ["spB", "Bravo spawn"]],
 	"vehicles": [["jA", "Alpha jeep"], ["jB", "Bravo jeep"], ["tA", "Alpha tank"], ["tB", "Bravo tank"], ["trA", "Alpha truck"], ["trB", "Bravo truck"]],
-	"fun": [["boom", "Explosion"], ["mortar", "Mortar strike"], ["smoke", "Smoke"], ["push", "Shove"]],
+	"fun": [["boom", "Explosion"], ["mortar", "Mortar strike"], ["smoke", "Smoke"], ["flare", "Flare"], ["push", "Shove"]],
 }
 const TIPS = {"a1": "Click the ground to drop in an Alpha soldier", "b1": "Click the ground to drop in a Bravo soldier",
 	"a5": "Click to drop in five Alpha soldiers", "b5": "Click to drop in five Bravo soldiers",
@@ -16,10 +16,15 @@ const TIPS = {"a1": "Click the ground to drop in an Alpha soldier", "b1": "Click
 	"mortar": "Click to call in a mortar barrage",
 	"jA": "Click to drop an Alpha jeep with a driver and gunner", "jB": "Click to drop a Bravo jeep with a driver and gunner",
 	"tA": "Click to drop an Alpha tank with its crew", "tB": "Click to drop a Bravo tank with its crew",
-	"trA": "Click to drop an empty Alpha truck (take control of a soldier and press F next to it)", "trB": "Click to drop an empty Bravo truck", "smoke": "Click to drop a smoke screen", "push": "Click a soldier to shove them over"}
+	"trA": "Click to drop an empty Alpha truck (take control of a soldier and press F next to it)", "trB": "Click to drop an empty Bravo truck", "smoke": "Click to drop a smoke screen", "flare": "Click to put up a parachute flare (lights up the area at night)", "push": "Click a soldier to shove them over"}
 
 var root: Control
 var lbl_a: Label
+var lbl_na: Label
+var lbl_nb: Label
+var lbl_more: Label
+var pa_panel: PanelContainer
+var pb_panel: PanelContainer
 var lbl_b: Label
 var lbl_sa: Label
 var lbl_sb: Label
@@ -61,6 +66,10 @@ var opt_size: OptionButton
 var opt_limit: OptionButton
 var opt_reinf: OptionButton
 var opt_armor: OptionButton
+var opt_teams: OptionButton
+var opt_time: OptionButton
+var teams_panel: PanelContainer
+var settings_panel: PanelContainer
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -117,9 +126,11 @@ func _build_top() -> void:
 	_place(top_bar, Control.PRESET_CENTER_TOP, -260, 10, 520, 50)
 	top_bar.add_theme_constant_override("separation", 0)
 	root.add_child(top_bar)
-	var pa = _panel(Color(0.11, 0.31, 0.72))
+	pa_panel = _panel(Color(0.11, 0.31, 0.72))
+	var pa = pa_panel
 	var va = VBoxContainer.new()
-	va.add_child(_label("ALPHA SQUAD", 14))
+	lbl_na = _label("ALPHA SQUAD", 14)
+	va.add_child(lbl_na)
 	lbl_a = _label("0 alive", 11)
 	va.add_child(lbl_a)
 	pa.add_child(va)
@@ -142,13 +153,19 @@ func _build_top() -> void:
 	lbl_sb = _label("0", 24)
 	ps2.add_child(lbl_sb)
 	top_bar.add_child(ps2)
-	var pb = _panel(Color(0.71, 0.14, 0.14))
+	pb_panel = _panel(Color(0.71, 0.14, 0.14))
+	var pb = pb_panel
 	var vb = VBoxContainer.new()
-	vb.add_child(_label("BRAVO SQUAD", 14))
+	lbl_nb = _label("BRAVO SQUAD", 14)
+	vb.add_child(lbl_nb)
 	lbl_b = _label("0 alive", 11)
 	vb.add_child(lbl_b)
 	pb.add_child(vb)
 	top_bar.add_child(pb)
+	lbl_more = _label("", 13)
+	lbl_more.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_place(lbl_more, Control.PRESET_CENTER_TOP, -300, 62, 600, 20)
+	root.add_child(lbl_more)
 	feed_box = VBoxContainer.new()
 	_place(feed_box, Control.PRESET_TOP_RIGHT, -330, 70, 320, 200)
 	feed_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -181,7 +198,8 @@ func feed(a, v, head: bool, what: String = "") -> void:
 			t += " (friendly)"
 	else:
 		t = "%s ✖" % v.sname
-	var l = _label(t, 13, Color(0.6, 0.75, 1.0) if (a != null and a.team == 0) or (a == null and v != null and v.team == 0) else Color(1.0, 0.65, 0.65))
+	var ct = a.team if a != null else (v.team if v != null else 0)
+	var l = _label(t, 13, G.team_color(ct).lightened(0.45))
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	feed_box.add_child(l)
 	feed_box.move_child(l, 0)
@@ -194,6 +212,13 @@ func feed(a, v, head: bool, what: String = "") -> void:
 		var n = wr.get_ref()
 		if n != null:
 			n.queue_free())
+
+func _tint(p: PanelContainer, c: Color) -> void:
+	var sb = p.get_theme_stylebox("panel")
+	if sb is StyleBoxFlat and sb.bg_color != c:
+		sb = sb.duplicate()
+		sb.bg_color = Color(c.r, c.g, c.b, sb.bg_color.a)
+		p.add_theme_stylebox_override("panel", sb)
 
 # ---------------------------------------------------------------- side buttons
 func _build_side() -> void:
@@ -382,7 +407,7 @@ func _row(parent: Control, label: String, ctrl: Control) -> void:
 
 func _build_menu() -> void:
 	menu = _panel(Color(0.11, 0.13, 0.15, 0.97))
-	_place(menu, Control.PRESET_CENTER, -260, -250, 520, 500)
+	_place(menu, Control.PRESET_CENTER, -280, -290, 560, 580)
 	menu.custom_minimum_size = Vector2(520, 0)
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
@@ -406,13 +431,21 @@ func _build_menu() -> void:
 	_row(v, "Reinforcements", opt_reinf)
 	opt_armor = _option(["None", "Jeeps", "Jeeps and tanks"], 1)
 	_row(v, "Vehicles", opt_armor)
+	opt_teams = _option(["2 teams", "3 teams", "4 teams"], 0)
+	_row(v, "Sides (3–4 only in sandbox, deathmatch, capture)", opt_teams)
+	opt_time = _option(["Day", "Dusk", "Night"], ["day", "dusk", "night"].find(G.settings["time"]))
+	opt_time.item_selected.connect(func(i):
+		G.settings["time"] = ["day", "dusk", "night"][i]
+		G.main.apply_time())
+	_row(v, "Time of day", opt_time)
 	var go = _button("Deploy", func(): _deploy())
 	go.custom_minimum_size = Vector2(0, 44)
 	go.add_theme_font_size_override("font_size", 20)
 	v.add_child(go)
 	var h = HBoxContainer.new()
+	h.add_child(_button("Teams…", func(): _show_teams()))
+	h.add_child(_button("Settings…", func(): _show_settings()))
 	h.add_child(_button("Controls", func(): help.visible = true))
-	h.add_child(_button("Quit", func(): get_tree().quit()))
 	v.add_child(h)
 	menu.add_child(v)
 	root.add_child(menu)
@@ -422,7 +455,8 @@ func _deploy() -> void:
 	G.main.start_game({"map": MAP_IDS[opt_map.selected], "mode": modes[opt_mode.selected],
 		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": int(opt_limit.get_item_text(opt_limit.selected)),
 		"reinforce": opt_reinf.selected != 3, "reinf_mode": ["truck", "para", "instant", "truck"][opt_reinf.selected],
-		"armor": ["none", "light", "heavy"][opt_armor.selected]})
+		"armor": ["none", "light", "heavy"][opt_armor.selected], "teams": opt_teams.selected + 2})
+	G.save_prefs()
 	menu.visible = false
 	help.visible = false
 
@@ -447,7 +481,8 @@ func _build_help() -> void:
 		"  Q / E  lean · Shift  sprint · C  crouch · Z  prone · run into low walls to vault\n" + \
 		"  R  reload · G  grenade · V  smoke · 1–5  rifle, machine gun, sniper, shotgun, rockets\n" + \
 		"  F  take the gun (or ammo) of a fallen soldier at your feet · stand at an ammo crate to restock\n" + \
-		"  Y  first-person / third-person view · Esc  free the mouse · X  leave the soldier\n\n" + \
+		"  Y  first-person / third-person view · L  fire a flare · Esc  free the mouse · X  leave the soldier\n" + \
+		"  F  next to a vehicle: get in · in a vehicle: WASD drive, mouse aim, click fire, 1–4 change seat, F get out\n\n" + \
 		"BATTLE\n" + \
 		"  Squad leaders carry a radio antenna. Soldiers who lose friends, their leader or come under heavy fire\n" + \
 		"  get shaken, and may break and run to the rear until a leader rallies them.\n" + \
@@ -485,12 +520,15 @@ func _build_win() -> void:
 	root.add_child(win)
 
 func show_win(team: int) -> void:
-	win_title.text = "%s squad wins" % G.TEAM_NAMES[team]
+	win_title.text = "%s wins" % G.TEAM_NAMES[team]
 	win_title.add_theme_color_override("font_color", G.TEAM_BAND[team].lightened(0.3))
+	if team == 1 and G.mode == "laststand":
+		win_title.text = "Overrun after %d wave%s" % [Obj.wave, "" if Obj.wave == 1 else "s"]
+		win_title.add_theme_color_override("font_color", Color(1.0, 0.6, 0.5))
 	win.visible = true
 
 func menu_open() -> bool:
-	return menu.visible or help.visible or win.visible or (report != null and report.visible)
+	return menu.visible or help.visible or win.visible or (report != null and report.visible) or (teams_panel != null and teams_panel.visible) or (settings_panel != null and settings_panel.visible)
 
 func typing() -> bool:
 	return false
@@ -532,6 +570,15 @@ func update_hud(dt: float) -> void:
 		lbl_mode.text = Obj.status_text()
 	lbl_a.text = "%d alive" % G.alive_count(0)
 	lbl_b.text = "%d alive" % G.alive_count(1)
+	lbl_na.text = G.TEAM_NAMES[0].to_upper()
+	lbl_nb.text = G.TEAM_NAMES[1].to_upper()
+	_tint(pa_panel, G.TEAM_BAND[0].darkened(0.2))
+	_tint(pb_panel, G.TEAM_BAND[1].darkened(0.2))
+	var more = []
+	for ti in range(2, G.team_count()):
+		more.append("%s  %d  (%d alive)" % [G.TEAM_NAMES[ti], int(G.cap_score[ti]) if cap else G.score[ti], G.alive_count(ti)])
+	lbl_more.text = "   ·   ".join(more)
+	lbl_more.visible = G.started and not more.is_empty()
 	var pts = Obj.points
 	cap_box.visible = Obj.uses_points() and G.started and not pts.is_empty()
 	if cap_box.visible:
@@ -745,3 +792,90 @@ func _draw_report_chart() -> void:
 				pts.append(Vector2((e[0] - t0) / (t1 - t0) * (w - 10.0) + 5.0, h - 6.0 - e[1][ti] / top * (h - 16.0)))
 		if pts.size() > 1:
 			c.draw_polyline(pts, G.TEAM_BAND[ti].lightened(0.2), 2.0, true)
+
+# ---------------------------------------------------------------- team customisation
+func _show_teams() -> void:
+	if teams_panel != null:
+		teams_panel.queue_free()
+	teams_panel = _panel(Color(0.1, 0.12, 0.14, 0.98))
+	_place(teams_panel, Control.PRESET_CENTER, -330, -210, 660, 420)
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	v.add_child(_label("Teams", 26))
+	v.add_child(_label("Name each side, pick its armband colour and its uniform. Teams 3 and 4 only fight when you choose 3 or 4 sides.", 13, Color(0.75, 0.75, 0.75)))
+	var bands = G.BANDS.keys()
+	var unis = G.UNIFORMS.keys()
+	for i in range(4):
+		var c = G.team_cfg[i]
+		var h = HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		var sw = ColorRect.new()
+		sw.custom_minimum_size = Vector2(22, 22)
+		sw.color = G.BANDS.get(c["band"], Color.WHITE)
+		h.add_child(sw)
+		var name_e = LineEdit.new()
+		name_e.text = c["name"]
+		name_e.max_length = 14
+		name_e.custom_minimum_size = Vector2(170, 0)
+		name_e.text_changed.connect(func(t): c["name"] = t)
+		h.add_child(name_e)
+		var ob = _option(bands, maxi(0, bands.find(c["band"])))
+		ob.item_selected.connect(func(k):
+			c["band"] = bands[k]
+			sw.color = G.BANDS[bands[k]])
+		h.add_child(ob)
+		var ou = _option(unis, maxi(0, unis.find(c["uniform"])))
+		ou.item_selected.connect(func(k): c["uniform"] = unis[k])
+		h.add_child(ou)
+		v.add_child(h)
+	var b = HBoxContainer.new()
+	b.add_child(_button("Done", func():
+		G.apply_teams()
+		G.save_prefs()
+		teams_panel.visible = false))
+	v.add_child(b)
+	teams_panel.add_child(v)
+	root.add_child(teams_panel)
+
+# ---------------------------------------------------------------- settings
+func _show_settings() -> void:
+	if settings_panel != null:
+		settings_panel.queue_free()
+	settings_panel = _panel(Color(0.1, 0.12, 0.14, 0.98))
+	_place(settings_panel, Control.PRESET_CENTER, -240, -200, 480, 400)
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	v.add_child(_label("Settings", 26))
+	var vol = HSlider.new()
+	vol.min_value = 0.0
+	vol.max_value = 1.0
+	vol.step = 0.05
+	vol.value = G.settings["volume"]
+	vol.custom_minimum_size = Vector2(220, 0)
+	vol.value_changed.connect(func(x):
+		G.settings["volume"] = x
+		G.audio.set_volume(x))
+	_row(v, "Volume", vol)
+	var sens = HSlider.new()
+	sens.min_value = 0.2
+	sens.max_value = 3.0
+	sens.step = 0.1
+	sens.value = G.settings["sens"]
+	sens.custom_minimum_size = Vector2(220, 0)
+	sens.value_changed.connect(func(x): G.settings["sens"] = x)
+	_row(v, "Mouse sensitivity", sens)
+	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Soldier callouts"], ["shadows", "Shadows"], ["grass", "Grass (next battle)"]]:
+		var key = item[0]
+		var cb = CheckBox.new()
+		cb.button_pressed = G.settings[key]
+		cb.focus_mode = Control.FOCUS_NONE
+		cb.toggled.connect(func(on):
+			G.settings[key] = on
+			if key == "shadows":
+				G.main.apply_time())
+		_row(v, item[1], cb)
+	v.add_child(_button("Done", func():
+		G.save_prefs()
+		settings_panel.visible = false))
+	settings_panel.add_child(v)
+	root.add_child(settings_panel)

@@ -44,18 +44,67 @@ var over = false
 var game_time = 0.0
 var view_range = 150.0
 var path_budget = 0
-var orders = [{"mode": "free", "point": null}, {"mode": "free", "point": null}]
+var orders = [{"mode": "free", "point": null}, {"mode": "free", "point": null}, {"mode": "free", "point": null}, {"mode": "free", "point": null}]
 var squads: Array = []
 var grenades: Array = []
 var smoke_clouds: Array = []
-var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "blood": true, "callouts": true}
+var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day"}
 
-const TEAM_NAMES = ["Alpha", "Bravo"]
-var TEAM_BAND = [Color(0.18, 0.44, 0.88), Color(0.84, 0.17, 0.17)]
-var TEAM_UNI = [Color(0.36, 0.43, 0.25), Color(0.48, 0.46, 0.31)]
-var TEAM_UNI2 = [Color(0.31, 0.36, 0.22), Color(0.40, 0.39, 0.25)]
-var TEAM_VEST = [Color(0.28, 0.31, 0.18), Color(0.35, 0.33, 0.23)]
-var TEAM_HELM = [Color(0.30, 0.35, 0.20), Color(0.38, 0.36, 0.24)]
+# ---------------------------------------------------------------- teams: names, armband colours and uniforms
+const UNIFORMS = {
+	"Woodland": [Color(0.36, 0.43, 0.25), Color(0.31, 0.36, 0.22), Color(0.28, 0.31, 0.18), Color(0.30, 0.35, 0.20)],
+	"Desert": [Color(0.66, 0.58, 0.42), Color(0.58, 0.5, 0.36), Color(0.52, 0.45, 0.32), Color(0.6, 0.53, 0.38)],
+	"Olive drab": [Color(0.48, 0.46, 0.31), Color(0.40, 0.39, 0.25), Color(0.35, 0.33, 0.23), Color(0.38, 0.36, 0.24)],
+	"Winter": [Color(0.86, 0.87, 0.88), Color(0.74, 0.76, 0.78), Color(0.55, 0.57, 0.58), Color(0.9, 0.9, 0.9)],
+	"Urban grey": [Color(0.45, 0.46, 0.47), Color(0.36, 0.37, 0.38), Color(0.25, 0.26, 0.27), Color(0.3, 0.31, 0.32)],
+	"Jungle": [Color(0.22, 0.32, 0.18), Color(0.18, 0.26, 0.14), Color(0.17, 0.2, 0.12), Color(0.2, 0.28, 0.15)],
+	"Navy": [Color(0.2, 0.25, 0.36), Color(0.16, 0.2, 0.29), Color(0.13, 0.15, 0.2), Color(0.18, 0.21, 0.28)],
+	"Field brown": [Color(0.45, 0.36, 0.26), Color(0.38, 0.3, 0.21), Color(0.3, 0.24, 0.17), Color(0.35, 0.28, 0.2)],
+}
+const BANDS = {"Blue": Color(0.18, 0.44, 0.88), "Red": Color(0.84, 0.17, 0.17), "Green": Color(0.2, 0.7, 0.25),
+	"Yellow": Color(0.92, 0.78, 0.15), "Orange": Color(0.95, 0.5, 0.1), "Purple": Color(0.58, 0.28, 0.82),
+	"White": Color(0.92, 0.92, 0.92), "Black": Color(0.1, 0.1, 0.1)}
+var team_cfg = [
+	{"name": "Alpha", "band": "Blue", "uniform": "Woodland"},
+	{"name": "Bravo", "band": "Red", "uniform": "Olive drab"},
+	{"name": "Charlie", "band": "Green", "uniform": "Desert"},
+	{"name": "Delta", "band": "Yellow", "uniform": "Urban grey"},
+]
+var TEAM_NAMES = []
+var TEAM_BAND = []
+var TEAM_UNI = []
+var TEAM_UNI2 = []
+var TEAM_VEST = []
+var TEAM_HELM = []
+
+func apply_teams() -> void:
+	TEAM_NAMES = []; TEAM_BAND = []; TEAM_UNI = []; TEAM_UNI2 = []; TEAM_VEST = []; TEAM_HELM = []
+	for c in team_cfg:
+		var u: Array = UNIFORMS.get(c["uniform"], UNIFORMS["Woodland"])
+		TEAM_NAMES.append(c["name"] if c["name"].strip_edges() != "" else "Team")
+		TEAM_BAND.append(BANDS.get(c["band"], Color.WHITE))
+		TEAM_UNI.append(u[0]); TEAM_UNI2.append(u[1]); TEAM_VEST.append(u[2]); TEAM_HELM.append(u[3])
+
+func team_color(t: int) -> Color:
+	return TEAM_BAND[t] if t >= 0 and t < TEAM_BAND.size() else Color(0.85, 0.85, 0.85)
+
+# saved between sessions (in the browser this lives in the page's local storage)
+func save_prefs() -> void:
+	var cf = ConfigFile.new()
+	for k in settings:
+		cf.set_value("settings", k, settings[k])
+	cf.set_value("teams", "cfg", team_cfg)
+	cf.save("user://prefs.cfg")
+
+func load_prefs() -> void:
+	var cf = ConfigFile.new()
+	if cf.load("user://prefs.cfg") != OK:
+		return
+	for k in settings:
+		settings[k] = cf.get_value("settings", k, settings[k])
+	var tc = cf.get_value("teams", "cfg", null)
+	if tc is Array and tc.size() == 4:
+		team_cfg = tc
 var SKINS = [Color(0.91, 0.73, 0.55), Color(0.82, 0.61, 0.42), Color(0.56, 0.38, 0.24), Color(0.94, 0.79, 0.63), Color(0.71, 0.49, 0.33)]
 const NAMES = ["Miller","Kowalski","Reyes","Novak","Park","Hughes","Silva","Ivanov","Okafor","Brandt","Dubois","Tanaka","Walsh","Costa","Larsen","Haddad","Petrov","Moreau","Kim","Ortiz","Jensen","Bauer","Russo","Nakamura","Fischer","Byrne","Duarte","Lindqvist","Abara","Sato","Grant","Weber","Rossi"]
 
@@ -91,6 +140,8 @@ func team_count() -> int:
 	return teams
 
 func _ready() -> void:
+	load_prefs()
+	apply_teams()
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--knee="):
 			KNEE_SIGN = float(a.substr(7))

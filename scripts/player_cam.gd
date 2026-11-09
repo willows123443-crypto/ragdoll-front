@@ -281,6 +281,9 @@ func _key(k: int) -> void:
 					G.ui.message("No free seats")
 			else:
 				_pick_up(s)
+		elif k == KEY_L and s.state == "alive":
+			Combat.flare(s.pos, aim_point)
+			G.ui.message("Flare away")
 		elif k == KEY_Y:
 			first_person = not first_person
 			_apply_view(s)
@@ -362,10 +365,12 @@ func use_tool(screen: Vector2) -> void:
 		G.ui.message("Mortar barrage incoming")
 	elif tool == "smoke":
 		Combat.smoke_at(p, 26.0)
+	elif tool == "flare":
+		Combat.flare(p + Vector3(0, 0, 0), p)
 	elif tool in ["jA", "jB", "tA", "tB", "trA", "trB"]:
 		var team = 0 if tool.ends_with("A") else 1
 		var kind = {"j": "jeep", "t": "tank", "tr": "truck"}[tool.substr(0, tool.length() - 1)]
-		var en: Vector3 = G.world.rally_point(1 - team)
+		var en: Vector3 = G.world.rally_point((team + 1) % G.team_count())
 		G.main.spawn_vehicle(kind, team, p, atan2(en.x - p.x, en.z - p.z), kind != "truck")
 	elif tool == "spA" or tool == "spB":
 		G.world.spawn[0 if tool == "spA" else 1] = Vector3(p.x, 0, p.z)

@@ -2,6 +2,7 @@ extends Node3D
 # Sets up the scene, runs the simulation tick, and handles game setup, spawning and game modes.
 
 var env: Environment
+var sky_mat: ProceduralSkyMaterial
 var sun: DirectionalLight3D
 var reinf_t = [0.0, 0.0]
 var markers: Node3D
@@ -59,6 +60,7 @@ func _build_environment() -> void:
 	env.fog_light_color = Color(0.66, 0.69, 0.7)
 	env.fog_density = 0.003
 	env.fog_aerial_perspective = 0.4
+	sky_mat = sm
 	var we = WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -69,6 +71,56 @@ func _build_environment() -> void:
 	sun.directional_shadow_max_distance = 140.0
 	sun.rotation = Vector3(deg_to_rad(-52), deg_to_rad(-35), 0)
 	add_child(sun)
+	apply_time()
+
+# day, dusk or night: sky, light and how far soldiers can see
+func apply_time() -> void:
+	var t = G.settings["time"]
+	var amb = float(_arg("amb", "0.38"))
+	var ex = float(_arg("exp", "0.68"))
+	var sn = float(_arg("sun", "0.95"))
+	sun.shadow_enabled = G.settings["shadows"]
+	match t:
+		"dusk":
+			sky_mat.sky_top_color = Color(0.32, 0.36, 0.55)
+			sky_mat.sky_horizon_color = Color(0.86, 0.55, 0.35)
+			sky_mat.ground_horizon_color = Color(0.5, 0.36, 0.28)
+			sun.light_color = Color(1.0, 0.68, 0.42)
+			sun.light_energy = sn * 0.8
+			sun.rotation = Vector3(deg_to_rad(-12), deg_to_rad(-70), 0)
+			env.ambient_light_color = Color(0.62, 0.52, 0.5)
+			env.ambient_light_energy = amb * 0.8
+			env.fog_light_color = Color(0.72, 0.55, 0.45)
+			env.tonemap_exposure = ex
+			G.view_range = 110.0
+		"night":
+			sky_mat.sky_top_color = Color(0.02, 0.03, 0.07)
+			sky_mat.sky_horizon_color = Color(0.06, 0.08, 0.14)
+			sky_mat.ground_horizon_color = Color(0.04, 0.05, 0.08)
+			sun.light_color = Color(0.55, 0.65, 0.9)
+			sun.light_energy = 0.22
+			sun.rotation = Vector3(deg_to_rad(-40), deg_to_rad(30), 0)
+			env.ambient_light_color = Color(0.3, 0.38, 0.6)
+			env.ambient_light_energy = 0.2
+			env.fog_light_color = Color(0.04, 0.05, 0.09)
+			env.tonemap_exposure = ex * 1.4
+			G.view_range = 45.0
+		_:
+			sky_mat.sky_top_color = Color(0.45, 0.55, 0.66)
+			sky_mat.sky_horizon_color = Color(0.68, 0.7, 0.71)
+			sky_mat.ground_horizon_color = Color(0.6, 0.6, 0.58)
+			sun.light_color = Color(1.0, 0.95, 0.86)
+			sun.light_energy = sn
+			sun.rotation = Vector3(deg_to_rad(-52), deg_to_rad(-35), 0)
+			env.ambient_light_color = Color(0.62, 0.66, 0.72)
+			env.ambient_light_energy = amb
+			env.fog_light_color = Color(0.66, 0.69, 0.7)
+			env.tonemap_exposure = ex
+			G.view_range = 150.0
+	sky_mat.ground_bottom_color = sky_mat.ground_horizon_color.darkened(0.5)
+
+func is_night() -> bool:
+	return G.settings["time"] == "night"
 
 func follow_sun(_cam_pos: Vector3, _fwd: Vector3) -> void:
 	pass   # directional shadows already follow the camera in Godot
@@ -88,13 +140,18 @@ func _clear() -> void:
 	G.squads.clear()
 	Combat.clear_all()
 	G.fx.clear_all()
-	G.score = [0, 0]
-	G.cap_score = [0.0, 0.0]
+	G.score = []
+	G.cap_score = []
+	for t in range(G.team_count()):
+		G.score.append(0)
+		G.cap_score.append(0.0)
 	G.cap_owner = -1
 	G.cap_prog = 0.0
 	G.over = false
 	G.game_time = 0.0
-	G.orders = [{"mode": "free", "point": null}, {"mode": "free", "point": null}]
+	G.orders = []
+	for t in range(4):
+		G.orders.append({"mode": "free", "point": null})
 	get_tree().paused = false
 	Engine.time_scale = 1.0
 
@@ -107,6 +164,15 @@ func preview_map(id: String) -> void:
 func start_game(o: Dictionary) -> void:
 	_clear()
 	G.mode = o.get("mode", "sandbox")
+	G.teams = clampi(o.get("teams", G.teams), 2, 4)
+	if G.mode in ["frontline", "assault", "laststand"]:
+		G.teams = 2
+	G.apply_teams()
+	G.score = []
+	G.cap_score = []
+	for t in range(G.team_count()):
+		G.score.append(0)
+		G.cap_score.append(0.0)
 	G.team_size = o.get("size", 10)
 	G.limit = o.get("limit", 50)
 	G.reinforce = o.get("reinforce", true)
@@ -116,7 +182,7 @@ func start_game(o: Dictionary) -> void:
 	Stats.reset()
 	Reinforce.reset()
 	Obj.reset()
-	for t in range(2):
+	for t in range(G.team_count()):
 		if G.mode == "laststand" and t == 1:
 			continue
 		for i in range(G.team_size):
@@ -142,7 +208,7 @@ func spawn_soldier(team: int, x: float, z: float, wid: String):
 	var s = Soldier.new()
 	add_child(s)
 	s.setup(team, p.x, p.z, wid if wid != "" else G.random_weapon())
-	var tgt: Vector3 = G.world.spawn[1 - team]
+	var tgt: Vector3 = G.world.capture
 	s.face(atan2(tgt.x - p.x, (tgt.z - p.z) * 0.3))
 	G.soldiers.append(s)
 	Stats.register(s)
@@ -168,7 +234,7 @@ func _starting_vehicles(t: int) -> void:
 	if G.armor == "none":
 		return
 	var home: Vector3 = G.world.rally_point(t)
-	var enemy: Vector3 = G.world.rally_point(1 - t)
+	var enemy: Vector3 = G.world.capture
 	var yaw = atan2(enemy.x - home.x, enemy.z - home.z)
 	var side = Vector3(cos(yaw), 0, -sin(yaw))
 	spawn_vehicle("jeep", t, _free_spot(home + side * 16.0), yaw)
@@ -236,6 +302,7 @@ func _sim_step() -> void:
 	Combat.step_grenades()
 	Combat.step_rockets()
 	Combat.step_strikes()
+	Combat.step_flares()
 	G.fx.step(G.DT)
 	Stats.step(G.DT)
 	Obj.step(G.DT)
@@ -324,8 +391,10 @@ func _set_flag_color(f: Node3D, col: Color) -> void:
 func refresh_markers() -> void:
 	for c in markers.get_children():
 		c.queue_free()
-	spawn_flags = [_make_flag(G.TEAM_BAND[0], false), _make_flag(G.TEAM_BAND[1], false)]
-	for t in range(2):
+	spawn_flags = []
+	for t in range(G.team_count()):
+		spawn_flags.append(_make_flag(G.TEAM_BAND[t], false))
+	for t in range(G.team_count()):
 		var p: Vector3 = G.world.spawn[t]
 		spawn_flags[t].position = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
 	point_flags = []
@@ -391,6 +460,7 @@ func _report(tag: String) -> void:
 	print("AUTOTEST %s | vehicles: %s | riding %d chute %d" % [tag, ", ".join(vs), rid, chu])
 	var kn = _knee_stats()
 	print("AUTOTEST %s | knees ok/backward: body %d/%d, target %d/%d" % [tag, kn[0], kn[1], kn[2], kn[3]])
+	print("AUTOTEST %s | teams %d alive %s" % [tag, G.team_count(), str(range(G.team_count()).map(func(t): return G.alive_count(t)))])
 	print("AUTOTEST %s | alive %d v %d | dead %d | score %d-%d | sim %.2f ms/tick" % [tag, alive[0], alive[1], dead, G.score[0], G.score[1], ms])
 	tick_us = 0
 	tick_n = 0
@@ -398,14 +468,19 @@ func _report(tag: String) -> void:
 func _autotest() -> void:
 	print("AUTOTEST start")
 	var scen = [["town", "capture", 30.0, "truck"], ["field", "capture", 30.0, "para"], ["trenches", "capture", 30.0, "truck"],
-		["valley", "frontline", 75.0, "truck"], ["front", "assault", 50.0, "para"], ["town", "laststand", 45.0, "truck"]]
+		["valley", "frontline", 75.0, "truck"], ["front", "assault", 50.0, "para"], ["town", "laststand", 45.0, "truck"],
+		["field", "capture", 40.0, "truck", 4, "night"], ["town", "deathmatch", 30.0, "para", 3, "dusk"]]
 	var only = _arg("scen", "")
 	for sc in scen:
 		var m = sc[0]
 		if only != "" and only != m + ":" + sc[1]:
 			continue
 		var tag = m + "/" + sc[1]
-		start_game({"map": m, "mode": sc[1], "size": 10, "limit": 100, "reinforce": true, "armor": "heavy", "reinf_mode": sc[3]})
+		var nteams = sc[4] if sc.size() > 4 else 2
+		G.settings["time"] = sc[5] if sc.size() > 5 else "day"
+		apply_time()
+		tag += " %dt %s" % [nteams, G.settings["time"]]
+		start_game({"map": m, "mode": sc[1], "size": 10, "limit": 100, "reinforce": true, "armor": "heavy", "reinf_mode": sc[3], "teams": nteams})
 		await _wait(12.0)
 		_report(tag + " 12s")
 		var s = null
@@ -451,11 +526,15 @@ func _look(from: Vector3, at: Vector3) -> void:
 
 func _shot_mode(dir: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = _arg("time", "day")
+	apply_time()
 	G.ui.visible = false
 	G.pc.force_free = true
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": "capture", "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
-		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck")})
+		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2"))})
+	if _arg("flare", "") != "":
+		Combat.flare(G.world.capture + Vector3(-20, 0, 0), G.world.capture)
 	await _wait(float(_arg("wait", "6")))
 	var c: Vector3 = G.world.capture
 	await _look(c + Vector3(-40, 25, -10), c)

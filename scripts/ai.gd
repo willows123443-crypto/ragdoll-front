@@ -77,6 +77,7 @@ static func assign_squad(s) -> void:
 	if ld == null or not is_instance_valid(ld) or ld.state == "dead":
 		q["leader"] = s
 		s.set_leader(true)
+		s.flares = 3
 	s.role = "flanker" if q["members"].size() == 3 else "rifleman"
 
 static func squad_movers(q) -> int:
@@ -97,7 +98,7 @@ static func objective_for(s) -> Vector3:
 	var c = team_intel_center(s.team)
 	if c != null:
 		return c
-	return G.world.capture if G.dist2d(s.pos, G.world.capture) > 18.0 else G.world.rally_point(1 - s.team)
+	return G.world.capture if G.dist2d(s.pos, G.world.capture) > 18.0 else G.world.rally_point((s.team + 1) % G.team_count())
 
 # which control point a soldier's squad is working on (attack the front, or hold a threatened point)
 static func squad_point(s) -> int:
@@ -125,7 +126,7 @@ static func squad_point(s) -> int:
 		# hold a point of ours that has enemies on it
 		for i in range(n):
 			var pt = Obj.points[i]
-			if pt["owner"] == team and pt["n"][1 - team] > 0 and qi % 3 == 2:
+			if pt["owner"] == team and pt["n"][(team + 1) % 2] > 0 and qi % 3 == 2:
 				pick = i
 				break
 	if q != null:
@@ -384,6 +385,10 @@ static func perceive(s) -> void:
 		var o = cand[k][1]
 		var d = sqrt(cand[k][0])
 		var rng = G.view_range
+		if rng < 100.0:
+			# in the dark you see what's lit by flares, or the flash of someone firing
+			if Combat.lit(o.pos) or G.sim_time - o.fired_t < 1.2:
+				rng = 150.0
 		if d > rng:
 			continue
 		var ch = o.chest()
@@ -472,6 +477,14 @@ static func decide(s) -> void:
 		return
 	if s.task == "rout":
 		s.task = null
+	# at night, leaders put up flares over where the enemy was last seen
+	if G.main.is_night() and s.flares > 0 and Morale.is_leader(s):
+		s.flare_cd -= 2.0
+		if s.flare_cd <= 0.0 and s.has_seen and G.sim_time - s.seen_t < 25.0 and s.vis_t == null and not Combat.lit(s.threat):
+			s.flares -= 1
+			s.flare_cd = randf_range(18.0, 28.0)
+			Combat.flare(s.pos, s.threat)
+			G.fx.callout(s, G.pick(["Flare up!", "Light 'em up!"]))
 	# low on ammunition: go and get some
 	if s.task == "resupply":
 		if s.supply_target == null or (s.supply_target is Object and (not is_instance_valid(s.supply_target) or s.supply_target.reserve <= 0)):
@@ -656,7 +669,7 @@ static func decide(s) -> void:
 					break
 		s.prone_t = false
 		if G.dist2d(s.pos, goal2) < 5.0:
-			var ch = find_cover(s, G.world.spawn[1 - s.team], "hold")
+			var ch = find_cover(s, G.world.spawn[(s.team + 1) % G.team_count()], "hold")
 			if ch != null:
 				take_cover(s, ch)
 			else:

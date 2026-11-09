@@ -19,13 +19,14 @@ const KINDS = {
 	"hospital": {"name": "Field hospital", "work": 41.6, "size": Vector2(9, 6.5)},
 	"radio": {"name": "Radio mast", "work": 28.8, "size": Vector2(4.5, 4.5)},
 	"depot": {"name": "Vehicle depot", "work": 57.6, "size": Vector2(11, 9)},
+	"aa": {"name": "AA gun", "work": 24.0, "size": Vector2(4.6, 4.6)},
 	"supply": {"name": "Supply dump", "work": 25.6, "size": Vector2(6.5, 5.5)},
 }
-const ORDER = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "tower", "bunker", "hospital", "radio", "depot", "supply"]
+const ORDER = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "tower", "bunker", "hospital", "radio", "depot", "supply"]
 # what an AI team adds around a finished FOB, in order: [kind, sideways, forward]
 const FOB_PLAN = [["mgnest", 0.0, 13.0], ["sandbags", -6.0, 10.0], ["sandbags", 6.0, 10.0], ["hospital", -11.0, -6.0],
 	["supply", 11.0, -5.0], ["radio", -12.0, 5.0], ["mortarpit", 6.0, -12.0], ["tower", 12.0, 7.0], ["wire", 0.0, 20.0],
-	["traps", -12.0, 19.0], ["bunker", 0.0, 0.0], ["depot", 0.0, -22.0]]
+	["traps", -12.0, 19.0], ["bunker", 0.0, 0.0], ["aa", -8.0, -16.0], ["depot", 0.0, -22.0]]
 
 const DEPOT_COST = {"jeep": 6, "truck": 6, "halftrack": 12, "armoredcar": 16}
 const DEPOT_TIME = {"jeep": 35.0, "truck": 40.0, "halftrack": 60.0, "armoredcar": 75.0}
@@ -94,6 +95,7 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 		"radio": _geo_radio(st)
 		"depot": _geo_depot(st)
 		"supply": _geo_supply(st)
+		"aa": _geo_aa(st)
 	G.world.edit_node = null
 	G.world.dyn_mode = false
 	for i in range(before, G.world.cols.size()):
@@ -258,12 +260,12 @@ static func _complete(st: Dictionary, quiet: bool) -> void:
 	match st["kind"]:
 		"fob", "supply", "hq":
 			var a = _wv(st, 2.6 if st["kind"] == "fob" else 0.0, 1.5 if st["kind"] == "fob" else 0.0)
-			st["ammo"] = {"p": a, "team": t}
+			st["ammo"] = {"p": a, "team": t, "stock": 100.0 if st["kind"] != "hq" else 1e9, "site": st}
 			G.world.ammo_points.append(st["ammo"])
-		"mgnest", "mortarpit":
+		"mgnest", "mortarpit", "aa":
 			VModel.bare = true
 			var yaw = atan2(_front(st).x, _front(st).z)
-			st["veh"] = G.main.spawn_vehicle("nest" if st["kind"] == "mgnest" else "mortar", t, st["p"], yaw, false)
+			st["veh"] = G.main.spawn_vehicle({"mgnest": "nest", "mortarpit": "mortar", "aa": "aagun"}[st["kind"]], t, st["p"], yaw, false)
 			VModel.bare = false
 	if t < no_spawn_said.size():
 		no_spawn_said[t] = false
@@ -544,6 +546,12 @@ static func _effect(st: Dictionary, dt: float) -> void:
 					G.main.spawn_vehicle(k2, t, p, atan2(_front(st).x, _front(st).z), false)
 					G.ui.radio(t, "Depot: a %s is ready for crew" % Vehicle.SPECS[k2]["name"].to_lower())
 		"fob", "hq", "supply":
+			# FOBs and dumps running low call up a supply truck from HQ
+			if st["kind"] != "hq" and st.get("ammo") != null and st["ammo"]["stock"] < 55.0:
+				var tr = st.get("truck")
+				if (tr == null or not is_instance_valid(tr) or tr.dead) and G.sim_time - st.get("truck_t", -999.0) > 60.0:
+					st["truck_t"] = G.sim_time
+					VehExt.supply_run(t, st)
 			# top up grenades and engineer kits at the crates
 			if st["t"] > 3.0:
 				st["t"] = 0.0
@@ -585,8 +593,8 @@ static func allowed(t: int) -> Array:
 			return ["sandbags", "wire", "traps", "mgnest"] if t == 0 else []
 		"assault":
 			if t == 0:
-				return ["fob", "sandbags", "hospital", "supply", "radio", "mortarpit", "tower"]
-			return ["sandbags", "wire", "traps", "mgnest", "bunker", "tower", "mortarpit"]
+				return ["fob", "sandbags", "hospital", "supply", "radio", "mortarpit", "tower", "aa"]
+			return ["sandbags", "wire", "traps", "mgnest", "bunker", "tower", "mortarpit", "aa"]
 		"siege":
 			if t == 0:
 				return ["sandbags", "wire", "traps", "mgnest", "bunker", "hospital", "tower"]
@@ -601,7 +609,7 @@ static func allowed(t: int) -> Array:
 
 # defenders dig in around the points they hold instead of setting up FOBs
 const DEFENCE_PLAN = [["mgnest", 0.0, 9.0], ["sandbags", -5.0, 7.0], ["sandbags", 5.0, 7.0], ["wire", 0.0, 15.0], ["bunker", 0.0, -4.0],
-	["traps", 9.0, 14.0], ["tower", -9.0, -6.0], ["mortarpit", 6.0, -10.0]]
+	["traps", 9.0, 14.0], ["tower", -9.0, -6.0], ["mortarpit", 6.0, -10.0], ["aa", -6.0, -12.0]]
 
 static func _ai_plan(t: int) -> void:
 	if G.alive_count(t) == 0:
@@ -924,6 +932,13 @@ static func _geo_mortarpit(st: Dictionary) -> void:
 	_sandbags(st, 1.5, 0.0, 2.2, false, 0.5)
 	for i in range(3):
 		_b(st, -0.8 + i * 0.35, 0.0, -0.9, 0.28, 0.2, 0.45, Color(0.28, 0.3, 0.2), {"collide": false})
+
+static func _geo_aa(st: Dictionary) -> void:
+	_sandbags(st, 0.0, 2.1, 3.6, true, 1.0)
+	_sandbags(st, 0.0, -2.1, 3.6, true, 1.0)
+	_sandbags(st, -2.1, 0.0, 2.4, false, 1.0)
+	_sandbags(st, 2.1, 0.0, 2.4, false, 1.0)
+	_crates(st, 1.2, -1.3, 2)
 
 static func _geo_tower(st: Dictionary) -> void:
 	var h = 4.8

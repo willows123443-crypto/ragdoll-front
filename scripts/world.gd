@@ -120,6 +120,20 @@ func bridge(x0: float, x1: float, zc: float, wide: float) -> void:
 		add_box(x0 + i * 8.0, -3.0, zc, 1.0, deck_y + 2.5, wide - 1.0, Color(0.4, 0.38, 0.34), {"abs": true, "collide": false})
 	bridges.append([x0, x1, zc - wide / 2.0, zc + wide / 2.0, deck_y, c])
 
+# a bridge running north-south (along z)
+func bridge_z(z0: float, z1: float, xc: float, wide: float) -> void:
+	var deck_y = 0.15
+	var c = add_col(xc, deck_y - 0.5, (z0 + z1) / 2.0, wide, 0.5, z1 - z0)
+	var ref = add_box(xc, deck_y - 0.5, (z0 + z1) / 2.0, wide, 0.5, z1 - z0, Color(0.42, 0.38, 0.32), {"abs": true, "collide": false})
+	c.vis = [ref]
+	c.dest = true
+	c.hp = 400.0
+	c.color = Color(0.42, 0.38, 0.32)
+	c.no_move = true
+	for k in [-1.0, 1.0]:
+		c.vis.append(add_box(xc + k * (wide / 2.0 - 0.15), deck_y, (z0 + z1) / 2.0, 0.25, 1.0, z1 - z0, Color(0.36, 0.33, 0.29), {"abs": true, "collide": false}))
+	bridges.append([xc - wide / 2.0, xc + wide / 2.0, z0, z1, deck_y, c])
+
 func is_large() -> bool:
 	return TW > 300
 

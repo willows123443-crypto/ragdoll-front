@@ -9,11 +9,13 @@ const TOOLS = {
 	"command": [["sel", "Select"], ["mvA", "Alpha: move to"], ["mvB", "Bravo: move to"]],
 	"vehicles": [["v:jeep:0", "Jeep A"], ["v:jeep:1", "Jeep B"], ["v:tank:0", "Tank A"], ["v:tank:1", "Tank B"], ["v:halftrack:0", "Half-track A"],
 		["v:armoredcar:1", "Armoured car B"], ["v:motorbike:0", "Motorbike A"], ["v:gunship:0", "Gunship A"], ["v:gunship:1", "Gunship B"],
-		["v:truck:0", "Truck A"], ["v:nest:0", "MG nest A"], ["v:nest:1", "MG nest B"], ["v:mortar:0", "Mortar A"], ["v:artillery:0", "Field gun A"]],
+		["v:truck:0", "Truck A"], ["v:nest:0", "MG nest A"], ["v:nest:1", "MG nest B"], ["v:mortar:0", "Mortar A"], ["v:artillery:0", "Field gun A"],
+		["v:aagun:0", "AA gun A"], ["v:aagun:1", "AA gun B"], ["v:fighter:0", "Fighter A"], ["v:fighter:1", "Fighter B"], ["v:bomber:0", "Bomber A"], ["v:bridger:0", "Bridge layer A"]],
 	"support": [["sup:artillery", "Artillery 10"], ["sup:airstrike", "Air strike 16"], ["sup:paradrop", "Paras 12"], ["sup:heli", "Heli 16"],
-		["sup:jeep", "Jeep 8"], ["sup:halftrack", "Half-track 14"], ["sup:armoredcar", "Arm. car 20"], ["sup:tank", "Tank 30"], ["sup:gunship", "Gunship 34"]],
+		["sup:jeep", "Jeep 8"], ["sup:halftrack", "Half-track 14"], ["sup:armoredcar", "Arm. car 20"], ["sup:tank", "Tank 30"], ["sup:gunship", "Gunship 34"],
+		["sup:fighter", "Fighter 22"], ["sup:bomber", "Dive bomber 28"], ["sup:bridger", "Bridge layer 14"]],
 	"build": [["bteam", "Team"], ["b:fob", "FOB"], ["b:sandbags", "Sandbags"], ["b:wire", "Wire"], ["b:traps", "Tank traps"], ["b:mgnest", "MG nest"],
-		["b:mortarpit", "Mortar pit"], ["b:tower", "Watchtower"], ["b:bunker", "Bunker"], ["b:hospital", "Hospital"], ["b:radio", "Radio mast"],
+		["b:mortarpit", "Mortar pit"], ["b:aa", "AA gun"], ["b:tower", "Watchtower"], ["b:bunker", "Bunker"], ["b:hospital", "Hospital"], ["b:radio", "Radio mast"],
 		["b:depot", "Depot"], ["b:supply", "Supply dump"], ["dis", "Dismantle"]],
 	"fun": [["boom", "Explosion"], ["mortar", "Mortar strike"], ["smoke", "Smoke"], ["flare", "Flare"], ["push", "Shove"]],
 }
@@ -741,6 +743,21 @@ func update_hud(dt: float) -> void:
 		p_name.text = "%s  ·  %s  ·  %s%s" % [s.sname, G.CLASSES.get(s.cls, {"name": "?"})["name"], s.W["name"], st]
 		p_hp.value = maxf(0.0, s.hp)
 		p_ammo.text = "%d | %d     grenades %d · smoke %d" % [s.mag, s.reserve, s.grenades, s.smokes]
+		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
+			var rv = s.vehicle
+			p_ammo.text = "%s  ·  armour %d%%" % [rv.spec["name"], int(100.0 * rv.hp / rv.spec["hp"])]
+			if not rv.spec.get("static", false):
+				p_ammo.text += "  ·  fuel %d%%" % int(rv.fuel * 100.0)
+			if rv.kind in ["mortar", "artillery"]:
+				p_ammo.text += "  ·  rounds %d" % rv.shells
+			if rv.gun_heat > 0.05:
+				p_ammo.text += "  ·  barrel %d%%" % int(rv.gun_heat * 100.0)
+			if rv.towing != null:
+				p_ammo.text += "  ·  towing"
+			if rv.tracks_broken:
+				p_ammo.text += "  ·  immobilised"
+			if rv.spec.get("plane", false):
+				p_ammo.text += "  ·  alt %d m" % int(rv.alt)
 		if s.rgren > 0:
 			p_ammo.text += " · rifle grenades %d (middle mouse)" % s.rgren
 		if s.stickies > 0:

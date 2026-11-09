@@ -7,10 +7,12 @@ extends RefCounted
 const COSTS = {
 	"artillery": 10, "airstrike": 16, "paradrop": 12, "heli": 16,
 	"jeep": 8, "motorbike": 6, "halftrack": 14, "armoredcar": 20, "tank": 30, "gunship": 34,
+	"fighter": 22, "bomber": 28, "bridger": 14,
 }
 const NAMES = {
 	"artillery": "Artillery barrage", "airstrike": "Air strike", "paradrop": "Paratroopers", "heli": "Helicopter insertion",
 	"jeep": "Jeep", "motorbike": "Motorbike", "halftrack": "Half-track", "armoredcar": "Armoured car", "tank": "Tank", "gunship": "Gunship (70 s)",
+	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer",
 }
 
 static var points: Array = []
@@ -69,6 +71,25 @@ static func _ai_spend(t: int) -> void:
 			opts.append_array(["tank", "gunship"])
 	if G.alive_count(t) < G.team_size * 0.6:
 		opts.append_array(["paradrop", "heli"])
+	# answer enemy aircraft with fighters; dive bombers against armour and bases
+	var enemy_air = false
+	var enemy_armour = false
+	for v in G.vehicles:
+		if v.team != t and not v.dead:
+			if v.spec.get("air", false):
+				enemy_air = true
+			elif v.spec["tracked"] or v.kind == "armoredcar":
+				enemy_armour = true
+	if enemy_air and G.armor != "none":
+		opts.append_array(["fighter", "fighter"])
+	if (enemy_armour or G.mode == "destroy") and G.armor == "heavy":
+		opts.append("bomber")
+	var broken_bridge = false
+	for b in G.world.bridges:
+		if not b[5].alive:
+			broken_bridge = true
+	if broken_bridge and G.armor != "none":
+		opts.append("bridger")
 	opts = opts.filter(func(o): return COSTS[o] <= points[t])
 	if opts.is_empty():
 		return
@@ -96,6 +117,11 @@ static func call_in(team: int, what: String, target: Vector3) -> bool:
 			Reinforce.paradrop(team, 6)
 		"heli":
 			Reinforce.heli(team, 6)
+		"fighter", "bomber":
+			var ep = Reinforce.entry_point(team)
+			var pv = G.main.spawn_vehicle(what, team, ep, atan2(G.world.capture.x - ep.x, G.world.capture.z - ep.z))
+			pv.life_t = 90.0
+			G.ui.radio(team, "%s on station for ninety seconds" % NAMES[what].split(" (")[0])
 		"gunship":
 			var e = Reinforce.entry_point(team)
 			var v = G.main.spawn_vehicle("gunship", team, e, atan2(G.world.capture.x - e.x, G.world.capture.z - e.z))
@@ -117,7 +143,7 @@ static func _air_strike(team: int, target: Vector3) -> void:
 	var node = Reinforce._plane_mesh(team)
 	node.global_position = start
 	node.look_at(end_, Vector3.UP)
-	planes.append({"node": node, "from": start, "to": end_, "t": 0.0, "target": target, "dir": dir, "dropped": false})
+	planes.append({"node": node, "from": start, "to": end_, "t": 0.0, "target": target, "dir": dir, "dropped": false, "team": team})
 
 static func _step_planes(dt: float) -> void:
 	for i in range(planes.size() - 1, -1, -1):
@@ -127,6 +153,14 @@ static func _step_planes(dt: float) -> void:
 		p["node"].global_position = at
 		if randf() < 0.15:
 			G.audio.engine(at, 1.0, true)
+		# enemy AA can bring the strike plane down before it drops
+		if not p["dropped"] and VehExt.aa_vs_plane(at, p.get("team", -1), dt):
+			G.fx.explosion(at, 2.0)
+			G.audio.boom(at)
+			G.ui.radio(p.get("team", 0), "Strike aircraft shot down!")
+			p["node"].queue_free()
+			planes.remove_at(i)
+			continue
 		if not p["dropped"] and p["t"] > 0.42:
 			p["dropped"] = true
 			for k in range(5):

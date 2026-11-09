@@ -28,7 +28,7 @@ static func jobs(s, known: bool, threat: Vector3) -> bool:
 	return false
 
 static func busy(s) -> bool:
-	return s.task in ["repair", "build", "mine", "patch", "construct"]
+	return s.task in ["repair", "build", "mine", "patch", "construct", "defuse"]
 
 static func _start_construct(s, st) -> void:
 	AI.release_cover(s)
@@ -80,6 +80,16 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 			return true
 	if s.vis_t != null or s.job_cd > 0.0:
 		return false
+	# sweep for enemy mines nearby and clear them
+	for m in Combat.mines:
+		if m["team"] != s.team and m["arm"] <= 0.0 and G.dist2d(m["p"], s.pos) < 14.0:
+			AI.release_cover(s)
+			s.task = "defuse"
+			s.board_target = m
+			s.build_t = 0.0
+			AI.go_to(s, m["p"], 3.2)
+			G.fx.callout(s, G.pick(["Mine! I'll clear it.", "Found a mine, stand back."]))
+			return true
 	# repair damaged friendly vehicles
 	for v in G.vehicles:
 		if v.team == s.team and not v.dead and not v.spec.get("air", false) and (v.hp < v.spec["hp"] * 0.75 or v.tracks_broken or v.burning) and G.dist2d(v.pos, s.pos) < 40.0:
@@ -159,6 +169,28 @@ static func work(s) -> void:
 				Build.add_work(st, (1.0 if s.cls == "engineer" else 0.55) * G.DT)
 			elif s.move_target == null:
 				AI.go_to(s, Build.work_spot(st, s), 4.6)
+		"defuse":
+			var mn = s.board_target
+			if mn == null or not (mn is Dictionary) or not Combat.mines.has(mn) or (s.vis_t != null and G.dist2d(s.vis_t.pos, s.pos) < 40.0):
+				s.task = null
+				s.board_target = null
+				s.decide_t = 0.0
+				return
+			if G.dist2d(mn["p"], s.pos) < 1.3:
+				AI.stop_move(s)
+				s.crouch_t = 1.0
+				s.hand_t = mn["p"] + Vector3(0, 0.15, 0)
+				s.build_t += G.DT
+				if s.build_t > 3.5:
+					if is_instance_valid(mn["node"]):
+						mn["node"].queue_free()
+					Combat.mines.erase(mn)
+					s.task = null
+					s.board_target = null
+					s.decide_t = 0.0
+					G.fx.callout(s, G.pick(["Mine cleared!", "Safe now."]))
+			elif s.move_target == null:
+				AI.go_to(s, mn["p"], 3.2)
 		"mine":
 			if s.move_target == null:
 				Combat.place_mine(s, s.pos + G.flat(s.board_target - s.pos) * 0.2, "ap")
@@ -176,6 +208,14 @@ static func work(s) -> void:
 				AI.stop_move(s)
 				s.crouch_t = 0.6
 				s.hand_t = v.center()
+				if v.burning:
+					# drag the crew out and smother the fire
+					for k in range(v.seats.size()):
+						var cs = v.seats[k]
+						if cs != null and is_instance_valid(cs) and not cs.is_player:
+							cs.dismount(false)
+					v.burning = false
+					G.fx.callout(s, G.pick(["Get out, she's burning!", "Pulling you out!"]))
 				s.aim_yaw = G.turn_to(s.aim_yaw, atan2(v.pos.x - s.pos.x, v.pos.z - s.pos.z), 4.0 * G.DT)
 				v.repair(40.0 * G.DT)
 				if v.hp >= v.spec["hp"]:

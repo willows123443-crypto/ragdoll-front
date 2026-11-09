@@ -331,6 +331,12 @@ func _key(k: int) -> void:
 		elif k == KEY_F and s.state == "riding":
 			s.dismount(false)
 			G.ui.message("Got out")
+		elif k == KEY_Q and s.state == "riding" and s.vehicle != null:
+			var rv = s.vehicle
+			if rv.kind == "bridger":
+				G.ui.message(VehExt.lay_bridge(rv))
+			elif not rv.spec.get("air", false) and not rv.spec.get("static", false) and rv.kind != "tank":
+				G.ui.message(VehExt.try_tow(rv))
 		elif k >= KEY_1 and k <= KEY_4 and s.state == "riding":
 			var v = s.vehicle
 			var i = k - KEY_1
@@ -349,7 +355,14 @@ func _key(k: int) -> void:
 			if v != null:
 				var i = v.free_seat("driver")
 				if s.mount(v, i):
-					G.ui.message("In the %s (%s). WASD drive · mouse aim · click fire · 1–4 change seat · F get out" % [v.spec["name"].to_lower(), v.spec["seats"][i]["role"]])
+					var hint = "WASD drive · mouse aim · click fire · 1–4 change seat · F get out"
+					if v.spec.get("plane", false):
+						hint = "Mouse steers the nose · W/S throttle · click guns · Shift+click bomb · F bail out"
+					elif v.kind == "bridger":
+						hint = "WASD drive · Q at the water's edge lays the bridge · F get out"
+					elif not v.spec.get("air", false) and not v.spec.get("static", false) and v.kind != "tank":
+						hint += " · Q tow a gun or broken vehicle behind you"
+					G.ui.message("In the %s (%s). %s" % [v.spec["name"].to_lower(), v.spec["seats"][i]["role"], hint])
 				else:
 					G.ui.message("No free seats")
 			else:

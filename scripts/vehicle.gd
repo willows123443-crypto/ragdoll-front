@@ -81,6 +81,19 @@ const SPECS = {
 	"mortar": {"name": "Mortar", "len": 1.6, "wid": 1.6, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 260.0,
 		"bullet": 0.5, "tracked": false, "standoff": 0.0, "static": true,
 		"seats": [{"o": Vector3(0.75, 0.95, -0.2), "role": "gunner", "pose": "stand", "face": 0.0}]},
+	"aagun": {"name": "Anti-aircraft gun", "len": 3.0, "wid": 3.0, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 700.0,
+		"bullet": 0.1, "tracked": false, "standoff": 0.0, "static": true, "gun": "aa",
+		"seats": [{"o": Vector3(0.0, 1.35, -0.55), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true}]},
+	"fighter": {"name": "Fighter", "len": 9.0, "wid": 10.0, "speed": 52.0, "rev": 24.0, "accel": 10.0, "turn": 1.0, "hp": 480.0,
+		"bullet": 0.35, "tracked": false, "standoff": 0.0, "air": true, "plane": true,
+		"seats": [{"o": Vector3(0.0, 1.55, 0.2), "role": "driver", "pose": "hidden", "face": 0.0}]},
+	"bomber": {"name": "Dive bomber", "len": 11.0, "wid": 13.0, "speed": 42.0, "rev": 22.0, "accel": 8.0, "turn": 0.8, "hp": 650.0,
+		"bullet": 0.3, "tracked": false, "standoff": 0.0, "air": true, "plane": true,
+		"seats": [{"o": Vector3(0.0, 1.55, 0.8), "role": "driver", "pose": "hidden", "face": 0.0},
+			{"o": Vector3(0.0, 1.5, -0.9), "role": "gunner", "pose": "hidden", "face": PI}]},
+	"bridger": {"name": "Bridge layer", "len": 7.4, "wid": 3.3, "speed": 7.0, "rev": 3.0, "accel": 3.0, "turn": 0.8, "hp": 1300.0,
+		"bullet": 0.0, "tracked": true, "standoff": 0.0,
+		"seats": [{"o": Vector3(0.6, 1.0, 1.8), "role": "driver", "pose": "hidden", "face": 0.0}]},
 	"tank": {"name": "Tank", "len": 6.6, "wid": 3.3, "speed": 7.5, "rev": 3.5, "accel": 3.5, "turn": 0.85, "hp": 1800.0,
 		"bullet": 0.0, "tracked": true, "standoff": 50.0,
 		"seats": [
@@ -140,6 +153,12 @@ var life_t = -1.0             # gunships called in for a while
 var ramp: Node3D = null
 var doors: Array = []          # {"n", "open"/"shut" or "slide", "t", "c"}
 var shells = 20                # mortar and field-gun rounds
+var fuel = 1.0
+var towing = null              # the vehicle we're pulling
+var towed_by = null
+var bomb_cd = 0.0
+var bridge_laid = false
+var fuel_said = false
 var gun_heat = 0.0             # mounted machine guns overheat
 var supply_t = 0.0
 
@@ -156,7 +175,14 @@ static func make(kind_: String, team_: int, p: Vector3, yaw_: float) -> Vehicle:
 	G.main.add_child(v)
 	v._build()
 	G.vehicles.append(v)
-	if v.spec.get("air", false):
+	if v.spec.get("plane", false):
+		v.alt = 75.0
+		v.pos.y = v._ground(p.x, p.z) + v.alt
+		v.set_meta("dir", Vector3(sin(yaw_), 0, cos(yaw_)))
+		v.set_meta("spd", v.spec["speed"])
+		v.global_transform = Transform3D(Basis(Vector3.UP, yaw_), v.pos)
+		v.body.global_transform = v.global_transform
+	elif v.spec.get("air", false):
 		v.alt = 35.0
 		v.pos.y = v._ground(p.x, p.z) + v.alt
 		v.global_transform = Transform3D(Basis(Vector3.UP, yaw_), v.pos)
@@ -304,6 +330,8 @@ func step(dt: float) -> void:
 	if dead:
 		dead_t += dt
 		speed = move_toward(speed, 0.0, 10.0 * dt)
+		if spec.get("plane", false):
+			VehExt.plane_step(self, dt)
 		return
 	if burning:
 		_burn_tick(dt)
@@ -311,6 +339,9 @@ func step(dt: float) -> void:
 			return
 	if spec.get("air", false):
 		_air_step(dt)
+		return
+	if towed_by != null and is_instance_valid(towed_by):
+		_crew_tick(dt)
 		return
 	if spec.get("static", false):
 		_weapons(dt)
@@ -327,6 +358,7 @@ func step(dt: float) -> void:
 			var r = _ai_drive(dt)
 			thr = r[0]
 			steer = r[1]
+	thr = VehExt.fuel_tick(self, dt, thr)
 	if tracks_broken:
 		thr = 0.0
 		steer *= 0.3 if spec["tracked"] else 1.0
@@ -392,6 +424,8 @@ func step(dt: float) -> void:
 		np.z = clampf(np.z, b.position.y + 3.0, b.end.y - 3.0)
 	pos = np
 	_place(dt)
+	if towing != null:
+		VehExt.tow_tick(self, dt)
 	_hit_people(f)
 	for w in wheels:
 		w.rotation.x += speed * dt / 0.45
@@ -488,7 +522,8 @@ func _weapons(dt: float) -> void:
 	var piv = gun_pivot.global_position
 	var flat_d = G.dist2d(want, piv)
 	var tp = atan2(want.y - piv.y, flat_d) - pitch * cos(turret_yaw)
-	gun_pitch = clampf(gun_pitch + clampf(tp - gun_pitch, -1.5 * dt, 1.5 * dt), -0.15 if kind == "tank" else -0.35, 0.4)
+	var pmax = 1.45 if kind == "aagun" else (0.9 if kind == "bomber" else 0.4)
+	gun_pitch = clampf(gun_pitch + clampf(tp - gun_pitch, -1.5 * dt, 1.5 * dt), -0.15 if kind == "tank" else -0.35, pmax)
 	_apply_turret()
 	var err = absf(wrapf(ty - turret_yaw, -PI, PI))
 	if not shoot or err > 0.08:
@@ -519,9 +554,9 @@ func _weapons(dt: float) -> void:
 					burst_cd = randf_range(0.6, 1.4)
 				return
 		if fire_cd <= 0.0:
-			fire_cd = 0.085
+			fire_cd = 0.085 if kind != "aagun" else 0.055
 			burst -= 1
-			gun_heat += 0.007
+			gun_heat += 0.007 if kind != "aagun" else 0.004
 			if gun_heat >= 1.0:
 				# overheated: wait for the barrel to be swapped
 				fire_cd = 5.0
@@ -532,7 +567,7 @@ func _weapons(dt: float) -> void:
 					G.fx.callout(controller, G.pick(["Barrel's glowing! Changing it!", "Overheated!"]))
 				return
 			var W = G.WEAPONS["hmg"]
-			var spread = W["spread"] + (0.008 if absf(speed) > 1.0 else 0.0)
+			var spread = W["spread"] + (0.008 if absf(speed) > 1.0 else 0.0) + (0.02 if kind == "aagun" else 0.0)
 			Combat.fire_ray(controller, muzzle(), Combat.spread_dir(_gun_dir(), spread), W, true, [body.get_rid()])
 			G.fx.muzzle(muzzle(), false)
 			G.audio.shot(muzzle(), W)
@@ -619,6 +654,8 @@ func _ai_gun_target(g):
 					best = [o.center(), true]
 		if best != null:
 			return best
+	if kind == "aagun" or kind == "bomber":
+		return VehExt.aa_target(self)
 	var tgt = g.vis_t
 	if tgt == null or not is_instance_valid(tgt) or tgt.state == "dead":
 		# nobody to shoot: tanks and armoured cars knock down enemy positions in view
@@ -686,6 +723,10 @@ func take_damage(amount: float, attacker, at: Vector3) -> void:
 		if not burning and randf() < (0.35 if local.z > spec["len"] * 0.15 else 0.15):
 			burning = true
 			G.ui.radio(team, "%s on fire!" % spec["name"])
+	if amount >= 60.0 and not spec.get("plane", false):
+		VehExt.dent(self, at)
+		if hp < spec["hp"] * 0.55 and randf() < 0.3:
+			VehExt.lose_door(self)
 	if hp < spec["hp"] * 0.35 and smoke_node == null:
 		G.fx.wreck_smoke(center(), self)
 		smoke_node = true
@@ -704,6 +745,11 @@ func destroy(attacker) -> void:
 		G.fx.wreck_smoke(center(), self)
 		smoke_node = true
 	_wreck_paint(self)
+	if kind in ["tank", "armoredcar"] and randf() < 0.45:
+		VehExt.blow_turret(self)
+	if towing != null and is_instance_valid(towing):
+		towing.towed_by = null
+		towing = null
 	for i in range(seats.size()):
 		var s = seats[i]
 		if s != null and is_instance_valid(s):
@@ -795,6 +841,31 @@ func _ai_drive(dt: float) -> Array:
 			return [0.0, 0.0]
 		if spec.get("boat", false):
 			return _steer_to(target, dt)
+	elif fuel < 0.15 and VehExt.fuel_stop(self) != null and G.dist2d(VehExt.fuel_stop(self), pos) > 12.0:
+		target = VehExt.fuel_stop(self)
+	elif kind == "bridger":
+		if bridge_laid:
+			return [0.0, 0.0]
+		var bsite = VehExt.bridge_site(self)
+		if bsite == null:
+			return [0.0, 0.0]
+		var bank: Vector3 = bsite[0]
+		var bst: float = get_meta("bstuck", 0.0)
+		if absf(speed) < 2.0 and G.dist2d(bank, pos) < 22.0:
+			bst += dt
+		else:
+			bst = maxf(0.0, bst - dt * 0.3)
+		set_meta("bstuck", bst)
+		if G.dist2d(bank, pos) < 5.0 or (G.dist2d(bank, pos) < 22.0 and bst > 3.0):
+			var want_yaw = atan2(bsite[1].x, bsite[1].z)
+			var dy = wrapf(want_yaw - yaw, -PI, PI)
+			if absf(dy) > 0.12:
+				return [0.25, clampf(dy * 2.0, -1.0, 1.0)]
+			var res = VehExt.lay_bridge(self)
+			if not bridge_laid and res.begins_with("Drive"):
+				return [0.5, 0.0]       # creep up to the edge
+			return [0.0, 0.0]
+		target = bank
 	else:
 		var obj: Vector3 = AI.objective_for(d)
 		var enemy = null
@@ -888,6 +959,12 @@ func _mission_target(dt: float):
 		if G.dist2d(pos, m["drop"]) < 6.0:
 			m["stage"] = 1
 			m["wait"] = 2.5
+			if m.get("type", "") == "supply":
+				var st = m["site"]
+				if st != null and not st["dead"] and st.get("ammo") != null:
+					st["ammo"]["stock"] = 100.0
+					m["wait"] = 6.0
+					G.ui.radio(team, "Supplies delivered to the %s" % st["name"])
 			for i in range(1, seats.size()):
 				var s = seats[i]
 				if s != null and is_instance_valid(s):
@@ -940,6 +1017,9 @@ func repair(amount: float) -> void:
 
 # ---------------------------------------------------------------- aircraft
 func _air_step(dt: float) -> void:
+	if spec.get("plane", false):
+		VehExt.plane_step(self, dt)
+		return
 	if rotor != null:
 		rotor.rotation.y += dt * (18.0 if not dead else 4.0)
 		if has_meta("tail_rotor"):

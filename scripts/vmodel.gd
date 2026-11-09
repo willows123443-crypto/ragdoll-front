@@ -682,6 +682,102 @@ static func build(v) -> void:
 			cyl(v.gun_pivot, 0.07, 1.2, Vector3(0, 0, 0.55), Color(0.2, 0.22, 0.18), "z", {"seg": 10})
 			for x in [0.18, -0.18]:
 				cyl(v.turret, 0.02, 0.6, Vector3(x, 0.2, 0.55), METAL, "y", {"rot": Vector3(0.3, 0, -signf(x) * 0.2), "seg": 4})
+		"aagun":
+			col(v, Vector3(2.4, 0.5, 2.4), Vector3(0, 0.25, 0))
+			cyl(hull, 1.2, 0.35, Vector3(0, 0.18, 0), dark, "y", {"seg": 16})
+			for k in range(4):
+				var a = k * PI / 2.0 + PI / 4.0
+				box(v, hull, Vector3(0.25, 0.15, 1.6), Vector3(cos(a) * 1.3, 0.08, sin(a) * 1.3), METAL, {"rot": Vector3(0, -a + PI / 2.0, 0), "b": 0.03})
+			if not bare:
+				var pts = []
+				for k in range(7):
+					var a0 = k * TAU / 8.0 + 0.4
+					var a1 = (k + 1) * TAU / 8.0 + 0.4
+					pts.append([Vector3(cos(a0), 0, sin(a0)) * 2.1, Vector3(cos(a1), 0, sin(a1)) * 2.1])
+				sandbag_ring(v, hull, pts, 2, Color(0.66, 0.6, 0.45))
+			v.turret = Node3D.new()
+			v.turret.position = Vector3(0, 0.75, 0)
+			hull.add_child(v.turret)
+			cyl(v.turret, 0.55, 0.35, Vector3(0, 0, 0), base, "y", {"seg": 14})
+			box(v, v.turret, Vector3(1.4, 0.7, 0.06), Vector3(0, 0.45, 0.45), base, {"b": 0.02, "rot": Vector3(-0.2, 0, 0)})
+			for x in [0.45, -0.45]:
+				box(v, v.turret, Vector3(0.08, 0.6, 0.6), Vector3(x, 0.45, 0.0), dark, {"b": 0.02})
+			v.gun_pivot = Node3D.new()
+			v.gun_pivot.position = Vector3(0, 0.6, 0.0)
+			v.turret.add_child(v.gun_pivot)
+			box(v, v.gun_pivot, Vector3(0.5, 0.35, 0.6), Vector3(0, 0, 0.1), dark, {"b": 0.05})
+			for x in [0.14, -0.14]:
+				cyl(v.gun_pivot, 0.05, 2.0, Vector3(x, 0.02, 1.3), Color(0.1, 0.1, 0.1), "z", {"seg": 8})
+				cyl(v.gun_pivot, 0.08, 0.3, Vector3(x, 0.02, 2.25), Color(0.1, 0.1, 0.1), "z", {"seg": 8})
+			cyl(v.gun_pivot, 0.12, 0.04, Vector3(0.0, 0.3, 0.6), METAL, "z", {"seg": 12})
+		"fighter", "bomber":
+			var bomber = v.kind == "bomber"
+			var pc = base.lerp(Color(0.5, 0.52, 0.5), 0.25)
+			col(v, Vector3(1.6, 1.6, 8.0), Vector3(0, 1.4, 0))
+			var fl = 9.0 if not bomber else 10.5
+			ball(hull, Vector3(1.4, 1.5, fl), Vector3(0, 1.4, 0.0), pc)
+			cyl(hull, 0.72, 0.9, Vector3(0, 1.45, fl * 0.42), pc.darkened(0.2), "z", {"r2": 0.6, "seg": 14})
+			ball(hull, Vector3(0.9, 0.8, 1.8 if not bomber else 3.2), Vector3(0, 2.05, 0.4 if not bomber else -0.1), Color.WHITE, {"m": glass()})
+			# wings with a slight dihedral, tailplane and fin
+			for x in [1.0, -1.0]:
+				box(v, hull, Vector3(4.6 if not bomber else 5.8, 0.14, 1.9), Vector3(x * (2.6 if not bomber else 3.2), 1.05, 0.5), pc, {"b": 0.06, "rot": Vector3(0, 0, -x * 0.07)})
+				box(v, hull, Vector3(0.6, 0.15, 1.95), Vector3(x * (4.7 if not bomber else 5.9), 1.22, 0.45), band, {"b": 0.04, "rot": Vector3(0, 0, -x * 0.07)})
+				insignia(v, hull, Vector3(x * 3.4, 1.14, 0.45), "y", 0.45)
+				box(v, hull, Vector3(1.6, 0.1, 0.8), Vector3(x * 1.0, 1.6, -fl * 0.45), pc, {"b": 0.03})
+				# landing gear legs and wheels tucked under the wings
+				cyl(hull, 0.05, 0.7, Vector3(x * 1.4, 0.65, 0.9), METAL, "y", {"seg": 6})
+				cyl(hull, 0.22, 0.12, Vector3(x * 1.4, 0.3, 0.9), TYRE, "x", {"seg": 12})
+				if not bomber:
+					cyl(hull, 0.04, 0.9, Vector3(x * 2.2, 1.0, 1.6), Color(0.1, 0.1, 0.1), "z", {"seg": 6})
+			box(v, hull, Vector3(0.12, 1.3, 1.1), Vector3(0, 2.2, -fl * 0.44), pc, {"b": 0.04, "rot": Vector3(-0.25, 0, 0)})
+			insignia(v, hull, Vector3(0.71, 1.5, -fl * 0.2), "x+", 0.35)
+			insignia(v, hull, Vector3(-0.71, 1.5, -fl * 0.2), "x-", 0.35)
+			if bomber:
+				box(v, hull, Vector3(0.5, 0.35, 1.6), Vector3(0, 0.6, 0.4), METAL, {"b": 0.12})
+				for x in [1.0, -1.0]:
+					box(v, hull, Vector3(0.3, 0.6, 0.8), Vector3(x * 1.6, 0.75, 1.2), pc, {"b": 0.06})
+			v.rotor = Node3D.new()
+			v.rotor.position = Vector3(0, 1.45, fl * 0.42 + 0.55)
+			hull.add_child(v.rotor)
+			cyl(v.rotor, 0.22, 0.45, Vector3.ZERO, METAL, "z", {"r2": 0.05, "seg": 10})
+			for k in range(3):
+				var blade = box(v, v.rotor, Vector3(0.18, 1.2, 0.05), Vector3.ZERO, Color(0.1, 0.1, 0.1), {"b": 0.01})
+				blade.rotation.z = k * TAU / 3.0
+				blade.position = Basis(Vector3(0, 0, 1), k * TAU / 3.0) * Vector3(0, 0.6, 0)
+			v.set_meta("prop", true)
+			if bomber:
+				v.turret = Node3D.new()
+				v.turret.position = Vector3(0, 2.05, -1.1)
+				hull.add_child(v.turret)
+				v.gun_pivot = Node3D.new()
+				v.turret.add_child(v.gun_pivot)
+				v.gun_pivot.rotation.y = 0.0
+				mg(v, v.gun_pivot, Vector3(0, 0, 0.0), 0.8)
+		"bridger":
+			col(v, Vector3(3.3, 1.0, 6.4), Vector3(0, 0.95, 0))
+			box(v, hull, Vector3(2.4, 0.9, 6.0), Vector3(0, 0.95, 0), base.darkened(0.05), {"b": 0.08})
+			box(v, hull, Vector3(3.0, 0.45, 4.8), Vector3(0, 1.6, -0.6), base, {"b": 0.12})
+			for x in [1.45, -1.45]:
+				box(v, hull, Vector3(0.7, 0.18, 6.6), Vector3(x, 0.88, 0), Color(0.13, 0.13, 0.12), {"b": 0.06})
+				box(v, hull, Vector3(0.7, 0.14, 5.8), Vector3(x, 0.05, 0), Color(0.13, 0.13, 0.12), {"b": 0.05})
+				cyl(hull, 0.4, 0.7, Vector3(x, 0.5, 3.0), Color(0.13, 0.13, 0.12), "x", {"seg": 12})
+				cyl(hull, 0.4, 0.7, Vector3(x, 0.5, -3.0), Color(0.13, 0.13, 0.12), "x", {"seg": 12})
+			for z in range(5):
+				for x in [1.45, -1.45]:
+					wheel(v, Vector3(x, 0.42, -2.4 + z * 1.2), 0.38, 0.6, rim)
+			# the folded bridge on its launch arm
+			var br = Node3D.new()
+			br.position = Vector3(0, 2.0, 0.0)
+			hull.add_child(br)
+			box(v, br, Vector3(3.6, 0.35, 7.6), Vector3(0, 0.2, 0), Color(0.45, 0.42, 0.36), {"b": 0.04})
+			for x in [1.65, -1.65]:
+				box(v, br, Vector3(0.2, 0.6, 7.6), Vector3(x, 0.4, 0), Color(0.38, 0.36, 0.3), {"b": 0.03})
+			for k in range(6):
+				box(v, br, Vector3(3.3, 0.06, 0.12), Vector3(0, 0.42, -3.2 + k * 1.3), Color(0.32, 0.3, 0.26), {"b": 0.0})
+			v.set_meta("bridge_node", br)
+			insignia(v, hull, Vector3(1.22, 1.0, -1.0), "x+", 0.3)
+			insignia(v, hull, Vector3(-1.22, 1.0, -1.0), "x-", 0.3)
+			box(v, hull, Vector3(2.4, 0.1, 0.06), Vector3(0, 1.4, -3.02), band, {"b": 0.0})
 		"tank":
 			col(v, Vector3(3.3, 1.0, 6.4), Vector3(0, 0.95, 0))
 			col(v, Vector3(3.0, 0.4, 5.2), Vector3(0, 1.6, -0.2))

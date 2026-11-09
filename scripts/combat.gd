@@ -779,9 +779,13 @@ static func step_mines() -> void:
 					break
 		else:
 			for v in G.vehicles:
-				if v.team != m["team"] and not v.dead and G.dist2d(v.pos, m["p"]) < v.spec["wid"] * 0.5 + 0.8:
+				if v.team != m["team"] and not v.dead and not v.spec.get("air", false) and G.dist2d(v.pos, m["p"]) < v.spec["wid"] * 0.5 + 0.8:
 					boom = true
-					v.take_damage(950.0, m["owner"] if is_instance_valid(m["owner"]) else null, m["p"])
+					v.take_damage(650.0, m["owner"] if is_instance_valid(m["owner"]) else null, m["p"])
+					# the blast takes off a track or a wheel
+					if not v.dead and not v.tracks_broken:
+						v.tracks_broken = true
+						G.ui.radio(v.team, "%s hit a mine, %s gone!" % [v.spec["name"], "track" if v.spec["tracked"] else "wheel"])
 					break
 		if boom:
 			explode(m["p"] + Vector3(0, 0.2, 0), m["owner"] if is_instance_valid(m["owner"]) else null, 0.9 if m["kind"] == "ap" else 1.5)

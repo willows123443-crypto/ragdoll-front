@@ -42,6 +42,8 @@ func _ready() -> void:
 			_breach_test()
 		if a == "--basetest":
 			_base_test()
+		if a == "--vehtest":
+			_veh_test()
 		if a.begins_with("--edtest="):
 			_editor_test(a.substr(9))
 
@@ -721,7 +723,10 @@ func _shot_mode(dir: String) -> void:
 			v.remove()
 		var c0: Vector3 = G.world.capture
 		var k = 0
-		for kind in ["halftrack", "armoredcar", "motorbike", "artillery", "gunship", "heli"]:
+		var vl = ["halftrack", "armoredcar", "motorbike", "artillery", "gunship", "heli"]
+		if _arg("vtypes", "") != "1":
+			vl = _arg("vtypes", "").split(",")
+		for kind in vl:
 			spawn_vehicle(kind, k % 2, _free_spot(c0 + Vector3(-30 + k * 12, 0, 22)), 0.4)
 			k += 1
 	if _arg("builds", "") != "":
@@ -926,6 +931,35 @@ func _base_test() -> void:
 			Combat.kill(s, null, false)
 	await _wait(3.0)
 	print("BASETEST over ", G.over, " out ", Build.out)
+	get_tree().quit()
+
+# planes dogfight, the AA gun fires, the bridge layer bridges, the truck tows and runs on fuel
+func _veh_test() -> void:
+	await _wait(0.5)
+	Engine.time_scale = 3.0
+	start_game({"map": "river", "mode": "sandbox", "size": 4, "limit": 9999, "reinforce": false, "armor": "none", "teams": 2})
+	var c: Vector3 = G.world.capture
+	var f0 = spawn_vehicle("fighter", 0, c + Vector3(-150, 0, 0), PI / 2.0)
+	var f1 = spawn_vehicle("fighter", 1, c + Vector3(150, 0, 30), -PI / 2.0)
+	var b0 = spawn_vehicle("bomber", 0, c + Vector3(-160, 0, -40), PI / 2.0)
+	var aa = spawn_vehicle("aagun", 1, c + Vector3(60, 0, -30), -PI / 2.0)
+	var br = spawn_vehicle("bridger", 0, G.world.spawn[0], PI / 2.0)
+	var tr = spawn_vehicle("truck", 0, G.world.spawn[0] + Vector3(0, 0, 14), PI / 2.0)
+	var gun = spawn_vehicle("artillery", 0, G.world.spawn[0] + Vector3(-9, 0, 14), PI / 2.0, false)
+	var msg = VehExt.try_tow(tr)
+	print("VEHTEST tow: ", msg)
+	print("VEHTEST bridge site ", VehExt.bridge_site(br), " driver ", br.driver(), " obj ", Build._objective(0), " water ", G.world.water)
+	for k in range(14):
+		await _wait(4.0)
+		var line = []
+		for v in [f0, f1, b0, aa, br, tr, gun]:
+			if is_instance_valid(v):
+				line.append("%s%d hp%d alt%d %s%s fuel%.2f p(%d,%d)" % [v.kind, v.team, int(v.hp), int(v.alt), "DEAD" if v.dead else "", v.get_meta("why", ""), v.fuel, int(v.pos.x), int(v.pos.z)])
+			else:
+				line.append("gone")
+		if k >= 9 and is_instance_valid(br):
+			print("VEHTEST bridger speed %.2f yaw %.2f bstuck %.1f site %s msg %s" % [br.speed, br.yaw, br.get_meta("bstuck", 0.0), str(VehExt.bridge_site(br)), VehExt.lay_bridge(br) if k == 13 else ""])
+		print("VEHTEST t%d | %s | bridges %d | gun-tr dist %.1f" % [k, " · ".join(line), G.world.bridges.size(), G.dist2d(gun.pos, tr.pos) if is_instance_valid(gun) and is_instance_valid(tr) else -1.0])
 	get_tree().quit()
 
 func _breach_test() -> void:

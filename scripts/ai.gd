@@ -1157,7 +1157,7 @@ static func find_ammo(s):
 	var best = null
 	var bd = 1e9
 	for a in G.world.ammo_points:
-		if a["team"] >= 0 and a["team"] != s.team:
+		if (a["team"] >= 0 and a["team"] != s.team) or a.get("stock", 1.0) <= 0.0:
 			continue
 		var d = G.dist2d(a["p"], s.pos)
 		if d < bd and d < 140.0:
@@ -1178,16 +1178,18 @@ static func supply_tick(s, dt: float) -> void:
 	if s.ammo_frac() >= 0.999 and s.grenades >= 2:
 		s.resupply_t = 0.0
 		return
-	var near = false
+	var near = null
 	for a in G.world.ammo_points:
-		if (a["team"] < 0 or a["team"] == s.team) and G.dist2d(a["p"], s.pos) < 2.6:
-			near = true
+		if (a["team"] < 0 or a["team"] == s.team) and G.dist2d(a["p"], s.pos) < 2.6 and a.get("stock", 1.0) > 0.0:
+			near = a
 			break
-	if near:
+	if near != null:
 		s.resupply_t += dt
 		if s.resupply_t >= 1.0:
 			s.resupply_t = 0.0
 			s.resupply()
+			if near.has("stock"):
+				near["stock"] -= 6.0
 			if s.is_player:
 				G.ui.message("Resupplied")
 			elif s.task == "resupply":

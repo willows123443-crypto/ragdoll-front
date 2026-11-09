@@ -5,17 +5,17 @@ extends Node3D
 # Local axes: +z is forward, +x is the vehicle's left, +y up.
 
 const SPECS = {
-	"jeep": {"name": "Jeep", "len": 4.2, "wid": 2.0, "speed": 15.0, "rev": 5.0, "accel": 7.0, "turn": 1.5, "hp": 420.0,
+	"jeep": {"name": "Jeep", "len": 4.2, "wid": 2.0, "speed": 15.0, "rev": 5.0, "accel": 7.0, "turn": 1.5, "hp": 520.0,
 		"bullet": 0.35, "tracked": false, "standoff": 38.0,
 		"seats": [
-			{"o": Vector3(0.45, 0.62, 0.25), "role": "driver", "pose": "sit", "face": 0.0},
-			{"o": Vector3(0.0, 0.95, -1.15), "role": "gunner", "pose": "stand", "face": 0.0},
-			{"o": Vector3(-0.45, 0.62, 0.25), "role": "pass", "pose": "sit", "face": 0.0},
-			{"o": Vector3(0.0, 0.62, -0.45), "role": "pass", "pose": "sit", "face": 0.0}]},
+			{"o": Vector3(0.45, 1.12, 0.15), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.0, 1.72, -1.35), "role": "gunner", "pose": "stand", "face": 0.0},
+			{"o": Vector3(-0.45, 1.12, 0.15), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.5, 1.12, -0.85), "role": "pass", "pose": "sit", "face": 0.0}]},
 	"truck": {"name": "Truck", "len": 7.2, "wid": 2.5, "speed": 11.0, "rev": 4.0, "accel": 4.5, "turn": 1.0, "hp": 650.0,
 		"bullet": 0.3, "tracked": false, "standoff": 0.0,
 		"seats": [
-			{"o": Vector3(0.55, 1.15, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.5, 1.75, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
 			{"o": Vector3(0.8, 1.62, -0.1), "role": "pass", "pose": "sit", "face": -PI / 2.0},
 			{"o": Vector3(-0.8, 1.62, -0.1), "role": "pass", "pose": "sit", "face": PI / 2.0},
 			{"o": Vector3(0.8, 1.62, -1.0), "role": "pass", "pose": "sit", "face": -PI / 2.0},
@@ -28,7 +28,8 @@ const SPECS = {
 		"bullet": 0.0, "tracked": true, "standoff": 50.0,
 		"seats": [
 			{"o": Vector3(0.6, 1.0, 1.6), "role": "driver", "pose": "hidden", "face": 0.0},
-			{"o": Vector3(0.0, 2.25, -0.2), "role": "gunner", "pose": "hidden", "face": 0.0}]},
+			{"o": Vector3(0.0, 2.25, -0.2), "role": "gunner", "pose": "hidden", "face": 0.0},
+			{"o": Vector3(0.5, 2.35, -0.4), "role": "pass", "pose": "hatch", "face": 0.0, "turret": true}]},
 }
 
 const L_VEH = 8
@@ -138,17 +139,35 @@ func _build() -> void:
 	var band = G.TEAM_BAND[team]
 	match kind:
 		"jeep":
-			_box(self, Vector3(1.9, 0.55, 4.0), Vector3(0, 0.75, 0), base_col, true)
-			_box(self, Vector3(1.8, 0.35, 1.3), Vector3(0, 1.15, 1.2), base_col)
-			_box(self, Vector3(1.6, 0.5, 0.06), Vector3(0, 1.4, 0.6), Color(0.5, 0.6, 0.65, 1))
-			_box(self, Vector3(1.7, 0.08, 0.12), Vector3(0, 1.08, -1.95), band)
+			# open-topped: floor, low sides, bonnet, windscreen frame and seats, so the crew is visible
+			var col = CollisionShape3D.new()
+			var cb = BoxShape3D.new()
+			cb.size = Vector3(1.9, 0.9, 4.0)
+			col.shape = cb
+			col.position = Vector3(0, 0.85, 0)
+			body.add_child(col)
+			_box(self, Vector3(1.9, 0.22, 4.0), Vector3(0, 0.62, 0), base_col)
+			_box(self, Vector3(1.85, 0.5, 1.25), Vector3(0, 0.98, 1.38), base_col)
+			for x in [0.92, -0.92]:
+				_box(self, Vector3(0.08, 0.42, 2.7), Vector3(x, 0.94, -0.62), base_col)
+			_box(self, Vector3(1.9, 0.42, 0.08), Vector3(0, 0.94, -1.96), base_col)
+			_box(self, Vector3(1.7, 0.08, 0.12), Vector3(0, 1.18, -1.98), band)
+			_box(self, Vector3(1.6, 0.06, 0.06), Vector3(0, 1.72, 0.7), dark)
+			for x in [0.8, -0.8]:
+				_box(self, Vector3(0.06, 0.55, 0.06), Vector3(x, 1.45, 0.7), dark)
+			_box(self, Vector3(1.5, 0.46, 0.02), Vector3(0, 1.46, 0.7), Color(0.55, 0.65, 0.7))
+			for x in [0.45, -0.45]:
+				_box(self, Vector3(0.55, 0.18, 0.55), Vector3(x, 0.82, 0.1), dark)
+				_box(self, Vector3(0.55, 0.5, 0.12), Vector3(x, 1.05, -0.2), dark)
+			_box(self, Vector3(1.3, 0.18, 0.55), Vector3(-0.2, 0.82, -0.9), dark)
+			_box(self, Vector3(0.36, 0.06, 0.04), Vector3(0.45, 1.25, 0.55), Color(0.1, 0.1, 0.1))
 			for z in [1.35, -1.3]:
 				for x in [0.95, -0.95]:
 					_wheel(Vector3(x, 0.42, z), 0.42, 0.32)
 			turret = Node3D.new()
-			turret.position = Vector3(0, 1.45, -1.0)
+			turret.position = Vector3(0, 1.6, -0.62)
 			add_child(turret)
-			_box(turret, Vector3(0.12, 0.6, 0.12), Vector3(0, -0.2, 0), dark)
+			_box(turret, Vector3(0.12, 0.85, 0.12), Vector3(0, -0.42, 0), dark)
 			gun_pivot = Node3D.new()
 			gun_pivot.position = Vector3(0, 0.15, 0)
 			turret.add_child(gun_pivot)
@@ -157,13 +176,21 @@ func _build() -> void:
 			_box(gun_pivot, Vector3(0.6, 0.4, 0.04), Vector3(0, 0.1, 0.45), dark)
 		"truck":
 			_box(self, Vector3(2.4, 0.5, 7.0), Vector3(0, 0.95, 0), dark, true)
-			_box(self, Vector3(2.3, 1.5, 1.8), Vector3(0, 1.85, 2.5), base_col, true)
-			_box(self, Vector3(2.0, 0.55, 0.06), Vector3(0, 2.2, 3.42), Color(0.5, 0.6, 0.65))
+			# cab with windows so the driver shows
+			_box(self, Vector3(2.3, 0.75, 1.8), Vector3(0, 1.55, 2.5), base_col, true)
+			_box(self, Vector3(2.3, 0.12, 1.8), Vector3(0, 2.62, 2.5), base_col)
+			for x in [1.12, -1.12]:
+				for z in [1.65, 3.35]:
+					_box(self, Vector3(0.08, 0.95, 0.1), Vector3(x, 2.1, z), base_col)
+			_box(self, Vector3(2.2, 0.85, 0.08), Vector3(0, 2.12, 1.62), base_col)
+			_box(self, Vector3(2.1, 0.6, 0.02), Vector3(0, 2.2, 3.38), Color(0.55, 0.65, 0.7))
+			_box(self, Vector3(2.3, 0.8, 0.9), Vector3(0, 1.4, 3.75), base_col.darkened(0.1))
+			_box(self, Vector3(0.55, 0.2, 0.5), Vector3(0.5, 1.95, 2.3), Color(0.15, 0.15, 0.14))
 			_box(self, Vector3(2.4, 0.6, 4.6), Vector3(0, 1.5, -1.2), base_col)
 			_box(self, Vector3(2.45, 0.1, 4.7), Vector3(0, 2.75, -1.2), base_col.darkened(0.15))
 			for x in [1.18, -1.18]:
 				_box(self, Vector3(0.06, 1.2, 4.6), Vector3(x, 2.15, -1.2), base_col.darkened(0.15))
-			_box(self, Vector3(2.4, 0.1, 0.4), Vector3(0, 2.62, 3.3), band)
+			_box(self, Vector3(2.4, 0.1, 0.4), Vector3(0, 2.7, 3.3), band)
 			for z in [2.4, -0.4, -2.6]:
 				for x in [1.1, -1.1]:
 					_wheel(Vector3(x, 0.55, z), 0.55, 0.42)
@@ -193,6 +220,8 @@ func _build() -> void:
 func seat_xform(i: int) -> Transform3D:
 	var sd = spec["seats"][i]
 	var xf = global_transform
+	if sd.get("turret", false) and turret != null:
+		xf = global_transform * Transform3D(Basis(Vector3.UP, turret_yaw), Vector3.ZERO)
 	return Transform3D(xf.basis * Basis(Vector3.UP, sd["face"]), xf * sd["o"])
 
 func forward() -> Vector3:

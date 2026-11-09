@@ -739,7 +739,15 @@ func compute_muzzle() -> void:
 	if u.length_squared() < 1e-4:
 		u = Vector3.UP - gun_dir * gun_dir.y
 	u = u.normalized()
-	gun_node.global_transform = Transform3D(Basis(u.cross(gun_dir), u, gun_dir), grip)
+	var want_xf = Transform3D(Basis(u.cross(gun_dir), u, gun_dir), grip)
+	if state == "alive" and not is_player:
+		# AI hands wobble with the ragdoll; ease the gun toward where it should be so it doesn't shake
+		var cur: Transform3D = gun_node.global_transform
+		if cur.origin.distance_to(grip) < 0.6:
+			var q0 = cur.basis.get_rotation_quaternion()
+			var q1 = want_xf.basis.get_rotation_quaternion()
+			want_xf = Transform3D(Basis(q0.slerp(q1, 0.3)), cur.origin.lerp(grip, 0.35))
+	gun_node.global_transform = want_xf
 	var head = gun_node.get_node_or_null("p1")
 	if wid == "rpg" and head:
 		head.visible = mag > 0
@@ -1180,24 +1188,37 @@ func mount(v, i: int) -> bool:
 	ads = false
 	prone = false
 	prone_t = false
+	vault = null
 	lean = 0.0
 	lean_t = 0.0
 	vel = Vector3.ZERO
 	for b in parts:
 		b.add_collision_exception_with(v.body)
-	hidden_in_vehicle = v.spec["seats"][i]["pose"] == "hidden"
-	visible = not hidden_in_vehicle
-	for b in parts:
-		b.freeze = hidden_in_vehicle
-		b.collision_layer = 0 if hidden_in_vehicle else G.L_BODY
-	gun_node.visible = not hidden_in_vehicle and v.spec["seats"][i]["role"] != "gunner"
+	hidden_in_vehicle = false
+	visible = true
+	gun_node.visible = v.spec["seats"][i]["role"] != "gunner"
+	mount_from = pos
+	mount_t = MOUNT_TIME
 	_place_in_seat()
 	return true
+
+const MOUNT_TIME = 0.6
+var mount_from = Vector3.ZERO
+var mount_t = 0.0
+
+func _hide_inside() -> void:
+	hidden_in_vehicle = true
+	visible = false
+	for b in parts:
+		b.freeze = true
+		b.collision_layer = 0
+	gun_node.visible = false
 
 func dismount(eject: bool) -> void:
 	var v = vehicle
 	if v == null:
 		return
+	var start: Vector3 = pos
 	if is_instance_valid(v) and seat >= 0 and seat < v.seats.size() and v.seats[seat] == self:
 		v.seats[seat] = null
 	var out: Vector3 = pos
@@ -1207,6 +1228,8 @@ func dismount(eject: bool) -> void:
 		side *= 1.0 if o.x >= 0.0 else -1.0
 		out = v.pos + side * (v.spec["wid"] * 0.5 + 0.9) + v.forward() * o.z
 		out = G.world.push_out_circle(out, 0.35)[0]
+		if hidden_in_vehicle and v.turret != null:
+			start = v.turret.global_position + Vector3(0, 0.9, 0) - Vector3(0, 0.95, 0)
 		for b in parts:
 			b.remove_collision_exception_with(v.body)
 	vehicle = null
@@ -1215,12 +1238,14 @@ func dismount(eject: bool) -> void:
 	gun_node.visible = true
 	var was_hidden = hidden_in_vehicle
 	hidden_in_vehicle = false
+	mount_t = 0.0
 	for b in parts:
 		b.freeze = false
 		b.collision_layer = G.L_BODY
-	pos = Vector3(out.x, G.world.surface_y(out.x, out.z, out.y + 1.0), out.z)
+	out.y = G.world.surface_y(out.x, out.z, out.y + 1.0)
+	pos = start
 	if was_hidden:
-		# climb out: put the body straight back into a standing pose next to the vehicle
+		# climbing out of the hatch: put the body back together standing on the hull
 		stand_pose()
 		_compute_targets()
 		for k in range(parts.size()):
@@ -1233,14 +1258,30 @@ func dismount(eject: bool) -> void:
 		think = 0.0
 		decide_t = 0.0
 	if eject and state == "alive":
-		state = "alive"
+		pos = out
 		fall(randf_range(1.5, 2.5))
+	elif state == "alive":
+		# hop down: the vault movement carries them from the seat to the ground beside the vehicle
+		vault = {"a": start, "b": out, "t": 0.0, "h": 0.3}
+		vy = 0.0
 
 func _place_in_seat() -> void:
 	var xf: Transform3D = vehicle.seat_xform(seat)
 	var f: Vector3 = xf.basis.z
 	body_yaw = atan2(f.x, f.z)
-	pos = xf.origin - Vector3(0, 0.95, 0)
+	var seat_p: Vector3 = xf.origin - Vector3(0, 0.95, 0)
+	if mount_t > 0.0:
+		# climbing in: an arc from where they stood up to the seat (or the hatch for crew inside)
+		var goal = seat_p
+		if vehicle.spec["seats"][seat]["pose"] == "hidden" and vehicle.turret != null:
+			goal = vehicle.turret.global_position + Vector3(0, 0.9, 0) - Vector3(0, 0.95, 0)
+		var k = G.smooth01(1.0 - mount_t / MOUNT_TIME)
+		pos = mount_from.lerp(goal, k) + Vector3(0, sin(k * PI) * 0.35, 0)
+		mount_t -= G.DT
+		if mount_t <= 0.0 and vehicle.spec["seats"][seat]["pose"] == "hidden":
+			_hide_inside()
+		return
+	pos = seat_p
 
 func _tick_riding() -> void:
 	var v = vehicle
@@ -1277,6 +1318,22 @@ func _tick_riding() -> void:
 		return
 	vel = Vector3.ZERO
 	crouch = 0.0
+	var spose: String = v.spec["seats"][seat]["pose"]
+	if mount_t > 0.0:
+		ready_ = false
+		crouch = 0.6
+		stand_pose()
+		strength = 0.5
+		drive()
+		return
+	if spose == "hatch":
+		ready_ = vis_t != null
+		stand_pose()
+		if not is_player and role == "pass":
+			AI.aim_and_fire(self)
+		strength = 0.5
+		drive()
+		return
 	if role == "gunner":
 		ready_ = false
 		stand_pose()
@@ -1286,6 +1343,8 @@ func _tick_riding() -> void:
 	else:
 		ready_ = role != "driver" and vis_t != null
 		ride_pose(role == "driver")
+		if not is_player and role == "pass" and ready_:
+			AI.aim_and_fire(self)
 	strength = 0.5
 	drive()
 

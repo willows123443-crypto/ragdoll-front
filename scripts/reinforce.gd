@@ -45,8 +45,8 @@ static func step(dt: float) -> void:
 static func entry_point(t: int) -> Vector3:
 	var b: Rect2 = G.world.bounds
 	var home: Vector3 = G.world.rally_point(t)
-	var enemy: Vector3 = G.world.rally_point((t + 1) % G.team_count())
-	var dir = G.flat(home - enemy).normalized()
+	# come in from the team's own edge: the one behind its base as seen from the middle of the map
+	var dir = G.flat(G.world.spawn[t] - Vector3.ZERO).normalized()
 	if dir.length_squared() < 0.01:
 		dir = Vector3(-1, 0, 0)
 	var x = b.position.x + 5.0 if dir.x < 0.0 else b.end.x - 5.0
@@ -85,8 +85,7 @@ static func truck(t: int, n: int) -> void:
 
 static func paradrop(t: int, n: int) -> void:
 	var home: Vector3 = G.world.rally_point(t)
-	var enemy: Vector3 = G.world.rally_point((t + 1) % G.team_count())
-	var zone = home + G.flat(enemy - home).normalized() * 18.0
+	var zone = home + G.flat(G.world.capture - home).normalized() * 18.0
 	var b: Rect2 = G.world.bounds
 	# the plane crosses the map along z, passing over the drop zone
 	var start = Vector3(zone.x, 75.0, b.position.y - 40.0)

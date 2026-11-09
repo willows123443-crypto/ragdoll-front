@@ -856,6 +856,7 @@ func live_tree(x: float, z: float) -> void:
 		add_box(x + rnd(-0.7, 0.7), h - 0.6 + i * 0.7, z + rnd(-0.7, 0.7), s, s * 0.8, s, leaf[i], {"ry": rnd(0, 1), "collide": false})
 
 func skyline(colors: Array, hmin: float, hmax: float) -> void:
+	return
 	for i in range(46 if not is_large() else 70):
 		var a = rnd(0.0, TAU)
 		var r = rnd(1.45, 1.9) * TW / 2.0
@@ -876,6 +877,16 @@ func camp(t: int, p: Vector3) -> void:
 	add_box(p.x + 0.9, 5.6, p.z, 1.6, 1.0, 0.05, G.team_color(t), {"collide": false, "no_shadow": true})
 	ammo_crate(p.x - 4.0, p.z, t)
 	ammo_crate(p.x + 4.0, p.z, t)
+	# tents and a sandbag ring facing the middle of the map
+	var hut = G.TEAM_UNI[t].lerp(Color(0.4, 0.4, 0.33), 0.5) if t < G.TEAM_UNI.size() else Color(0.4, 0.4, 0.33)
+	var inward = -signf(p.z) if absf(p.z) > absf(p.x) else 0.0
+	for i in range(3):
+		var hx = p.x - 18.0 + i * 18.0
+		var hz = p.z - inward * 9.0
+		if not inside_any(hx, hz, 3.0):
+			add_box(hx, 0.0, hz, 6.0, 2.4, 4.0, hut, {"dest": true, "hp": 120.0})
+	for k in [-1.0, 1.0]:
+		sandbags(p.x + k * 9.0, p.z + inward * 8.0, 5.0, true)
 
 # an ammo crate: stand next to it for a second to restock
 func ammo_crate(x: float, z: float, team: int) -> void:
@@ -1074,6 +1085,203 @@ func build_trenches() -> void:
 	tank(-6, -30); truck(8, 30, true)
 	skyline([Color(0.43, 0.42, 0.36), Color(0.37, 0.36, 0.31), Color(0.48, 0.46, 0.41)], 6, 18)
 	capture = Vector3.ZERO
+
+# ---------------------------------------------------------------- scenery beyond the edge of the map
+var backdrop: Node3D = null
+
+# rolling country (or ruined suburbs, or shell-torn mud) stretching to the horizon, with forests and buildings
+func build_backdrop(style: String) -> void:
+	if backdrop:
+		backdrop.queue_free()
+	backdrop = Node3D.new()
+	add_child(backdrop)
+	var noise = FastNoiseLite.new()
+	noise.seed = rng.randi()
+	noise.frequency = 0.004
+	noise.fractal_octaves = 4
+	var tree_noise = FastNoiseLite.new()
+	tree_noise.seed = noise.seed + 7
+	tree_noise.frequency = 0.012
+	var hw = TW / 2.0
+	var hd = TH_ / 2.0
+	var R = 760.0
+	var cell = 14.0
+	var n = int(2.0 * (maxf(hw, hd) + R) / cell)
+	var x0 = -(maxf(hw, hd) + R)
+	var base_c: Color = MAPS.get(G.map_id, {}).get("ground", Color(0.45, 0.45, 0.35))
+	var hill_c = base_c.lerp(Color(0.3, 0.38, 0.2), 0.45) if style != "war" else base_c.darkened(0.15)
+	var far_c = Color(0.42, 0.47, 0.5)
+	var verts = PackedVector3Array()
+	var cols = PackedColorArray()
+	# roads that run off the edge of the map carry on across the countryside
+	var road_z: Array = []
+	var road_x: Array = []
+	for rd in roads:
+		if rd[1] - rd[0] > TW * 0.9:
+			road_z.append([(rd[2] + rd[3]) * 0.5, (rd[3] - rd[2]) * 0.5])
+		elif rd[3] - rd[2] > TH_ * 0.9:
+			road_x.append([(rd[0] + rd[1]) * 0.5, (rd[1] - rd[0]) * 0.5])
+	var hfun = func(x: float, z: float) -> float:
+		var ex = maxf(0.0, maxf(absf(x) - hw, absf(z) - hd))
+		if ex <= 0.0:
+			return -2.0
+		var k = clampf(ex / 90.0, 0.0, 1.0)
+		for rz in road_z:
+			if absf(x) > hw:
+				k = minf(k, clampf((absf(z - rz[0]) - rz[1] - 3.0) / 25.0, 0.0, 1.0))
+		for rx in road_x:
+			if absf(z) > hd:
+				k = minf(k, clampf((absf(x - rx[0]) - rx[1] - 3.0) / 25.0, 0.0, 1.0))
+		var h = (noise.get_noise_2d(x, z) * 0.5 + 0.5) * 38.0 * k * k
+		h += clampf((ex - 350.0) / 300.0, 0.0, 1.0) * (60.0 + noise.get_noise_2d(x * 0.5, z * 0.5) * 50.0)
+		return h - 0.4 * (1.0 - k)
+	var hs = PackedFloat32Array()
+	hs.resize((n + 1) * (n + 1))
+	for iz in range(n + 1):
+		for ix in range(n + 1):
+			hs[iz * (n + 1) + ix] = hfun.call(x0 + ix * cell, x0 + iz * cell)
+	var st = SurfaceTool.new()
+	var arr_v = PackedVector3Array()
+	var arr_c = PackedColorArray()
+	var arr_n = PackedVector3Array()
+	for iz in range(n):
+		for ix in range(n):
+			var xa = x0 + ix * cell
+			var za = x0 + iz * cell
+			# skip cells entirely inside the playable map
+			if xa > -hw + 2.0 and xa + cell < hw - 2.0 and za > -hd + 2.0 and za + cell < hd - 2.0:
+				continue
+			var q = [[ix, iz], [ix + 1, iz], [ix, iz + 1], [ix + 1, iz + 1]]
+			var pv = []
+			for c in q:
+				pv.append(Vector3(x0 + c[0] * cell, hs[c[1] * (n + 1) + c[0]], x0 + c[1] * cell))
+			var nrm = (pv[2] - pv[0]).cross(pv[1] - pv[0]).normalized()
+			if nrm.y < 0.0:
+				nrm = -nrm
+			var hh = (pv[0].y + pv[3].y) * 0.5
+			var col = base_c.lerp(hill_c, clampf(hh / 20.0, 0.0, 1.0)).lerp(far_c, clampf((hh - 40.0) / 80.0, 0.0, 0.7))
+			col = col * (0.93 + 0.07 * noise.get_noise_2d(xa * 3.0, za * 3.0))
+			col.a = 1.0
+			for idx in [0, 1, 2, 1, 3, 2]:
+				arr_v.append(pv[idx])
+				arr_c.append(col)
+				arr_n.append(nrm)
+	var arrays = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = arr_v
+	arrays[Mesh.ARRAY_COLOR] = arr_c
+	arrays[Mesh.ARRAY_NORMAL] = arr_n
+	var am = ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mat = StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.vertex_color_is_srgb = true
+	mat.roughness = 1.0
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	am.surface_set_material(0, mat)
+	var mi = MeshInstance3D.new()
+	mi.mesh = am
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	backdrop.add_child(mi)
+	for rz in road_z:
+		for sx in [-1.0, 1.0]:
+			_road_strip(Vector3(sx * (hw + 300.0), 0.0, rz[0]), Vector2(600.0, rz[1] * 2.0))
+	for rx in road_x:
+		for sz in [-1.0, 1.0]:
+			_road_strip(Vector3(rx[0], 0.0, sz * (hd + 300.0)), Vector2(rx[1] * 2.0, 600.0))
+	# woods: clumps of trees where the noise says so
+	var crowns: Array = []
+	var tries = 0
+	var want = 2600 if style != "war" else 700
+	while crowns.size() < want and tries < want * 6:
+		tries += 1
+		var x = rng.randf_range(x0, -x0)
+		var z = rng.randf_range(x0, -x0)
+		var ex = maxf(absf(x) - hw, absf(z) - hd)
+		if ex < 8.0 or ex > 520.0:
+			continue
+		var dens = tree_noise.get_noise_2d(x, z)
+		if dens < (0.05 if style != "war" else 0.35):
+			continue
+		crowns.append(Vector3(x, hfun.call(x, z), z))
+	var mm = MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	var cone = CylinderMesh.new()
+	cone.top_radius = 0.0 if style != "war" else 0.12
+	cone.bottom_radius = 2.2 if style != "war" else 0.2
+	cone.height = 8.0
+	cone.radial_segments = 6
+	cone.rings = 1
+	mm.mesh = cone
+	mm.instance_count = crowns.size()
+	for i in range(crowns.size()):
+		var p: Vector3 = crowns[i]
+		var sc = rng.randf_range(0.7, 1.5)
+		mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3(sc, sc * rng.randf_range(0.8, 1.3), sc)), p + Vector3(0, 3.6 * sc, 0)))
+		var g = Color(0.2, 0.3, 0.15) if style != "war" else Color(0.22, 0.18, 0.14)
+		mm.set_instance_color(i, g * rng.randf_range(0.8, 1.2))
+	var tmi = MultiMeshInstance3D.new()
+	tmi.multimesh = mm
+	var tmat = StandardMaterial3D.new()
+	tmat.vertex_color_use_as_albedo = true
+	tmat.vertex_color_is_srgb = true
+	tmat.roughness = 1.0
+	tmi.material_override = tmat
+	tmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	backdrop.add_child(tmi)
+	# buildings: ruined suburbs around the town, farmsteads in the country
+	var houses = 140 if style == "urban" else (36 if style == "farm" else 12)
+	var walls = [Color(0.78, 0.71, 0.56), Color(0.73, 0.64, 0.49), Color(0.61, 0.59, 0.55), Color(0.56, 0.33, 0.27), Color(0.82, 0.76, 0.62)]
+	var roofs = [Color(0.45, 0.25, 0.2), Color(0.36, 0.29, 0.25), Color(0.3, 0.3, 0.32)]
+	var hmm = MultiMesh.new()
+	hmm.transform_format = MultiMesh.TRANSFORM_3D
+	hmm.use_colors = true
+	hmm.mesh = BoxMesh.new()
+	hmm.instance_count = houses * 2
+	var k = 0
+	tries = 0
+	while k < houses and tries < houses * 20:
+		tries += 1
+		var x = rng.randf_range(x0, -x0)
+		var z = rng.randf_range(x0, -x0)
+		var ex = maxf(absf(x) - hw, absf(z) - hd)
+		var maxd = 180.0 if style == "urban" else 420.0
+		if ex < 12.0 or ex > maxd:
+			continue
+		var y = hfun.call(x, z)
+		if y > 20.0:
+			continue
+		var w = rng.randf_range(7, 13)
+		var d = rng.randf_range(6, 11)
+		var h = rng.randf_range(4, 9) if style == "urban" else rng.randf_range(3.5, 6)
+		if style == "urban" and rng.randf() < 0.4:
+			h *= rng.randf_range(0.3, 0.6)     # ruined
+		var yaw = rng.randf_range(0, PI)
+		var bb = Basis(Vector3.UP, yaw)
+		hmm.set_instance_transform(k * 2, Transform3D(bb.scaled(Vector3(w, h, d)), Vector3(x, y + h / 2.0 - 0.3, z)))
+		hmm.set_instance_color(k * 2, walls[rng.randi() % walls.size()])
+		var roof_h = 0.5 if (style == "urban" and h < 4.0) else 1.6
+		hmm.set_instance_transform(k * 2 + 1, Transform3D(bb.scaled(Vector3(w + 0.6, roof_h, d + 0.6)), Vector3(x, y + h + roof_h / 2.0 - 0.3, z)))
+		hmm.set_instance_color(k * 2 + 1, roofs[rng.randi() % roofs.size()])
+		k += 1
+	hmm.visible_instance_count = k * 2
+	var hmi = MultiMeshInstance3D.new()
+	hmi.multimesh = hmm
+	hmi.material_override = tmat
+	backdrop.add_child(hmi)
+
+func _road_strip(c: Vector3, size: Vector2) -> void:
+	var m = MeshInstance3D.new()
+	var pm = PlaneMesh.new()
+	pm.size = size
+	m.mesh = pm
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.31, 0.3, 0.3)
+	mat.roughness = 1.0
+	m.material_override = mat
+	m.position = c + Vector3(0, 0.02, 0)
+	backdrop.add_child(m)
 
 # ---------------------------------------------------------------- large maps
 # a cluster of houses (some with an upper floor) around a point, keeping clear of roads
@@ -1483,5 +1691,6 @@ func load_map(id: String) -> void:
 	build_nav()
 	build_cover()
 	build_decor()
+	build_backdrop({"town": "urban", "field": "farm", "trenches": "war", "valley": "farm", "front": "war"}.get(id, "farm"))
 	for s in smoke_sources:
 		G.fx.wreck_smoke(s, geo_root)

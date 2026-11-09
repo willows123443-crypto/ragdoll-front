@@ -21,7 +21,7 @@ var callouts: Array = []
 func _ready() -> void:
 	soft_tex = _radial_tex(64, Color(1, 1, 1, 1), 0.0)
 	blood_tex = _blob_tex(Color(0.33, 0.04, 0.04, 0.9))
-	scorch_tex = _blob_tex(Color(0.08, 0.07, 0.06, 0.85))
+	scorch_tex = _blob_tex(Color(0.16, 0.14, 0.11, 0.5))
 	var tm = StandardMaterial3D.new()
 	tm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	tm.albedo_color = Color(1.0, 0.9, 0.6)
@@ -235,6 +235,7 @@ func wreck_smoke(pos: Vector3, parent: Node) -> void:
 	p.scale_amount_max = 1.8
 	p.scale_amount_curve = _grow_curve(1.0, 7.0)
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	p.preprocess = p.lifetime
 	parent.add_child(p)
 	p.global_position = pos
 	p.emitting = true
@@ -260,15 +261,19 @@ func smoke_screen(pos: Vector3, life: float) -> CPUParticles3D:
 	p.scale_amount_max = 3.5
 	p.scale_amount_curve = _grow_curve(1.0, 3.0)
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# the web renderer draws particles that haven't been emitted yet as black discs, so the cloud
+	# starts fully formed (scaled up from small) and fades out as a whole instead of stopping emission
+	p.preprocess = p.lifetime
 	add_child(p)
 	p.global_position = pos
 	p.emitting = true
-	var wr = weakref(p)
-	get_tree().create_timer(life, false).timeout.connect(func():
-		var n = wr.get_ref()
-		if n != null:
-			n.emitting = false)
-	get_tree().create_timer(life + 8.0, false).timeout.connect(p.queue_free)
+	p.scale = Vector3(0.2, 0.2, 0.2)
+	var mat: StandardMaterial3D = p.material_override
+	var tw = p.create_tween()
+	tw.tween_property(p, "scale", Vector3.ONE, 2.5)
+	tw.tween_interval(maxf(0.5, life - 2.5))
+	tw.tween_property(mat, "albedo_color", Color(1, 1, 1, 0), 5.0)
+	tw.tween_callback(p.queue_free)
 	return p
 
 func decal(pos: Vector3, size: float, scorch: bool) -> void:

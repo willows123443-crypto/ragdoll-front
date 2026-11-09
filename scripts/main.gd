@@ -231,6 +231,11 @@ func spawn_vehicle(kind: String, team: int, p: Vector3, yaw: float, crew: bool =
 			var g = spawn_soldier(team, p.x, p.z, "rifle")
 			if g != null:
 				g.mount(v, gs)
+		for i in range(v.seats.size()):
+			if v.spec["seats"][i]["pose"] == "hatch" and v.seats[i] == null:
+				var c = spawn_soldier(team, p.x, p.z, "rifle")
+				if c != null:
+					c.mount(v, i)
 	return v
 
 func _starting_vehicles(t: int) -> void:
@@ -461,6 +466,16 @@ func _report(tag: String) -> void:
 		elif o.state == "chute":
 			chu += 1
 	print("AUTOTEST %s | vehicles: %s | riding %d chute %d" % [tag, ", ".join(vs), rid, chu])
+	var cen = []
+	for t in range(G.team_count()):
+		var c = Vector3.ZERO
+		var n = 0
+		for o in G.soldiers:
+			if o.team == t and o.state != "dead":
+				c += o.pos
+				n += 1
+		cen.append("t%d spawn(%d,%d) avg(%d,%d)" % [t, int(G.world.spawn[t].x), int(G.world.spawn[t].z), int(c.x / maxi(n, 1)), int(c.z / maxi(n, 1))])
+	print("AUTOTEST %s | %s" % [tag, " ".join(cen)])
 	var kn = _knee_stats()
 	print("AUTOTEST %s | knees ok/backward: body %d/%d, target %d/%d" % [tag, kn[0], kn[1], kn[2], kn[3]])
 	print("AUTOTEST %s | teams %d alive %s" % [tag, G.team_count(), str(range(G.team_count()).map(func(t): return G.alive_count(t)))])
@@ -560,12 +575,18 @@ func _shot_mode(dir: String) -> void:
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": "capture", "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
 		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2"))})
+	if _arg("smoke", "") != "":
+		Combat.smoke_at(G.world.capture + Vector3(0, 0, 10), 30.0)
+		Combat.throw_grenade(G.soldiers[0], G.world.capture + Vector3(4, 0, 12), "smoke")
 	if _arg("flare", "") != "":
 		Combat.flare(G.world.capture + Vector3(-20, 0, 0), G.world.capture)
 	await _wait(float(_arg("wait", "6")))
 	var c: Vector3 = G.world.capture
 	await _look(c + Vector3(-40, 25, -10), c)
 	await _snap(dir, "overview")
+	if _arg("smoke", "") != "":
+		await _look(c + Vector3(-14, 4, 4), c + Vector3(0, 1, 11))
+		await _snap(dir, "smoke")
 	if _arg("fp", "") != "":
 		for s in G.soldiers:
 			if s.state == "alive":

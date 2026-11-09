@@ -171,6 +171,7 @@ func build_terrain(base: Color) -> void:
 	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var mat = StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
+	mat.vertex_color_is_srgb = true
 	mat.roughness = 1.0
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	am.surface_set_material(0, mat)
@@ -1046,6 +1047,7 @@ func build_decor() -> void:
 	mi.multimesh = mm
 	var gm = StandardMaterial3D.new()
 	gm.vertex_color_use_as_albedo = true
+	gm.vertex_color_is_srgb = true
 	gm.roughness = 1.0
 	mi.material_override = gm
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -1073,6 +1075,7 @@ func build_decor() -> void:
 		ri.multimesh = rm
 		var rmat = StandardMaterial3D.new()
 		rmat.vertex_color_use_as_albedo = true
+		rmat.vertex_color_is_srgb = true
 		ri.material_override = rmat
 		geo_root.add_child(ri)
 

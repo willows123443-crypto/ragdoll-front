@@ -91,6 +91,7 @@ func billboard_mat(col: Color, additive: bool) -> StandardMaterial3D:
 	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	m.vertex_color_use_as_albedo = true
+	m.vertex_color_is_srgb = true
 	m.albedo_texture = soft_tex
 	m.albedo_color = col
 	if additive:

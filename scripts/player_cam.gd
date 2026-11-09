@@ -137,7 +137,11 @@ func _process(dt: float) -> void:
 		var back = 2.4
 		var side = 0.6
 		var piv: Vector3
-		if s.state == "alive":
+		if s.state == "riding" and s.vehicle != null:
+			piv = s.vehicle.center() + Vector3(0, 1.6 if s.vehicle.kind != "jeep" else 1.1, 0)
+			back = {"jeep": 6.5, "truck": 10.0, "tank": 9.5}.get(s.vehicle.kind, 8.0)
+			side = 0.0
+		elif s.state == "alive":
 			piv = Vector3(s.pos.x, s.pos.y + (0.55 if s.prone else 1.55 - 0.45 * s.crouch), s.pos.z) + r * s.lean * 0.4
 			if s.ads:
 				back = 1.15
@@ -149,7 +153,7 @@ func _process(dt: float) -> void:
 			side = 0.3
 		back += kick * 0.6
 		var want_p = piv - d * back + r * side + Vector3(0, 0.12, 0)
-		if first_person and s.state == "alive":
+		if first_person and s.state == "alive" and s.vehicle == null:
 			# eyes: where the pose puts the head, carried by the real chest (steady, but moves with the body)
 			var eye: Vector3 = s.parts[1].global_position + (s.targets[2].origin - s.targets[1].origin)
 			want_p = eye + d * 0.12 + Vector3(0, 0.06, 0) - Vector3(0, kick * 0.05, 0)
@@ -165,7 +169,10 @@ func _process(dt: float) -> void:
 			var off = Vector3(0.0, -0.13, 0.42) if s.ads else Vector3(0.2, -0.22, 0.48)
 			off.y -= kick * 0.1
 			s.gun_node.global_transform = Transform3D(Basis(up.cross(d), up, d), want_p + r * off.x + up * off.y + d * off.z - d * kick * 0.15)
-		var ah = G.ray(want_p, want_p + d * 300.0, G.L_WORLD | G.L_BODY, s.rids)
+		var aex: Array = s.rids.duplicate()
+		if s.vehicle != null:
+			aex.append(s.vehicle.body.get_rid())
+		var ah = G.ray(want_p, want_p + d * 300.0, G.L_WORLD | G.L_BODY | G.L_VEH, aex)
 		aim_point = want_p + d * 300.0 if ah.is_empty() else ah.position
 		if aim_point.distance_to(piv) < 2.0:
 			aim_point = want_p + d * 20.0
@@ -248,8 +255,32 @@ func _key(k: int) -> void:
 		elif k == KEY_R and s.state == "alive":
 			if not s.start_reload() and s.reserve <= 0:
 				G.ui.message("No spare magazines")
+		elif k == KEY_F and s.state == "riding":
+			s.dismount(false)
+			G.ui.message("Got out")
+		elif k >= KEY_1 and k <= KEY_4 and s.state == "riding":
+			var v = s.vehicle
+			var i = k - KEY_1
+			if i < v.seats.size() and v.seats[i] == null:
+				v.seats[s.seat] = null
+				var hid = s.hidden_in_vehicle
+				s.vehicle = null
+				s.state = "alive"
+				for b in s.parts:
+					b.freeze = false
+					b.remove_collision_exception_with(v.body)
+				s.mount(v, i)
+				G.ui.message("Seat %d: %s" % [i + 1, v.spec["seats"][i]["role"]])
 		elif k == KEY_F and s.state == "alive":
-			_pick_up(s)
+			var v = _near_vehicle(s)
+			if v != null:
+				var i = v.free_seat("driver")
+				if s.mount(v, i):
+					G.ui.message("In the %s (%s). WASD drive · mouse aim · click fire · 1–4 change seat · F get out" % [v.spec["name"].to_lower(), v.spec["seats"][i]["role"]])
+				else:
+					G.ui.message("No free seats")
+			else:
+				_pick_up(s)
 		elif k == KEY_Y:
 			first_person = not first_person
 			_apply_view(s)
@@ -331,6 +362,11 @@ func use_tool(screen: Vector2) -> void:
 		G.ui.message("Mortar barrage incoming")
 	elif tool == "smoke":
 		Combat.smoke_at(p, 26.0)
+	elif tool in ["jA", "jB", "tA", "tB", "trA", "trB"]:
+		var team = 0 if tool.ends_with("A") else 1
+		var kind = {"j": "jeep", "t": "tank", "tr": "truck"}[tool.substr(0, tool.length() - 1)]
+		var en: Vector3 = G.world.rally_point(1 - team)
+		G.main.spawn_vehicle(kind, team, p, atan2(en.x - p.x, en.z - p.z), kind != "truck")
 	elif tool == "spA" or tool == "spB":
 		G.world.spawn[0 if tool == "spA" else 1] = Vector3(p.x, 0, p.z)
 		G.main.refresh_markers()
@@ -368,3 +404,34 @@ func _apply_view(s) -> void:
 		return
 	s.set_head_hidden(first_person)
 	cam.set_cull_mask_value(4, not first_person)
+
+func _near_vehicle(s):
+	var best = null
+	var bd = 1e9
+	for v in G.vehicles:
+		if v.dead or (v.team != s.team and v.driver() != null):
+			continue
+		var d = G.dist2d(v.pos, s.pos) - v.spec["len"] * 0.5
+		if d < 2.2 and d < bd:
+			bd = d
+			best = v
+	return best
+
+# controlling a soldier who sits in a vehicle
+func rider_update(s) -> void:
+	var v = s.vehicle
+	var role: String = v.spec["seats"][s.seat]["role"]
+	var captured = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+	var thr = 0.0
+	var steer = 0.0
+	if role == "driver":
+		if Input.is_key_pressed(KEY_W): thr += 1.0
+		if Input.is_key_pressed(KEY_S): thr -= 1.0
+		if Input.is_key_pressed(KEY_A): steer += 1.0
+		if Input.is_key_pressed(KEY_D): steer -= 1.0
+	v.player_inputs["thr"] = thr
+	v.player_inputs["steer"] = steer
+	v.player_inputs["aim"] = aim_point
+	v.player_inputs["fire"] = mouse_down and captured and (role == "gunner" or (role == "driver" and v.kind == "tank" and v.gunner() == null))
+	s.aim_yaw = atan2(aim_point.x - s.pos.x, aim_point.z - s.pos.z)
+	s.morale = maxf(s.morale, 60.0)

@@ -37,7 +37,7 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 			AI.add_intel(o, s, origin, 1.5 if d < 15.0 else d * 0.12, false)
 
 # how much material a bullet can punch through (metres of plain wall); wood and foliage count for much less
-const PEN = {"rifle": 0.34, "lmg": 0.42, "sniper": 0.75, "shotgun": 0.08, "rpg": 0.0}
+const PEN = {"rifle": 0.34, "lmg": 0.42, "sniper": 0.75, "shotgun": 0.08, "rpg": 0.0, "hmg": 0.55}
 const MAT_FACTOR = [1.0, 0.3, 0.1]   # solid, wood, foliage
 
 # metres of the ray o + d*t inside an axis-aligned box, starting from entry distance t0
@@ -52,18 +52,25 @@ static func _box_exit(o: Vector3, d: Vector3, lo: Vector3, hi: Vector3) -> float
 		t_exit = minf(t_exit, maxf(t1, t2))
 	return t_exit
 
-static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool) -> void:
+static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, extra_ex: Array = []) -> void:
 	var exclude: Array = shooter.rids.duplicate()
+	exclude.append_array(extra_ex)
+	if shooter.vehicle != null and is_instance_valid(shooter.vehicle):
+		exclude.append(shooter.vehicle.body.get_rid())
 	var dmg = W["dmg"]
 	var pen = PEN.get(W["id"], 0.3)
 	var events: Array = []
 	var t_end = 240.0
 	var from = o
 	for step in range(4):
-		var hit = G.ray(from, o + d * 240.0, G.L_WORLD | G.L_BODY, exclude)
+		var hit = G.ray(from, o + d * 240.0, G.L_WORLD | G.L_BODY | G.L_VEH, exclude)
 		if hit.is_empty():
 			break
 		var t = o.distance_to(hit.position)
+		if hit.collider.has_meta("vehicle"):
+			events.append({"t": t, "veh": hit.collider.get_meta("vehicle"), "p": hit.position, "n": hit.normal, "dmg": dmg})
+			t_end = t
+			break
 		if W["id"] == "shotgun" and t > 15.0:
 			dmg = W["dmg"] * maxf(0.25, 1.0 - (t - 15.0) / 20.0)
 		if hit.collider.has_meta("soldier"):
@@ -109,7 +116,14 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool) 
 	Stats.shot(shooter)
 	var on_hit = func():
 		for ev in events:
-			if ev.has("s"):
+			if ev.has("veh"):
+				var v = ev["veh"]
+				if is_instance_valid(v):
+					v.take_damage(ev["dmg"] * v.spec["bullet"], shooter, ev["p"])
+				G.fx.impact(ev["p"], ev["n"])
+				if randf() < 0.4:
+					G.audio.ricochet(ev["p"])
+			elif ev.has("s"):
 				var hs = ev["s"]
 				if is_instance_valid(hs):
 					hit_soldier(hs, ev["part"], ev["p"], d, ev["dmg"], shooter, force)
@@ -231,17 +245,22 @@ static func step_rockets() -> void:
 		var stepv: Vector3 = r["v"] * G.DT
 		var ex: Array = []
 		if is_instance_valid(r["owner"]):
-			ex = r["owner"].rids
-		var hit = G.ray(r["p"], r["p"] + stepv, G.L_WORLD | G.L_BODY, ex)
+			ex = r["owner"].rids.duplicate()
+		if r.get("veh") != null and is_instance_valid(r["veh"]):
+			ex.append(r["veh"].body.get_rid())
+		var hit = G.ray(r["p"], r["p"] + stepv, G.L_WORLD | G.L_BODY | G.L_VEH, ex)
 		if not hit.is_empty() or r["life"] <= 0.0:
 			var at: Vector3 = r["p"] if hit.is_empty() else hit.position
+			if not hit.is_empty() and hit.collider.has_meta("vehicle"):
+				var hv = hit.collider.get_meta("vehicle")
+				hv.take_damage(r.get("vdmg", 560.0), r["owner"] if is_instance_valid(r["owner"]) else null, hit.position)
 			if not hit.is_empty() and hit.collider.has_meta("soldier"):
 				var hs = hit.collider.get_meta("soldier")
 				if hs.state != "dead":
 					hs.hp -= 60.0
 					if hs.hp <= 0.0:
 						kill(hs, r["owner"], false)
-			explode(at - stepv.normalized() * 0.1, r["owner"], 1.25)
+			explode(at - stepv.normalized() * 0.1, r["owner"] if is_instance_valid(r["owner"]) else null, r.get("power", 1.25))
 			r["mesh"].queue_free()
 			rockets.remove_at(i)
 			continue
@@ -252,6 +271,21 @@ static func step_rockets() -> void:
 		if r["trail"] <= 0.0:
 			r["trail"] = 0.05
 			G.fx.dust_cloud(r["p"], 0.5)
+
+# tank cannon: a fast, flat shell
+static func launch_shell(veh, s, origin: Vector3, dir: Vector3) -> void:
+	var m = MeshInstance3D.new()
+	var bm = BoxMesh.new()
+	bm.size = Vector3(0.12, 0.12, 0.6)
+	m.mesh = bm
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.8, 0.4)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.material_override = mat
+	G.fx.add_child(m)
+	m.global_position = origin
+	rockets.append({"p": origin, "v": dir * 140.0, "owner": s, "veh": veh, "mesh": m, "life": 3.0, "trail": 0.0, "power": 1.5, "vdmg": 650.0})
+	G.fx.dust_cloud(origin + dir * 0.5, 2.0)
 
 # ---------------------------------------------------------------- mortar strikes
 static func mortar_strike(center: Vector3, n: int) -> void:
@@ -356,7 +390,13 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 	if cam:
 		shake = maxf(shake, clampf(1.2 - cam.global_position.distance_to(pos) / 40.0, 0.0, 1.0))
 	G.world.damage_area(pos, R * 0.75, power)
+	for v in G.vehicles.duplicate():
+		var dv = v.center().distance_to(pos)
+		if dv < R * 1.2:
+			v.take_damage(300.0 * power * (1.0 - dv / (R * 1.2)) * (0.3 if v.spec["tracked"] else 1.0), owner_s, pos)
 	for s in G.soldiers:
+		if s.state == "riding" and s.hidden_in_vehicle:
+			continue
 		var d = s.parts[0].global_position.distance_to(pos)
 		if owner_s != null and s.state != "dead" and s.team != owner_s.team and d < 60.0:
 			AI.add_intel(s, owner_s, owner_s.pos, 10.0, false)

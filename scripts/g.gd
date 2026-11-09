@@ -11,6 +11,10 @@ const L_DEBRIS = 4
 
 # if dead soldiers' knees or elbows bend the wrong way, flip these to -1.0
 var teams = 2
+var vehicles: Array = []
+var reinf_mode = "truck"     # truck, para, instant
+var armor = "light"          # none, light, heavy: vehicles each side starts with
+const L_VEH = 8
 var KNEE_SIGN = 1.0
 var ELBOW_SIGN = 1.0
 
@@ -60,6 +64,7 @@ var WEAPONS = {
 	"lmg":     {"id": "lmg", "mags": 2, "name": "Machine gun", "mag": 100, "rof": 0.08, "auto": true, "dmg": 26.0, "pellets": 1, "spread": 0.02, "move_spread": 0.05, "force": 3.2, "reload": 4.5, "recoil": 0.014, "len": 1.08, "hold": 0.4, "snd_pitch": 0.85, "snd_vol": 1.5, "zoom": 44.0, "tracer": 330.0, "range": [18.0, 95.0], "burst": [6, 14], "speed": 0.85, "rocket": false},
 	"sniper":  {"id": "sniper", "mags": 5, "name": "Sniper rifle", "mag": 5, "rof": 1.25, "auto": false, "dmg": 96.0, "pellets": 1, "spread": 0.0015, "move_spread": 0.045, "force": 7.5, "reload": 3.2, "recoil": 0.06, "len": 1.22, "hold": 0.4, "snd_pitch": 0.7, "snd_vol": 4.0, "zoom": 14.0, "tracer": 650.0, "range": [35.0, 170.0], "burst": [1, 1], "speed": 0.95, "rocket": false},
 	"shotgun": {"id": "shotgun", "mags": 4, "name": "Shotgun", "mag": 8, "rof": 0.85, "auto": false, "dmg": 14.0, "pellets": 8, "spread": 0.055, "move_spread": 0.02, "force": 2.4, "reload": 3.4, "recoil": 0.045, "len": 0.86, "hold": 0.36, "snd_pitch": 0.6, "snd_vol": 3.0, "zoom": 52.0, "tracer": 300.0, "range": [2.0, 20.0], "burst": [1, 1], "speed": 1.05, "rocket": false},
+	"hmg":     {"id": "hmg", "mags": 0, "name": "Mounted MG", "mag": 200, "rof": 0.085, "auto": true, "dmg": 34.0, "pellets": 1, "spread": 0.012, "move_spread": 0.0, "force": 4.0, "reload": 4.0, "recoil": 0.0, "len": 1.2, "hold": 0.4, "snd_pitch": 0.75, "snd_vol": 3.0, "zoom": 40.0, "tracer": 340.0, "range": [10.0, 120.0], "burst": [6, 16], "speed": 1.0, "rocket": false},
 	"rpg":     {"id": "rpg", "mags": 2, "name": "Rocket launcher", "mag": 1, "rof": 1.0, "auto": false, "dmg": 0.0, "pellets": 1, "spread": 0.007, "move_spread": 0.03, "force": 5.0, "reload": 3.6, "recoil": 0.035, "len": 1.12, "hold": 0.42, "snd_pitch": 0.5, "snd_vol": 4.0, "zoom": 38.0, "tracer": 0.0, "range": [16.0, 85.0], "burst": [1, 1], "speed": 0.9, "rocket": true},
 }
 const WEAPON_LIST = ["rifle", "lmg", "sniper", "shotgun", "rpg"]

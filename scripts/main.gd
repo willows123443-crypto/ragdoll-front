@@ -77,8 +77,12 @@ func follow_sun(_cam_pos: Vector3, _fwd: Vector3) -> void:
 func _clear() -> void:
 	if G.player != null:
 		G.pc.leave_soldier()
+	for v in G.vehicles.duplicate():
+		v.remove()
+	G.vehicles.clear()
 	for s in G.soldiers:
 		if is_instance_valid(s):
+			s._drop_chute()
 			s.queue_free()
 	G.soldiers.clear()
 	G.squads.clear()
@@ -106,11 +110,15 @@ func start_game(o: Dictionary) -> void:
 	G.team_size = o.get("size", 10)
 	G.limit = o.get("limit", 50)
 	G.reinforce = o.get("reinforce", true)
+	G.reinf_mode = o.get("reinf_mode", G.reinf_mode)
+	G.armor = o.get("armor", G.armor)
 	G.world.load_map(o.get("map", "town"))
 	Stats.reset()
+	Reinforce.reset()
 	for t in range(2):
 		for i in range(G.team_size):
 			base_spawn(t)
+		_starting_vehicles(t)
 	refresh_markers()
 	G.pc.free_pos = Vector3(-62, G.world.ground_y(-62, -6) + 7.0, -6)
 	G.pc.free_yaw = PI / 2.0 + 0.12
@@ -133,6 +141,44 @@ func spawn_soldier(team: int, x: float, z: float, wid: String):
 	Stats.register(s)
 	AI.assign_squad(s)
 	return s
+
+# a vehicle with its crew (driver, and a gunner if it has a gun)
+func spawn_vehicle(kind: String, team: int, p: Vector3, yaw: float, crew: bool = true):
+	p = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
+	var v = Vehicle.make(kind, team, p, yaw)
+	if crew:
+		var d = spawn_soldier(team, p.x, p.z, "rifle")
+		if d != null:
+			d.mount(v, 0)
+		var gs = v.gunner_seat()
+		if gs >= 0:
+			var g = spawn_soldier(team, p.x, p.z, "rifle")
+			if g != null:
+				g.mount(v, gs)
+	return v
+
+func _starting_vehicles(t: int) -> void:
+	if G.armor == "none":
+		return
+	var home: Vector3 = G.world.rally_point(t)
+	var enemy: Vector3 = G.world.rally_point(1 - t)
+	var yaw = atan2(enemy.x - home.x, enemy.z - home.z)
+	var side = Vector3(cos(yaw), 0, -sin(yaw))
+	spawn_vehicle("jeep", t, _free_spot(home + side * 16.0), yaw)
+	if G.armor == "heavy":
+		spawn_vehicle("tank", t, _free_spot(home - side * 18.0), yaw)
+
+func _free_spot(p: Vector3) -> Vector3:
+	for k in range(20):
+		var q = p + Vector3(randf_range(-1, 1), 0, randf_range(-1, 1)) * k * 1.5
+		var clear = true
+		for dx in [-2.5, 0.0, 2.5]:
+			for dz in [-3.5, 0.0, 3.5]:
+				if G.world.inside_any(q.x + dx, q.z + dz, 0.5):
+					clear = false
+		if clear:
+			return q
+	return p
 
 func base_spawn(team: int) -> void:
 	var b: Vector3 = G.world.spawn[team]
@@ -173,13 +219,10 @@ func _sim_step() -> void:
 	if not G.over:
 		G.game_time += G.DT
 	G.path_budget = 4
-	if G.reinforce and not G.over:
-		for t in range(2):
-			reinf_t[t] -= G.DT
-			if reinf_t[t] <= 0.0:
-				reinf_t[t] = 2.2
-				if G.alive_count(t) < G.team_size:
-					base_spawn(t)
+	Reinforce.step(G.DT)
+	for v in G.vehicles.duplicate():
+		if is_instance_valid(v):
+			v.step(G.DT)
 	for s in G.soldiers.duplicate():
 		if is_instance_valid(s):
 			s.tick()
@@ -319,6 +362,21 @@ func _report(tag: String) -> void:
 		if q.get("leader") != null and is_instance_valid(q["leader"]) and q["leader"].state != "dead":
 			leaders += 1
 	print("AUTOTEST %s | morale %d/%d broken %d/%d lowammo %d/%d leaders %d/%d squads | routs %d/%d shots %d/%d hits %d/%d" % [tag, int(mor[0] / maxi(cnt[0], 1)), int(mor[1] / maxi(cnt[1], 1)), brk[0], brk[1], low[0], low[1], leaders, G.squads.size(), Stats.teams[0]["routs"], Stats.teams[1]["routs"], Stats.teams[0]["shots"], Stats.teams[1]["shots"], Stats.teams[0]["hits"], Stats.teams[1]["hits"]])
+	var vs = []
+	for v in G.vehicles:
+		var crew = 0
+		for q in v.seats:
+			if q != null:
+				crew += 1
+		vs.append("%s%d hp%d crew%d spd%.1f%s%s" % [v.kind, v.team, int(v.hp), crew, v.speed, " WRECK" if v.dead else "", (" st%d d%.0f" % [v.mission["stage"], G.dist2d(v.pos, v.mission["drop"])]) if v.mission != null else ""])
+	var rid = 0
+	var chu = 0
+	for o in G.soldiers:
+		if o.state == "riding":
+			rid += 1
+		elif o.state == "chute":
+			chu += 1
+	print("AUTOTEST %s | vehicles: %s | riding %d chute %d" % [tag, ", ".join(vs), rid, chu])
 	var kn = _knee_stats()
 	print("AUTOTEST %s | knees ok/backward: body %d/%d, target %d/%d" % [tag, kn[0], kn[1], kn[2], kn[3]])
 	print("AUTOTEST %s | alive %d v %d | dead %d | score %d-%d | sim %.2f ms/tick" % [tag, alive[0], alive[1], dead, G.score[0], G.score[1], ms])
@@ -328,7 +386,8 @@ func _report(tag: String) -> void:
 func _autotest() -> void:
 	print("AUTOTEST start")
 	for m in ["town", "field", "trenches"]:
-		start_game({"map": m, "mode": "capture", "size": 10, "limit": 9999, "reinforce": true})
+		start_game({"map": m, "mode": "capture", "size": 10, "limit": 9999, "reinforce": true, "armor": "heavy",
+			"reinf_mode": {"town": "truck", "field": "para", "trenches": "truck"}[m]})
 		await _wait(12.0)
 		_report(m + " 12s")
 		var s = null
@@ -376,7 +435,8 @@ func _shot_mode(dir: String) -> void:
 	G.ui.visible = false
 	G.pc.force_free = true
 	await _wait(0.5)
-	start_game({"map": _arg("map", "town"), "mode": "capture", "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true})
+	start_game({"map": _arg("map", "town"), "mode": "capture", "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
+		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck")})
 	await _wait(float(_arg("wait", "6")))
 	var c: Vector3 = G.world.capture
 	await _look(c + Vector3(-40, 25, -10), c)
@@ -404,6 +464,17 @@ func _shot_mode(dir: String) -> void:
 				s.p_prone = pose == "prone"
 				break
 		await _wait(2.5)
+	var vi = 0
+	for v in G.vehicles:
+		if vi >= int(_arg("vshots", "0")):
+			break
+		var f = v.forward()
+		var r = Vector3(f.z, 0, -f.x)
+		get_tree().paused = true
+		await _look(v.pos + r * 9.0 + f * 5.0 + Vector3(0, 4.0, 0), v.pos + Vector3(0, 1.0, 0))
+		await _snap(dir, "vehicle%d" % vi)
+		get_tree().paused = false
+		vi += 1
 	var n = 0
 	var order = G.soldiers.duplicate()
 	if G.player != null:

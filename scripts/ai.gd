@@ -410,7 +410,7 @@ static func perceive(s) -> void:
 # ---------------------------------------------------------------- decisions
 static func decide(s) -> void:
 	s.decide_t = randf_range(1.6, 2.6)
-	if s.task == "flee" or s.route != null:
+	if s.task == "flee" or s.route != null or s.task == "board":
 		return
 	# routed: keep running to the rear, then cower in cover until morale comes back
 	if s.broken:
@@ -660,6 +660,18 @@ static func update(s) -> void:
 			s.flee = null
 			s.decide_t = 0.0
 	s.hand_t = null
+	# climbing into a vehicle
+	if s.task == "board":
+		var v = s.board_target
+		if v == null or not is_instance_valid(v) or v.dead or v.free_seat() < 0 or s.vis_t != null:
+			s.task = null
+			s.board_target = null
+		elif G.dist2d(v.pos, s.pos) < v.spec["len"] * 0.5 + 1.5:
+			var want = "driver" if v.driver() == null else "gunner"
+			if s.mount(v, v.free_seat(want)):
+				return
+		elif s.move_target == null or G.dist2d(s.move_target, v.pos) > 3.0:
+			go_to(s, v.pos, 5.0)
 	# medic: drag the wounded out of the line of fire, then patch them up
 	if s.task == "medic":
 		var w = s.patient

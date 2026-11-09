@@ -5,13 +5,17 @@ var tool = "ctl"
 var tab = "units"
 const TOOLS = {
 	"units": [["a1", "Alpha soldier"], ["b1", "Bravo soldier"], ["a5", "Alpha squad"], ["b5", "Bravo squad"], ["ctl", "Take control"], ["spA", "Alpha spawn"], ["spB", "Bravo spawn"]],
+	"vehicles": [["jA", "Alpha jeep"], ["jB", "Bravo jeep"], ["tA", "Alpha tank"], ["tB", "Bravo tank"], ["trA", "Alpha truck"], ["trB", "Bravo truck"]],
 	"fun": [["boom", "Explosion"], ["mortar", "Mortar strike"], ["smoke", "Smoke"], ["push", "Shove"]],
 }
 const TIPS = {"a1": "Click the ground to drop in an Alpha soldier", "b1": "Click the ground to drop in a Bravo soldier",
 	"a5": "Click to drop in five Alpha soldiers", "b5": "Click to drop in five Bravo soldiers",
 	"ctl": "Click a soldier to take control of them (or press F)", "spA": "Click to move where Alpha reinforcements arrive",
 	"spB": "Click to move where Bravo reinforcements arrive", "boom": "Click anywhere to set off an explosion",
-	"mortar": "Click to call in a mortar barrage", "smoke": "Click to drop a smoke screen", "push": "Click a soldier to shove them over"}
+	"mortar": "Click to call in a mortar barrage",
+	"jA": "Click to drop an Alpha jeep with a driver and gunner", "jB": "Click to drop a Bravo jeep with a driver and gunner",
+	"tA": "Click to drop an Alpha tank with its crew", "tB": "Click to drop a Bravo tank with its crew",
+	"trA": "Click to drop an empty Alpha truck (take control of a soldier and press F next to it)", "trB": "Click to drop an empty Bravo truck", "smoke": "Click to drop a smoke screen", "push": "Click a soldier to shove them over"}
 
 var root: Control
 var lbl_a: Label
@@ -53,7 +57,8 @@ var opt_map: OptionButton
 var opt_mode: OptionButton
 var opt_size: OptionButton
 var opt_limit: OptionButton
-var chk_reinf: CheckBox
+var opt_reinf: OptionButton
+var opt_armor: OptionButton
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -160,15 +165,17 @@ func _build_top() -> void:
 	cap_box.visible = false
 	root.add_child(cap_box)
 
-func feed(a, v, head: bool) -> void:
+func feed(a, v, head: bool, what: String = "") -> void:
 	var t = ""
-	if a != null:
+	if v == null:
+		t = "%s  [%s]  %s destroyed" % [a.sname, a.W["name"], what]
+	elif a != null:
 		t = "%s  [%s]  %s%s" % [a.sname, a.W["name"], v.sname, "  ✦" if head else ""]
 		if a.team == v.team and a != v:
 			t += " (friendly)"
 	else:
 		t = "%s ✖" % v.sname
-	var l = _label(t, 13, Color(0.6, 0.75, 1.0) if (a != null and a.team == 0) or (a == null and v.team == 0) else Color(1.0, 0.65, 0.65))
+	var l = _label(t, 13, Color(0.6, 0.75, 1.0) if (a != null and a.team == 0) or (a == null and v != null and v.team == 0) else Color(1.0, 0.65, 0.65))
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	feed_box.add_child(l)
 	feed_box.move_child(l, 0)
@@ -202,7 +209,7 @@ func _build_side() -> void:
 # ---------------------------------------------------------------- tool bar
 func _build_tools() -> void:
 	tabs_box = HBoxContainer.new()
-	_place(tabs_box, Control.PRESET_CENTER_BOTTOM, -90, -96, 180, 32)
+	_place(tabs_box, Control.PRESET_CENTER_BOTTOM, -140, -96, 280, 32)
 	root.add_child(tabs_box)
 	tool_box = HBoxContainer.new()
 	_place(tool_box, Control.PRESET_CENTER_BOTTOM, -420, -56, 840, 40)
@@ -218,7 +225,7 @@ func _render_tools() -> void:
 		c.queue_free()
 	for c in tool_box.get_children():
 		c.queue_free()
-	for t in [["units", "Units"], ["fun", "Effects"]]:
+	for t in [["units", "Units"], ["vehicles", "Vehicles"], ["fun", "Effects"]]:
 		var key = t[0]
 		var b = _button(t[1], func():
 			tab = key
@@ -369,7 +376,7 @@ func _row(parent: Control, label: String, ctrl: Control) -> void:
 
 func _build_menu() -> void:
 	menu = _panel(Color(0.11, 0.13, 0.15, 0.97))
-	_place(menu, Control.PRESET_CENTER, -260, -230, 520, 460)
+	_place(menu, Control.PRESET_CENTER, -260, -250, 520, 500)
 	menu.custom_minimum_size = Vector2(520, 0)
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
@@ -389,10 +396,10 @@ func _build_menu() -> void:
 	_row(v, "Kills / points to win", opt_limit)
 	opt_size = _option(["5", "8", "10", "15", "20"], 2)
 	_row(v, "Soldiers per team", opt_size)
-	chk_reinf = CheckBox.new()
-	chk_reinf.button_pressed = true
-	chk_reinf.focus_mode = Control.FOCUS_NONE
-	_row(v, "Reinforcements", chk_reinf)
+	opt_reinf = _option(["By truck", "Paratroopers", "Appear at base", "None"], 0)
+	_row(v, "Reinforcements", opt_reinf)
+	opt_armor = _option(["None", "Jeeps", "Jeeps and tanks"], 1)
+	_row(v, "Vehicles", opt_armor)
 	var go = _button("Deploy", func(): _deploy())
 	go.custom_minimum_size = Vector2(0, 44)
 	go.add_theme_font_size_override("font_size", 20)
@@ -409,7 +416,8 @@ func _deploy() -> void:
 	var modes = ["sandbox", "deathmatch", "capture"]
 	G.main.start_game({"map": maps[opt_map.selected], "mode": modes[opt_mode.selected],
 		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": int(opt_limit.get_item_text(opt_limit.selected)),
-		"reinforce": chk_reinf.button_pressed})
+		"reinforce": opt_reinf.selected != 3, "reinf_mode": ["truck", "para", "instant", "truck"][opt_reinf.selected],
+		"armor": ["none", "light", "heavy"][opt_armor.selected]})
 	menu.visible = false
 	help.visible = false
 

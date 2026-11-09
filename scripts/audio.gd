@@ -10,6 +10,7 @@ var s_whistle: AudioStreamWAV
 var s_step: AudioStreamWAV
 var s_hit: AudioStreamWAV
 var s_rocket: AudioStreamWAV
+var s_engine: AudioStreamWAV
 var players: Array = []
 var pi = 0
 var ui_player: AudioStreamPlayer
@@ -33,6 +34,7 @@ func _ready() -> void:
 	s_step = _noise(0.06, 0.02, 0.15, 1.0)
 	s_hit = _sweep(1400.0, 1200.0, 0.05, 0.25)
 	s_rocket = _noise(0.7, 0.25, 0.3, 1.0)
+	s_engine = _engine_loop()
 	for i in range(28):
 		var p = AudioStreamPlayer3D.new()
 		p.bus = "World"
@@ -127,6 +129,25 @@ func whistle(pos: Vector3) -> void:
 func step(pos: Vector3) -> void:
 	if cam_dist(pos) < 12.0:
 		play(s_step, pos, -14.0, randf_range(0.8, 1.2))
+
+# engines: short rumbles re-triggered while driving, pitched up with speed
+func engine(pos: Vector3, load_: float, heavy: bool) -> void:
+	if cam_dist(pos) < 90.0:
+		play(s_engine, pos, -6.0 if heavy else -9.0, (0.55 if heavy else 0.8) + load_ * 0.5)
+
+func _engine_loop() -> AudioStreamWAV:
+	var n = int(0.42 * RATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var lp = 0.0
+	for i in range(n):
+		var t = float(i) / RATE
+		var env = minf(1.0, t * 30.0) * minf(1.0, (0.42 - t) * 30.0)
+		lp += (randf() * 2.0 - 1.0 - lp) * 0.08
+		var v = sin(TAU * 42.0 * t) * 0.35 + sin(TAU * 84.0 * t) * 0.2 + sin(TAU * 126.0 * t) * 0.1 + lp * 0.5
+		v *= 0.75 + 0.25 * sin(TAU * 14.0 * t)
+		out[i] = v * env * 0.6
+	return _wav(out)
 
 func hit_tick(kill: bool) -> void:
 	ui_player.stream = s_hit

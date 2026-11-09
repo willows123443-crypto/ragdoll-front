@@ -86,6 +86,11 @@ var rally_cd = 0.0
 var morale_t = 0.0
 var rec = null          # stats record (see Stats)
 var leader_mark: Node3D = null
+var vehicle = null
+var seat = -1
+var board_target = null
+var hidden_in_vehicle = false
+var chute: Node3D = null
 var reload_t = 0.0
 var fire_cd = 0.0
 var burst = 0
@@ -249,7 +254,7 @@ func _build_body() -> void:
 	for i in range(11):
 		var b = RigidBody3D.new()
 		b.collision_layer = G.L_BODY
-		b.collision_mask = G.L_WORLD | G.L_BODY | G.L_DEBRIS
+		b.collision_mask = G.L_WORLD | G.L_BODY | G.L_DEBRIS | G.L_VEH
 		b.mass = PART_MASS[i]
 		b.can_sleep = false
 		b.linear_damp = 0.1
@@ -766,6 +771,10 @@ func drop_gun() -> void:
 func fall(t: float = -1.0) -> void:
 	if state == "dead":
 		return
+	if vehicle != null:
+		dismount(true)
+	if state == "chute":
+		_drop_chute()
 	if state == "alive" or state == "getup":
 		AI.release_cover(self)
 		path = []
@@ -779,6 +788,10 @@ func fall(t: float = -1.0) -> void:
 	gu = null; ads = false; task = null; flee = null; prone = false; prone_t = false; vault = null; hand_t = null; throw_t = 0.0; route = null; vy = 0.0
 
 func go_dead() -> void:
+	if vehicle != null:
+		dismount(true)
+	if state == "chute":
+		_drop_chute()
 	if state != "dead":
 		compute_muzzle()
 		drop_gun()
@@ -898,7 +911,11 @@ func tick() -> void:
 			_tick_wounded()
 		"alive":
 			_tick_alive()
-	if state != "dead":
+		"riding":
+			_tick_riding()
+		"chute":
+			_tick_chute()
+	if state != "dead" and not hidden_in_vehicle:
 		compute_muzzle()
 
 func _tick_down() -> void:
@@ -1054,8 +1071,23 @@ func _tick_alive() -> void:
 		var hit = res[1]
 		if hit != null and not prone and vy == 0.0 and dragging == null and G.world.vaultable(hit):
 			start_vault(hit)
-		pos.x = clampf(pos.x, -128.0, 128.0)
-		pos.z = clampf(pos.z, -93.0, 93.0)
+		# keep clear of vehicles
+		for v in G.vehicles:
+			var rel = G.flat(pos - v.pos)
+			var vf = v.forward()
+			var vl = Vector3(vf.z, 0, -vf.x)
+			var a = rel.dot(vf)
+			var bb = rel.dot(vl)
+			var hl = v.spec["len"] * 0.5 + 0.3
+			var hw = v.spec["wid"] * 0.5 + 0.3
+			if absf(a) < hl and absf(bb) < hw and absf(pos.y - v.pos.y) < 2.5:
+				if hl - absf(a) < hw - absf(bb):
+					pos += vf * (hl - absf(a)) * signf(a if a != 0.0 else 1.0)
+				else:
+					pos += vl * (hw - absf(bb)) * signf(bb if bb != 0.0 else 1.0)
+		var bnd: Rect2 = G.world.bounds
+		pos.x = clampf(pos.x, bnd.position.x, bnd.end.x)
+		pos.z = clampf(pos.z, bnd.position.y, bnd.end.y)
 		var sy: float = G.world.surface_y(pos.x, pos.z, pos.y)
 		if sy >= pos.y - 0.06 and vy >= 0.0:
 			pos.y = minf(sy, pos.y + 8.0 * G.DT) if sy > pos.y else sy
@@ -1124,3 +1156,207 @@ func _tick_alive() -> void:
 			stumble = 0.3
 			stumble_dir = Vector3(ex / e, 0, ez / e)
 			pos = G.world.push_out_circle(pos, 0.33)[0]
+
+# ---------------------------------------------------------------- vehicles
+func mount(v, i: int) -> bool:
+	if v == null or v.dead or i < 0 or i >= v.seats.size() or v.seats[i] != null:
+		return false
+	AI.release_cover(self)
+	AI.stop_move(self)
+	if dragging != null:
+		dragging.dragger = null
+		dragging = null
+	vehicle = v
+	seat = i
+	v.seats[i] = self
+	state = "riding"
+	task = null
+	route = null
+	board_target = null
+	ads = false
+	prone = false
+	prone_t = false
+	lean = 0.0
+	lean_t = 0.0
+	vel = Vector3.ZERO
+	for b in parts:
+		b.add_collision_exception_with(v.body)
+	hidden_in_vehicle = v.spec["seats"][i]["pose"] == "hidden"
+	visible = not hidden_in_vehicle
+	for b in parts:
+		b.freeze = hidden_in_vehicle
+		b.collision_layer = 0 if hidden_in_vehicle else G.L_BODY
+	gun_node.visible = not hidden_in_vehicle and v.spec["seats"][i]["role"] != "gunner"
+	_place_in_seat()
+	return true
+
+func dismount(eject: bool) -> void:
+	var v = vehicle
+	if v == null:
+		return
+	if is_instance_valid(v) and seat >= 0 and seat < v.seats.size() and v.seats[seat] == self:
+		v.seats[seat] = null
+	var out: Vector3 = pos
+	if is_instance_valid(v):
+		var side = Vector3(cos(v.yaw), 0, -sin(v.yaw))
+		var o: Vector3 = v.spec["seats"][seat]["o"]
+		side *= 1.0 if o.x >= 0.0 else -1.0
+		out = v.pos + side * (v.spec["wid"] * 0.5 + 0.9) + v.forward() * o.z
+		out = G.world.push_out_circle(out, 0.35)[0]
+		for b in parts:
+			b.remove_collision_exception_with(v.body)
+	vehicle = null
+	seat = -1
+	visible = true
+	gun_node.visible = true
+	var was_hidden = hidden_in_vehicle
+	hidden_in_vehicle = false
+	for b in parts:
+		b.freeze = false
+		b.collision_layer = G.L_BODY
+	pos = Vector3(out.x, G.world.surface_y(out.x, out.z, out.y + 1.0), out.z)
+	if was_hidden:
+		# climb out: put the body straight back into a standing pose next to the vehicle
+		stand_pose()
+		_compute_targets()
+		for k in range(parts.size()):
+			parts[k].global_transform = targets[k]
+			parts[k].linear_velocity = Vector3.ZERO
+			parts[k].angular_velocity = Vector3.ZERO
+	if state == "riding":
+		state = "alive"
+		strength = 0.42
+		think = 0.0
+		decide_t = 0.0
+	if eject and state == "alive":
+		state = "alive"
+		fall(randf_range(1.5, 2.5))
+
+func _place_in_seat() -> void:
+	var xf: Transform3D = vehicle.seat_xform(seat)
+	var f: Vector3 = xf.basis.z
+	body_yaw = atan2(f.x, f.z)
+	pos = xf.origin - Vector3(0, 0.95, 0)
+
+func _tick_riding() -> void:
+	var v = vehicle
+	if v == null or not is_instance_valid(v):
+		vehicle = null
+		state = "alive"
+		return
+	supp = maxf(0.0, supp - 0.3 * G.DT)
+	stun = 0.0
+	for r in range(5):
+		limb[r] = minf(1.0, limb[r] + 1.1 * G.DT)
+	_place_in_seat()
+	var role: String = v.spec["seats"][seat]["role"]
+	if is_player:
+		G.pc.rider_update(self)
+	else:
+		think -= G.DT
+		if think <= 0.0:
+			AI.perceive(self)
+		morale_t -= G.DT
+		if morale_t <= 0.0:
+			morale_t = 0.5
+			Morale.tick(self, 0.5)
+		if vis_t != null and is_instance_valid(vis_t) and role != "driver":
+			var tp: Vector3 = vis_t.pos
+			aim_yaw = G.turn_to(aim_yaw, atan2(tp.x - pos.x, tp.z - pos.z), 3.0 * G.DT)
+		else:
+			aim_yaw = G.turn_to(aim_yaw, body_yaw, 2.0 * G.DT)
+	if hidden_in_vehicle:
+		# inside the hull: keep the frozen body with the vehicle so it's there when they climb out
+		var off: Vector3 = pos - parts[0].global_position + Vector3(0, 0.95, 0)
+		for b in parts:
+			b.global_position += off
+		return
+	vel = Vector3.ZERO
+	crouch = 0.0
+	if role == "gunner":
+		ready_ = false
+		stand_pose()
+		hand_t = v.turret.global_position + v._gun_dir() * 0.25 + Vector3(0, 0.15, 0) if v.turret != null else null
+		_arms_and_gun(0.0, false, Vector3(sin(aim_yaw), 0, cos(aim_yaw)), Vector3(-cos(aim_yaw), 0, sin(aim_yaw)), Vector3(sin(aim_yaw), 0, cos(aim_yaw)))
+		hand_t = null
+	else:
+		ready_ = role != "driver" and vis_t != null
+		ride_pose(role == "driver")
+	strength = 0.5
+	drive()
+
+# seated: upper body as when standing, thighs forward along the seat, shins hanging down
+func ride_pose(driving: bool) -> void:
+	stand_pose()
+	var f = Vector3(sin(body_yaw), 0, cos(body_yaw))
+	for hi in [9, 12]:
+		var hip: Vector3 = P[hi]
+		var knee = hip + f * 0.42 + Vector3(0, 0.02, 0)
+		P[hi + 1] = knee
+		P[hi + 2] = knee + Vector3(0, -0.42, 0) + f * 0.06
+	if driving:
+		var r = Vector3(-f.z, 0, f.x)
+		var wheel = P[2] + f * 0.45 + Vector3(0, 0.35, 0)
+		P[8] = wheel - r * 0.18
+		P[5] = wheel + r * 0.18
+		P[7] = _ik(P[6], P[8], 0.3, 0.3, Vector3(0, -1, 0) + r * 0.7)
+		P[4] = _ik(P[3], P[5], 0.3, 0.3, Vector3(0, -1, 0) - r * 0.7)
+
+# ---------------------------------------------------------------- parachutes
+func start_chute(at: Vector3) -> void:
+	state = "chute"
+	pos = at
+	vel = Vector3(randf_range(-1, 1), 0, randf_range(-1, 1))
+	chute = Node3D.new()
+	var canopy = MeshInstance3D.new()
+	var sm = SphereMesh.new()
+	sm.radius = 2.4
+	sm.height = 2.0
+	sm.is_hemisphere = true
+	canopy.mesh = sm
+	canopy.material_override = _mat("canopy%d" % team, G.TEAM_UNI[team].lerp(Color(0.8, 0.8, 0.75), 0.4), false)
+	canopy.position = Vector3(0, 4.2, 0)
+	chute.add_child(canopy)
+	for k in range(4):
+		var line = MeshInstance3D.new()
+		var lm = BoxMesh.new()
+		lm.size = Vector3(0.02, 3.2, 0.02)
+		line.mesh = lm
+		line.material_override = _mat("line", Color(0.2, 0.2, 0.2), false)
+		var a = k * PI / 2.0 + PI / 4.0
+		line.position = Vector3(cos(a) * 0.9, 2.9, sin(a) * 0.9)
+		line.rotation = Vector3(sin(a) * 0.45, 0, -cos(a) * 0.45)
+		chute.add_child(line)
+	G.main.add_child(chute)
+	stand_pose()
+	_compute_targets()
+	for k in range(parts.size()):
+		parts[k].global_transform = targets[k]
+		parts[k].linear_velocity = Vector3(0, -4.5, 0)
+
+func _tick_chute() -> void:
+	var gy: float = G.world.surface_y(pos.x, pos.z, pos.y)
+	var wind = Vector3(sin(G.sim_time * 0.1) * 1.5, 0, 0.6)
+	pos += (vel + wind) * G.DT + Vector3(0, -4.5 * G.DT, 0)
+	vel *= 0.995
+	if chute != null:
+		chute.global_position = pos + Vector3(0, 0.9, 0)
+		chute.rotation.z = sin(G.sim_time * 1.3 + seed_) * 0.08
+	ready_ = false
+	stand_pose()
+	strength = 0.35
+	drive()
+	if pos.y <= gy + 0.05:
+		pos.y = gy
+		_drop_chute()
+		state = "alive"
+		strength = 0.42
+		think = 0.0
+		decide_t = 0.0
+		if randf() < 0.25:
+			fall(1.0)
+
+func _drop_chute() -> void:
+	if chute != null:
+		chute.queue_free()
+		chute = null

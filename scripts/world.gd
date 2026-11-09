@@ -23,6 +23,7 @@ var buildings: Array = []
 var roads: Array = []
 var spawn = [Vector3(-96, 0, 0), Vector3(96, 0, 0)]
 var capture = Vector3.ZERO
+var bounds = Rect2(-128, -93, 256, 186)   # playable area (x, z)
 var ammo_points: Array = []   # {"p": Vector3, "team": int (-1 = anyone)}
 var geo_root: Node3D
 var rng = RandomNumberGenerator.new()

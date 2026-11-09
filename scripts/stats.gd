@@ -11,7 +11,7 @@ static func reset() -> void:
 	roster = []
 	teams = []
 	for t in range(G.team_count()):
-		teams.append({"spawned": 0, "deaths": 0, "kills": 0, "shots": 0, "hits": 0, "dmg": 0.0, "heads": 0, "routs": 0, "teamkills": 0, "heals": 0})
+		teams.append({"spawned": 0, "deaths": 0, "kills": 0, "shots": 0, "hits": 0, "dmg": 0.0, "heads": 0, "routs": 0, "teamkills": 0, "heals": 0, "vehicles_lost": 0})
 	timeline = []
 	sample_t = 0.0
 
@@ -81,3 +81,7 @@ static func mvp(team: int = -1):
 		if best == null or sc > best[0]:
 			best = [sc, r]
 	return best[1] if best != null and best[0] > 0.0 else null
+
+static func vehicle_lost(team: int) -> void:
+	if team < teams.size():
+		teams[team]["vehicles_lost"] += 1

@@ -342,8 +342,12 @@ void fragment() {
 	root.add_child(vignette)
 	root.move_child(vignette, 0)
 
+var hudx: Control
+
 func _build_center() -> void:
 	_build_vignette()
+	hudx = preload("res://scripts/hudx.gd").new()
+	root.add_child(hudx)
 	cross = Control.new()
 	cross.set_anchors_preset(Control.PRESET_FULL_RECT)
 	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE

@@ -756,6 +756,18 @@ func _shot_mode(dir: String) -> void:
 		var av = _arg("at", "0,0,0").split(",")
 		await _look(c + Vector3(float(cv[0]), float(cv[1]), float(cv[2])), c + Vector3(float(av[0]), float(av[1]), float(av[2])))
 		await _snap(dir, "cam")
+	if _arg("hud", "") != "":
+		for s in G.soldiers:
+			if s.state == "alive" and s.team == 0:
+				G.pc.possess(s)
+				G.pc.force_free = false
+				break
+		G.ui.visible = true
+		G.ui.menu.visible = false
+		await _wait(1.5)
+		await _snap(dir, "hud")
+		G.ui.visible = false
+		G.pc.force_free = true
 	if _arg("tacmap", "") != "":
 		G.ui.visible = true
 		G.ui.tacmap = preload("res://scripts/tacmap.gd").new()

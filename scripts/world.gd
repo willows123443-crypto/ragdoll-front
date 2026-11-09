@@ -826,6 +826,9 @@ func base(sx: float) -> void:
 	add_box(bx + sx * 3.9, 5.6, 0.0, 1.6, 1.0, 0.05, G.TEAM_BAND[0] if sx < 0 else G.TEAM_BAND[1], {"collide": false, "no_shadow": true})
 
 func crater_at(x: float, z: float, r: float, d: float) -> void:
+	for rd in roads:
+		if x > rd[0] - r * 1.7 and x < rd[1] + r * 1.7 and z > rd[2] - r * 1.7 and z < rd[3] + r * 1.7:
+			return
 	crater_ter(x, z, r, d)
 	for k in range(6):
 		var a = k / 6.0 * TAU + 0.3
@@ -852,12 +855,13 @@ func build_town() -> void:
 		var sx = -1.0 if rng.randf() < 0.5 else 1.0
 		hill(sx * rnd(110, 128), rnd(-80, 80), rnd(10, 18), rnd(1, 3))
 	flatten_rect(-40, -48, 40, 48, 8); flatten_rect(-130, -5, 130, 5, 3); flatten_rect(-130, -28, -84, 28, 6); flatten_rect(84, -28, 130, 28, 6)
+	roads = [[-130, 130, -4.5, 4.5], [-17.5, -10.5, -45, 45]]
 	for sx in [-1.0, 1.0]:
 		for i in range(9):
 			crater_at(sx * rnd(52, 72), rnd(-45, 45), rnd(2.2, 3.4), rnd(0.9, 1.3))
+	_flatten_roads()
 	build_terrain(MAPS["town"]["ground"])
 	flat_plane(0, 0, 260, 9, Color(0.29, 0.29, 0.3), 0.015); flat_plane(-14, 0, 7, 90, Color(0.32, 0.31, 0.32), 0.013)
-	roads = [[-130, 130, -4.5, 4.5], [-17.5, -10.5, -45, 45]]
 	for b in [[-25, -12, 9, 9, 5], [-24, 30, 9, 9, 4.5], [-4, -30, 9, 8, 5], [-5, -14, 7, 7, 4], [-4, 15, 8, 7, 6], [-5, 31, 10, 9, 5],
 			[11, -12, 7, 8, 4.5], [12, 14, 9, 8, 5], [12, 30, 8, 8, 6], [28, -20, 8, 12, 5], [27, 32, 7, 7, 4]]:
 		building(b[0], b[1], b[2], b[3], b[4])
@@ -900,11 +904,12 @@ func build_field() -> void:
 		hill(rnd(-120, 120), rnd(-90, 90), rnd(14, 34), rnd(1.2, 4))
 	flatten_rect(-4, 24, 8, 36, 6); flatten_rect(-12, -39, 4, -25, 6); flatten_rect(-130, -5, 130, 1, 3)
 	flatten_rect(-130, -28, -84, 28, 6); flatten_rect(84, -28, 130, 28, 6); flatten_rect(-14, -14, 14, 10, 5)
+	roads = [[-130, 130, -4.5, 0.5]]
 	for i in range(10):
 		crater_at(rnd(-60, 60), rnd(-60, 60), rnd(2, 3), rnd(0.8, 1.2))
+	_flatten_roads()
 	build_terrain(MAPS["field"]["ground"])
 	flat_plane(0, -2, 260, 5, Color(0.48, 0.42, 0.31), 0.014)
-	roads = [[-130, 130, -4.5, 0.5]]
 	for sx in [-1.0, 1.0]:
 		var z = -70.0
 		while z < 70.0:
@@ -1000,6 +1005,11 @@ func build_trenches() -> void:
 	tank(-6, -30); truck(8, 30, true)
 	skyline([Color(0.43, 0.42, 0.36), Color(0.37, 0.36, 0.31), Color(0.48, 0.46, 0.41)], 6, 18)
 	capture = Vector3.ZERO
+
+# roads are flat painted strips, so the ground under them must be flat too (no hills or holes hidden under the paint)
+func _flatten_roads() -> void:
+	for rd in roads:
+		flatten_rect(rd[0], rd[2], rd[1], rd[3], 2.5)
 
 func on_road(x: float, z: float) -> bool:
 	for r in roads:

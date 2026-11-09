@@ -10,8 +10,8 @@ const L_BODY = 2
 const L_DEBRIS = 4
 
 # if dead soldiers' knees or elbows bend the wrong way, flip these to -1.0
-const KNEE_SIGN = 1.0
-const ELBOW_SIGN = 1.0
+var KNEE_SIGN = 1.0
+var ELBOW_SIGN = 1.0
 
 var main = null
 var world = null
@@ -80,6 +80,11 @@ var GUN_MODELS = {
 		[0, 0.015, 0.32, 0.06, 0.06, 0.15, C_WOOD], [0, -0.06, 0.0, 0.04, 0.1, 0.05, C_DARK]],
 	"rpg": [[0, 0.02, 0.3, 0.11, 0.11, 1.12, C_OLIVE], [0, 0.02, 0.93, 0.15, 0.15, 0.22, C_GREEN], [0, -0.08, 0.12, 0.04, 0.11, 0.05, C_DARK], [0.07, 0.08, 0.28, 0.03, 0.07, 0.05, C_DARK], [0, -0.07, 0.36, 0.04, 0.1, 0.05, C_DARK]],
 }
+
+func _ready() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--knee="):
+			KNEE_SIGN = float(a.substr(7))
 
 func random_weapon() -> String:
 	var r = randf()

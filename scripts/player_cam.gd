@@ -15,6 +15,7 @@ var r_drag = false
 var bloom = 0.0
 var kick = 0.0
 var orbit = 0.0
+var force_free = false   # development screenshots: keep the free camera while controlling a soldier
 
 func _ready() -> void:
 	cam = Camera3D.new()
@@ -117,7 +118,7 @@ func _process(dt: float) -> void:
 	var fov_t = 65.0
 	if G.player != null and not is_instance_valid(G.player):
 		G.player = null
-	if G.player != null:
+	if G.player != null and not force_free:
 		var s = G.player
 		var cp = cos(cam_pitch)
 		var d = Vector3(sin(cam_yaw) * cp, sin(cam_pitch), cos(cam_yaw) * cp)

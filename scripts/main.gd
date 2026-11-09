@@ -30,6 +30,9 @@ func _ready() -> void:
 	preview_map("town")
 	if "--autotest" in OS.get_cmdline_user_args():
 		_autotest()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--shot="):
+			_shot_mode(a.substr(7))
 
 func _build_environment() -> void:
 	env = Environment.new()
@@ -42,10 +45,11 @@ func _build_environment() -> void:
 	sm.ground_bottom_color = Color(0.3, 0.29, 0.26)
 	sky.sky_material = sm
 	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.55
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.62, 0.66, 0.72)
+	env.ambient_light_energy = float(_arg("amb", "0.38"))
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 0.9
+	env.tonemap_exposure = float(_arg("exp", "0.68"))
 	env.ssao_enabled = true
 	env.ssao_radius = 1.2
 	env.ssao_intensity = 1.6
@@ -53,14 +57,14 @@ func _build_environment() -> void:
 	env.glow_intensity = 0.4
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.66, 0.69, 0.7)
-	env.fog_density = 0.0045
+	env.fog_density = 0.003
 	env.fog_aerial_perspective = 0.4
 	var we = WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 	sun = DirectionalLight3D.new()
 	sun.light_color = Color(1.0, 0.95, 0.86)
-	sun.light_energy = 1.15
+	sun.light_energy = float(_arg("sun", "0.95"))
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 140.0
 	sun.rotation = Vector3(deg_to_rad(-52), deg_to_rad(-35), 0)
@@ -295,6 +299,8 @@ func _report(tag: String) -> void:
 	var alive = [G.alive_count(0), G.alive_count(1)]
 	var dead = G.soldiers.filter(func(s): return s.state == "dead").size()
 	var ms = (tick_us / 1000.0) / maxi(tick_n, 1)
+	var kn = _knee_stats()
+	print("AUTOTEST %s | knees ok/backward: body %d/%d, target %d/%d" % [tag, kn[0], kn[1], kn[2], kn[3]])
 	print("AUTOTEST %s | alive %d v %d | dead %d | score %d-%d | sim %.2f ms/tick" % [tag, alive[0], alive[1], dead, G.score[0], G.score[1], ms])
 	tick_us = 0
 	tick_n = 0
@@ -321,3 +327,83 @@ func _autotest() -> void:
 		_report(m + " 30s")
 	print("AUTOTEST done")
 	get_tree().quit()
+
+# ---------------------------------------------------------------- screenshot mode (development aid)
+# --shot=OUTDIR [--map=town] [--wait=6] [--size=6]
+func _arg(name: String, def: String) -> String:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--" + name + "="):
+			return a.substr(name.length() + 3)
+	return def
+
+func _snap(dir: String, name: String) -> void:
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(dir + "/" + name + ".png")
+
+func _look(from: Vector3, at: Vector3) -> void:
+	G.pc.free_pos = from
+	var d = at - from
+	G.pc.free_yaw = atan2(d.x, d.z)
+	G.pc.free_pitch = atan2(d.y, Vector2(d.x, d.z).length())
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+func _shot_mode(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.ui.visible = false
+	G.pc.force_free = true
+	await _wait(0.5)
+	start_game({"map": _arg("map", "town"), "mode": "capture", "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true})
+	await _wait(float(_arg("wait", "6")))
+	var c: Vector3 = G.world.capture
+	await _look(c + Vector3(-40, 25, -10), c)
+	await _snap(dir, "overview")
+	var pose = _arg("pose", "")
+	if pose != "":
+		for s in G.soldiers:
+			if s.state == "alive":
+				G.pc.possess(s)
+				s.p_crouch = pose == "crouch"
+				s.p_prone = pose == "prone"
+				break
+		await _wait(2.5)
+	var n = 0
+	var order = G.soldiers.duplicate()
+	if G.player != null:
+		order.erase(G.player)
+		order.push_front(G.player)
+	for s in order:
+		if s.state != "alive" or n >= int(_arg("close", "3")):
+			continue
+		var p = s.pos
+		var f = Vector3(sin(s.aim_yaw), 0, cos(s.aim_yaw))
+		var r = Vector3(f.z, 0, -f.x)
+		get_tree().paused = true
+		await _look(p + r * float(_arg("dist", "3.0")) + Vector3(0, 0.8, 0), p + Vector3(0, 0.6, 0))
+		await _snap(dir, "side%d" % n)
+		await _look(p + f * 3.0 + Vector3(0, 1.4, 0), p + Vector3(0, 0.9, 0))
+		await _snap(dir, "front%d" % n)
+		get_tree().paused = false
+		await _wait(0.3)
+		n += 1
+	get_tree().quit()
+
+func _knee_stats() -> Array:
+	# counts legs bending the right way (shin swings back) vs backwards, for real bodies and for the pose targets
+	var out = [0, 0, 0, 0]
+	for s in G.soldiers:
+		if s.state != "alive":
+			continue
+		var f = Vector3(sin(s.aim_yaw), 0, cos(s.aim_yaw))
+		for pr in [[7, 8], [9, 10]]:
+			var yt = s.parts[pr[0]].global_basis.y
+			var ys = s.parts[pr[1]].global_basis.y
+			var d = (ys - yt).dot(f)
+			if absf(d) > 0.25:
+				out[0 if d < 0.0 else 1] += 1
+			var tt = s.targets[pr[0]].basis.y
+			var ts = s.targets[pr[1]].basis.y
+			var e = (ts - tt).dot(f)
+			if absf(e) > 0.25:
+				out[2 if e < 0.0 else 3] += 1
+	return out

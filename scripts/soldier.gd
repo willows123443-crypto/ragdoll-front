@@ -10,7 +10,7 @@ const PART_W = [0.36, 0.44, 0.26, 0.13, 0.12, 0.13, 0.12, 0.17, 0.15, 0.17, 0.15
 const PART_H = [0.22, 0.52, 0.27, 0.3, 0.3, 0.3, 0.3, 0.45, 0.45, 0.45, 0.45]
 const PART_D = [0.25, 0.26, 0.26, 0.13, 0.12, 0.13, 0.12, 0.17, 0.15, 0.17, 0.15]
 const PART_MASS = [10.0, 14.0, 4.0, 2.5, 2.0, 2.5, 2.0, 7.0, 4.0, 7.0, 4.0]
-const PART_MUS = [1.0, 1.0, 0.7, 0.9, 0.75, 0.9, 0.75, 1.0, 1.1, 1.0, 1.1]
+const PART_MUS = [1.0, 1.0, 0.7, 1.05, 0.95, 1.05, 0.95, 1.0, 1.1, 1.0, 1.1]
 const PART_REG = [0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4]       # 0 core, 1 l-arm, 2 r-arm, 3 l-leg, 4 r-leg
 const PART_KIND = ["torso", "torso", "head", "arm", "arm", "arm", "arm", "leg", "leg", "leg", "leg"]
 
@@ -266,7 +266,7 @@ func _build_body() -> void:
 		_mesh(parts[i], Vector3(0.17, 0.47, 0.17), Vector3.ZERO, uni2)
 	for i in [8, 10]:
 		_mesh(parts[i], Vector3(0.15, 0.45, 0.15), Vector3.ZERO, uni2)
-		_mesh(parts[i], Vector3(0.16, 0.14, 0.28), Vector3(0, 0.21, -0.05), boot)
+		_mesh(parts[i], Vector3(0.16, 0.14, 0.28), Vector3(0, 0.21, 0.07), boot)
 	# no collisions within the same body (joints and muscles handle that)
 	for i in range(11):
 		for j in range(i + 1, 11):
@@ -640,7 +640,12 @@ func compute_muzzle() -> void:
 		return
 	if state == "alive":
 		gun_dir = gun_dir_p
-		grip = hand_l() - gun_dir * 0.3 if anchor_l else hand_r()
+		# hold the gun where the pose wants the hands, carried by the real chest so it moves with the body
+		# but doesn't flap around with the loosely driven arm bodies
+		var pose_hand: Vector3 = P[5] - gun_dir * 0.3 if anchor_l else P[8]
+		var steady: Vector3 = parts[1].global_position + (pose_hand - targets[1].origin)
+		var phys: Vector3 = hand_l() - gun_dir * 0.3 if anchor_l else hand_r()
+		grip = steady.lerp(phys, 0.15)
 	else:
 		var d = hand_l() - hand_r()
 		if d.length() > 0.05:

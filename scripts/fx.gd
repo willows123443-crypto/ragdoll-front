@@ -262,7 +262,11 @@ func smoke_screen(pos: Vector3, life: float) -> CPUParticles3D:
 	add_child(p)
 	p.global_position = pos
 	p.emitting = true
-	get_tree().create_timer(life, false).timeout.connect(func(): p.emitting = false)
+	var wr = weakref(p)
+	get_tree().create_timer(life, false).timeout.connect(func():
+		var n = wr.get_ref()
+		if n != null:
+			n.emitting = false)
 	get_tree().create_timer(life + 8.0, false).timeout.connect(p.queue_free)
 	return p
 

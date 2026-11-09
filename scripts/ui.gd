@@ -173,9 +173,11 @@ func feed(a, v, head: bool) -> void:
 		var last = feed_box.get_child(feed_box.get_child_count() - 1)
 		feed_box.remove_child(last)
 		last.queue_free()
+	var wr = weakref(l)
 	get_tree().create_timer(6.0).timeout.connect(func():
-		if is_instance_valid(l):
-			l.queue_free())
+		var n = wr.get_ref()
+		if n != null:
+			n.queue_free())
 
 # ---------------------------------------------------------------- side buttons
 func _build_side() -> void:

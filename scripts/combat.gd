@@ -156,8 +156,10 @@ static func kill(s, attacker, head: bool) -> void:
 			break
 	if s == G.player:
 		G.ui.message("You were killed in action")
+		var wr = weakref(s)
 		G.main.get_tree().create_timer(2.6, false).timeout.connect(func():
-			if G.player == s:
+			var o = wr.get_ref()
+			if o != null and G.player == o:
 				G.pc.leave_soldier())
 
 # ---------------------------------------------------------------- rockets

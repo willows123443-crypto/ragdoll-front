@@ -57,12 +57,12 @@ try:
 except ValueError:
     pass
 if num is None:
-    subprocess.run(["gh", "issue", "create", "--title", TITLE, "--body",
-                    "Each push to main builds the game, runs an automatic headless test on all three maps, and posts the results here.\n\nPlay: https://%s.github.io/%s/" % tuple(os.environ.get("GITHUB_REPOSITORY", "x/y").split("/"))], check=False)
-    out = subprocess.run(["gh", "issue", "list", "--state", "all", "--search", TITLE + " in:title", "--json", "number,title"],
-                         capture_output=True, text=True).stdout
-    for it in json.loads(out or "[]"):
-        if it["title"] == TITLE:
-            num = str(it["number"])
+    made = subprocess.run(["gh", "issue", "create", "--title", TITLE, "--body",
+                    "Each push to main builds the game, runs an automatic headless test on all three maps, and posts the results here.\n\nPlay: https://%s.github.io/%s/" % tuple(os.environ.get("GITHUB_REPOSITORY", "x/y").split("/"))], capture_output=True, text=True).stdout
+    m = re.search(r"/issues/(\d+)", made)
+    if m:
+        num = m.group(1)
+if num is None:
+    num = "1"
 if num:
     subprocess.run(["gh", "issue", "comment", num, "--body", text[:60000]], check=False)

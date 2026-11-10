@@ -560,7 +560,7 @@ func play() -> void:
 		markers = null
 	G.ui.root.visible = true
 	var placed_only = armies_opt != null and armies_opt.selected == 1 and not data["units"].is_empty()
-	G.main.start_game({"map": "custom", "mode": modes[mode_opt.selected], "size": 10, "limit": 100, "reinforce": not placed_only, "teams": 2,
+	G.main.start_game({"map": "custom", "mode": modes[mode_opt.selected], "size": 10, "limit": G.default_limit(modes[mode_opt.selected]), "reinforce": not placed_only, "teams": 2,
 		"armies": not placed_only})
 
 # ---------------------------------------------------------------- UI

@@ -93,9 +93,12 @@ func _ready() -> void:
 	_build_center()
 	_build_player_hud()
 	_build_menu()
+	_build_title()
 	_build_help()
 	_build_win()
 	_build_command()
+	menu.visible = false
+	title.visible = true
 
 # ---------------------------------------------------------------- helpers
 func _place(c: Control, preset: int, x: float, y: float, w: float, h: float) -> void:
@@ -670,8 +673,13 @@ func _build_menu() -> void:
 	_place(menu, Control.PRESET_CENTER, -450, -320, 900, 640)
 	var outer = VBoxContainer.new()
 	outer.add_theme_constant_override("separation", 8)
-	var title = _label("RAGDOLL FRONT", 32, Color(0.96, 0.93, 0.85))
-	outer.add_child(title)
+	var top = HBoxContainer.new()
+	top.add_child(_button("←  Back", func():
+		menu.visible = false
+		show_menu()))
+	var tl = _label("  New battle", 28, Color(0.96, 0.93, 0.85))
+	top.add_child(tl)
+	outer.add_child(top)
 	var d = _label("Two armies fight it out on their own. Drop in soldiers, call in strikes, command from above or take control of anyone on the field.", 14, Color(0.75, 0.77, 0.75))
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD
 	d.custom_minimum_size = Vector2(860, 0)
@@ -701,8 +709,15 @@ func _build_menu() -> void:
 	v.add_child(mode_info)
 	opt_mode.item_selected.connect(func(_i): _show_mode_info())
 	_show_mode_info()
-	opt_limit = _option(["25", "50", "100", "200"], 1)
-	_row(v, "Kills / points / tickets", opt_limit)
+	opt_limit = _option(["50"], 0)
+	limit_row = HBoxContainer.new()
+	limit_lbl = _label("Win at", 15)
+	limit_lbl.custom_minimum_size = Vector2(200, 0)
+	limit_row.add_child(limit_lbl)
+	limit_row.add_child(opt_limit)
+	opt_limit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(limit_row)
+	_fill_limits()
 	_section(v, "Forces")
 	opt_size = _option(["5", "8", "10", "15", "20", "30", "50", "100"], 2)
 	_row(v, "Soldiers per side", opt_size)
@@ -928,14 +943,50 @@ func _deploy() -> void:
 		G.random_seed = int(t) if t.is_valid_int() else t.hash()
 	var mid = _map_id(opt_map.selected)
 	G.main.start_game({"map": mid, "mode": MODE_IDS[opt_mode.selected],
-		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": int(opt_limit.get_item_text(opt_limit.selected)),
+		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": _limit_value(),
 		"reinforce": opt_reinf.selected != 4, "reinf_mode": ["truck", "para", "heli", "instant", "truck"][opt_reinf.selected],
 		"armor": ["none", "light", "heavy"][opt_armor.selected], "teams": opt_teams.selected + 2})
 	G.save_prefs()
 	menu.visible = false
+	title.visible = false
 	help.visible = false
 
+# only the modes that end on a number get one to set, and each gets its own kind of number
+const LIMITS = {
+	"deathmatch": ["Kills to win", [25, 50, 100, 200], 1],
+	"capture": ["Points to win", [100, 200, 400, 800], 1],
+	"commander": ["Points to win", [100, 200, 400, 800], 1],
+	"koth": ["Points to win", [60, 120, 240, 480], 1],
+	"frontline": ["Tickets per side", [50, 100, 200, 400], 1],
+	"assault": ["Attackers' tickets", [50, 100, 200, 400], 1],
+	"breakthrough": ["Attackers' tickets", [50, 100, 200, 400], 1],
+	"siege": ["Town's supplies", [60, 100, 160, 240], 1],
+}
+var limit_row: HBoxContainer
+var limit_lbl: Label
+
+func _fill_limits() -> void:
+	if opt_limit == null or opt_mode == null:
+		return
+	var id = MODE_IDS[clampi(opt_mode.selected, 0, MODE_IDS.size() - 1)]
+	var L = LIMITS.get(id)
+	limit_row.visible = L != null
+	if L == null:
+		return
+	limit_lbl.text = L[0]
+	opt_limit.clear()
+	for n in L[1]:
+		opt_limit.add_item(str(n))
+	opt_limit.select(L[2])
+
+func _limit_value() -> int:
+	var id = MODE_IDS[clampi(opt_mode.selected, 0, MODE_IDS.size() - 1)]
+	if not LIMITS.has(id):
+		return 999999
+	return int(opt_limit.get_item_text(opt_limit.selected))
+
 func _show_mode_info() -> void:
+	_fill_limits()
 	if mode_info != null:
 		var id = MODE_IDS[clampi(opt_mode.selected, 0, MODE_IDS.size() - 1)]
 		var extra = ""
@@ -943,8 +994,117 @@ func _show_mode_info() -> void:
 			extra = "  (two sides only)"
 		mode_info.text = Obj.MODE_INFO.get(id, "") + extra
 
-func show_menu() -> void:
+# the title screen (and, during a battle, the pause menu)
+var title: Control
+var title_box: VBoxContainer
+var title_sub: Label
+
+func _build_title() -> void:
+	title = Control.new()
+	title.set_anchors_preset(Control.PRESET_FULL_RECT)
+	title.mouse_filter = Control.MOUSE_FILTER_STOP
+	# a dark band down the left over the slowly turning battlefield
+	var shade = ColorRect.new()
+	shade.color = Color(0.03, 0.035, 0.04, 0.82)
+	_place(shade, Control.PRESET_LEFT_WIDE, 0, 0, 440, 0)
+	title.add_child(shade)
+	var edge = ColorRect.new()
+	edge.color = Color(0.95, 0.75, 0.3, 0.6)
+	_place(edge, Control.PRESET_LEFT_WIDE, 440, 0, 3, 0)
+	title.add_child(edge)
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	_place(v, Control.PRESET_LEFT_WIDE, 48, 30, 344, 0)
+	title.add_child(v)
+	var logo = _label("RAGDOLL", 44, Color(0.96, 0.93, 0.85))
+	v.add_child(logo)
+	var logo2 = _label("FRONT", 44, Color(0.95, 0.75, 0.3))
+	logo2.position.y = -14
+	v.add_child(logo2)
+	title_sub = _label("Battles that play themselves, until you step in.", 14, Color(0.72, 0.74, 0.72))
+	title_sub.autowrap_mode = TextServer.AUTOWRAP_WORD
+	title_sub.custom_minimum_size = Vector2(340, 0)
+	v.add_child(title_sub)
+	var gap = Control.new()
+	gap.custom_minimum_size = Vector2(0, 4)
+	v.add_child(gap)
+	title_box = VBoxContainer.new()
+	title_box.add_theme_constant_override("separation", 5)
+	v.add_child(title_box)
+	root.add_child(title)
+	_fill_title()
+
+func _title_button(text: String, sub: String, cb: Callable, big: bool = false) -> void:
+	var b = _button(text if sub == "" else "%s\n%s" % [text, sub], cb)
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.custom_minimum_size = Vector2(340, 52 if big else (40 if sub != "" else 34))
+	b.add_theme_font_size_override("font_size", 20 if big else 14)
+	if big:
+		b.add_theme_stylebox_override("normal", _dock_style(Color(0.78, 0.58, 0.16)))
+		b.add_theme_stylebox_override("hover", _dock_style(Color(0.9, 0.7, 0.25)))
+		b.add_theme_color_override("font_color", Color(0.06, 0.06, 0.05))
+		b.add_theme_color_override("font_hover_color", Color(0, 0, 0))
+	title_box.add_child(b)
+
+func _fill_title() -> void:
+	for c in title_box.get_children():
+		c.queue_free()
+	if G.started:
+		title_sub.text = "Paused · %s on %s" % [G.mode.capitalize(), G.world.MAPS.get(G.map_id, {}).get("name", G.map_id) if G.world != null else ""]
+		_title_button("▶  Resume", "", func(): _close_title(), true)
+		_title_button("Restart this battle", "same map, mode and forces", func():
+			_close_title()
+			_deploy())
+		_title_button("New battle…", "pick a map, a mode and your forces", func(): _open_setup())
+		_title_button("Battle report", "who killed whom, and how", func(): show_report())
+	else:
+		title_sub.text = "Battles that play themselves, until you step in. Drop in soldiers, take over anyone on the field or command from above."
+		_title_button("▶  Quick battle", "pick a map, a mode and your forces", func(): _open_setup(), true)
+		_title_button("Campaign", "nine regions, one battle at a time", func(): _show_campaign())
+		_title_button("Daily challenge", "the same battle for everyone today", func(): _show_daily())
+		_title_button("Commander", "fight a battle from above, RTS style", func(): _quick("commander"))
+		_title_button("Zombie horde", "hold out against ten waves", func(): _quick("horde"))
+		_title_button("Map editor", "build, paint and script your own maps", func():
+			title.visible = false
+			G.editor.new_map(Vector2(260, 190)))
+		_title_button("Scenario code", "save or load a battle as a code", func(): _show_scenario())
+	var h = HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	for e in [["Teams", func(): _show_teams()], ["Settings", func(): _show_settings()], ["Controls", func(): help.visible = true]]:
+		var b = _button(e[0], e[1])
+		b.custom_minimum_size = Vector2(109, 36)
+		h.add_child(b)
+	title_box.add_child(h)
+	if G.started:
+		_title_button("Quit to title screen", "", func():
+			G.main.quit_to_title()
+			show_menu())
+
+func _open_setup() -> void:
+	title.visible = false
 	menu.visible = true
+
+func _close_title() -> void:
+	title.visible = false
+	get_tree().paused = false
+	if G.player != null:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+# one click into a mode from the title screen, with sensible settings
+func _quick(mode: String) -> void:
+	var i = MODE_IDS.find(mode)
+	if i >= 0:
+		opt_mode.select(i)
+		_show_mode_info()
+	title.visible = false
+	_deploy()
+
+func show_menu() -> void:
+	_fill_title()
+	title.visible = true
+	menu.visible = false
+	if G.started and not G.over:
+		get_tree().paused = true
 	if G.player != null:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
@@ -965,6 +1125,7 @@ func _build_help() -> void:
 		"  Mouse  aim · Left-click  fire · Right mouse  aim down sights\n" + \
 		"  Q / E  lean · Shift  sprint · C  crouch · Z  prone · run into low walls to vault\n" + \
 		"  R  reload · G  grenade · V  smoke · 1–5  rifle, machine gun, sniper, shotgun, rockets\n" + \
+		"  H  put a field dressing on your wound (or on a bleeding friend next to you) — wounds bleed until dressed\n" + \
 		"  F  take the gun (or ammo) of a fallen soldier at your feet · stand at an ammo crate to restock\n" + \
 		"  B  class action (engineer: sandbags/repair · medic: heal · radio: artillery on crosshair · sniper/spotter: mark target)\n" + \
 		"  N  place a mine (Shift+N anti-tank) · K  satchel charge · 1–9  rifle, MG, sniper, shotgun, rockets, SMG, pistol, flamethrower, AT rifle\n" + \
@@ -1022,7 +1183,7 @@ func show_win(team: int) -> void:
 	win.visible = true
 
 func menu_open() -> bool:
-	return menu.visible or help.visible or win.visible or (report != null and report.visible) or (scen_panel != null and scen_panel.visible) or (camp_panel != null and camp_panel.visible) or (teams_panel != null and teams_panel.visible) or (settings_panel != null and settings_panel.visible)
+	return menu.visible or (title != null and title.visible) or help.visible or win.visible or (report != null and report.visible) or (scen_panel != null and scen_panel.visible) or (camp_panel != null and camp_panel.visible) or (teams_panel != null and teams_panel.visible) or (settings_panel != null and settings_panel.visible)
 
 func typing() -> bool:
 	return false
@@ -1037,6 +1198,8 @@ func _unhandled_key_input(ev: InputEvent) -> void:
 			tacmap.toggle()
 		elif ev.keycode == KEY_M and G.started:
 			show_menu()
+		elif ev.keycode == KEY_H and G.player != null and is_instance_valid(G.player) and G.player.state == "alive" and not menu_open():
+			Medical.player_dress(G.player)
 		elif ev.keycode == KEY_H:
 			help.visible = not help.visible
 		elif ev.keycode == KEY_J and G.started:
@@ -1044,9 +1207,15 @@ func _unhandled_key_input(ev: InputEvent) -> void:
 				report.visible = false
 			else:
 				show_report()
-		elif ev.keycode == KEY_ESCAPE and G.started and G.player == null:
-			menu.visible = false
+		elif ev.keycode == KEY_ESCAPE and help.visible:
 			help.visible = false
+		elif ev.keycode == KEY_ESCAPE and menu.visible:
+			menu.visible = false
+			show_menu()
+		elif ev.keycode == KEY_ESCAPE and title.visible and G.started:
+			_close_title()
+		elif ev.keycode == KEY_ESCAPE and G.started and G.player == null:
+			show_menu()
 
 var perf_lbl: Label = null
 var perf_t = 0.0
@@ -1081,7 +1250,7 @@ func update_hud(dt: float) -> void:
 	if vignette != null:
 		var want = 0.0
 		if G.player != null and is_instance_valid(G.player) and G.player.state != "dead":
-			want = clampf(G.player.supp / 1.2, 0.0, 1.0) * 0.85 + (0.35 if G.player.hp < 35.0 else 0.0)
+			want = clampf(G.player.supp / 1.2, 0.0, 1.0) * 0.85 + (0.35 if G.player.hp < 35.0 else 0.0) + (0.25 + 0.15 * sin(Time.get_ticks_msec() * 0.006) if G.player.bleed > 0.0 else 0.0)
 		var m: ShaderMaterial = vignette.material
 		var cv = m.get_shader_parameter("amount")
 		var cur: float = cv if cv != null else 0.0
@@ -1099,7 +1268,7 @@ func update_hud(dt: float) -> void:
 	elif G.mode == "sandbox":
 		lbl_mode.text = "sandbox"
 	elif cap:
-		lbl_mode.text = "capture · %d" % G.limit
+		lbl_mode.text = "first to %d points" % G.limit
 	elif G.mode == "deathmatch":
 		lbl_mode.text = "first to %d" % G.limit
 	else:
@@ -1202,6 +1371,10 @@ func update_hud(dt: float) -> void:
 			p_ammo.text += " · sandbags %d · mines %d · satchels %d" % [s.kits, s.mines, s.satchels]
 		if s.resupply_t > 0.0:
 			p_ammo.text += "     resupplying…"
+		if s.bandage_t > 0.0:
+			p_ammo.text += "     dressing a wound…"
+		elif s.bleed > 0.0 and s.state != "dead":
+			p_ammo.text += "     BLEEDING — H to dress it (%d dressing%s)" % [s.dressings, "" if s.dressings == 1 else "s"]
 		tip.text = "" if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else "Click to aim — X to leave this soldier"
 	else:
 		tip.text = TIPS.get(tool, "") if show_game else ""

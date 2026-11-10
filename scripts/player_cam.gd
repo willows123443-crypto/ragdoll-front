@@ -870,6 +870,13 @@ func _carry_or_crate(s) -> bool:
 		s.kick(G.flat(pn["c"] - s.pos).normalized())
 		Doors.shatter(pn)
 		return true
+	var tb = G.world.table_near(s.pos, 1.7)
+	if tb != null:
+		var face = Vector3(sin(cam_yaw), 0, cos(cam_yaw))
+		G.world.flip_table(tb, face)
+		s.kick(G.flat(tb["p"] - s.pos).normalized())
+		G.ui.message("Table flipped: cover facing the way you're looking")
+		return true
 	var dr = Doors.door_near(s.pos, 1.8)
 	if dr != null and dr["goal"] <= 0.0:
 		s.kick(G.flat(dr["c"] - s.pos).normalized())

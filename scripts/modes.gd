@@ -724,7 +724,7 @@ static func start_daily() -> void:
 	G.settings["time"] = c["time"]
 	G.main.apply_time()
 	G.settings["time"] = keep_t
-	G.main.start_game({"map": c["map"], "mode": c["mode"], "size": c["size"], "limit": 100, "reinforce": not ("no reinforcements" in c["mods"]),
+	G.main.start_game({"map": c["map"], "mode": c["mode"], "size": c["size"], "limit": G.default_limit(c["mode"]), "reinforce": not ("no reinforcements" in c["mods"]),
 		"reinf_mode": "truck", "armor": c["armor"], "teams": 2})
 	if "veterans" in c["mods"]:
 		for s in G.soldiers:

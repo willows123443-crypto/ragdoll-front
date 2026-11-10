@@ -873,6 +873,12 @@ static func update(s) -> void:
 	if s.zombie:
 		Modes.zombie_tick(s)
 		return
+	if (s.bleed > 0.0 or s.bandage_t > 0.0 or s.think <= 0.05) and Medical.ai_tick(s):
+		stance(s)
+		s.crouch_t = 0.8
+		return
+	if s.think <= 0.05 and not s.in_cover and s.has_seen and G.sim_time - s.seen_t < 8.0 and not G.world.tables.is_empty():
+		_try_flip(s)
 	s.think -= G.DT
 	s.decide_t -= G.DT
 	s.morale_t -= G.DT
@@ -990,6 +996,23 @@ static func update(s) -> void:
 					s.task = null
 	aim_and_fire(s)
 	stance(s)
+
+# indoors with the enemy about and no cover: tip the nearest table over and get behind it
+static func _try_flip(s) -> void:
+	if randf() > 0.4 or Doors.building_at(s.pos) < 0:
+		return
+	var t = G.world.table_near(s.pos, 2.6)
+	if t == null:
+		return
+	var to = G.flat(s.threat - t["p"])
+	if to.length() < 3.0:
+		return
+	# only if the table is between us and them (or we can get behind it)
+	G.world.flip_table(t, to.normalized())
+	s.kick(G.flat(t["p"] - s.pos).normalized())
+	G.fx.callout(s, G.pick(["Table!", "Get behind this!", "Cover, here!"]))
+	release_cover(s)
+	s.decide_t = 0.0
 
 static func aim_at(s, pt: Vector3, rate: float) -> float:
 	var oy = s.pos.y + (0.3 if s.prone else 1.45 - 0.45 * s.crouch)

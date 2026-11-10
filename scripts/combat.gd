@@ -145,8 +145,13 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 	var cam = G.main.get_viewport().get_camera_3d()
 	if shooter != G.player and cam:
 		var tc = (cam.global_position - o).dot(d)
-		if tc > 2.0 and tc < t_end and (o + d * tc).distance_to(cam.global_position) < 2.5 and randf() < 0.6:
-			G.audio.whizz(o + d * tc)
+		if tc > 2.0 and tc < t_end:
+			var miss = (o + d * tc).distance_to(cam.global_position)
+			# rifle-calibre rounds crack as they go past; pistol and SMG rounds just whizz
+			if miss < 7.0 and W["id"] in ["rifle", "lmg", "sniper", "hmg", "atrifle"] and tc > 15.0:
+				G.audio.crack(o + d * tc, miss)
+			elif miss < 2.5 and randf() < 0.6:
+				G.audio.whizz(o + d * tc)
 	var force = W["force"]
 	Stats.shot(shooter)
 	var on_hit = func():
@@ -228,6 +233,7 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 		b.apply_impulse(imp * b.mass * (0.5 if kind == "head" else 0.4), point - b.global_position)
 		_cap(s, 5.5)
 		return
+	Medical.wound(s, dmg * mult)
 	b.apply_impulse(imp * b.mass * 0.8, point - b.global_position)
 	if s.state == "alive" or s.state == "riding":
 		s.limb[Soldier.PART_REG[part]] = 0.05
@@ -669,6 +675,8 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 	if cam:
 		shake = maxf(shake, clampf(1.2 - cam.global_position.distance_to(pos) / 40.0, 0.0, 1.0))
 	G.world.damage_area(pos, R * 0.75, power)
+	if power >= 1.0:
+		G.world.blast_crater(pos, clampf(1.2 * power, 1.0, 3.2))
 	for v in G.vehicles.duplicate():
 		var dv = v.center().distance_to(pos)
 		if dv < R * 1.2:
@@ -686,7 +694,9 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 		if s.state != "dead":
 			s.supp = 1.5
 			if d < R:
-				s.hp -= 170.0 * (1.0 - d / R) * (1.0 if exposed else 0.3) * ((0.0 if not Modes.rescued else 0.3) if s == Modes.pilot else 1.0)
+				var edmg = 170.0 * (1.0 - d / R) * (1.0 if exposed else 0.3) * ((0.0 if not Modes.rescued else 0.3) if s == Modes.pilot else 1.0)
+				s.hp -= edmg
+				Medical.wound(s, edmg * 0.6)
 				if s == G.player:
 					G.ui.damage_indicator(pos)
 			if s.hp <= 0.0:

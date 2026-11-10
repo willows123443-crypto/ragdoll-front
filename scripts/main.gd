@@ -237,6 +237,12 @@ func _clear() -> void:
 	get_tree().paused = false
 	Engine.time_scale = 1.0
 
+func quit_to_title() -> void:
+	var m = G.map_id if G.map_id != "custom" else "town"
+	Modes.daily = {}
+	Campaign.active = false
+	preview_map(m)
+
 func preview_map(id: String) -> void:
 	_clear()
 	G.started = false
@@ -245,6 +251,9 @@ func preview_map(id: String) -> void:
 
 func start_game(o: Dictionary) -> void:
 	_clear()
+	if G.ui.title != null:
+		G.ui.title.visible = false
+		G.ui.menu.visible = false
 	G.mode = o.get("mode", "sandbox")
 	G.teams = clampi(o.get("teams", G.teams), 2, 4)
 	if G.mode in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde"]:
@@ -262,7 +271,7 @@ func start_game(o: Dictionary) -> void:
 		G.settings["time"] = "night"
 		apply_time()
 		G.settings["time"] = keep_t
-	G.limit = o.get("limit", 50)
+	G.limit = o.get("limit", G.default_limit(G.mode))
 	G.reinforce = o.get("reinforce", true)
 	G.reinf_mode = o.get("reinf_mode", G.reinf_mode)
 	G.armor = o.get("armor", G.armor)
@@ -776,6 +785,34 @@ func _shot_mode(dir: String) -> void:
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "capture"), "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
 		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2"))})
+	if _arg("fxshot", "") != "":
+		# a crater, a felled tree and a furnished room
+		var tree = null
+		for c in G.world.cols:
+			if c.has_meta("tree") and not c.has_meta("dead_tree") and G.dist2d((c.lo + c.hi) * 0.5, G.world.capture) < 90.0:
+				tree = c
+				break
+		if tree != null:
+			var tp = (tree.lo + tree.hi) * 0.5
+			tp.y = tree.lo.y
+			tree.set_meta("fall", Vector3(1, 0, 0))
+			G.world.destroy_col(tree)
+			Combat.explode(tp + Vector3(-4.0, 0.1, 3.0), null, 1.6)
+			await _wait(2.5)
+			await _look(tp + Vector3(-9, 5, 10), tp + Vector3(-1, 0, 1))
+			await _snap(dir, "fx")
+		if not G.world.tables.is_empty():
+			var tb = G.world.tables[0]
+			var p0: Vector3 = tb["p"]
+			await _look(p0 + Vector3(2.2, 1.7, 2.2), p0)
+			await _snap(dir, "room")
+	if _arg("titleshot", "") != "":
+		G.ui.visible = true
+		G.pc.force_free = false
+		G.main.quit_to_title()
+		G.ui.show_menu()
+		await _wait(1.0)
+		await _snap(dir, "title")
 	if _arg("menushot", "") != "":
 		G.ui.visible = true
 		G.ui.show_menu()
@@ -1260,6 +1297,14 @@ func _mode_test(mode: String) -> void:
 				up += 1
 		if up > 0:
 			pz += " upstairs %d" % up
+		var bl = 0
+		var dressing = 0
+		for s in G.soldiers:
+			if s.state != "dead" and s.bleed > 0.0:
+				bl += 1
+			if s.bandage_t > 0.0:
+				dressing += 1
+		pz += " bleeding %d dressing %d tables %d flipped %d" % [bl, dressing, G.world.tables.size(), G.world.tables.filter(func(t): return t["flipped"]).size()]
 		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz])
 		if G.over:
 			break
@@ -1269,7 +1314,12 @@ func _mode_test(mode: String) -> void:
 func _door_test() -> void:
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
-	print("DOORTEST doors %d panes %d" % [Doors.doors.size(), Doors.panes.size()])
+	print("DOORTEST doors %d panes %d tables %d" % [Doors.doors.size(), Doors.panes.size(), G.world.tables.size()])
+	if not G.world.tables.is_empty():
+		var tb = G.world.tables[0]
+		var nc = G.world.cols.size()
+		G.world.flip_table(tb, Vector3(1, 0, 0))
+		print("DOORTEST flipped a table: alive %s cols %d -> %d" % [tb["c"].alive, nc, G.world.cols.size()])
 	for dq in Doors.doors:
 		print("  door ", dq["c"], " n ", dq["n"])
 	if Doors.doors.is_empty():

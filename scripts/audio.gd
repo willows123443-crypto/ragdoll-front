@@ -13,6 +13,10 @@ var s_rocket: AudioStreamWAV
 var s_engine: AudioStreamWAV
 var s_hammer: AudioStreamWAV
 var s_kick: AudioStreamWAV
+var s_guns = {}             # a report for each kind of gun
+var s_distant: AudioStreamWAV
+var s_crack: AudioStreamWAV
+var s_slap: AudioStreamWAV
 var s_groans: Array = []
 var s_snarl: AudioStreamWAV
 var s_screech: AudioStreamWAV
@@ -46,6 +50,18 @@ func _ready() -> void:
 	s_hammer = _noise(0.09, 0.025, 0.55, 3.0, 30.0)
 	s_kick = _noise(0.35, 0.07, 0.12, 2.4, 70.0)
 	s_glass = _glass_sound()
+	# guns: length, decay, brightness, punch, low thump
+	s_guns["rifle"] = _gun(0.42, 0.05, 0.5, 2.3, 70.0, 0.02)
+	s_guns["lmg"] = _gun(0.4, 0.045, 0.42, 2.5, 60.0, 0.015)
+	s_guns["sniper"] = _gun(0.9, 0.09, 0.55, 2.6, 48.0, 0.05)
+	s_guns["shotgun"] = _gun(0.55, 0.08, 0.25, 2.8, 52.0, 0.0)
+	s_guns["hmg"] = _gun(0.5, 0.06, 0.3, 2.8, 42.0, 0.02)
+	s_guns["smg"] = _gun(0.22, 0.03, 0.55, 2.0, 95.0, 0.0)
+	s_guns["pistol"] = _gun(0.2, 0.028, 0.6, 1.8, 110.0, 0.0)
+	s_guns["atrifle"] = _gun(1.0, 0.11, 0.4, 3.0, 38.0, 0.06)
+	s_distant = _noise(1.4, 0.32, 0.05, 1.1, 34.0)
+	s_crack = _crack()
+	s_slap = _noise(0.25, 0.05, 0.22, 1.2, 0.0)
 	for k in range(3):
 		s_groans.append(_groan(1.1 + k * 0.35, 85.0 + k * 22.0, 0.55))
 	s_snarl = _groan(0.55, 140.0, 1.0)
@@ -255,7 +271,56 @@ func cam_dist(pos: Vector3) -> float:
 func shot(pos: Vector3, w: Dictionary) -> void:
 	var d = cam_dist(pos)
 	notice(pos, 0.08)
-	play(s_shot, pos, w["snd_vol"], w["snd_pitch"], minf(d / 343.0, 0.4))
+	var delay = minf(d / 343.0, 0.6)
+	var stream = s_guns.get(w["id"], s_shot)
+	if d > 110.0:
+		# far off, a gun is a dull thud rolling across the field
+		play(s_distant, pos, w["snd_vol"] - 4.0, w["snd_pitch"] * 1.3, delay)
+		return
+	play(stream, pos, w["snd_vol"], randf_range(0.96, 1.04), delay)
+	# a slap-back echo off walls in town (and a longer one indoors)
+	if d < 90.0 and G.world != null and (indoor > 0.5 or _walls_near(pos)):
+		play(s_slap, pos, w["snd_vol"] - 9.0, 0.85, delay + randf_range(0.09, 0.2) + indoor * 0.08)
+
+func _walls_near(p: Vector3) -> bool:
+	return G.world.cols_in_rect(p.x - 14.0, p.z - 14.0, p.x + 14.0, p.z + 14.0).size() > 6
+
+# a round going past close: the sharp crack of a supersonic bullet, louder the closer it passes
+func crack(pos: Vector3, miss: float) -> void:
+	play(s_crack, pos, lerpf(2.0, -14.0, clampf(miss / 7.0, 0.0, 1.0)), randf_range(0.9, 1.15))
+
+# a gunshot: a sharp transient, a body of filtered noise, and a low thump
+func _gun(len_s: float, decay: float, bright: float, punch: float, thump: float, tail: float) -> AudioStreamWAV:
+	var n = int(len_s * RATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var lp = 0.0
+	var lp2 = 0.0
+	for i in range(n):
+		var t = float(i) / RATE
+		var env = exp(-t / decay) * minf(1.0, t * 3000.0)
+		var w = randf() * 2.0 - 1.0
+		lp += (w - lp) * bright
+		lp2 += (lp - lp2) * 0.08
+		var v = lp * env * punch
+		v += (randf() * 2.0 - 1.0) * exp(-t / 0.004) * 0.8
+		if thump > 0.0:
+			v += sin(TAU * thump * t * (1.0 - t * 0.6)) * exp(-t / (decay * 1.4)) * 0.9
+		if tail > 0.0:
+			v += lp2 * exp(-t / (tail * 6.0)) * 1.4
+		out[i] = v
+	return _wav(out)
+
+func _crack() -> AudioStreamWAV:
+	var n = int(0.06 * RATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	for i in range(n):
+		var t = float(i) / RATE
+		var v = (randf() * 2.0 - 1.0) * exp(-t / 0.006) * 1.4
+		v += sin(TAU * 2600.0 * t) * exp(-t / 0.01) * 0.5
+		out[i] = v
+	return _wav(out)
 
 func boom(pos: Vector3) -> void:
 	notice(pos, 0.6)

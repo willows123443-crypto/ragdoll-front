@@ -227,7 +227,7 @@ static func work(s) -> void:
 				AI.go_to(s, v.pos, 4.8)
 		"patch":
 			var w = s.patient
-			if w == null or not is_instance_valid(w) or w.state != "alive" or w.hp >= 95.0:
+			if w == null or not is_instance_valid(w) or w.state != "alive" or (w.hp >= 95.0 and w.bleed <= 0.0):
 				s.task = null
 				s.patient = null
 				s.decide_t = 0.0
@@ -236,6 +236,7 @@ static func work(s) -> void:
 				AI.stop_move(s)
 				s.crouch_t = 0.8
 				s.hand_t = w.chest()
+				w.bleed = 0.0
 				w.hp = minf(100.0, w.hp + 25.0 * G.DT)
 				if w.hp >= 95.0:
 					Stats.healed(s)
@@ -250,7 +251,7 @@ static func _medic(s, known: bool) -> bool:
 	var best = null
 	var bd = 25.0
 	for o in G.soldiers:
-		if o != s and o.team == s.team and o.state == "alive" and o.hp < 65.0 and o.vehicle == null:
+		if o != s and o.team == s.team and o.state == "alive" and (o.hp < 65.0 or o.bleed > 0.1) and o.vehicle == null:
 			var d = G.dist2d(o.pos, s.pos)
 			if d < bd:
 				bd = d
@@ -325,10 +326,8 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 static func call_artillery(s, target: Vector3) -> void:
 	# a red smoke marker goes down where the shells will fall
 	Combat.smoke_at(target, 14.0, Color(0.85, 0.22, 0.18), 0.4)
-	for i in range(6):
-		Combat.shell_at(target, 10.0, 6.0 + i * randf_range(0.5, 1.0), s, 1.45)
-	G.fx.callout(s, G.pick(["Fire mission, danger close!", "Artillery inbound!", "Requesting fire support!"]))
-	G.ui.radio(s.team, "%s: fire mission on grid %s" % [s.sname, AI.grid_ref(target)])
+	Support.fire_mission(s.team, target, s, 6, 10.0, 1.45)
+	G.fx.callout(s, G.pick(["Fire mission, over!", "Requesting fire, grid %s!" % AI.grid_ref(target), "Battery, fire mission!"]))
 
 # ---------------------------------------------------------------- anti-tank: go after enemy armour
 # returns -1 nothing to do, 0 threw a charge, 1 moving in to place one

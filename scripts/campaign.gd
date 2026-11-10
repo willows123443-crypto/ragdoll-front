@@ -76,7 +76,7 @@ static func attack(i: int) -> void:
 	active = true
 	current = i
 	var r = REGIONS[i]
-	G.main.start_game({"map": r["map"], "mode": r["mode"], "size": SQUAD, "limit": 100, "reinforce": true,
+	G.main.start_game({"map": r["map"], "mode": r["mode"], "size": SQUAD, "limit": G.default_limit(r["mode"]), "reinforce": true,
 		"reinf_mode": "truck", "armor": "heavy" if data["turn"] > 2 else "light", "teams": 2})
 	# our motor pool: whatever survived the last battles
 	if not data.has("pool"):

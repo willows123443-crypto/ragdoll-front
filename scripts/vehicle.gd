@@ -403,7 +403,9 @@ func step(dt: float) -> void:
 		if res[1] != null:
 			var col = res[1]
 			# tanks flatten crates and flimsy walls; anything fast smashes crates
-			if col.dest and (spec["tracked"] or (col.prop == 1 and absf(speed) > 6.0)):
+			if col.dest and (spec["tracked"] or (col.prop == 1 and absf(speed) > 6.0 and not col.has_meta("tree"))):
+				if col.has_meta("tree"):
+					col.set_meta("fall", f * signf(speed if speed != 0.0 else 1.0))
 				G.world.destroy_col(col)
 				speed *= 0.85
 				continue

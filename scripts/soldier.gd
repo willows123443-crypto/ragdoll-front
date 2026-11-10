@@ -150,6 +150,11 @@ var hurt_t = 0.0
 var supp = 0.0
 var heal_t = 0.0
 var medic = null
+var bleed = 0.0          # hp lost per second until a dressing goes on
+var dressings = 2
+var bandage_t = 0.0      # putting a dressing on (own wound, or bandage_who's)
+var bandage_who = null
+var drip_t = 0.0
 var dragger = null
 var dragging = null
 var carrying = null         # a wounded friend over the shoulder
@@ -948,6 +953,7 @@ func head_pos() -> Vector3:
 # ---------------------------------------------------------------- classes
 func set_class(c: String) -> void:
 	cls = c
+	dressings = 6 if c == "medic" else 2
 	if c == "officer" and parts.size() > 2:
 		# officers wear a peaked cap instead of a helmet
 		for m in parts[2].get_children():
@@ -1015,6 +1021,7 @@ func resupply() -> void:
 		kits = maxi(kits, 3)
 	grenades = maxi(grenades, 2)
 	smokes = maxi(smokes, 1)
+	dressings = maxi(dressings, 6 if cls == "medic" else 2)
 	if wid == "rpg":
 		rockets = 3
 
@@ -1190,10 +1197,17 @@ func fall(t: float = -1.0) -> void:
 	lod_wake()
 	state = "down"
 	strength = 0.0
+	fall_t = 0.0
 	down_t = t if t > 0.0 else randf_range(1.2, 2.2)
 	gu = null; ads = false; task = null; flee = null; prone = false; prone_t = false; vault = null; hand_t = null; throw_t = 0.0; route = null; vy = 0.0
 
+var death_style = ""
+var fall_t = 0.0
+
 func go_dead() -> void:
+	# how this one goes down
+	var r = randf()
+	death_style = "slump" if r < 0.25 else ("knees" if r < 0.45 else ("clutch" if r < 0.65 else ("stagger" if r < 0.82 else "spin")))
 	if vehicle != null:
 		dismount(true)
 	if state == "chute":
@@ -1271,6 +1285,9 @@ func start_getup() -> void:
 	set_sleepy(false)
 
 func make_wounded() -> void:
+	if not has_meta("pilot"):
+		bleed = maxf(bleed, 0.45)
+	bandage_t = 0.0
 	state = "wounded"
 	strength = 0.18
 	crawl_target = null
@@ -1393,10 +1410,16 @@ func tick() -> void:
 		_flashlight_tick()
 	callout_cd -= G.DT
 	hurt_t -= G.DT
+	if bleed > 0.0 and state != "dead":
+		Medical.tick(self)
+		if state == "dead":
+			return
 	if burn_t > 0.0 and state != "dead":
 		_burn()
 	match state:
 		"dead":
+			if dead_t < 0.9 and not lod_frozen:
+				_death_motion()
 			dead_t += G.DT
 			if not pooled and dead_t > 1.2:
 				pooled = true
@@ -1416,7 +1439,56 @@ func tick() -> void:
 	if state != "dead" and not hidden_in_vehicle and (not lod_frozen or lod_n % 2 == 0):
 		compute_muzzle()
 
+# the last moments: buckling at the knees, hands going to the wound, staggering back, spinning round
+func _death_motion() -> void:
+	var t = dead_t
+	var up = Vector3.UP
+	match death_style:
+		"knees":
+			if t < 0.35:
+				parts[0].linear_velocity.y = minf(parts[0].linear_velocity.y, -1.6)
+				for i in [8, 10]:
+					parts[i].linear_velocity += Vector3(sin(body_yaw), 0, cos(body_yaw)) * 0.35
+				parts[1].linear_velocity = parts[1].linear_velocity.lerp(Vector3(0, -0.6, 0), 0.15)
+		"clutch":
+			var wp = wound_part if wound_part >= 0 and wound_part < parts.size() else 1
+			var tgt: Vector3 = parts[wp].global_position
+			for i in [4, 6]:
+				var to = tgt - parts[i].global_position
+				if to.length() > 0.12:
+					parts[i].linear_velocity = parts[i].linear_velocity.lerp(to / G.DT * 0.12, 0.4)
+		"stagger":
+			if t < 0.45:
+				var back = -Vector3(sin(body_yaw), 0, cos(body_yaw))
+				for i in [0, 1, 2]:
+					var lv: Vector3 = parts[i].linear_velocity
+					if G.flat(lv).length() < 2.6:
+						parts[i].linear_velocity = lv + back * (0.22 if i == 0 else 0.3)
+		"spin":
+			if t < 0.05:
+				var sp = (1.0 if id % 2 == 0 else -1.0) * randf_range(4.0, 7.0)
+				parts[1].angular_velocity += up * sp
+				parts[0].angular_velocity += up * sp * 0.6
+
+# knocked down next to a wall: put a hand out to catch yourself
+func _brace() -> void:
+	var ch: Vector3 = parts[1].global_position
+	var v: Vector3 = G.flat(parts[1].linear_velocity)
+	if v.length() < 0.6:
+		return
+	var hit = G.ray(ch, ch + v.normalized() * 1.2, G.L_WORLD)
+	if hit.is_empty():
+		return
+	var hp: Vector3 = hit.position + Vector3(0, 0.1, 0)
+	var hand = 6 if v.normalized().dot(Vector3(-cos(body_yaw), 0, sin(body_yaw))) >= 0.0 else 4
+	var to = hp - parts[hand].global_position
+	parts[hand].linear_velocity = parts[hand].linear_velocity.lerp(to / G.DT * 0.25, 0.5)
+	parts[1].linear_velocity *= 0.9
+
 func _tick_down() -> void:
+	fall_t += G.DT
+	if fall_t < 0.9:
+		_brace()
 	supp = maxf(0.0, supp - 0.3 * G.DT)
 	down_t -= G.DT
 	if down_t <= 0.0 and parts[0].linear_velocity.length() < 1.2:
@@ -1466,8 +1538,6 @@ func _tick_getup() -> void:
 			decide_t = 0.0
 
 func _tick_wounded() -> void:
-	if not has_meta("pilot"):
-		hp -= 0.45 * G.DT
 	supp = maxf(0.0, supp - 0.3 * G.DT)
 	if hp <= 0.0:
 		Combat.kill(self, last_attacker, false)
@@ -1536,6 +1606,7 @@ func _tick_wounded() -> void:
 	drive()
 	if heal_t >= 3.0:
 		hp = 50.0
+		bleed = 0.0
 		heal_t = 0.0
 		if medic and is_instance_valid(medic):
 			medic.task = null
@@ -1554,6 +1625,8 @@ func _tick_alive() -> void:
 		limb[r] = minf(1.0, limb[r] + 1.1 * G.DT)
 	if is_player:
 		G.pc.player_update(self)
+		if bandage_t > 0.0:
+			Medical.bandage_tick(self)
 	else:
 		AI.update(self)
 	if state != "alive":

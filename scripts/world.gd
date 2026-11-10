@@ -1018,7 +1018,7 @@ func ruin_col(c) -> void:
 			g["mm"].set_instance_transform(r[1], zero)
 		else:
 			g["xforms"][r[1]] = zero
-	if c.has_meta("bld") and c.lo.y - c.gy < 0.5:
+	if c.has_meta("bld") and c.lo.y - c.gy < 0.5 and not c.has_meta("furn"):
 		c.get_meta("bld")["fallen"] += 1
 	# leave some rubble where it stood
 	if (c.hi.x - c.lo.x) * (c.hi.z - c.lo.z) > 0.6 and c.lo.y - c.gy < 0.5:
@@ -1046,6 +1046,8 @@ func destroy_col(c, depth: int = 0) -> void:
 		var g = r[0]
 		if g["mm"]:
 			g["mm"].set_instance_transform(r[1], zero)
+	if c.has_meta("tree"):
+		_tree_down(c)
 	var size: Vector3 = c.hi - c.lo
 	var n = clampi(roundi(size.x * size.y * size.z * 3.0), 4, 14)
 	for i in range(n):
@@ -1200,6 +1202,20 @@ const ROOFC = [Color(0.5, 0.25, 0.2), Color(0.36, 0.3, 0.27), Color(0.42, 0.22, 
 
 # an intact house: regular windows and a door, a pitched tiled roof and a chimney
 func house(x: float, z: float, w: float, d: float, h: float = 3.4) -> void:
+	# bigger houses get an upstairs
+	if w >= 8.5 and d >= 7.0 and rng.randf() < 0.45 and edit_node == null:
+		var c0u = cols.size()
+		_tower(x, z, w, d)
+		_pitched_roof(x, z, w, d, 6.6, ROOFC[rng.randi() % ROOFC.size()], true)
+		var T = towers[towers.size() - 1]
+		_furnish(x, z, w, d, 0.0, z - d / 2.0 + 2.2)
+		for fr in T["floor_rects"]:
+			if fr[1] - fr[0] > 3.0 and fr[3] - fr[2] > 2.5:
+				_furnish((fr[0] + fr[1]) / 2.0, (fr[2] + fr[3]) / 2.0, fr[1] - fr[0], fr[3] - fr[2], T["floor_y"], -1e9, true)
+				break
+		var bldu = {"x": x, "z": z, "w": w, "d": d, "h": 8.6, "cols": [], "walls0": 0, "fallen": 0}
+		_claim(bldu, c0u)
+		return
 	var color: Color = WALLC[rng.randi() % WALLC.size()]
 	var t = 0.35
 	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h + 1.8, "cols": [], "walls0": 0, "fallen": 0}
@@ -1212,9 +1228,121 @@ func house(x: float, z: float, w: float, d: float, h: float = 3.4) -> void:
 	wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true, d / 2.0 if door_side == 3 else -1.0)
 	flat_plane(x, z, w - 0.4, d - 0.4, Color(0.44, 0.42, 0.38), 0.02)
 	_pitched_roof(x, z, w, d, h, ROOFC[rng.randi() % ROOFC.size()], true)
-	for i in range(3):
-		add_box(x + rnd(-w / 2.0 + 1.0, w / 2.0 - 1.0), 0.0, z + rnd(-d / 2.0 + 1.0, d / 2.0 - 1.0), rnd(0.6, 1.2), rnd(0.5, 0.9), rnd(0.5, 0.9), Color(0.4, 0.3, 0.2), {"collide": false})
+	_furnish(x, z, w, d, 0.0)
 	_claim(bld, c0)
+
+# ---------------------------------------------------------------- furniture
+# tables (which soldiers flip over for cover), chairs, a bed, a wardrobe, a stove and a rug.
+# y0 is the floor height; keep_south is a z below which nothing goes (the stairs)
+var tables: Array = []          # {"c": WCol, "p": Vector3, "y": floor height, "flipped": bool}
+const WOOD = Color(0.45, 0.32, 0.2)
+
+func _furnish(x: float, z: float, w: float, d: float, y0: float, keep_south: float = -1e9, upper: bool = false) -> void:
+	var hw = w / 2.0 - 0.9
+	var hd = d / 2.0 - 0.9
+	if hw < 0.8 or hd < 0.8:
+		return
+	var placed = []
+	var free = func(px: float, pz: float, r: float) -> bool:
+		if pz - r < keep_south:
+			return false
+		for q in placed:
+			if absf(q.x - px) < r + q.y and absf(q.z - pz) < r + q.y:
+				return false
+		return upper or not inside_any(px, pz, r * 0.6, ground_y(px, pz) + y0)
+	# a rug in the middle
+	if not upper:
+		flat_plane(x + rnd(-0.5, 0.5), z + rnd(-0.5, 0.5), minf(2.6, w - 2.0), minf(1.8, d - 2.0), [Color(0.45, 0.2, 0.16), Color(0.25, 0.3, 0.4), Color(0.42, 0.36, 0.22)][rng.randi() % 3], 0.035)
+	# the table and its chairs
+	for k in range(8):
+		var tx = x + rnd(-hw + 0.6, hw - 0.6)
+		var tz = z + rnd(-hd + 0.6, hd - 0.6)
+		if free.call(tx, tz, 1.1):
+			var along_x = rng.randf() < 0.5
+			var tw = 1.5 if along_x else 0.85
+			var td = 0.85 if along_x else 1.5
+			var refs = [add_box(tx, y0 + 0.68, tz, tw, 0.08, td, WOOD, {"collide": false})]
+			for ex in [-1.0, 1.0]:
+				for ez in [-1.0, 1.0]:
+					refs.append(add_box(tx + ex * (tw / 2.0 - 0.08), y0, tz + ez * (td / 2.0 - 0.08), 0.08, 0.68, 0.08, WOOD.darkened(0.2), {"collide": false}))
+			if edit_node == null:
+				var col = add_col(tx, ground_y(tx, tz) + y0, tz, tw, 0.76, td, 1)
+				col.dest = true
+				col.hp = 60.0
+				col.color = WOOD
+				col.vis = refs
+				col.set_meta("furn", true)
+				tables.append({"c": col, "p": Vector3(tx, ground_y(tx, tz) + y0, tz), "y": y0, "flipped": false})
+			placed.append(Vector3(tx, 0, tz) + Vector3(0, 1.1, 0))
+			for e in [-1.0, 1.0]:
+				var cx = tx + (e * (tw / 2.0 + 0.35) if along_x else 0.0)
+				var cz = tz + (0.0 if along_x else e * (td / 2.0 + 0.35))
+				add_box(cx, y0, cz, 0.42, 0.45, 0.42, WOOD.lightened(0.08), {"collide": false})
+				add_box(cx + (e * 0.19 if along_x else 0.0), y0 + 0.45, cz + (0.0 if along_x else e * 0.19), 0.06 if along_x else 0.42, 0.45, 0.42 if along_x else 0.06, WOOD.lightened(0.08), {"collide": false})
+			break
+	# against the walls: a bed, a wardrobe, a stove or a dresser
+	var kinds = ["bed", "wardrobe", "stove", "dresser"]
+	for i in range(kinds.size() - 1, 0, -1):
+		var j = rng.randi() % (i + 1)
+		var tmp = kinds[i]
+		kinds[i] = kinds[j]
+		kinds[j] = tmp
+	var n = 2 if not upper else 1
+	for kind in kinds.slice(0, n + 1):
+		for k in range(10):
+			var side = rng.randi() % 4
+			var px = x + (rnd(-hw, hw) if side < 2 else (-hw if side == 2 else hw))
+			var pz = z + ((-hd if side == 0 else hd) if side < 2 else rnd(-hd, hd))
+			var r = 1.0 if kind == "bed" else 0.6
+			if not free.call(px, pz, r):
+				continue
+			match kind:
+				"bed":
+					var bx = 1.9 if side < 2 else 0.95
+					var bz = 0.95 if side < 2 else 1.9
+					add_box(px, y0, pz, bx, 0.45, bz, Color(0.35, 0.26, 0.18), {"dest": true, "hp": 80.0, "mat": 1})
+					add_box(px, y0 + 0.45, pz, bx - 0.1, 0.12, bz - 0.1, Color(0.78, 0.76, 0.7), {"collide": false})
+				"wardrobe":
+					add_box(px, y0, pz, 0.9 if side < 2 else 0.5, 1.9, 0.5 if side < 2 else 0.9, WOOD.darkened(0.12), {"dest": true, "hp": 90.0, "mat": 1})
+				"stove":
+					add_box(px, y0, pz, 0.7, 0.85, 0.6, Color(0.2, 0.2, 0.21), {"dest": true, "hp": 200.0})
+					add_box(px, y0 + 0.85, pz, 0.14, 1.4, 0.14, Color(0.15, 0.15, 0.15), {"collide": false})
+				"dresser":
+					add_box(px, y0, pz, 1.1 if side < 2 else 0.5, 0.85, 0.5 if side < 2 else 1.1, WOOD.lightened(0.05), {"dest": true, "hp": 70.0, "mat": 1})
+			if edit_node == null and not cols.is_empty():
+				cols[cols.size() - 1].set_meta("furn", true)
+			placed.append(Vector3(px, r, pz))
+			break
+
+# a soldier tips a table onto its side between himself and the threat: instant low cover
+func flip_table(t: Dictionary, threat_dir: Vector3) -> void:
+	if t["flipped"] or not t["c"].alive:
+		return
+	t["flipped"] = true
+	var p: Vector3 = t["p"]
+	ruin_col(t["c"])
+	update_nav_area(p.x - 1.0, p.z - 1.0, p.x + 1.0, p.z + 1.0)
+	var along_x = absf(threat_dir.z) >= absf(threat_dir.x)
+	var off = Vector3(0, 0, signf(threat_dir.z)) * 0.4 if along_x else Vector3(signf(threat_dir.x), 0, 0) * 0.4
+	var q = p + off
+	var yy = t["y"]
+	build_now(func():
+		add_box(q.x, yy, q.z, 1.5 if along_x else 0.1, 0.85, 0.1 if along_x else 1.5, WOOD, {"dest": true, "hp": 70.0, "mat": 1})
+		for e in [-1.0, 1.0]:
+			var lp = q - off * 1.6 + (Vector3(e * 0.6, 0, 0) if along_x else Vector3(0, 0, e * 0.6))
+			add_box(lp.x, yy + 0.35, lp.z, 0.08 if along_x else 0.6, 0.08, 0.6 if along_x else 0.08, WOOD.darkened(0.2), {"collide": false}))
+	G.audio.kick(q)
+
+func table_near(p: Vector3, r: float):
+	var best = null
+	var bd = r
+	for t in tables:
+		if not t["flipped"] and t["c"].alive and absf(t["p"].y - p.y) < 1.5:
+			var d = G.dist2d(t["p"], p)
+			if d < bd:
+				bd = d
+				best = t
+	return best
 
 # a pitched roof over a box of walls; it rests on the walls and falls in when they go
 func _pitched_roof(x: float, z: float, w: float, d: float, h: float, rc: Color, chimney: bool, rh: float = -1.0) -> void:
@@ -1408,14 +1536,14 @@ func _claim(bld: Dictionary, c0: int) -> void:
 		if c.dest:
 			bld["cols"].append(c)
 			c.set_meta("bld", bld)
-			if c.lo.y - c.gy < 0.5:
+			if c.lo.y - c.gy < 0.5 and not c.has_meta("furn"):
 				bld["walls0"] += 1
 
 func _collapse_check(c) -> void:
 	if not c.has_meta("bld"):
 		return
 	var bld = c.get_meta("bld")
-	if c.lo.y - c.gy < 0.5:
+	if c.lo.y - c.gy < 0.5 and not c.has_meta("furn"):
 		bld["fallen"] += 1
 	if bld.get("down", 0) >= 2 or bld["walls0"] == 0:
 		return
@@ -1610,16 +1738,118 @@ func tank(x: float, z: float) -> void:
 func dead_tree(x: float, z: float) -> void:
 	var h = rnd(4.0, 7.0)
 	var c = Color(0.24, 0.2, 0.16)
+	var tc = add_col(x, ground_y(x, z), z, 0.4, h, 0.4, 1)
+	piece_start()
 	add_box(x, 0.0, z, 0.32, h, 0.32, c, {"rz": rnd(-0.08, 0.08), "collide": false})
 	for i in range(4):
 		add_box(x + rnd(-0.6, 0.6), h * rnd(0.5, 0.9), z + rnd(-0.6, 0.6), 0.12, rnd(1.0, 2.2), 0.12, c, {"rz": rnd(-1, 1), "rx": rnd(-1, 1), "collide": false})
-	add_col(x, ground_y(x, z), z, 0.4, h, 0.4)
+	piece_end(tc, c, 180.0)
+	tc.set_meta("tree", h)
+	tc.set_meta("dead_tree", true)
+
+# a wooden fence: posts and two rails; low enough to vault, flimsy enough to drive through
+func fence_row(x: float, z: float, ln: float, along_x: bool) -> void:
+	var fc = Color(0.5, 0.42, 0.3)
+	var c = add_col(x, ground_y(x, z), z, ln if along_x else 0.14, 0.95, 0.14 if along_x else ln, 1)
+	piece_start()
+	var n = maxi(2, int(ln / 1.3))
+	for i in range(n + 1):
+		var o = -ln / 2.0 + i * ln / n
+		add_box(x + o if along_x else x, 0.0, z if along_x else z + o, 0.1, 1.0, 0.1, fc.darkened(0.15), {"collide": false})
+	for yy in [0.35, 0.75]:
+		add_box(x, yy, z, ln if along_x else 0.05, 0.08, 0.05 if along_x else ln, fc, {"collide": false})
+	piece_end(c, fc, 50.0)
+	c.set_meta("fence", true)
+
+# a shell crater: a dark scooped bowl with a ring of thrown-up earth, and the rim is cover for anyone lying in it
+var craters: Array = []
+func blast_crater(p: Vector3, r: float) -> void:
+	if in_water(p.x, p.z) or inside_any(p.x, p.z, 0.5):
+		return
+	var gy = ground_y(p.x, p.z)
+	if absf(p.y - gy) > 1.2:
+		return
+	var node = Node3D.new()
+	geo_root.add_child(node)
+	node.position = Vector3(p.x, gy, p.z)
+	var bowl = MeshInstance3D.new()
+	var cm = CylinderMesh.new()
+	cm.top_radius = r
+	cm.bottom_radius = r * 0.45
+	cm.height = 0.12
+	bowl.mesh = cm
+	bowl.material_override = _crater_mat(Color(0.2, 0.17, 0.13))
+	bowl.position = Vector3(0, 0.02, 0)
+	node.add_child(bowl)
+	var n = 9
+	for k in range(n):
+		var a = k * TAU / n + randf_range(-0.2, 0.2)
+		var lump = MeshInstance3D.new()
+		lump.mesh = shape_mesh("blob")
+		lump.material_override = _crater_mat(Color(0.36, 0.3, 0.22).lerp(Color(0.3, 0.26, 0.2), randf()))
+		var s = randf_range(0.7, 1.1) * r * 0.55
+		lump.scale = Vector3(s * 1.4, s * 0.45, s)
+		lump.rotation.y = -a
+		lump.position = Vector3(cos(a) * r, 0.0, sin(a) * r)
+		node.add_child(lump)
+	# lying in the bowl, the rim keeps you out of sight
+	var cps = []
+	for k in range(4):
+		var a2 = k * TAU / 4.0 + randf() * 0.5
+		var d = Vector3(cos(a2), 0, sin(a2))
+		var cp = add_cp(p.x + d.x * r * 0.55, p.z + d.z * r * 0.55, -d, Vector3(-d.z, 0, d.x), "low", null)
+		if cp != null:
+			cps.append(cp)
+	craters.append({"n": node, "cps": cps})
+	if craters.size() > 50:
+		var old = craters.pop_front()
+		if is_instance_valid(old["n"]):
+			old["n"].queue_free()
+		for cp in old["cps"]:
+			cover.erase(cp)
+			var kk = _ckey(cp.p.x, cp.p.z)
+			if cover_grid.has(kk):
+				cover_grid[kk].erase(cp)
+
+static var crater_mats = {}
+func _crater_mat(c: Color) -> StandardMaterial3D:
+	var k = c.to_html()
+	if not crater_mats.has(k):
+		var m = StandardMaterial3D.new()
+		m.albedo_color = c
+		m.roughness = 1.0
+		crater_mats[k] = m
+	return crater_mats[k]
+
+# what's left when a tree comes down: a splintered stump, and the trunk lying where it fell
+func _tree_down(c) -> void:
+	var x = (c.lo.x + c.hi.x) * 0.5
+	var z = (c.lo.z + c.hi.z) * 0.5
+	var h: float = c.get_meta("tree")
+	var dir: Vector3 = c.get_meta("fall") if c.has_meta("fall") else Vector3(randf_range(-1, 1), 0, randf_range(-1, 1)).normalized()
+	var dead = c.has_meta("dead_tree")
+	var trunk = Color(0.24, 0.2, 0.16) if dead else Color(0.29, 0.23, 0.16)
+	var sh = randf_range(0.35, 0.9)
+	build_now(func():
+		add_box(x, 0.0, z, 0.46, sh, 0.46, trunk.darkened(0.15), {"collide": false, "shape": "cyl"})
+		for k in range(4):
+			var a = k * PI / 2.0 + randf_range(-0.4, 0.4)
+			add_box(x + cos(a) * 0.13, sh - 0.05, z + sin(a) * 0.13, 0.08, randf_range(0.2, 0.45), 0.08, Color(0.62, 0.52, 0.36), {"collide": false, "rz": cos(a) * 0.35, "rx": -sin(a) * 0.35})
+		if randf() < 0.85:
+			var L = maxf(1.5, h - sh)
+			var mid = Vector3(x, 0, z) + dir * (L * 0.5 + 0.3)
+			add_box(mid.x, 0.05, mid.z, 0.38, 0.38, L, trunk, {"collide": false, "ry": atan2(dir.x, dir.z)})
+			if not dead:
+				var tip = Vector3(x, 0, z) + dir * (L + 0.8)
+				for k in range(3):
+					add_box(tip.x + randf_range(-0.9, 0.9), 0.0, tip.z + randf_range(-0.9, 0.9), randf_range(1.4, 2.2), randf_range(1.0, 1.5), randf_range(1.4, 2.2), Color(0.27, 0.34, 0.18), {"collide": false, "shape": "blob", "ry": randf() * 3.0}))
 
 func live_tree(x: float, z: float) -> void:
 	var h = rnd(3.0, 5.0)
 	var trunk = Color(0.29, 0.23, 0.16)
+	var tc = add_col(x, ground_y(x, z), z, 0.45, h, 0.45, 1)
+	piece_start()
 	add_box(x, 0.0, z, 0.42, h, 0.42, trunk, {"collide": false, "shape": "cyl"})
-	add_col(x, ground_y(x, z), z, 0.45, h, 0.45)
 	# a couple of branches
 	for i in range(2):
 		var a = rnd(0, TAU)
@@ -1631,6 +1861,8 @@ func live_tree(x: float, z: float) -> void:
 		var a = float(i) / nb * TAU + rnd(-0.4, 0.4)
 		var r = 0.0 if i == 0 else rnd(0.8, 1.4)
 		add_box(x + cos(a) * r, h - 1.1 + rnd(0.0, 1.2) - (0.0 if i == 0 else 0.4), z + sin(a) * r, s, s * 0.85, s, leaf[i % leaf.size()], {"ry": rnd(0, 3), "collide": false, "shape": "blob"})
+	piece_end(tc, trunk, 240.0)
+	tc.set_meta("tree", h)
 
 # a rounded bush clump (visual only)
 func bush(x: float, z: float, sc: float = 1.0) -> void:
@@ -2136,6 +2368,13 @@ func _village_build(placed: Array, towers_: int) -> void:
 			big_building(q[0], q[1], q[2], q[3])
 		elif rng.randf() < 0.45:
 			house(q[0], q[1], q[2], q[3])
+			# a garden fence along one side
+			if rng.randf() < 0.6:
+				var side = 1.0 if rng.randf() < 0.5 else -1.0
+				if rng.randf() < 0.5:
+					fence_row(q[0], q[1] + side * (q[3] / 2.0 + 2.2), q[2] + 2.0, true)
+				else:
+					fence_row(q[0] + side * (q[2] / 2.0 + 2.2), q[1], q[3] + 2.0, false)
 		else:
 			building(q[0], q[1], q[2], q[3], rnd(3.5, 6.0))
 		i += 1
@@ -2381,7 +2620,7 @@ func begin_edit(m: Dictionary) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
+	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]
 	paint = m.get("paint", PackedByteArray())

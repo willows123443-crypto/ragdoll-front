@@ -27,10 +27,70 @@ static func reset() -> void:
 		points.append(10)
 		ai_t.append(randf_range(20.0, 40.0))
 	trickle = 0.0
+	missions = []
 	for p in planes:
 		if is_instance_valid(p["node"]):
 			p["node"].queue_free()
 	planes = []
+
+# ---------------------------------------------------------------- fire missions
+# The guns don't hit first time: a ranging round lands off target, the observer sends a correction,
+# a second round lands closer, and then the battery fires for effect.
+static var missions: Array = []
+
+static func fire_mission(team: int, target: Vector3, caller, shells: int, spread: float, power: float) -> void:
+	var a = randf() * TAU
+	var err = Vector3(cos(a), 0, sin(a)) * randf_range(28.0, 45.0)
+	missions.append({"team": team, "target": target, "caller": caller, "shells": shells, "spread": spread, "power": power,
+		"stage": 0, "t": 1.5, "err": err, "from": caller.pos if caller != null and is_instance_valid(caller) else G.world.spawn[team]})
+	G.ui.radio(team, "Fire mission, grid %s. Ranging round on the way" % AI.grid_ref(target))
+
+static func _step_missions(dt: float) -> void:
+	for i in range(missions.size() - 1, -1, -1):
+		var m = missions[i]
+		m["t"] -= dt
+		if m["t"] > 0.0:
+			continue
+		var c = m["caller"]
+		var has_eyes = c != null and is_instance_valid(c) and c.state == "alive"
+		# the observer keeps the target up to date while he can see what's there
+		if has_eyes and c.vis_t != null and is_instance_valid(c.vis_t) and G.dist2d(c.vis_t.pos, m["target"]) < 30.0:
+			m["target"] = c.vis_t.pos
+		var tgt: Vector3 = m["target"]
+		match m["stage"]:
+			0:
+				# ranging round
+				var p = tgt + m["err"]
+				Combat.shell_at(p, 1.5, 3.5, c if has_eyes else null, m["power"])
+				var los = G.flat(tgt - m["from"]).normalized()
+				if los.length_squared() < 0.5:
+					los = Vector3(1, 0, 0)
+				var miss = p - tgt
+				var rng = -miss.dot(los)
+				var lat = Vector3(los.z, 0, -los.x).dot(miss)
+				m["corr"] = "%s %d, %s %d" % ["add" if rng > 0.0 else "drop", absi(roundi(rng / 5.0) * 5), "left" if lat > 0.0 else "right", absi(roundi(lat / 5.0) * 5)]
+				m["stage"] = 1
+				m["t"] = 6.5
+			1:
+				# the observer calls the correction
+				if has_eyes:
+					G.fx.callout(c, G.pick(["Adjust fire, %s!" % m["corr"], "Correction: %s, over!" % m["corr"]]))
+				G.ui.radio(m["team"], "Adjust fire: %s. Next round on the way" % m["corr"])
+				m["err"] = m["err"] * (0.3 if has_eyes else 0.55) + Vector3(randf_range(-4, 4), 0, randf_range(-4, 4))
+				m["stage"] = 2
+				m["t"] = 2.5
+			2:
+				Combat.shell_at(tgt + m["err"], 1.5, 3.5, c if has_eyes else null, m["power"])
+				m["err"] = m["err"] * 0.15
+				m["stage"] = 3
+				m["t"] = 6.5
+			3:
+				if has_eyes:
+					G.fx.callout(c, G.pick(["On target! Fire for effect!", "Good hit, fire for effect!"]))
+				G.ui.radio(m["team"], "Fire for effect on %s!" % AI.grid_ref(tgt))
+				for k in range(m["shells"]):
+					Combat.shell_at(tgt + m["err"], m["spread"], 3.0 + k * randf_range(0.4, 0.9), c if has_eyes else null, m["power"])
+				missions.remove_at(i)
 
 static func earn(team: int, n: int) -> void:
 	if team >= 0 and team < points.size():
@@ -38,6 +98,7 @@ static func earn(team: int, n: int) -> void:
 
 static func step(dt: float) -> void:
 	_step_planes(dt)
+	_step_missions(dt)
 	if G.over or points.is_empty():
 		return
 	trickle += dt
@@ -109,9 +170,7 @@ static func call_in(team: int, what: String, target: Vector3) -> bool:
 	points[team] -= COSTS[what]
 	match what:
 		"artillery":
-			for i in range(8):
-				Combat.shell_at(target, 12.0, 5.0 + i * randf_range(0.4, 0.9), null, 1.6)
-			G.ui.radio(team, "Artillery barrage on %s, splash in five" % AI.grid_ref(target))
+			fire_mission(team, target, null, 8, 12.0, 1.6)
 		"airstrike":
 			_air_strike(team, target)
 			G.ui.radio(team, "Air strike inbound on %s" % AI.grid_ref(target))

@@ -84,11 +84,11 @@ static func reset() -> void:
 			pt["prog"] = 1.0
 	phase = 0
 	hold_t = 150.0
-	supply = float(G.limit) * 1.2
+	supply = float(G.limit) * 1.2 if G.limit < 100000 else 160.0
 	siege_t = 480.0
 	sab_targets = []
 	mode_t = 0.0
-	tickets = [G.limit, G.limit]
+	tickets = [G.limit, G.limit] if G.limit < 100000 else [200, 200]
 	bleed_t = 0.0
 	wave = 0
 	wave_t = 8.0

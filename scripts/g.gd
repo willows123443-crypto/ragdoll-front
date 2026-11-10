@@ -114,6 +114,11 @@ func team_color(t: int) -> Color:
 	return TEAM_BAND[t] if t >= 0 and t < TEAM_BAND.size() else Color(0.85, 0.85, 0.85)
 
 # saved between sessions (in the browser this lives in the page's local storage)
+# what a mode is played to when nobody picked a number (modes that end some other way get no limit)
+func default_limit(mode: String) -> int:
+	return {"deathmatch": 50, "capture": 200, "commander": 200, "koth": 120, "frontline": 100, "assault": 100,
+		"breakthrough": 100, "siege": 100}.get(mode, 999999)
+
 func save_prefs() -> void:
 	var cf = ConfigFile.new()
 	for k in settings:

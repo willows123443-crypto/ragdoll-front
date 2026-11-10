@@ -287,6 +287,32 @@ func explosion(pos: Vector3, power: float) -> void:
 	f["l"].omni_range = 22.0
 	f["t"] = 0.12
 	decal(pos, randf_range(2.5, 3.5) * power, true)
+	# the dust hangs about long after the bang
+	var haze = _one_shot_smoke(pos + Vector3(0, 0.8, 0), Color(0.55, 0.5, 0.42, 0.55), 7, 14.0, 3.0 * power, 11.0 * power, false)
+	haze.gravity = Vector3(0, 0.04, 0)
+	haze.initial_velocity_max = 0.8
+	haze.spread = 90.0
+	# a quick shockwave ring across the ground
+	if power >= 0.9:
+		var ring = MeshInstance3D.new()
+		var tm = TorusMesh.new()
+		tm.inner_radius = 0.85
+		tm.outer_radius = 1.0
+		ring.mesh = tm
+		var rm = StandardMaterial3D.new()
+		rm.albedo_color = Color(0.9, 0.85, 0.7, 0.55)
+		rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		ring.material_override = rm
+		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(ring)
+		ring.global_position = pos + Vector3(0, 0.3, 0)
+		ring.scale = Vector3(0.5, 0.15, 0.5)
+		var tw = create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(ring, "scale", Vector3(9.0 * power, 0.4, 9.0 * power), 0.32)
+		tw.tween_property(rm, "albedo_color", Color(0.9, 0.85, 0.7, 0.0), 0.32)
+		tw.chain().tween_callback(ring.queue_free)
 
 func dust_cloud(pos: Vector3, size: float) -> void:
 	var d = _one_shot_smoke(pos, Color(0.62, 0.58, 0.5, 0.7), 8, 3.0, 1.2 * clampf(size, 1.0, 3.0), 4.5, false)
@@ -438,13 +464,18 @@ func step(dt: float) -> void:
 	for i in range(debris_list.size() - 1, -1, -1):
 		var d = debris_list[i]
 		d["t"] -= dt
+		d["age"] = d.get("age", 0.0) + dt
+		if d["age"] > 7.0 and not d.get("still", false) and is_instance_valid(d["b"]):
+			d["still"] = true
+			d["b"].freeze = true
+			d["b"].collision_mask = 0
 		if d["t"] <= 0.0 or not is_instance_valid(d["b"]):
 			if is_instance_valid(d["b"]):
 				d["b"].queue_free()
 			debris_list.remove_at(i)
 
 func debris(pos: Vector3, vel: Vector3, size: float, col: Color) -> void:
-	if debris_list.size() > 140:
+	if debris_list.size() > 260:
 		var old = debris_list.pop_front()
 		if is_instance_valid(old["b"]):
 			old["b"].queue_free()
@@ -471,7 +502,7 @@ func debris(pos: Vector3, vel: Vector3, size: float, col: Color) -> void:
 	b.rotation = Vector3(randf() * 6, randf() * 6, randf() * 6)
 	b.linear_velocity = vel
 	b.angular_velocity = Vector3(randf_range(-6, 6), randf_range(-6, 6), randf_range(-6, 6))
-	debris_list.append({"b": b, "t": randf_range(25.0, 40.0)})
+	debris_list.append({"b": b, "t": randf_range(150.0, 240.0)})
 
 func clear_all() -> void:
 	for t in tracers:

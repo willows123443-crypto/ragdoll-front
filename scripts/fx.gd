@@ -558,6 +558,7 @@ func callout(s, text: String) -> void:
 	if not G.settings["callouts"] or s.callout_cd > 0.0 or s.zombie or Fog.hidden(s):
 		return
 	s.callout_cd = randf_range(4.0, 7.0)
+	text = Voice.flavour(s, text)
 	if callouts.size() >= 8:
 		var o = callouts.pop_front()
 		if is_instance_valid(o["l"]):

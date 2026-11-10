@@ -405,10 +405,25 @@ func bark(s, text: String) -> void:
 	if DisplayServer.tts_is_speaking():
 		return
 	bark_t = randf_range(1.4, 2.2)
-	var voice = tts_voices[(s.id * 7) % tts_voices.size()]
+	# each side sounds different: its own pick of voices, pitch range and pace
+	var st = Voice.style(s)
+	var n = tts_voices.size()
+	var vi = (s.id * 7) % n
+	if n >= 3:
+		var third = maxi(1, n / 3)
+		vi = (s.id * 7) % third + (0 if st == "alpha" else (third if st == "bravo" else mini(2 * third, n - 1)))
+		vi = mini(vi, n - 1)
+	var voice = tts_voices[vi]
 	var vol = int(clampf(100.0 * G.settings["volume"] * (1.0 - minf(d, 40.0) / 55.0), 10.0, 100.0))
-	var pitch = 0.82 + fmod(s.seed_, 1.0) * 0.36
+	var f = fmod(s.seed_, 1.0)
+	var pitch = 0.82 + f * 0.36
 	var rate = 1.2 if text.ends_with("!") else 1.05
+	if st == "mil":
+		pitch = 0.62 + f * 0.26
+		rate += 0.18
+	elif st == "bravo":
+		pitch = 0.95 + f * 0.3
+		rate -= 0.08
 	DisplayServer.tts_speak(text, voice, vol, pitch, rate)
 
 # the dead: a voiced moan through a throaty filter, wobbling in pitch, with breath noise

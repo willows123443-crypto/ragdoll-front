@@ -924,11 +924,20 @@ func destroy(attacker) -> void:
 				G.ui.radio(t, "Enemy command truck destroyed")
 		if team < Commander.timers.size():
 			Commander.timers[team] = maxf(Commander.timers[team], 30.0)
+	# shot down with height to spare: the crew bail out and come down under parachutes
+	var bail = spec.get("plane", false) and alt > 22.0
 	for i in range(seats.size()):
 		var s = seats[i]
+		if s != null and is_instance_valid(s) and bail and randf() < 0.8:
+			s.dismount(true)
+			s.start_chute(pos + Vector3(randf_range(-2, 2), -2.5, randf_range(-2, 2)))
+			s.vel = G.flat(air_vel) * 0.12
+			s.hp = minf(s.hp, randf_range(55.0, 100.0))
+			G.fx.callout(s, G.pick(["Bailing out!", "I'm hit, I'm getting out!", "Eject! Eject!", "Going over the side!"]))
+			continue
 		if s != null and is_instance_valid(s):
 			s.dismount(true)
-			if randf() < (0.8 if kind == "tank" else 0.5):
+			if bail or randf() < (0.8 if kind == "tank" else 0.5):
 				Combat.kill(s, attacker, false)
 			else:
 				s.hp = minf(s.hp, 30.0)
@@ -1143,6 +1152,9 @@ func _ai_drive(dt: float) -> Array:
 						ps2.dismount(false)
 				return [0.0, 0.0]
 		if G.dist2d(target, pos) < 8.0:
+			return [0.0, 0.0]
+		# armour doesn't drive into a built-up street on its own: wait for the infantry
+		if spec["tracked"] and enemy == null and not Ops.tank_may_enter(self):
 			return [0.0, 0.0]
 	_set_goal(target)
 	# follow the path with some look-ahead

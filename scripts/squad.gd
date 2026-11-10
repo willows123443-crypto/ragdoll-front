@@ -28,6 +28,7 @@ static func step(dt: float) -> void:
 		_suppress(q)
 		_smoke_cross(q)
 		_fall_back(q)
+		Tactics.squad(q)
 		release_fallback(q)
 
 static func leader_of(q):

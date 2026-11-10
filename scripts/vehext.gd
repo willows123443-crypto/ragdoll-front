@@ -21,14 +21,13 @@ static func plane_step(v, dt: float) -> void:
 			v.set_meta("crashed", true)
 			v.pos.y = gy + 0.3
 			v.air_vel = Vector3.ZERO
-			G.fx.explosion(v.pos + Vector3(0, 1, 0), 2.0)
-			G.audio.boom(v.pos)
-			G.world.damage_area(v.pos, 6.0, 1.2)
+			Combat.explode(v.pos + Vector3(0, 1, 0), null, 1.4)
 		if v.has_meta("crashed"):
 			v.pos.y = gy + 0.3
 			v.air_vel = Vector3.ZERO
 		v.alt = maxf(0.0, v.pos.y - gy)
 		return
+	damage_trail(v)
 	var want: Vector3 = cur
 	var thr = 0.75
 	var fire = false
@@ -52,6 +51,14 @@ static func plane_step(v, dt: float) -> void:
 	else:
 		want = (cur + Vector3(0, -0.25, 0)).normalized()
 		thr = 0.2
+	# keep the fight low enough to see from the battlefield: over the ceiling, nose down into a turn
+	if v.alt > 190.0 and want.y > -0.2:
+		var fw = G.flat(want)
+		if fw.length_squared() < 0.01:
+			fw = G.flat(cur)
+		if fw.length_squared() < 0.01:
+			fw = Vector3(1, 0, 0)
+		want = (fw.normalized() + Vector3(0, -0.25 - clampf((v.alt - 190.0) / 60.0, 0.0, 1.0), 0)).normalized()
 	# never fly into the ground: look a couple of seconds ahead along the current heading
 	var spd0: float = v.get_meta("spd", v.spec["speed"])
 	var ahead = v.pos + cur * spd0 * 1.8
@@ -164,21 +171,47 @@ static func _plane_ai(v, dt: float, cur: Vector3) -> Array:
 	var pull: float = v.get_meta("pull_t", 0.0)
 	if pull > 0.0:
 		v.set_meta("pull_t", pull - dt)
-		return [(G.flat(cur).normalized() + Vector3(0, 0.75, 0)).normalized(), 1.0, false, false]
-	# fighters go after enemy aircraft first
+		# fighters break into a climbing turn to one side; bombers just pull out of the dive
+		var fc = G.flat(cur).normalized()
+		if v.kind == "fighter":
+			fc = fc.rotated(Vector3.UP, v.get_meta("pull_side", 1.0) * 1.1)
+		return [(fc + Vector3(0, 0.75 if v.kind != "fighter" else 0.35, 0)).normalized(), 1.0, false, false]
+	# someone on my tail: break hard to one side, then reverse, until he overshoots
+	var ev = _evade(v, dt, cur)
+	if ev != null:
+		return ev
+	# fighters go after enemy aircraft first: other planes before helicopters, and the one I'm already chasing
 	if v.kind == "fighter":
 		var best = null
-		var bd = 600.0
+		var bs = 1e9
+		var cur_t = v.get_meta("dog_t") if v.has_meta("dog_t") else null
 		for o in G.vehicles:
 			if o.team != v.team and not o.dead and o.spec.get("air", false) and o.alt > 4.0:
 				var dd = o.pos.distance_to(v.pos)
-				if dd < bd:
-					bd = dd
+				if dd > 650.0:
+					continue
+				var sc = dd * (1.0 if o.spec.get("plane", false) else 1.6)
+				if o == cur_t:
+					sc *= 0.6
+				# easier shot if he's in front of me
+				sc *= 1.3 - 0.5 * cur.dot((o.pos - v.pos).normalized())
+				if sc < bs:
+					bs = sc
 					best = o
 		if best != null:
+			v.set_meta("dog_t", best)
+			var bd = best.pos.distance_to(v.pos)
 			var lead: Vector3 = best.pos + best.air_vel * (bd / (v.get_meta("spd", 40.0) + 80.0))
 			var w = (lead - v.pos).normalized()
-			return [w, 1.0, cur.angle_to(w) < 0.07 and bd < 220.0, false]
+			# overshooting a slower target head-on: pull up and come round again instead of ramming
+			if bd < 25.0 and cur.dot(best.air_vel.normalized()) < 0.0:
+				v.set_meta("pull_t", randf_range(1.2, 2.2))
+				v.set_meta("pull_side", 1.0 if randf() < 0.5 else -1.0)
+			if bd < 60.0 and randf() < 0.01:
+				G.fx.callout(v.driver(), G.pick(["On his six!", "I've got him!", "Guns, guns, guns!", "Stay on him!"]))
+			return [w, 1.0 if bd > 70.0 else 0.6, cur.angle_to(w) < 0.08 and bd < 230.0, false]
+		elif v.has_meta("dog_t"):
+			v.remove_meta("dog_t")
 	# ground attack: armour first, then dug-in positions, then groups of soldiers
 	var g = _ground_target(v)
 	if g == null:
@@ -194,6 +227,98 @@ static func _plane_ai(v, dt: float, cur: Vector3) -> Array:
 		v.set_meta("pull_t", 3.0)
 		return [w2, 1.0, false, aligned and v.kind == "bomber"]
 	return [w2, 0.85, aligned and flat_d < 150.0 and v.kind == "fighter", aligned and v.kind == "fighter" and flat_d < 60.0]
+
+# an enemy fighter sitting behind me and pointing at me: jink. The break lasts a couple of seconds,
+# alternates sides and mixes in climbs and dives, so a chasing fighter has to work to stay on it.
+static func _evade(v, dt: float, cur: Vector3):
+	var et: float = v.get_meta("ev_t", 0.0)
+	if et > 0.0:
+		v.set_meta("ev_t", et - dt)
+		var right = cur.cross(Vector3.UP).normalized()
+		var side: float = v.get_meta("ev_side", 1.0)
+		var vert: float = v.get_meta("ev_v", 0.0)
+		if v.alt < 45.0:
+			vert = absf(vert) + 0.2
+		return [(cur + right * side * 1.6 + Vector3(0, vert, 0)).normalized(), 1.0, false, false]
+	v.set_meta("ev_chk", v.get_meta("ev_chk", 0.0) - dt)
+	if v.get_meta("ev_chk", 0.0) > 0.0:
+		return null
+	v.set_meta("ev_chk", 0.4)
+	for o in G.vehicles:
+		if o.team == v.team or o.dead or o.kind != "fighter" or o.alt < 4.0:
+			continue
+		var to_me = v.pos - o.pos
+		var d = to_me.length()
+		if d > 260.0 or d < 1.0:
+			continue
+		var od: Vector3 = o.get_meta("dir", o.forward())
+		# he's behind me and his nose is on me
+		if od.dot(to_me / d) > 0.93 and cur.dot(to_me / d) > 0.3:
+			v.set_meta("ev_t", randf_range(1.6, 2.8))
+			v.set_meta("ev_side", -v.get_meta("ev_side", 1.0) if randf() < 0.7 else v.get_meta("ev_side", 1.0))
+			v.set_meta("ev_v", randf_range(-0.5, 0.6))
+			if randf() < 0.3:
+				G.fx.callout(v.driver(), G.pick(["He's on my tail!", "Breaking left!", "Breaking right!", "Get him off me!"]))
+			return null
+	return null
+
+# a damaged plane trails smoke: grey from the engine first, then thick black with flames before it goes
+static func damage_trail(v) -> void:
+	var f = v.hp / v.spec["hp"]
+	var stage: int = v.get_meta("trail", 0)
+	if f < 0.7 and stage < 1:
+		v.set_meta("trail", 1)
+		_trail(v, Color(0.62, 0.62, 0.6, 0.55), 0.7, 3.0)
+	if f < 0.35 and stage < 2:
+		v.set_meta("trail", 2)
+		_trail(v, Color(0.1, 0.09, 0.08, 0.8), 1.2, 5.0)
+		var fl = OmniLight3D.new()
+		fl.light_color = Color(1.0, 0.55, 0.2)
+		fl.light_energy = 2.0
+		fl.omni_range = 6.0
+		v.add_child(fl)
+		fl.position = Vector3(0, 0.3, 1.5)
+		var fire = CPUParticles3D.new()
+		fire.amount = 24
+		fire.lifetime = 0.35
+		fire.direction = Vector3(0, 0.3, -1)
+		fire.spread = 15.0
+		fire.initial_velocity_min = 2.0
+		fire.initial_velocity_max = 4.0
+		fire.gravity = Vector3.ZERO
+		fire.mesh = QuadMesh.new()
+		fire.material_override = G.fx.billboard_mat(Color(1, 1, 1, 1), true)
+		fire.color = Color(1.0, 0.6, 0.15, 0.9)
+		fire.scale_amount_min = 0.5
+		fire.scale_amount_max = 1.0
+		fire.local_coords = true
+		fire.preprocess = fire.lifetime
+		v.add_child(fire)
+		fire.position = Vector3(0, 0.3, 1.2)
+		fire.emitting = true
+
+static func _trail(v, c: Color, size: float, life: float) -> void:
+	var p = CPUParticles3D.new()
+	p.amount = 60
+	p.lifetime = life
+	p.direction = Vector3(0, 1, 0)
+	p.spread = 30.0
+	p.initial_velocity_min = 0.2
+	p.initial_velocity_max = 0.8
+	p.gravity = Vector3(0, 0.3, 0)
+	p.mesh = QuadMesh.new()
+	p.material_override = G.fx.billboard_mat(Color(1, 1, 1, 1), false)
+	p.color = c
+	p.color_ramp = G.fx._fade_ramp(c)
+	p.scale_amount_min = size
+	p.scale_amount_max = size * 1.5
+	p.scale_amount_curve = G.fx._grow_curve(1.0, 4.0)
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	p.local_coords = false
+	p.preprocess = life
+	v.add_child(p)
+	p.position = Vector3(0.0, 0.4, -1.0 if v.kind == "bomber" else 0.6)
+	p.emitting = true
 
 static func _ground_target(v):
 	var best = null

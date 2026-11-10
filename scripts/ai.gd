@@ -281,6 +281,7 @@ static func find_cover(s, threat: Vector3, mode: String):
 				sc -= 6.0
 			sc += -3.0 if hide else 7.0
 		sc += absf(de - ideal) * 0.12
+		sc += Tactics.danger_at(cp.p, s.team) * 4.0      # not where our men keep getting killed
 		sc += float((i * 7919 + s.id * 31) % 100) / 50.0
 		cands.append([sc, cp])
 	cands.sort_custom(func(a, b): return a[0] < b[0])
@@ -809,6 +810,8 @@ static func _initiative(s, known: bool, threat: Vector3, dT: float) -> bool:
 
 static func decide(s) -> void:
 	s.decide_t = randf_range(1.6, 2.6)
+	if s.task == "stretcher" and Stretcher.busy(s):
+		return
 	if s.task == "flee" or s.route != null or s.task == "board":
 		return
 	# routed: keep running to the rear, then cower in cover until morale comes back
@@ -1019,7 +1022,8 @@ static func decide(s) -> void:
 			go_to(s, C + Vector3(randf_range(-5, 5), 0, randf_range(-5, 5)), 4.6)
 			return
 	# marksmen and some gunners head for upstairs windows
-	if s.cover == null and known and (W["id"] == "sniper" or (W["id"] == "lmg" and s.id % 3 == 0)):
+	# marksmen, some gunners and the odd rifleman go up high where they can see a long way
+	if s.cover == null and known and (W["id"] == "sniper" or (W["id"] == "lmg" and s.id % 3 == 0) or (W["id"] == "rifle" and s.id % 7 == 0)):
 		var post = find_post(s, threat)
 		if post != null:
 			take_post(s, post)
@@ -1175,7 +1179,11 @@ static func update(s) -> void:
 			s.flee = null
 			s.decide_t = 0.0
 	s.hand_t = null
+	s.hands_t = null
 	s.tool_mode = ""
+	if s.task == "stretcher" and Stretcher.busy(s):
+		Stretcher.drive(s)
+		return
 	if s.task == "fetch":
 		fetch_tick(s)
 	if ClassAI.busy(s):
@@ -1216,6 +1224,13 @@ static func update(s) -> void:
 			s.ready_ = false
 			s.crouch_t = 0.5
 			s.hand_t = wp
+			# both hands under his arms
+			var p3: Vector3 = w.parts[3].global_position
+			var p5: Vector3 = w.parts[5].global_position
+			if p3.distance_squared_to(s.hand_l()) <= p5.distance_squared_to(s.hand_l()):
+				s.hands_t = [p3, p5]
+			else:
+				s.hands_t = [p5, p3]
 		elif G.dist2d(w.pos, s.pos) > 1.1:
 			if s.move_target == null or s.move_target.distance_to(w.pos) > 1.0:
 				go_to(s, w.pos, 5.0)
@@ -1224,6 +1239,9 @@ static func update(s) -> void:
 			var exposed = s.has_seen and G.sim_time - s.seen_t < 8.0 and not G.blocked(Vector3(s.threat.x, s.threat.y + 1.5, s.threat.z), w.pos + Vector3(0, 0.4, 0))
 			var dest = null
 			# a field hospital close by: carry them there, where they can be saved
+			# too far to drag him but a hospital's behind us: get a second man and a stretcher
+			if w.heal_t <= 0.0 and Medical.hospital_near(s.team, w.pos, 45.0) == null and Stretcher.try_start(w, s):
+				return
 			var hosp = Medical.hospital_near(s.team, w.pos, 45.0)
 			if hosp != null and G.dist2d(hosp["p"], w.pos) > 5.0 and w.heal_t <= 0.0:
 				s.dragging = w
@@ -1284,6 +1302,8 @@ static func update(s) -> void:
 	_keep_from_zombies(s)
 	aim_and_fire(s)
 	stance(s)
+	if s.vis_t == null and s.move_target == null:
+		Tactics.door_watch(s)
 
 # zombies only bite, so you never walk into them: anything close gets backed away from while you keep
 # shooting, nobody goes chasing the horde out of the line, and men bunch up back to back when it's thick
@@ -1565,6 +1585,9 @@ static func stance(s) -> void:
 		return
 	if s.want.length_squared() > 0.1 and not s.in_cover:
 		s.prone_t = false
+	# pinned down in the open: flat on the ground, crawling for cover
+	if s.supp > 1.1 and not s.in_cover and s.task != "flank_move" and s.task != "medic" and s.dragging == null and s.vault == null and not s.zombie:
+		s.prone_t = true
 	if s.in_cover and s.cover != null:
 		var cp = s.cover
 		var peek_now = s.want_peek and (s.peek_vis or s.force_peek)

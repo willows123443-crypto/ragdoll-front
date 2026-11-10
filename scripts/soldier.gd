@@ -146,6 +146,7 @@ var flashlight: Node3D = null
 var nade_cd = 6.0
 var throw_t = 0.0
 var hand_t = null
+var hands_t = null   # two-handed grip: [left, right] (dragging a man by his shoulders)
 var tool_mode = ""           # "hammer" while building
 var hammer: Node3D = null
 var hammer_hit = false
@@ -874,6 +875,9 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 				_:
 					rh = rsh + uf * 0.42 - ur * 0.02 + Vector3(0, -0.06 + sin(zt * 2.1) * 0.06, 0)
 					lh = lsh + uf * (0.34 + 0.06 * sin(zt * 1.3)) + ur * 0.02 + Vector3(0, -0.12 + sin(zt * 1.7) * 0.07, 0)
+	elif hand_t != null and hands_t != null:
+		lh = hands_t[0]
+		rh = hands_t[1]
 	elif hand_t != null:
 		rh = hand_t + ur * 0.13
 		lh = hand_t - ur * 0.13
@@ -1648,7 +1652,7 @@ func fall(t: float = -1.0) -> void:
 	strength = 0.0
 	fall_t = 0.0
 	down_t = t if t > 0.0 else randf_range(1.2, 2.2)
-	gu = null; ads = false; task = null; flee = null; prone = false; prone_t = false; vault = null; hand_t = null; throw_t = 0.0; route = null; vy = 0.0
+	gu = null; ads = false; task = null; flee = null; prone = false; prone_t = false; vault = null; hand_t = null; hands_t = null; throw_t = 0.0; route = null; vy = 0.0
 
 var death_style = ""
 var fall_t = 0.0
@@ -1695,7 +1699,7 @@ func go_dead() -> void:
 	state = "dead"
 	strength = 0.0
 	dead_t = 0.0
-	gu = null; task = null; flee = null; hand_t = null; vault = null; prone = false; prone_t = false
+	gu = null; task = null; flee = null; hand_t = null; hands_t = null; vault = null; prone = false; prone_t = false
 	if medic and is_instance_valid(medic):
 		medic.task = null
 		medic.patient = null
@@ -2076,6 +2080,9 @@ func _tick_wounded() -> void:
 	if hp <= 0.0:
 		Combat.kill(self, last_attacker, false)
 		return
+	if has_meta("stretcher") and get_meta("stretcher")["stage"] == 1:
+		# lying on a stretcher: the bearers carry the body, nothing to do here
+		return
 	if randf() < 0.004:
 		G.fx.callout(self, G.pick(["Medic!", "I'm hit!", "Help!"]))
 	if carried_by != null and is_instance_valid(carried_by) and carried_by.state == "alive" and carried_by.carrying == self:
@@ -2103,10 +2110,18 @@ func _tick_wounded() -> void:
 		crawl_pose()
 		strength = 0.02
 		drive()
-		var hand: Vector3 = (dragger.hand_l() + dragger.hand_r()) * 0.5
-		for i in [1, 3, 5]:
+		# held under both arms: each of the dragger's hands has one of his shoulders
+		var hl: Vector3 = dragger.hand_l()
+		var hr: Vector3 = dragger.hand_r()
+		var a3 = 3
+		var a5 = 5
+		if parts[3].global_position.distance_squared_to(hl) > parts[5].global_position.distance_squared_to(hl):
+			a3 = 5
+			a5 = 3
+		var tg = {1: (hl + hr) * 0.5 + Vector3(0, -0.08, 0), a3: hl, a5: hr}
+		for i in tg:
 			var b: RigidBody3D = parts[i]
-			b.linear_velocity = b.linear_velocity.lerp((hand - b.global_position) / G.DT * 0.3, 0.6)
+			b.linear_velocity = b.linear_velocity.lerp((tg[i] - b.global_position) / G.DT * 0.3, 0.6)
 		var pel: Vector3 = parts[0].global_position
 		pos = Vector3(pel.x, G.world.surface_y(pel.x, pel.z, pel.y), pel.z)
 		var hd: Vector3 = parts[2].global_position - pel
@@ -2581,8 +2596,11 @@ func ride_pose(driving: bool) -> void:
 		P[4] = _ik(P[3], P[5], 0.3, 0.3, Vector3(0, -1, 0) - r * 0.7)
 
 # ---------------------------------------------------------------- parachutes
+var chute_lines: Array = []
+
 func start_chute(at: Vector3) -> void:
 	state = "chute"
+	chute_lines = []
 	pos = at
 	vel = Vector3(randf_range(-1, 1), 0, randf_range(-1, 1))
 	chute = Node3D.new()
@@ -2598,13 +2616,12 @@ func start_chute(at: Vector3) -> void:
 	for k in range(4):
 		var line = MeshInstance3D.new()
 		var lm = BoxMesh.new()
-		lm.size = Vector3(0.02, 3.2, 0.02)
+		lm.size = Vector3(0.025, 1.0, 0.025)
 		line.mesh = lm
 		line.material_override = _mat("line", Color(0.2, 0.2, 0.2), false)
-		var a = k * PI / 2.0 + PI / 4.0
-		line.position = Vector3(cos(a) * 0.9, 2.9, sin(a) * 0.9)
-		line.rotation = Vector3(sin(a) * 0.45, 0, -cos(a) * 0.45)
+		line.top_level = true
 		chute.add_child(line)
+		chute_lines.append(line)
 	G.main.add_child(chute)
 	stand_pose()
 	_compute_targets()
@@ -2623,8 +2640,16 @@ func _tick_chute() -> void:
 	ready_ = false
 	stand_pose()
 	strength = 0.35
+	# hands up on the risers above each shoulder
+	var lsh: Vector3 = parts[3].global_transform * Vector3(0, -0.15, 0)
+	var rsh: Vector3 = parts[5].global_transform * Vector3(0, -0.15, 0)
+	hand_t = (lsh + rsh) * 0.5 + Vector3(0, 0.45, 0)
+	hands_t = [lsh + Vector3(0, 0.42, 0), rsh + Vector3(0, 0.42, 0)]
 	drive()
+	_chute_lines(lsh, rsh)
 	if pos.y <= gy + 0.05:
+		hand_t = null
+		hands_t = null
 		pos.y = gy
 		_drop_chute()
 		state = "alive"
@@ -2634,7 +2659,29 @@ func _tick_chute() -> void:
 		if randf() < 0.25:
 			fall(1.0)
 
+# the rigging: the two lines on each side of the canopy run down to the harness at that shoulder
+func _chute_lines(lsh: Vector3, rsh: Vector3) -> void:
+	if chute == null or chute_lines.size() < 4:
+		return
+	var xf: Transform3D = chute.global_transform
+	var fwd = Vector3(sin(body_yaw), 0, cos(body_yaw))
+	var right = Vector3(-cos(body_yaw), 0, sin(body_yaw))
+	var lside = 1.0 if (lsh - rsh).dot(right) > 0.0 else -1.0
+	var rim = [right * lside + fwd, right * lside - fwd, -right * lside + fwd, -right * lside - fwd]
+	for k in range(4):
+		var top: Vector3 = xf * Vector3(0, 4.2, 0) + rim[k].normalized() * 2.15
+		var bot: Vector3 = (lsh if k < 2 else rsh) + Vector3(0, 0.06, 0)
+		var d = top - bot
+		var L = d.length()
+		if L < 0.01:
+			continue
+		var y = d / L
+		var x = y.cross(Vector3.FORWARD if absf(y.dot(Vector3.FORWARD)) < 0.9 else Vector3.RIGHT).normalized()
+		var z = x.cross(y)
+		chute_lines[k].global_transform = Transform3D(Basis(x, y * L, z), (top + bot) * 0.5)
+
 func _drop_chute() -> void:
+	chute_lines = []
 	if chute != null:
 		chute.queue_free()
 		chute = null

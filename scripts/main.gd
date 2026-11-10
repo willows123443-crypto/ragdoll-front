@@ -62,6 +62,10 @@ func _ready() -> void:
 			_prod_test()
 		if a == "--hordetest":
 			_horde_test()
+		if a == "--dogtest":
+			_dog_test()
+		if a == "--stretchtest":
+			_stretch_test()
 		if a.begins_with("--mapshots="):
 			_map_shots(a.substr(11))
 		if a == "--camptest2":
@@ -363,6 +367,9 @@ func start_game(o: Dictionary) -> void:
 	Medical.reset_hospitals()
 	Faction.setup()
 	Fog.reset()
+	Tactics.reset()
+	Ops.reset()
+	Stretcher.reset()
 	Prod.reset()
 	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2:
 		G.ui.radio(0, "Your commander is %s" % Commander.STYLE_TEXT[Commander.style_of(0)])
@@ -389,6 +396,9 @@ func spawn_soldier(team: int, x: float, z: float, wid: String):
 	var s = Soldier.new()
 	add_child(s)
 	var cl = "rifleman" if wid != "" else (force_cls.pop_front() if not force_cls.is_empty() else Faction.pick_class(team))
+	# a side that keeps meeting enemy armour sends more anti-tank men
+	if wid == "" and cl == "rifleman" and randf() < Ops.at_bias(team):
+		cl = "at"
 	if wid == "":
 		wid = Faction.weapon_for(team, cl)
 	s.setup(team, p.x, p.z, wid)
@@ -545,6 +555,8 @@ func _sim_step() -> void:
 	Fog.step(G.DT)
 	Prod.step(G.DT)
 	Commander.step(G.DT)
+	Ops.step(G.DT)
+	Stretcher.step(G.DT)
 	Obj.step(G.DT)
 	Modes.step(G.DT)
 	Ferry.step(G.DT)
@@ -951,6 +963,69 @@ func _shot_mode(dir: String) -> void:
 		await _wait(0.3)
 		await _snap(dir, "rocket")
 		print("ROCKETSHOT cam after ", get_viewport().get_camera_3d().global_position, " rockets ", Combat.rockets.size())
+	if _arg("stretchshot", "") != "":
+		# a stretcher run back to the field hospital, and a medic dragging a man in with both hands
+		var home: Vector3 = _free_spot(G.world.capture + Vector3(-40, 0, 0))
+		var fw = Vector3(1, 0, 0)
+		var hsp = _free_spot(home)
+		Build.place("hospital", 0, hsp, fw, true)
+		var groups = [[hsp + Vector3(70, 0, 0), 2], [hsp + Vector3(26, 0, -16), 1]]
+		var ws = []
+		for g in groups:
+			var wp = _free_spot(g[0])
+			var w = spawn_soldier(0, wp.x, wp.z, "rifle")
+			force_cls = ["medic"]
+			spawn_soldier(0, wp.x + 5.0, wp.z + 1.0, "")
+			force_cls = []
+			if g[1] == 2:
+				spawn_soldier(0, wp.x - 5.0, wp.z - 1.0, "rifle")
+			ws.append(w)
+		await _wait(0.4)
+		for w in ws:
+			w.hp = 30.0
+			w.make_wounded()
+			w.bleed = 0.0
+		await _wait(float(_arg("stretchshot", "7")))
+		for w in ws:
+			var c: Vector3 = w.parts[1].global_position
+			await _look(c + (Vector3(1.5, 1.5, 4.2) if w.has_meta("stretcher") else Vector3(2.8, 2.6, -2.8)), c + Vector3(0, -0.1, 0))
+			await _wait(0.2)
+			await _snap(dir, "stretcher" if w.has_meta("stretcher") else ("drag" if w.dragger != null else "medic_%s" % w.state))
+	if _arg("chuteshot", "") != "":
+		var cq: Vector3 = _free_spot(G.world.capture)
+		var para = spawn_soldier(0, cq.x, cq.z, "rifle")
+		para.start_chute(cq + Vector3(0, 60, 0))
+		await _wait(float(_arg("chuteshot", "2")))
+		var pp: Vector3 = para.pos
+		await _look(pp + Vector3(0, 2.0, 6.5), pp + Vector3(0, 2.4, 0))
+		await _snap(dir, "chute_front")
+		pp = para.pos
+		await _look(pp + Vector3(6.5, 1.0, 0.5), pp + Vector3(0, 2.4, 0))
+		await _snap(dir, "chute_side")
+	if _arg("dogshot", "") != "":
+		# fighters over the field: one smoking and on fire, and a pilot coming down under his canopy
+		var c0: Vector3 = G.world.capture + Vector3(0, 70, 0)
+		var a = spawn_vehicle("fighter", 0, c0, 0.0)
+		var b = spawn_vehicle("fighter", 1, c0 + Vector3(0, 0, 60), 0.0)
+		var e = spawn_vehicle("fighter", 1, c0 + Vector3(60, 10, -60), 0.0)
+		for v in [a, b, e]:
+			v.pos.y = c0.y + (10.0 if v == e else 0.0)
+			v.life_t = 999.0
+		await _wait(0.2)
+		b.take_damage(b.spec["hp"] * 0.7, null, b.pos)
+		await _wait(float(_arg("dogshot", "2.5")))
+		var bd: Vector3 = b.get_meta("dir", b.forward())
+		var bp: Vector3 = b.pos + bd * b.get_meta("spd", 40.0) / 30.0
+		await _look(bp - bd * 24.0 + Vector3(0, 5, 0) + bd.cross(Vector3.UP) * 9.0, bp - bd * 7.0)
+		await _snap(dir, "dogfight")
+		e.destroy(null)
+		await _wait(2.5)
+		var ch = G.soldiers.filter(func(x): return x.state == "chute")
+		print("DOGSHOT chutes ", ch.size())
+		if not ch.is_empty():
+			var cp: Vector3 = ch[0].pos
+			await _look(cp + Vector3(7, 1.5, 7), cp + Vector3(0, 2.5, 0))
+			await _snap(dir, "bailout")
 	if _arg("fxshot", "") != "":
 		# a crater, a felled tree and a furnished room
 		var tree = null
@@ -1602,7 +1677,7 @@ func _mode_test(mode: String) -> void:
 		for v in G.vehicles:
 			if v.kind == "atgun":
 				pz += " at[%s %.1f]" % ["dead" if v.dead else ("crew" if v.gunner() != null else "nocrew"), G.sim_time - v.get_meta("fire_t", -99.0)]
-		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz])
+		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events)])
 		if G.over:
 			break
 	get_tree().quit()
@@ -1682,6 +1757,55 @@ func _horde_test() -> void:
 	for k in range(6):
 		await _wait(10.0)
 		print("HORDETEST t%d wave %d left %d alive %d points %d boards %d" % [k * 10, Modes.horde_wave, Modes.horde_left, G.alive_count(0), Support.points[0], G.world.cols.filter(func(c): return c.alive and c.has_meta("board")).size()])
+	get_tree().quit()
+
+# dogfight: two fighters a side meet over the field; count hits, smoke trails, kills and parachutes
+func _dog_test() -> void:
+	await _wait(0.5)
+	Engine.time_scale = 2.0
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	for t in [0, 1]:
+		for k in range(2):
+			var ep = Reinforce.entry_point(t) + Vector3(k * 30.0, 0, 0)
+			var pv = spawn_vehicle("fighter", t, ep, atan2(G.world.capture.x - ep.x, G.world.capture.z - ep.z))
+			pv.life_t = 999.0
+	for k in range(int(_arg("n", "12"))):
+		await _wait(float(_arg("dt", "5")))
+		var line = "DOGTEST t%d" % (k * 5)
+		for v in G.vehicles:
+			if v.kind == "fighter":
+				line += " | T%d hp %.0f alt %.0f trail %d %s%s dir %s pull %.1f tgt %s" % [v.team, v.hp, v.alt, v.get_meta("trail", 0), "dead " if v.dead else "", "evading" if v.get_meta("ev_t", 0.0) > 0.0 else "", str(v.get_meta("dir", Vector3.ZERO)), v.get_meta("pull_t", 0.0), str(v.get_meta("dog_t").pos.distance_to(v.pos)) if v.has_meta("dog_t") and is_instance_valid(v.get_meta("dog_t")) else "-"]
+		var chutes = G.soldiers.filter(func(x): return x.state == "chute").size()
+		var landed = G.soldiers.filter(func(x): return x.state == "alive" and x.vehicle == null).size()
+		print(line, " | chutes %d on ground %d" % [chutes, landed])
+	get_tree().quit()
+
+# a wounded man far from the field hospital gets carried back on a stretcher by two men
+func _stretch_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	var home: Vector3 = G.world.rally_point(0)
+	var fw = G.flat(G.world.capture - home).normalized()
+	var hp = _free_spot(home)
+	Build.place("hospital", 0, hp, fw, true)
+	var wp = _free_spot(hp + fw * 80.0)
+	var w = spawn_soldier(0, wp.x, wp.z, "rifle")
+	force_cls = ["medic"]
+	var m = spawn_soldier(0, wp.x + 8.0, wp.z, "")
+	force_cls = []
+	var b = spawn_soldier(0, wp.x - 8.0, wp.z, "rifle")
+	await _wait(0.5)
+	w.hp = 30.0
+	w.make_wounded()
+	w.bleed = 0.0
+	for k in range(30):
+		await _wait(2.0)
+		var st = w.get_meta("stretcher") if w.has_meta("stretcher") else null
+		print("STRETCHTEST t%d w %s d_hosp %.1f | medic task %s | b task %s | stage %s heal %.1f" % [k * 2, w.state, G.dist2d(w.pos, hp), str(m.task), str(b.task), str(st["stage"]) if st != null else "-", w.heal_t])
+		if w.state != "wounded":
+			break
 	get_tree().quit()
 
 # commander economy: a depot queue, an upgrade and a supply convoy

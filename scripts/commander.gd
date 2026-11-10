@@ -169,6 +169,8 @@ static func _plan(team: int, off) -> void:
 	if ec == null:
 		return
 	var st = style_of(team)
+	Ops.plan_lane(team, home, ec)
+	var fav = Ops.favourite_lane(team)
 	for k in range(qs.size()):
 		var q = qs[k]
 		var job = "attack"
@@ -178,8 +180,12 @@ static func _plan(team: int, off) -> void:
 			job = "flank"
 		elif st != "reckless" and qs.size() >= 4 and k == 0:
 			job = "defend"
-		_assign(q, job, ec if job != "defend" else home + G.flat(ec - home).normalized() * 25.0, home)
+		# a defending squad guards the side the enemy keeps coming from, if it has a favourite
+		var dp = (fav if fav != null else home + G.flat(ec - home).normalized() * 25.0)
+		_assign(q, job, ec if job != "defend" else dp, home)
 	G.ui.radio(team, "Command: enemy concentrating near %s, all squads engage" % AI.grid_ref(ec))
+	if st != "cautious":
+		Ops.coordinated(team, ec, home)
 
 # hand squads out across the points: attack what we can take, defend what's under threat,
 # keep a light hold on the rest, and never send everyone to the same place
@@ -244,6 +250,15 @@ static func _spread_over_points(team: int, qs: Array, home: Vector3) -> void:
 		lines.append("%s %s" % [job, pts[best]["name"]])
 	if not lines.is_empty() and randf() < 0.6:
 		G.ui.radio(team, "Command: " + ", ".join(lines.slice(0, 4)))
+	# the point most squads are going for gets a barrage and smoke ahead of them
+	var most = -1
+	var mc = 1
+	for i in range(pts.size()):
+		if pts[i]["owner"] != team and count[i] > mc:
+			mc = count[i]
+			most = i
+	if most >= 0 and style_of(team) != "cautious" and strength(team, pts[most]["p"], 30.0) > 0.5:
+		Ops.coordinated(team, pts[most]["p"], home)
 
 # destroy base: most squads go for the nearest enemy HQ or FOB, one stays home to guard the HQ
 static func _base_plan(team: int, qs: Array, home: Vector3) -> void:
@@ -252,6 +267,7 @@ static func _base_plan(team: int, qs: Array, home: Vector3) -> void:
 		return
 	targets.sort_custom(func(a, b): return G.dist2d(a["p"], home) < G.dist2d(b["p"], home))
 	var mine = Build.hq(team)
+	Ops.plan_lane(team, home, targets[0]["p"])
 	var k = 0
 	for q in qs:
 		if k % 4 == 3 and mine != null and Build.alive(mine):
@@ -261,6 +277,7 @@ static func _base_plan(team: int, qs: Array, home: Vector3) -> void:
 			_assign(q, "flank" if k % 3 == 1 else "attack", tg["p"], home)
 		k += 1
 	G.ui.radio(team, "Command: all squads, hit the enemy %s at %s" % [targets[0]["name"], AI.grid_ref(targets[0]["p"])])
+	Ops.coordinated(team, targets[0]["p"], home)
 
 # sabotage: raiders split between the targets; defenders guard them and hunt the raiders
 static func _raid_plan(team: int, qs: Array, home: Vector3) -> void:
@@ -305,6 +322,9 @@ static func _assign(q, job: String, target: Vector3, home: Vector3) -> void:
 		p = target + Vector3(to.z, 0, -to.x) * side * 35.0 - to * 10.0
 		p.x = clampf(p.x, G.world.bounds.position.x + 5.0, G.world.bounds.end.x - 5.0)
 		p.z = clampf(p.z, G.world.bounds.position.y + 5.0, G.world.bounds.end.y - 5.0)
+	# the main effort goes where they're thinnest
+	if job == "attack" and q.has("team") and G.dist2d(target, home) > 40.0:
+		p += Ops.lane_off[q["team"]]
 	q["cmd"] = {"job": job, "p": p, "t": G.sim_time + 20.0}
 	q["obj_t"] = -1.0
 	var L = Squad.leader_of(q)

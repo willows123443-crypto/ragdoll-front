@@ -37,6 +37,7 @@ const KOTH_EVERY = 90.0
 const HORDE_WIN = 10
 
 static func reset() -> void:
+	clear_spits()
 	convoy = []
 	arrived = 0
 	pilot = null
@@ -437,6 +438,8 @@ static func _home(t: int) -> Vector3:
 
 # ---------------------------------------------------------------- per tick
 static func step(dt: float) -> void:
+	if not spits.is_empty() or not puddles.is_empty():
+		step_spits(dt)
 	if G.over:
 		return
 	check_t -= dt
@@ -680,6 +683,13 @@ static func _spawn_pack(n: int) -> void:
 static func _pick_type() -> String:
 	var r = randf()
 	var w = float(horde_wave)
+	# later waves: riot-armoured ones, bloaters that burst, and spitters that throw acid from a distance
+	if horde_wave >= 2 and randf() < 0.05 + 0.01 * w:
+		return "bloater"
+	if horde_wave >= 3 and randf() < 0.04 + 0.01 * w:
+		return "armored"
+	if horde_wave >= 4 and randf() < 0.03 + 0.005 * w:
+		return "spitter"
 	if horde_wave >= 2 and r < 0.04 + 0.012 * w:
 		return "brute"
 	r = randf()
@@ -694,7 +704,121 @@ const ZOMBIES = {
 	"runner": {"hp": 70.0, "hpw": 4.0, "speed": [5.0, 5.8], "dmg": [12.0, 18.0], "name": "Runner"},
 	"brute": {"hp": 430.0, "hpw": 25.0, "speed": [2.2, 2.6], "dmg": [34.0, 44.0], "name": "Brute"},
 	"crawler": {"hp": 55.0, "hpw": 3.0, "speed": [2.6, 3.0], "dmg": [9.0, 14.0], "name": "Crawler"},
+	"armored": {"hp": 220.0, "hpw": 8.0, "speed": [2.3, 2.9], "dmg": [18.0, 26.0], "name": "Armoured"},
+	"bloater": {"hp": 90.0, "hpw": 4.0, "speed": [2.0, 2.5], "dmg": [14.0, 20.0], "name": "Bloater"},
+	"spitter": {"hp": 80.0, "hpw": 4.0, "speed": [2.6, 3.2], "dmg": [10.0, 15.0], "name": "Spitter"},
 }
+
+# a spitter keeps its distance and lobs acid: a hit burns, and where it lands it leaves a puddle that
+# burns anyone who stands in it for a while
+static var spits: Array = []
+static var puddles: Array = []
+static var _acid_mat: StandardMaterial3D = null
+
+static func _acid() -> StandardMaterial3D:
+	if _acid_mat == null:
+		_acid_mat = StandardMaterial3D.new()
+		_acid_mat.albedo_color = Color(0.55, 0.85, 0.15, 0.85)
+		_acid_mat.emission_enabled = true
+		_acid_mat.emission = Color(0.35, 0.6, 0.05)
+		_acid_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_acid_mat.roughness = 0.2
+	return _acid_mat
+
+static func _spit(s, t) -> void:
+	if G.sim_time < s.get_meta("spit_t", 0.0):
+		return
+	s.set_meta("spit_t", G.sim_time + randf_range(3.5, 5.0))
+	var from: Vector3 = s.head_pos() + Vector3(0, -0.05, 0)
+	var aim: Vector3 = t.chest() + G.flat(t.vel) * 0.5
+	var flat_d = G.dist2d(aim, from)
+	var tflight = clampf(flat_d / 14.0, 0.4, 1.4)
+	var v = (aim - from) / tflight
+	v.y -= 0.5 * G.GRAV * tflight      # arc up and over
+	var m = MeshInstance3D.new()
+	var sm = SphereMesh.new()
+	sm.radius = 0.12
+	sm.height = 0.24
+	sm.radial_segments = 8
+	sm.rings = 4
+	m.mesh = sm
+	m.material_override = _acid()
+	G.fx.add_child(m)
+	m.global_position = from
+	spits.append({"p": from, "v": v, "m": m, "life": 3.0, "owner": s})
+	s.lunge_t = 0.0
+	s.melee_t = 0.8
+	G.audio.groan(s.pos, "snarl")
+
+static func step_spits(dt: float) -> void:
+	for i in range(spits.size() - 1, -1, -1):
+		var sp = spits[i]
+		sp["life"] -= dt
+		sp["v"].y += G.GRAV * dt
+		var np: Vector3 = sp["p"] + sp["v"] * dt
+		var ex: Array = sp["owner"].rids if is_instance_valid(sp["owner"]) else []
+		var hit = G.ray(sp["p"], np, G.L_WORLD | G.L_BODY, ex)
+		var landed = sp["life"] <= 0.0
+		var at: Vector3 = np
+		if not hit.is_empty():
+			at = hit.position
+			landed = true
+			if hit.collider.has_meta("soldier"):
+				var v = hit.collider.get_meta("soldier")
+				if not v.zombie and v.state != "dead":
+					v.hp -= randf_range(14.0, 22.0)
+					v.last_attacker = sp["owner"] if is_instance_valid(sp["owner"]) else null
+					if v.is_player:
+						Combat.shake = maxf(Combat.shake, 0.3)
+					if v.hp <= 0.0:
+						Combat.kill(v, v.last_attacker, false)
+					elif v.state == "alive" and not v.is_player:
+						G.fx.callout(v, G.pick(["Argh, it burns!", "Acid!", "Get it off me!"]))
+		sp["p"] = np
+		if is_instance_valid(sp["m"]):
+			sp["m"].global_position = np
+		if landed:
+			if is_instance_valid(sp["m"]):
+				sp["m"].queue_free()
+			spits.remove_at(i)
+			var gy = G.world.surface_y(at.x, at.z, at.y + 0.5)
+			var pm = MeshInstance3D.new()
+			var cm = CylinderMesh.new()
+			cm.top_radius = 1.1
+			cm.bottom_radius = 1.1
+			cm.height = 0.02
+			cm.radial_segments = 14
+			pm.mesh = cm
+			pm.material_override = _acid()
+			G.fx.add_child(pm)
+			pm.global_position = Vector3(at.x, gy + 0.03, at.z)
+			G.fx.smoke_screen(Vector3(at.x, gy + 0.3, at.z), 2.0, Color(0.6, 0.8, 0.3), 0.3)
+			puddles.append({"p": Vector3(at.x, gy, at.z), "m": pm, "life": 5.0})
+	for i in range(puddles.size() - 1, -1, -1):
+		var pd = puddles[i]
+		pd["life"] -= dt
+		if is_instance_valid(pd["m"]):
+			pd["m"].scale = Vector3.ONE * clampf(pd["life"] / 2.0, 0.2, 1.0)
+		if pd["life"] <= 0.0:
+			if is_instance_valid(pd["m"]):
+				pd["m"].queue_free()
+			puddles.remove_at(i)
+			continue
+		for o in G.soldiers_near(pd["p"]):
+			if not o.zombie and o.state == "alive" and G.dist2d(o.pos, pd["p"]) < 1.1 and absf(o.pos.y - pd["p"].y) < 1.0:
+				o.hp -= 6.0 * dt
+				if o.hp <= 0.0:
+					Combat.kill(o, null, false)
+
+static func clear_spits() -> void:
+	for sp in spits:
+		if is_instance_valid(sp["m"]):
+			sp["m"].queue_free()
+	for pd in puddles:
+		if is_instance_valid(pd["m"]):
+			pd["m"].queue_free()
+	spits = []
+	puddles = []
 
 static func make_zombie(z, kind: String = "walker") -> void:
 	var zs = ZOMBIES[kind]
@@ -750,6 +874,12 @@ static func zombie_tick(s) -> void:
 	s.aim_yaw = G.turn_to(s.aim_yaw, yaw, 3.0 * G.DT)
 	s.aim_pitch = 0.0
 	var spd: float = s.zspeed
+	# a spitter hangs back at throwing range instead of closing in
+	if s.ztype == "spitter" and s.lunge_t <= 0.0 and d > 5.0 and d < 20.0 and not G.blocked(s.head_pos(), t.chest()):
+		AI.stop_move(s)
+		s.want = Vector3.ZERO if d > 9.0 else -to / d * 0.5
+		_spit(s, t)
+		return
 	var reach = 1.0 if s.ztype == "crawler" else 1.25
 	# the attack: a short wind-up, a lunge and a bite
 	if s.lunge_t > 0.0:
@@ -788,6 +918,13 @@ static func zombie_tick(s) -> void:
 					break
 		# a lurching walk: speed surges and sags
 		var surge = 1.0 if s.ztype == "runner" else 0.75 + 0.35 * absf(sin(G.sim_time * 1.6 + s.seed_))
+		match s.zstyle:
+			1:
+				surge = 0.6 + 0.6 * maxf(0.0, sin(G.sim_time * 2.4 + s.seed_))      # lunging bursts
+			2:
+				surge = 0.8 + 0.25 * sin(G.sim_time * 0.9 + s.seed_)
+			4:
+				surge = 0.85                                                       # slow and steady
 		s.want = dir * (spd * surge / s.W["speed"])
 		# not getting anywhere (a wall, a fence, a crowd)? find a way round for a while
 		s.prog_t += G.DT

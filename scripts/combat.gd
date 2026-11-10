@@ -208,6 +208,7 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 	var b: RigidBody3D = s.parts[part]
 	var imp = dir * force * 1.6
 	if s.state == "dead":
+		s.unsettle()
 		b.apply_impulse(imp * b.mass * 0.25, point - b.global_position)
 		_cap(s, 5.0)
 		G.fx.bleed(point, dir, false)
@@ -220,6 +221,8 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 		mult = 0.55
 	elif kind == "leg":
 		mult = 0.6
+	if s.zombie and s.ztype == "armored" and kind == "torso":
+		mult *= 0.3          # riot armour: aim for the head
 	# battles last longer: everyone takes a bit more punishment than before
 	dmg *= 0.62
 	s.hp -= dmg * mult * (0.35 if s == Modes.pilot else 1.0)     # the pilot has a flak vest (and the game is no fun if he drops at once)
@@ -257,6 +260,18 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 			# stumble: hit mid-stride, they go down hard and scramble up
 			s.fall(randf_range(0.6, 1.1))
 			s.push(1, dir * 2.5 + Vector3(0, 0.5, 0), 0.4)
+		elif s.state == "alive":
+			# stays up: a flinch away from the hit, a step or two off balance, or a drop to one knee
+			var rr = randf()
+			if kind == "leg" or rr < 0.3:
+				s.crouch = maxf(s.crouch, 0.8)
+				s.stumble = 0.25
+				s.stumble_dir = G.flat(dir).normalized()
+			elif rr < 0.7:
+				s.stumble = 0.35
+				s.stumble_dir = G.flat(dir).normalized()
+			else:
+				s.aim_yaw += randf_range(-0.5, 0.5)       # spun half round by the impact
 		if s.state == "alive" and randf() < 0.4:
 			G.fx.callout(s, G.pick(["I'm hit!", "Argh!", "Taking fire!"]))
 	else:
@@ -270,6 +285,12 @@ static func kill(s, attacker, head: bool) -> void:
 		return
 	if attacker != null and not is_instance_valid(attacker):
 		attacker = null
+	if s.zombie and s.ztype == "bloater" and not s.has_meta("burst"):
+		# a bloater bursts: a gas blast that knocks down (and hurts) anyone close, zombies included
+		s.set_meta("burst", true)
+		var bp: Vector3 = s.chest()
+		G.fx.smoke_screen(bp, 6.0, Color(0.55, 0.62, 0.3), 0.6)
+		(func(): Combat.explode(bp, null, 0.55)).call_deferred()
 	s.go_dead()
 	if attacker != null and attacker.team != s.team:
 		attacker.kills += 1
@@ -742,6 +763,7 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 			elif s.state == "alive":
 				s.stun = maxf(s.stun, 0.3)
 		s.wake()
+		s.unsettle()
 		# thrown flat and rolled, not launched skyward
 		for b in s.parts:
 			var away: Vector3 = b.global_position - pos

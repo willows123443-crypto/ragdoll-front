@@ -56,6 +56,8 @@ func _ready() -> void:
 			_ladder_test()
 		if a == "--ordertest":
 			_order_test()
+		if a == "--spittest":
+			_spit_test()
 		if a.begins_with("--mapshots="):
 			_map_shots(a.substr(11))
 		if a == "--camptest2":
@@ -513,6 +515,7 @@ func _sim_step() -> void:
 			continue
 		if big and s.lod_frozen and s.state == "alive":
 			if (fr + s.id) % 2 != 0:
+				s.lod_glide()
 				continue
 			G.DT = 2.0 / 60.0
 			s.tick()
@@ -889,6 +892,30 @@ func _shot_mode(dir: String) -> void:
 		await _snap(dir, "kit")
 		await _look(cp + Vector3(2.4, 1.7, 1.2), cp + Vector3(0.4, 1.3, 0))
 		await _snap(dir, "kit_side")
+	if _arg("zombieshot", "") != "":
+		# a mixed pack of the dead walking past, each with its own gait
+		for s0 in G.soldiers.duplicate():
+			if s0.state != "dead":
+				s0.queue_free()
+				G.soldiers.erase(s0)
+		var zc: Vector3 = _free_spot(G.world.capture)
+		var bait = spawn_soldier(0, zc.x - 26.0, zc.z, "pistol")
+		bait.order = {"mode": "hold", "point": bait.pos}
+		bait.mag = 0
+		bait.reserve = 0
+		var kinds = ["walker", "walker", "walker", "runner", "brute", "armored", "bloater", "spitter", "walker", "runner"]
+		for i in range(kinds.size()):
+			Soldier.zombie_next = kinds[i]
+			var zz = spawn_soldier(1, zc.x + (i % 5) * 1.6, zc.z - 4.0 + (i / 5) * 3.0 + (i % 5) * 0.8, "pistol")
+			Soldier.zombie_next = ""
+			if zz != null:
+				Modes.make_zombie(zz, kinds[i])
+		await _wait(float(_arg("zombieshot", "2.0")))
+		print("ZOMBIESHOT spits ", Modes.spits.size(), " puddles ", Modes.puddles.size(), " bait hp ", bait.hp)
+		await _look(zc + Vector3(-6.0, 1.8, 9.0), zc + Vector3(-6.0, 1.0, 0))
+		await _snap(dir, "zombies")
+		await _wait(0.6)
+		await _snap(dir, "zombies2")
 	if _arg("rocketshot", "") != "":
 		# a bazooka round in flight, seen from the side
 		var rp0: Vector3 = _free_spot(G.world.capture + Vector3(10, 0, 10))
@@ -1620,6 +1647,39 @@ func _map_shots(list: String) -> void:
 		await _look(c + Vector3(22, 3.5, 18), c + Vector3(0, 2, 0))
 		await _snap(dir, m + "_c")
 		print("MAPSHOT ", m)
+	get_tree().quit()
+
+# a spitter against a soldier who can't shoot back
+func _spit_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	var c: Vector3 = _free_spot(G.world.capture)
+	var bait = spawn_soldier(0, c.x, c.z, "pistol")
+	bait.order = {"mode": "hold", "point": bait.pos}
+	for k in ["spitter", "bloater", "armored"]:
+		Soldier.zombie_next = k
+		var z = spawn_soldier(1, c.x + 14.0, c.z + (0.0 if k == "spitter" else (25.0 if k == "bloater" else -25.0)), "pistol")
+		Soldier.zombie_next = ""
+		Modes.make_zombie(z, k)
+		z.hp = 99999.0
+	var shot = 0
+	for i in range(8):
+		await _wait(1.0)
+		shot = maxi(shot, Modes.spits.size())
+		var sz = null
+		for z in G.soldiers:
+			if z.zombie and z.ztype == "spitter":
+				sz = z
+		print("SPITTEST t%d spits %d puddles %d bait hp %.0f state %s | spitter d %.1f blocked %s spit_t %.1f now %.1f" % [i, Modes.spits.size(), Modes.puddles.size(), bait.hp, bait.state, G.dist2d(sz.pos, bait.pos), str(G.blocked(sz.head_pos(), bait.chest())), sz.get_meta("spit_t", 0.0), G.sim_time])
+		if not Modes.puddles.is_empty():
+			print("   puddle at ", Modes.puddles[0]["p"], " bait at ", bait.pos)
+	# the bloater bursts when it dies
+	for z in G.soldiers:
+		if z.zombie and z.ztype == "bloater" and z.state != "dead":
+			Combat.kill(z, null, false)
+	await _wait(0.5)
+	print("SPITTEST bloater burst done, bait state %s hp %.0f" % [bait.state, bait.hp])
 	get_tree().quit()
 
 # commander orders: a half-track with troops is sent somewhere, then told to dismount

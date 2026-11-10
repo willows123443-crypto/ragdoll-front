@@ -739,6 +739,74 @@ static func ambush_hold(s, tgt) -> bool:
 	return true
 
 # ---------------------------------------------------------------- decisions
+# soldiers left to themselves size things up and act on it, instead of only doing what the squad does:
+# someone cut off pulls back to his mates, a handful facing a crowd falls back to better cover,
+# the badly hurt get out of the line, and nobody stands in the open in front of an enemy tank
+static func _initiative(s, known: bool, threat: Vector3, dT: float) -> bool:
+	if s.zombie or s.task in ["medic", "resupply", "regroup", "withdraw", "sapper", "post"] and s.move_target != null:
+		return false
+	if not known or dT > 70.0:
+		return false
+	var friends = 0
+	var nearest_f = null
+	var nfd = 80.0
+	for o in G.soldiers:
+		if o == s or o.team != s.team or o.state != "alive" or o.vehicle != null:
+			continue
+		var d = G.dist2d(o.pos, s.pos)
+		if d < 20.0:
+			friends += 1
+		if d < nfd and d > 4.0:
+			nfd = d
+			nearest_f = o
+	var foes = 0
+	for e in s.intel:
+		var k = s.intel[e]
+		if G.sim_time - k["t"] < 8.0 and G.dist2d(k["p"], s.pos) < 40.0:
+			foes += 1
+	# enemy armour close and nothing to stop it with: get out of its sight
+	if not (s.W["rocket"] or s.W["ap"]) and s.fausts <= 0:
+		for v in G.vehicles:
+			if v.team != s.team and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar") and G.dist2d(v.pos, s.pos) < 35.0:
+				if s.in_cover and s.cover != null and G.blocked(v.center(), s.chest()):
+					break        # already out of its sight
+				var hc = find_cover(s, v.pos, "retreat")
+				if hc != null:
+					take_cover(s, hc)
+					s.task = "withdraw"
+					G.fx.callout(s, G.pick(["Tank! Get behind something!", "Armour, take cover!"]))
+					return true
+				break
+	# cut off from the others: work back to the nearest friend rather than fight it out alone
+	if friends == 0 and nearest_f != null and nfd > 22.0 and not (s.in_cover and s.cover_bad == 0 and foes <= 1):
+		release_cover(s)
+		var side = Vector3(randf_range(-3, 3), 0, randf_range(-3, 3))
+		go_to(s, nearest_f.pos + side, 4.8)
+		s.task = "regroup"
+		G.fx.callout(s, G.pick(["Moving to you!", "Coming to you, cover me!", "I'm on my own here, falling in!"]))
+		return true
+	# badly outnumbered where he is: fall back to cover further off and keep shooting from there
+	if foes >= friends + 3 and s.cover_bad < 3:
+		var rc = find_cover(s, threat, "retreat")
+		if rc != null and G.dist2d(rc.p, s.pos) > 3.0:
+			take_cover(s, rc)
+			s.task = "withdraw"
+			if randf() < 0.5:
+				G.fx.callout(s, G.pick(["Too many of them, fall back!", "Pull back, pull back!", "Back to the next cover!"]))
+			return true
+	# hurt and out in the open: get out of the line, to a field hospital if there's one close
+	if s.hp < 40.0 and not s.in_cover:
+		var hosp = Medical.hospital_near(s.team, s.pos, 60.0)
+		if hosp != null:
+			go_to(s, hosp["p"], 4.0)
+			s.task = "withdraw"
+			return true
+		var hcv = find_cover(s, threat, "hold")
+		if hcv != null:
+			take_cover(s, hcv)
+			return true
+	return false
+
 static func decide(s) -> void:
 	s.decide_t = randf_range(1.6, 2.6)
 	if s.task == "flee" or s.route != null or s.task == "board":
@@ -846,6 +914,8 @@ static func decide(s) -> void:
 			s.burst = 0
 			s.burst_cd = 0.8
 		s.nade_cd = randf_range(10.0, 18.0)
+	if order["mode"] == "free" and _initiative(s, known, threat, dT):
+		return
 	if order["mode"] == "follow":
 		var L = order.get("who")
 		if L == null or not is_instance_valid(L) or L.state == "dead":
@@ -1195,6 +1265,8 @@ static func update(s) -> void:
 						s.flee = null
 						s.task = null
 						s.decide_t = 0.0
+					if s.task == "regroup" or s.task == "withdraw":
+						s.task = null
 					if s.cover != null and s.cover.p.distance_to(s.pos) < 0.8:
 						s.in_cover = true
 						s.cover_time = 0.0
@@ -1209,8 +1281,76 @@ static func update(s) -> void:
 				if s.task == "flee":
 					s.flee = null
 					s.task = null
+	_keep_from_zombies(s)
 	aim_and_fire(s)
 	stance(s)
+
+# zombies only bite, so you never walk into them: anything close gets backed away from while you keep
+# shooting, nobody goes chasing the horde out of the line, and men bunch up back to back when it's thick
+static func _keep_from_zombies(s) -> void:
+	# standing in acid: get out of it first
+	for pd in Modes.puddles:
+		var dp = G.flat(s.pos - pd["p"])
+		if dp.length() < 1.4:
+			stop_move(s)
+			s.want = (dp.normalized() if dp.length() > 0.05 else Vector3(1, 0, 0)) * 3.0
+			return
+	if not (G.mode == "horde" or s.has_meta("zsaw")):
+		return
+	var t = s.get_meta("zchk", 0.0) - G.DT
+	var near = s.get_meta("znear") if s.has_meta("znear") else null
+	if t <= 0.0:
+		t = 0.25
+		near = null
+		var bd = 26.0
+		var push = Vector3.ZERO
+		for o in G.soldiers:
+			if not o.zombie or o.state == "dead" or o.team == s.team:
+				continue
+			var d = G.dist2d(o.pos, s.pos)
+			if d < bd:
+				bd = d
+				near = o
+			if d < 14.0:
+				push += G.flat(s.pos - o.pos).normalized() * (14.0 - d)
+		s.set_meta("znear", near)
+		s.set_meta("zpush", push)
+		if near != null:
+			s.set_meta("zsaw", true)
+	s.set_meta("zchk", t)
+	if near == null or not is_instance_valid(near) or near.state == "dead":
+		return
+	var zd = G.dist2d(near.pos, s.pos)
+	# don't head toward them: cancel any move that closes the distance
+	if s.move_target != null and G.dist2d(s.move_target, near.pos) < zd - 2.0 and s.task != "medic":
+		stop_move(s)
+		s.decide_t = 1.5
+	if s.in_cover and zd > 6.0:
+		return
+	var danger = 8.0 if near.ztype != "runner" else 12.0
+	if zd < danger and s.task != "medic" and s.dragging == null:
+		# back off, away from the closest of them and toward the middle of the defence
+		var away: Vector3 = s.get_meta("zpush", Vector3.ZERO)
+		if away.length_squared() < 0.01:
+			away = G.flat(s.pos - near.pos)
+		away = away.normalized()
+		var home = G.flat(G.world.capture - s.pos)
+		if home.length() > 6.0:
+			away = (away * 0.75 + home.normalized() * 0.25).normalized()
+		for ang in [0.0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6]:
+			var nd = away.rotated(Vector3.UP, ang)
+			if not G.world.solid_at(s.pos.x + nd.x * 0.8, s.pos.z + nd.z * 0.8, 0.25, s.pos.y):
+				away = nd
+				break
+		release_cover(s)
+		stop_move(s)
+		s.want = away * (3.2 if zd < danger * 0.5 else 2.2)
+		s.prone_t = false
+		s.kneel = false
+		s.threat = near.pos
+		s.has_threat = true
+		if zd < 1.8 and s.throw_t <= 0.0 and s.fire_cd <= 0.0 and s.reload_t > 0.0:
+			Combat.knife(s, near)
 
 # indoors with the enemy about and no cover: tip the nearest table over and get behind it
 static func _try_flip(s) -> void:
@@ -1406,6 +1546,8 @@ static func aim_and_fire(s) -> void:
 		elif s.has_threat:
 			yaw = atan2(s.threat.x - s.pos.x, s.threat.z - s.pos.z)
 			s.ready_ = G.sim_time - s.seen_t < 12.0
+		else:
+			s.ready_ = false        # nothing about: rifle down, at ease
 		s.aim_yaw = G.turn_to(s.aim_yaw, yaw, 3.5 * G.DT)
 		s.aim_pitch *= 0.95
 		if s.mag < W["mag"] * 0.5 and s.vis_t == null:
@@ -1452,11 +1594,13 @@ static func stance(s) -> void:
 			s.crouch_t = 1.0
 		return
 	var dark_creep = (G.main.is_night() or s.has_meta("scout")) and s.vis_t == null and s.task != "charge" and s.task != "flee"
+	# only take a knee when there's been something to take a knee for: otherwise stand easy
+	var alert = G.sim_time - s.seen_t < 25.0 or s.supp > 0.3
 	if s.want.length_squared() > 0.1:
 		s.kneel = false
 		s.crouch_t = 0.3 if s.supp > 0.8 else (0.35 if dark_creep else 0.0)
 	else:
-		s.crouch_t = 0.85 if (s.kneel or dark_creep) else 0.0
+		s.crouch_t = 0.85 if ((s.kneel and alert) or dark_creep) else 0.0
 
 # ---------------------------------------------------------------- ammunition
 # nearest place to restock: a friendly ammo crate, or a fallen soldier's pouches close by

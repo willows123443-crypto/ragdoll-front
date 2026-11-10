@@ -2456,6 +2456,26 @@ func build_backdrop(style: String) -> void:
 	hmm.use_colors = true
 	hmm.mesh = BoxMesh.new()
 	hmm.instance_count = houses * 2
+	var prm = MultiMesh.new()
+	prm.transform_format = MultiMesh.TRANSFORM_3D
+	prm.use_colors = true
+	var prism = PrismMesh.new()
+	prism.size = Vector3(1, 1, 1)
+	prm.mesh = prism
+	prm.instance_count = houses
+	var chm = MultiMesh.new()
+	chm.transform_format = MultiMesh.TRANSFORM_3D
+	chm.use_colors = true
+	chm.mesh = BoxMesh.new()
+	chm.instance_count = houses
+	var wnm = MultiMesh.new()
+	wnm.transform_format = MultiMesh.TRANSFORM_3D
+	wnm.use_colors = true
+	wnm.mesh = BoxMesh.new()
+	wnm.instance_count = houses * 2
+	var np = 0
+	var nc = 0
+	var nw = 0
 	var k = 0
 	tries = 0
 	while k < houses and tries < houses * 20:
@@ -2478,15 +2498,38 @@ func build_backdrop(style: String) -> void:
 		var bb = Basis(Vector3.UP, yaw)
 		hmm.set_instance_transform(k * 2, Transform3D(bb.scaled(Vector3(w, h, d)), Vector3(x, y + h / 2.0 - 0.3, z)))
 		hmm.set_instance_color(k * 2, walls[rng.randi() % walls.size()])
-		var roof_h = 0.5 if (style == "urban" and h < 4.0) else 1.6
-		hmm.set_instance_transform(k * 2 + 1, Transform3D(bb.scaled(Vector3(w + 0.6, roof_h, d + 0.6)), Vector3(x, y + h + roof_h / 2.0 - 0.3, z)))
-		hmm.set_instance_color(k * 2 + 1, roofs[rng.randi() % roofs.size()])
+		var ruined = style == "urban" and h < 4.0
+		var rc: Color = roofs[rng.randi() % roofs.size()]
+		if ruined or (style == "urban" and rng.randf() < 0.5):
+			# flat roof with a parapet (or the bare top of a ruin)
+			hmm.set_instance_transform(k * 2 + 1, Transform3D(bb.scaled(Vector3(w + 0.3, 0.45, d + 0.3)), Vector3(x, y + h + 0.2 - 0.3, z)))
+			hmm.set_instance_color(k * 2 + 1, walls[rng.randi() % walls.size()].darkened(0.12))
+		else:
+			# a pitched roof with overhanging eaves, and a chimney
+			hmm.set_instance_transform(k * 2 + 1, Transform3D(bb.scaled(Vector3(0.01, 0.01, 0.01)), Vector3(x, y - 50.0, z)))
+			var rh = minf(w, d) * 0.32
+			prm.set_instance_transform(np, Transform3D(bb.scaled(Vector3(w + 0.8, rh, d + 0.8)), Vector3(x, y + h + rh / 2.0 - 0.3, z)))
+			prm.set_instance_color(np, rc)
+			np += 1
+			chm.set_instance_transform(nc, Transform3D(bb.scaled(Vector3(0.7, rh + 0.8, 0.7)), Vector3(x, y + h + rh * 0.5, z) + bb * Vector3(w * 0.28, 0, d * 0.1)))
+			chm.set_instance_color(nc, Color(0.45, 0.32, 0.27))
+			nc += 1
+		# a dark band of windows along the long sides
+		for sgn in [-1.0, 1.0]:
+			wnm.set_instance_transform(nw, Transform3D(bb.scaled(Vector3(w * 0.75, minf(1.2, h * 0.25), 0.1)), Vector3(x, y + h * 0.55, z) + bb * Vector3(0, 0, sgn * (d * 0.5 + 0.03))))
+			wnm.set_instance_color(nw, Color(0.14, 0.15, 0.17))
+			nw += 1
 		k += 1
 	hmm.visible_instance_count = k * 2
-	var hmi = MultiMeshInstance3D.new()
-	hmi.multimesh = hmm
-	hmi.material_override = tmat
-	backdrop.add_child(hmi)
+	prm.visible_instance_count = np
+	chm.visible_instance_count = nc
+	wnm.visible_instance_count = nw
+	for mmx in [hmm, prm, chm, wnm]:
+		var hmi = MultiMeshInstance3D.new()
+		hmi.multimesh = mmx
+		hmi.material_override = tmat
+		hmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		backdrop.add_child(hmi)
 
 func _road_strip(c: Vector3, size: Vector2) -> void:
 	var m = MeshInstance3D.new()
@@ -2824,10 +2867,16 @@ func build_river() -> void:
 	for sx in [-1.0, 1.0]:
 		flatten_rect(sx * (W2 - 60.0) - 24.0, -28.0, sx * (W2 - 60.0) + 24.0, 28.0, 6.0)
 	# the riverbed
-	_each_vert(-16.0, -D2 - 2.0, 16.0, D2 + 2.0, func(i, vx, vz):
+	# the riverbed, with banks that slope gently down to the water instead of dropping off a step
+	_each_vert(-34.0, -D2 - 2.0, 34.0, D2 + 2.0, func(i, vx, vz):
 		var dx = absf(vx - sin(vz * 0.02) * 6.0)
-		if dx < 11.0:
-			th[i] = minf(th[i], -2.6 * (1.0 - G.smooth01(maxf(0.0, dx - 7.0) / 4.0))))
+		if dx < 7.0:
+			th[i] = -2.6
+		elif dx < 26.0:
+			var k = G.smooth01((dx - 7.0) / 19.0)
+			# the hills ease down toward the river; the bank meets the water about 10 m out
+			var land = minf(th[i], 0.4 + (dx - 10.0) * 0.22)
+			th[i] = lerpf(-2.6, land, k))
 	var X = [-170.0, -80.0, 80.0, 170.0]
 	var Z = [20.0, -25.0, 25.0, -20.0]
 	var vil = []
@@ -2836,14 +2885,20 @@ func build_river() -> void:
 		vil.append(return_village)
 	_flatten_roads()
 	build_terrain(MAPS["river"]["ground"])
-	add_water(-14.0, 14.0, -D2, D2, -0.7, Color(0.22, 0.34, 0.38, 0.85))
+	# the water follows the river's bends in short strips
+	var seg = 8.0
+	var zz = -D2
+	while zz < D2:
+		var cx = sin((zz + seg * 0.5) * 0.02) * 6.0
+		add_water(cx - 21.0, cx + 21.0, zz, minf(D2, zz + seg), -0.7, Color(0.22, 0.34, 0.38, 0.85))
+		zz += seg
 	for rd in roads:
 		if rd[1] - rd[0] > 100.0:
 			flat_plane(-W2 / 2.0 - 7.0, (rd[2] + rd[3]) * 0.5, W2 - 14.0, rd[3] - rd[2], Color(0.31, 0.3, 0.3), 0.015)
 			flat_plane(W2 / 2.0 + 7.0, (rd[2] + rd[3]) * 0.5, W2 - 14.0, rd[3] - rd[2], Color(0.31, 0.3, 0.3), 0.015)
-	bridge(-15.0, 15.0, 0.0, 7.0)
-	bridge(-15.0, 15.0, -70.0, 5.0)
-	bridge(-15.0, 15.0, 70.0, 5.0)
+	bridge(-19.0, 19.0, 0.0, 7.0)
+	bridge(-19.0, 19.0, -70.0, 5.0)
+	bridge(-19.0, 19.0, 70.0, 5.0)
 	for i in range(4):
 		_village_build(vil[i], 1)
 		strongpoint(X[i] + (8.0 if X[i] < 0.0 else -8.0), Z[i], 1.0 if X[i] < 0.0 else -1.0)

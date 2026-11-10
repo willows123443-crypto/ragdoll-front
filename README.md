@@ -76,6 +76,12 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **More ammunition:** more spare magazines for every gun and more rockets
 - **Smoother animation:** pose changes ease in over a few frames; soldiers turn to face a wall before vaulting it and look where they're going while they're over
 - **Map fixes:** the beach map's sea now runs to the horizon, and the colour of high ground no longer washes out to near white on hilly maps
+- **Animation:** soldiers with nothing to shoot at stand easy with the rifle held low and their weight shifting, walk facing where they're going, ease into turns, and only take a knee when something has happened; far-off soldiers move smoothly instead of stuttering; everyone has a neck
+- **Hits and deaths:** soldiers flinch, stagger or drop to a knee when hit and stay up; deaths depend on where the hit landed (a head shot drops them at once, leg hits fold the knees) with more ways to fall: forwards, twisting, reaching out, sitting back; bodies settle and lie still
+- **Militia looks:** full balaclavas with an eye slit; AK-pattern rifles with wooden furniture and curved magazines, old bolt-action rifles, a belt-fed MG and RPG-7s
+- **Zombie fights:** soldiers back away from anything close while they keep shooting and never walk into the horde; new zombies from later waves: riot-armoured ones you have to shoot in the head, bloaters that burst and knock people down, and spitters that hang back and lob acid that burns and leaves a burning puddle; every zombie has its own walk (shambling, lurching, staggering, hunched or stiff), arm poses and pace, and there are two kinds of runner
+- **Smarter soldiers:** left to themselves they pull back to their mates when cut off, fall back to better cover when badly outnumbered, get out of sight of enemy armour if they have nothing to fight it with, and head for a field hospital when badly hurt; vehicles stuck in a narrow street try another way round and their troops get out and carry on on foot
+- **Look fixes:** Bravo's helmet sits clear of the eyes; helicopter troops sit on benches along the walls; the river has gently sloping banks; distant farms and towns have pitched roofs, chimneys and windows
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

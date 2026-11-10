@@ -788,6 +788,12 @@ static func _build_main(v) -> void:
 				box(v, hull, Vector3(2.1, 0.45, 4.6), Vector3(0, 0.62, 0.3), hc.darkened(0.08), {"b": 0.18})
 				ball(hull, Vector3(1.95, 1.35, 1.7), Vector3(0, 1.65, 3.05), Color.WHITE, {"m": glass()})
 				ball(hull, Vector3(1.5, 0.8, 2.8), Vector3(0, 2.45, 0.3), hc.darkened(0.04))
+				# troop benches along both walls
+				for x in [0.8, -0.8]:
+					box(v, hull, Vector3(0.42, 0.08, 2.5), Vector3(x, 0.88, 0.4), Color(0.25, 0.27, 0.22), {"b": 0.02})
+					box(v, hull, Vector3(0.05, 0.45, 2.5), Vector3(x * 1.22, 1.15, 0.4), Color(0.3, 0.3, 0.26), {"b": 0.01})
+					for z in [1.5, -0.7]:
+						box(v, hull, Vector3(0.04, 0.1, 0.04), Vector3(x, 0.8, z), METAL, {"b": 0.0})
 				for x in [0.45, -0.45]:
 					cyl(hull, 0.22, 0.6, Vector3(x, 2.5, -1.25), METAL, "z", {"seg": 10})
 				# sliding side doors with windows, round portholes behind them

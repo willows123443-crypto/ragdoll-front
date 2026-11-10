@@ -33,6 +33,8 @@ static var camo_tex: ImageTexture = null
 static var next_id = 0
 static var zombie_next = ""       # the horde: the next soldier made is one of the walking dead (walker, runner, brute, crawler)
 var zombie = false
+var zstyle = 0          # 0 reaching shamble, 1 lurch, 2 stagger, 3 hunched, 4 stiff
+var zgait = 1.0
 var ztype = ""
 var zspeed = 2.8
 var lunge_t = 0.0
@@ -246,6 +248,9 @@ func setup(team_: int, x: float, z: float, weapon_id: String) -> void:
 	skin = G.pick(G.SKINS)
 	zombie = zombie_next != ""
 	ztype = zombie_next
+	# each of the dead moves its own way: a gait style and its own pace
+	zstyle = randi() % 5
+	zgait = randf_range(0.8, 1.25)
 	if zombie:
 		skin = [Color(0.55, 0.6, 0.48), Color(0.62, 0.62, 0.55), Color(0.5, 0.55, 0.5), Color(0.58, 0.55, 0.45)][randi() % 4]
 		if ztype == "brute":
@@ -362,8 +367,8 @@ static var face_texs = {}
 static var face_mats = {}
 const BROWS = [Color(0.2, 0.13, 0.08), Color(0.07, 0.06, 0.05), Color(0.52, 0.4, 0.24), Color(0.3, 0.2, 0.12)]
 
-static func _face_mat(brow: int, beard: int, eyes_only: bool) -> Material:
-	var key = "%d_%d_%s" % [brow, beard, str(eyes_only)]
+static func _face_mat(brow: int, beard: int, eyes_only: bool, slit: Color = Color(0, 0, 0, 0)) -> Material:
+	var key = "%d_%d_%s_%s" % [brow, beard, str(eyes_only), slit.to_html()]
 	if face_mats.has(key):
 		return face_mats[key]
 	var N = 32
@@ -382,8 +387,15 @@ static func _face_mat(brow: int, beard: int, eyes_only: bool) -> Material:
 					continue
 				if beard == 2 or r.randf() < 0.32:
 					img.set_pixel(x, y, bc.darkened(0.15 + r.randf() * 0.15))
-	# brows, slightly angled
+	# a balaclava's eye slit: a band of skin with the eyes in it
+	if slit.a > 0.0:
+		for y in range(11, 18):
+			for x in range(4, N - 4):
+				img.set_pixel(x, y, slit)
+	# brows, slightly angled (hidden under a balaclava)
 	for x in range(6, 14):
+		if slit.a > 0.0:
+			break
 		var y = 9 if x > 8 else 10
 		img.set_pixel(x, y, bc)
 		img.set_pixel(N - 1 - x, y, bc)
@@ -447,9 +459,9 @@ func _face(head: Node3D, sk: Material, militia: bool) -> void:
 		beard = 1
 	var balaclava = militia and id % 4 == 0
 	# the head and torso pieces have +z pointing out of the back, so the face goes on -z
-	var z = 0.144 if balaclava else 0.1265
+	var z = 0.1375 if balaclava else 0.1265
 	# set a little low on the head so brows and eyes sit clear of any helmet rim
-	var fq = _detail(head, face_quad, Vector3(0, -0.012, -z), _face_mat(brow, beard, balaclava))
+	var fq = _detail(head, face_quad, Vector3(0, -0.012, -z), _face_mat(brow, beard, balaclava, skin if balaclava else Color(0, 0, 0, 0)))
 	fq.rotation.y = PI
 	if not balaclava:
 		_detail(head, unit_box, Vector3(0, -0.04, -0.138), sk, Vector3(0.045, 0.07, 0.04))
@@ -482,12 +494,10 @@ func _helmet(head: Node3D, helm: Material, band: Material, cloth: Material) -> v
 		0:  # round dome with a narrow rim
 			_hpart(head, "dome", Vector3(0.33, 0.5, 0.35), Vector3(0, 0.07, 0), helm)
 			_hpart(head, "cyl", Vector3(0.37, 0.025, 0.39), Vector3(0, 0.07, 0), helm)
-		1:  # deep helmet flaring out over the neck and ears (kept above the brow so it never covers the face)
-			_hpart(head, "dome", Vector3(0.32, 0.5, 0.34), Vector3(0, 0.08, 0), helm)
-			_hpart(head, "flare", Vector3(0.33, 0.05, 0.35), Vector3(0, 0.085, 0.01), helm)
-			_mesh(head, Vector3(0.27, 0.1, 0.05), Vector3(0, 0.04, 0.14), helm)
-			for e in [-1.0, 1.0]:
-				_mesh(head, Vector3(0.03, 0.08, 0.14), Vector3(e * 0.145, 0.045, 0.06), helm)
+		1:  # high rounded helmet with a short skirt down over the back of the neck; the front stays clear of the eyes
+			_hpart(head, "dome", Vector3(0.31, 0.54, 0.33), Vector3(0, 0.085, 0.005), helm)
+			_hpart(head, "cyl", Vector3(0.33, 0.02, 0.35), Vector3(0, 0.085, 0.005), helm)
+			_mesh(head, Vector3(0.24, 0.075, 0.035), Vector3(0, 0.055, 0.152), helm)
 		2:  # shallow bowl with a wide flat brim
 			_hpart(head, "dome", Vector3(0.28, 0.38, 0.3), Vector3(0, 0.08, 0), helm)
 			_hpart(head, "cyl", Vector3(0.44, 0.022, 0.46), Vector3(0, 0.075, 0), helm)
@@ -543,6 +553,8 @@ func _build_body() -> void:
 	_mesh(parts[1], Vector3(0.46, 0.32, 0.3), Vector3(0, 0.06, 0), vest)
 	_mesh(parts[1], Vector3(0.32, 0.3, 0.14), Vector3(0, 0.05, -0.19), vest)
 	_mesh(parts[2], Vector3(0.25, 0.26, 0.25), Vector3.ZERO, sk)
+	# a neck down into the collar, so the head doesn't float above the shoulders
+	_mesh(parts[2], Vector3(0.12, 0.13, 0.12), Vector3(0, -0.185, 0.015), sk)
 	if not zombie:
 		_face(parts[2], sk, militia)
 	if militia:
@@ -623,13 +635,15 @@ func _fill_gun() -> void:
 		gun_node.remove_child(c)
 		c.queue_free()
 	var i = 0
-	for p in G.GUN_MODELS[wid]:
+	for p in G.gun_model(wid, team, id):
 		var mi = MeshInstance3D.new()
 		var bm = BoxMesh.new()
 		bm.size = Vector3(p[3], p[4], p[5])
 		mi.mesh = bm
 		mi.material_override = _mat("gun" + p[6].to_html(false), p[6], false)
 		mi.position = Vector3(p[0], p[1], p[2])
+		if p.size() > 7:
+			mi.rotation.x = p[7]
 		mi.layers = 2
 		mi.name = "p%d" % i
 		gun_node.add_child(mi)
@@ -767,9 +781,12 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 		g = (aim * 0.7 + Vector3(0, -0.45, 0) - ur * 0.25).normalized()
 	elif ready_:
 		g = aim
+	elif spd < 0.6:
+		# at ease: rifle held low across the body, muzzle down
+		g = (uf * 0.62 - ur * 0.38 + Vector3(0, -0.55, 0)).normalized()
 	else:
 		g = uf * 0.55 - ur * 0.62
-		g.y = 0.45
+		g.y = 0.3
 		g = g.normalized()
 	var gd = Vector3(0, -1, 0) + g * g.y
 	if gd.length_squared() < 1e-4:
@@ -783,6 +800,8 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 		rh = rsh + uf * 0.03 - ur * 0.06 + g * 0.24 + Vector3(0, 0.03, 0)
 	elif ready_ or reloading or gun_blocked:
 		rh = rsh + g * 0.27 - ur * 0.07 + Vector3(0, -0.09, 0)
+	elif spd < 0.6:
+		rh = rsh + uf * 0.14 - ur * 0.03 + Vector3(0, -0.36, 0)
 	else:
 		rh = rsh + uf * 0.2 - ur * 0.05 + Vector3(0, -0.3 + sin(phase * 2.0) * 0.02 * minf(spd, 3.0), 0)
 	anchor_l = false
@@ -832,9 +851,29 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 		elif ztype == "brute":
 			rh = rsh + uf * 0.22 - ur * 0.18 + Vector3(0, -0.32 + sin(zt * 1.3) * 0.04, 0)
 			lh = lsh + uf * 0.22 + ur * 0.18 + Vector3(0, -0.32 + sin(zt * 1.1) * 0.04, 0)
+		elif ztype == "runner" and zstyle % 2 == 1:
+			# arms trailing back as it bolts
+			var k2 = sin(phase)
+			rh = rsh - uf * (0.18 + 0.08 * k2) + Vector3(0, -0.28, 0) - ur * 0.06
+			lh = lsh - uf * (0.18 - 0.08 * k2) + Vector3(0, -0.28, 0) + ur * 0.06
 		else:
-			rh = rsh + uf * 0.42 - ur * 0.02 + Vector3(0, -0.06 + sin(zt * 2.1) * 0.06, 0)
-			lh = lsh + uf * (0.34 + 0.06 * sin(zt * 1.3)) + ur * 0.02 + Vector3(0, -0.12 + sin(zt * 1.7) * 0.07, 0)
+			match zstyle:
+				1:  # arms hanging and swinging with the lurch
+					var k3 = sin(phase)
+					rh = rsh + uf * (0.08 + 0.12 * k3) + Vector3(0, -0.5, 0) - ur * 0.04
+					lh = lsh + uf * (0.08 - 0.12 * k3) + Vector3(0, -0.5, 0) + ur * 0.04
+				2:  # one arm reaching, the other dangling
+					rh = rsh + uf * 0.45 + Vector3(0, -0.04 + sin(zt * 2.0) * 0.07, 0)
+					lh = lsh + uf * 0.06 + Vector3(0, -0.52, 0) + ur * 0.05
+				3:  # hands hanging low in front of the knees
+					rh = rsh + uf * 0.28 - ur * 0.06 + Vector3(0, -0.46 + sin(zt * 1.4) * 0.03, 0)
+					lh = lsh + uf * 0.3 + ur * 0.06 + Vector3(0, -0.46 + sin(zt * 1.2) * 0.03, 0)
+				4:  # clawing at the air
+					rh = rsh + uf * 0.3 + Vector3(0, 0.05 + 0.16 * sin(zt * 3.1), 0) - ur * 0.05
+					lh = lsh + uf * 0.3 + Vector3(0, 0.05 + 0.16 * sin(zt * 2.6 + 1.0), 0) + ur * 0.05
+				_:
+					rh = rsh + uf * 0.42 - ur * 0.02 + Vector3(0, -0.06 + sin(zt * 2.1) * 0.06, 0)
+					lh = lsh + uf * (0.34 + 0.06 * sin(zt * 1.3)) + ur * 0.02 + Vector3(0, -0.12 + sin(zt * 1.7) * 0.07, 0)
 	elif hand_t != null:
 		rh = hand_t + ur * 0.13
 		lh = hand_t - ur * 0.13
@@ -891,17 +930,37 @@ func stand_pose() -> void:
 	var pY = 0.98 - 0.42 * c + bob * 0.5
 	var gy = pos.y
 	var base = Vector3(pos.x, gy, pos.z)
-	P[2] = base + r * (lean * 0.05) + Vector3(0, pY, 0) + f * (-0.04 * c)
-	P[9] = base + r * (-0.11 + lean * 0.05) + Vector3(0, pY - 0.05, 0) + f * (-0.04 * c)
-	P[12] = base + r * (0.11 + lean * 0.05) + Vector3(0, pY - 0.05, 0) + f * (-0.04 * c)
+	# standing easy: the weight drifts from one leg to the other and the hips follow
+	var ease_k = clampf(1.0 - spd / 0.6, 0.0, 1.0) * (0.0 if ready_ or zombie or c > 0.3 else 1.0)
+	var sway = sin(t * 0.33 + float(id)) * 0.035 * ease_k
+	pY -= absf(sway) * 0.35
+	P[2] = base + r * (lean * 0.05 + sway) + Vector3(0, pY, 0) + f * (-0.04 * c)
+	P[9] = base + r * (-0.11 + lean * 0.05 + sway) + Vector3(0, pY - 0.05 - maxf(0.0, sway) * 0.4, 0) + f * (-0.04 * c)
+	P[12] = base + r * (0.11 + lean * 0.05 + sway) + Vector3(0, pY - 0.05 - maxf(0.0, -sway) * 0.4, 0) + f * (-0.04 * c)
 	var sprint = not ready_ and spd > 4.6
 	var al = 0.06 + 0.3 * c + minf(spd, 6.0) * 0.028 + (0.12 if sprint else 0.0) + breath
 	if swim:
 		al = 1.05 + sin(t * 3.2) * 0.05
 	var th = lean * 0.42
 	if zombie:
-		al += {"walker": 0.42, "runner": 0.3, "brute": 0.5}.get(ztype, 0.4) + (0.3 if lunge_t > 0.0 and lunge_t < 0.3 else 0.0)
+		al += {"walker": 0.42, "runner": 0.3, "brute": 0.5, "bloater": 0.2, "spitter": 0.36}.get(ztype, 0.4) + (0.3 if lunge_t > 0.0 and lunge_t < 0.3 else 0.0)
 		th += sin(t * 0.9) * 0.14 + (0.1 if id % 2 == 0 else -0.1)
+		match zstyle:
+			1:  # lurching, pitched forward and bobbing with every step
+				al += 0.22 + absf(sin(phase)) * 0.12
+			2:  # staggering from side to side as it walks
+				th += sin(phase * 0.5) * 0.22
+				for hi2 in [2, 9, 12]:
+					P[hi2] = P[hi2] + r * sin(phase * 0.5) * 0.07
+			3:  # hunched right over
+				al += 0.38
+				for hi3 in [2, 9, 12]:
+					P[hi3] = P[hi3] - Vector3(0, 0.07, 0)
+			4:  # stiff and upright, head rolling
+				al -= 0.28
+				th += sin(t * 0.5) * 0.08
+		if ztype == "runner" and zstyle % 2 == 1:
+			al += 0.25          # the other kind of runner: bent low and fast
 	var tw = clampf(G.wrap_a(aim_yaw - body_yaw), -1.1, 1.1)
 	var uy = body_yaw + tw
 	var uf = Vector3(sin(uy), 0, cos(uy))
@@ -922,6 +981,10 @@ func stand_pose() -> void:
 	if zombie:
 		# head lolls to one side and juts forward
 		P[1] = P[1] + uf * (0.06 + (0.1 if lunge_t > 0.0 and lunge_t < 0.3 else 0.0)) + ur * (0.05 * sin(t * 0.6) + (0.04 if id % 2 == 0 else -0.04)) - Vector3(0, 0.04, 0)
+		if zstyle == 4:
+			P[0] = P[0] + ur * sin(t * 0.7) * 0.07 - Vector3(0, 0.03, 0)     # head lolling round
+		elif zstyle == 3:
+			P[0] = P[0] + uf * 0.06
 	var A = minf(spd * 0.12, 0.45)
 	var lmx = mlx * mn
 	var lmz = mlz * mn
@@ -934,12 +997,18 @@ func stand_pose() -> void:
 		var ph = phase + (PI if side == 1 else 0.0)
 		var sw = sin(ph)
 		var lift = maxf(0.0, cos(ph)) * A * 0.6
-		if zombie and ztype != "runner" and side == id % 2:
+		if zombie and ztype != "runner" and side == id % 2 and (zstyle == 0 or zstyle == 3):
 			sw *= 0.45          # the bad leg drags
 			lift = 0.0
+		elif zombie and zstyle == 4 and side == id % 2:
+			lift *= 0.3         # a stiff leg swung round rather than lifted
+		elif zombie and zstyle == 1:
+			sw *= 1.3
+			lift *= 1.4
 		var hi = 12 if side == 1 else 9
 		var cz = -0.24 * c if side == 1 else 0.3 * c
-		var foot = base + r * (sd * 0.13 + lmx * sw * A) + f * (lmz * sw * A + cz)
+		var wide = 0.1 if zombie and zstyle == 2 else 0.0
+		var foot = base + r * (sd * (0.13 + wide) + lmx * sw * A) + f * (lmz * sw * A + cz)
 		if swim:
 			# frog kick, legs trailing behind
 			var kk = sin(t * 3.2 + (PI if side == 1 else 0.0))
@@ -1049,6 +1118,20 @@ func _lod_far() -> bool:
 	var ld: float = G.settings["lod_dist"]
 	return cam != null and cam.global_position.distance_squared_to(pos) > ld * ld
 
+# a far-off soldier only thinks every other frame: in between, carry the body along so it doesn't stutter
+func lod_glide() -> void:
+	if not lod_frozen or hidden_in_vehicle:
+		return
+	var d = Vector3(vel.x, 0, vel.z) * G.DT
+	if d.length_squared() < 1e-8:
+		return
+	# past a hundred-odd metres nobody can see the difference: save the work
+	var cam = get_viewport().get_camera_3d()
+	if cam != null and cam.global_position.distance_squared_to(pos) > 14400.0:
+		return
+	for b in parts:
+		b.global_position += d
+
 # back to a real simulated body (falling, dying, climbing aboard)
 func lod_wake() -> void:
 	if not lod_frozen:
@@ -1089,9 +1172,12 @@ func _smooth_targets() -> void:
 
 func drive() -> void:
 	_compute_targets()
-	if state == "alive" or state == "riding" or state == "getup":
+	var far = _lod_far()
+	if (state == "alive" or state == "riding" or state == "getup") and not far:
 		_smooth_targets()
-	if _lod_far():
+	elif far:
+		sm_off = []
+	if far:
 		if not lod_frozen or not parts[0].freeze:
 			lod_frozen = true
 			for b in parts:
@@ -1131,6 +1217,7 @@ func wake() -> void:
 		b.sleeping = false
 
 func push(part: int, impulse_v: Vector3, spread: float) -> void:
+	unsettle()
 	for i in range(parts.size()):
 		var b: RigidBody3D = parts[i]
 		var w = 1.0 if i == part else spread
@@ -1383,6 +1470,27 @@ func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
 	elif ztype == "runner":
 		_mesh(parts[1], Vector3(0.38, 0.5, 0.2), Vector3.ZERO, sk)
 		_mesh(parts[1], Vector3(0.3, 0.07, 0.21), Vector3(0, 0.08, 0.0), blood)
+	elif ztype == "armored":
+		# riot gear: helmet with a visor, a body armour vest and pads
+		var riot = _mat("zriot", Color(0.13, 0.14, 0.15), false)
+		_hpart(parts[2], "dome", Vector3(0.33, 0.52, 0.35), Vector3(0, 0.06, 0), riot)
+		_mesh(parts[2], Vector3(0.24, 0.1, 0.02), Vector3(0, 0.02, -0.15), _mat("zvisor", Color(0.25, 0.3, 0.32), false))
+		_mesh(parts[1], Vector3(0.5, 0.4, 0.34), Vector3(0, 0.04, 0), riot)
+		for i in [3, 5, 7, 9]:
+			_mesh(parts[i], Vector3(0.16, 0.14, 0.16), Vector3(0, 0.0, 0), riot)
+	elif ztype == "bloater":
+		# swollen and sickly green, the gut ready to burst
+		var bloat = _mat("zbloat", Color(0.5, 0.56, 0.32), false)
+		_mesh(parts[1], Vector3(0.62, 0.52, 0.5), Vector3(0, -0.04, -0.06), bloat)
+		_mesh(parts[0], Vector3(0.5, 0.26, 0.42), Vector3(0, 0.02, -0.04), bloat)
+		_mesh(parts[1], Vector3(0.18, 0.14, 0.03), Vector3(0.08, -0.08, -0.31), blood)
+	elif ztype == "spitter":
+		# thin, the jaw hanging open over a swollen, glowing throat
+		var acid = _mat_glow("zacid", Color(0.55, 0.85, 0.15))
+		_mesh(parts[2], Vector3(0.12, 0.1, 0.03), Vector3(0, -0.07, -0.13), _mat("zmouth", Color(0.08, 0.02, 0.02), false))
+		_mesh(parts[2], Vector3(0.16, 0.12, 0.14), Vector3(0, -0.17, -0.03), acid)
+		_mesh(parts[1], Vector3(0.36, 0.5, 0.2), Vector3.ZERO, sk)
+		_mesh(parts[1], Vector3(0.1, 0.18, 0.02), Vector3(-0.05, 0.08, -0.11), acid)
 	elif ztype == "crawler":
 		for i in [8, 10]:
 			for ch in parts[i].get_children():
@@ -1550,8 +1658,18 @@ func go_dead() -> void:
 		climb = null
 		release_ladder_gun(false)
 	# how this one goes down
+	# where they were hit shapes how they go down
 	var r = randf()
-	death_style = "slump" if r < 0.25 else ("knees" if r < 0.45 else ("clutch" if r < 0.65 else ("stagger" if r < 0.82 else "spin")))
+	if wound_part == 2 and r < 0.65:
+		death_style = "limp"            # a head shot: everything just stops
+	elif wound_part >= 7 and r < 0.6:
+		death_style = "knees"           # legs go first
+	elif (wound_part == 3 or wound_part == 4 or wound_part == 5 or wound_part == 6) and r < 0.5:
+		death_style = "clutch"
+	else:
+		var styles = ["slump", "knees", "clutch", "stagger", "spin", "forward", "twist", "reach", "sitback"]
+		death_style = styles[randi() % styles.size()]
+	settled = false
 	if vehicle != null:
 		dismount(true)
 	if state == "chute":
@@ -1778,6 +1896,7 @@ func tick() -> void:
 			if dead_t < 0.9 and not lod_frozen:
 				_death_motion()
 			dead_t += G.DT
+			_settle()
 			if not pooled and dead_t > 1.2:
 				pooled = true
 				G.fx.decal(parts[0].global_position, randf_range(1.0, 1.6), false)
@@ -1826,6 +1945,64 @@ func _death_motion() -> void:
 				var sp = (1.0 if id % 2 == 0 else -1.0) * randf_range(4.0, 7.0)
 				parts[1].angular_velocity += up * sp
 				parts[0].angular_velocity += up * sp * 0.6
+		"forward":
+			# topples forward onto the face, the knees giving way under him
+			if t < 0.4:
+				var fw = Vector3(sin(body_yaw), 0, cos(body_yaw))
+				parts[1].linear_velocity += fw * 0.28
+				parts[2].linear_velocity += fw * 0.32
+				parts[0].linear_velocity.y = minf(parts[0].linear_velocity.y, -0.8)
+		"twist":
+			# turns half away as one leg folds
+			if t < 0.3:
+				var sd = 1.0 if id % 2 == 0 else -1.0
+				parts[1].angular_velocity += up * sd * 0.5
+				parts[8 if id % 2 == 0 else 10].linear_velocity.y = minf(parts[8 if id % 2 == 0 else 10].linear_velocity.y, -1.4)
+		"reach":
+			# one arm comes up and out, then everything sags
+			if t < 0.45:
+				var hand = 6 if id % 2 == 0 else 4
+				var fw2 = Vector3(sin(body_yaw), 0, cos(body_yaw))
+				parts[hand].linear_velocity = parts[hand].linear_velocity.lerp(fw2 * 1.4 + Vector3(0, 1.6 - t * 4.0, 0), 0.3)
+				parts[0].linear_velocity.y = minf(parts[0].linear_velocity.y, -0.9)
+		"sitback":
+			# drops to the seat, then rolls back
+			if t < 0.3:
+				parts[0].linear_velocity.y = minf(parts[0].linear_velocity.y, -2.0)
+			elif t < 0.7:
+				var bk = -Vector3(sin(body_yaw), 0, cos(body_yaw))
+				parts[1].linear_velocity += bk * 0.22
+				parts[2].linear_velocity += bk * 0.26
+
+# once a body has come to rest it stops twitching: more damping, and it's frozen in place until
+# something (a blast, a vehicle, being dragged) moves it again
+var settled = false
+
+func _settle() -> void:
+	if settled or lod_frozen or parts.is_empty() or dragger != null or carried_by != null:
+		return
+	if dead_t > 1.4 and dead_t < 1.45:
+		for b in parts:
+			b.linear_damp = 1.6
+			b.angular_damp = 3.5
+	if dead_t > 3.0 and int(dead_t * 60.0) % 15 == 0:
+		for b in parts:
+			if b.linear_velocity.length_squared() > 0.02 or b.angular_velocity.length_squared() > 0.1:
+				return
+		settled = true
+		for b in parts:
+			b.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
+			b.freeze = true
+
+func unsettle() -> void:
+	if not settled:
+		return
+	settled = false
+	dead_t = 1.5
+	for b in parts:
+		b.freeze = false
+		b.linear_damp = 0.1
+		b.angular_damp = 1.0
 
 # knocked down next to a wall: put a hand out to catch yourself
 func _brace() -> void:
@@ -1973,6 +2150,19 @@ func _tick_wounded() -> void:
 		start_getup()
 		G.fx.callout(self, "Thanks!")
 
+# turning eases in and out instead of starting and stopping dead
+var yaw_v = 0.0
+
+func _turn_body(goal: float, max_rate: float) -> void:
+	var d = G.wrap_a(goal - body_yaw)
+	var want_v = clampf(d * 7.0, -max_rate, max_rate)
+	yaw_v = lerpf(yaw_v, want_v, minf(1.0, G.DT * 11.0))
+	if absf(d) < absf(yaw_v * G.DT):
+		body_yaw = goal
+		yaw_v = 0.0
+	else:
+		body_yaw += yaw_v * G.DT
+
 func _tick_alive() -> void:
 	supp = maxf(0.0, supp - 0.3 * G.DT)
 	radio_cd = maxf(0.0, radio_cd - G.DT) if is_player else radio_cd
@@ -2102,18 +2292,22 @@ func _tick_alive() -> void:
 		var my = atan2(vel.x, vel.z)
 		var rel = G.wrap_a(my - aim_yaw)
 		var goal = aim_yaw + rel * 0.5 if absf(rel) < 1.3 else aim_yaw
-		body_yaw = G.turn_to(body_yaw, goal, 6.0 * G.DT)
+		if not ready_:
+			goal = my            # just walking: face the way you're going
+		_turn_body(goal, 6.0)
 		turning = false
 	else:
 		var dd = G.wrap_a(aim_yaw - body_yaw)
 		if absf(dd) > 0.8:
 			turning = true
 		if turning or dragging != null:
-			body_yaw = G.turn_to(body_yaw, aim_yaw, 3.2 * G.DT)
+			_turn_body(aim_yaw, 3.6)
+		else:
+			yaw_v = lerpf(yaw_v, 0.0, minf(1.0, G.DT * 10.0))
 			if absf(dd) < 0.12:
 				turning = false
 	var ph0 = sin(phase)
-	phase += (spd * (5.0 if prone else 2.3) + (6.0 if turning else 0.0) + (9.0 if stumble > 0.0 else 0.0)) * G.DT
+	phase += (spd * (5.0 if prone else 2.3) * (zgait if zombie else 1.0) + (6.0 if turning else 0.0) + (9.0 if stumble > 0.0 else 0.0)) * G.DT
 	if ph0 * sin(phase) < 0.0 and (spd > 0.8 or stumble > 0.0) and not prone:
 		if not G.world.water.is_empty() and G.world.in_water(pos.x, pos.z):
 			if not _lod_far():
@@ -2126,8 +2320,10 @@ func _tick_alive() -> void:
 	# far away in a big battle: pose and body only every third tick, and no balance checks
 	var far = _lod_far()
 	if far:
+		# far off: the pose is worked out every other tick and the body carried along in between
 		lod_n += 1
 		if lod_n % 2 != 0:
+			lod_glide()
 			return
 	if not far:
 		check_gun_clip()

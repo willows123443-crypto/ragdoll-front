@@ -68,8 +68,9 @@ static func headgear(s, head: Node3D) -> void:
 	var dark = s._mat("milwrap" + str(k), [Color(0.1, 0.1, 0.1), Color(0.5, 0.45, 0.36), Color(0.2, 0.2, 0.22), Color(0.62, 0.6, 0.55)][k], false)
 	var band = s._mat("band" + G.TEAM_BAND[s.team].to_html(), G.TEAM_BAND[s.team], false)
 	match k:
-		0:  # balaclava: the whole head, a slit for the eyes
-			s._hpart(head, "dome", Vector3(0.28, 0.52, 0.29), Vector3(0, 0.0, 0), dark)
+		0:  # balaclava: knitted over the whole head, a slit for the eyes (the face texture shows skin there)
+			s._mesh(head, Vector3(0.272, 0.282, 0.272), Vector3(0, 0.006, 0), dark)
+			s._hpart(head, "dome", Vector3(0.27, 0.12, 0.27), Vector3(0, 0.145, 0), dark)
 		1:  # shemagh wrapped round head and face
 			s._hpart(head, "dome", Vector3(0.3, 0.42, 0.31), Vector3(0, 0.06, 0), dark)
 			s._hpart(head, "cyl", Vector3(0.27, 0.1, 0.27), Vector3(0, -0.06, -0.02), dark)

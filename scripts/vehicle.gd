@@ -74,13 +74,13 @@ const SPECS = {
 	"heli": {"name": "Transport helicopter", "len": 11.0, "wid": 3.0, "speed": 26.0, "rev": 8.0, "accel": 8.0, "turn": 1.0, "hp": 700.0,
 		"bullet": 0.3, "tracked": false, "standoff": 0.0, "air": true,
 		"seats": [
-			{"o": Vector3(0.3, 1.15, 2.7), "role": "driver", "pose": "sit", "face": 0.0},
-			{"o": Vector3(0.5, 1.0, 1.2), "role": "pass", "pose": "sit", "face": -PI / 2.0},
-			{"o": Vector3(-0.5, 1.0, 1.2), "role": "pass", "pose": "sit", "face": PI / 2.0},
-			{"o": Vector3(0.5, 1.0, 0.4), "role": "pass", "pose": "sit", "face": -PI / 2.0},
-			{"o": Vector3(-0.5, 1.0, 0.4), "role": "pass", "pose": "sit", "face": PI / 2.0},
-			{"o": Vector3(0.5, 1.0, -0.4), "role": "pass", "pose": "sit", "face": -PI / 2.0},
-			{"o": Vector3(-0.5, 1.0, -0.4), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
+			{"o": Vector3(0.3, 1.0, 2.75), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.78, 1.05, 1.2), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.78, 1.05, 1.2), "role": "pass", "pose": "sit", "face": PI / 2.0},
+			{"o": Vector3(0.78, 1.05, 0.4), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.78, 1.05, 0.4), "role": "pass", "pose": "sit", "face": PI / 2.0},
+			{"o": Vector3(0.78, 1.05, -0.4), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.78, 1.05, -0.4), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
 	"gunship": {"name": "Gunship", "len": 10.0, "wid": 2.4, "speed": 30.0, "rev": 8.0, "accel": 9.0, "turn": 1.2, "hp": 900.0,
 		"bullet": 0.2, "tracked": false, "standoff": 0.0, "air": true, "gun": "mg",
 		"seats": [
@@ -1060,6 +1060,8 @@ func _ai_drive(dt: float) -> Array:
 			return [0.0, 0.0]
 		if spec.get("boat", false):
 			return _steer_to(target, dt)
+	elif detour != null and G.sim_time < detour_t and G.dist2d(detour, pos) > 6.0:
+		target = detour
 	elif cmd != null:
 		target = cmd
 		if G.dist2d(cmd, pos) < 4.0 + spec["len"] * 0.25:
@@ -1223,6 +1225,9 @@ func _ai_drive(dt: float) -> Array:
 		if (moved < 3.0 and stuck_n >= 3) or (outside and moved < 3.0):
 			stuck_n = 0
 			_unwedge()
+			_plan_detour()
+		elif moved < 3.0 and stuck_n >= 1:
+			_plan_detour()
 		elif moved >= 3.0:
 			stuck_n = 0
 	return r
@@ -1230,6 +1235,38 @@ func _ai_drive(dt: float) -> Array:
 var stuck_n = 0
 var prog_t = 0.0
 var prog_p = Vector3.ZERO
+
+# boxed in (a narrow street, a jam, a wreck): try another way for a while, through open ground to one side;
+# and troops in the back get out and carry on on foot rather than sit in a jam
+var detour = null
+var detour_t = 0.0
+
+func _plan_detour() -> void:
+	var to = G.flat(goal - pos)
+	if to.length_squared() < 1.0:
+		to = forward()
+	to = to.normalized()
+	var best = null
+	for k in range(16):
+		var a = (0.9 + 0.25 * k) * (1.0 if k % 2 == 0 else -1.0)
+		var q = pos + to.rotated(Vector3.UP, a) * (18.0 + 2.0 * k)
+		if G.world.inside_any(q.x, q.z, spec["wid"] * 0.8) or G.world.in_water(q.x, q.z):
+			continue
+		var b = G.world.bounds
+		if q.x < b.position.x + 8.0 or q.x > b.end.x - 8.0 or q.z < b.position.y + 8.0 or q.z > b.end.y - 8.0:
+			continue
+		best = q
+		break
+	if best != null:
+		detour = best
+		detour_t = G.sim_time + 14.0
+		path_t = 0.0
+	if mission == null:
+		for i in range(1, seats.size()):
+			var ps = seats[i]
+			if ps != null and is_instance_valid(ps) and spec["seats"][i]["role"] == "pass" and not ps.is_player:
+				ps.dismount(false)
+				ps.no_board_t = G.sim_time + 30.0
 
 func _unwedge() -> void:
 	var b = G.world.bounds

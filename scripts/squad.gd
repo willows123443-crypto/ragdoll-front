@@ -18,6 +18,9 @@ static func step(dt: float) -> void:
 	if tick_t > 0.0:
 		return
 	tick_t = 1.0
+	RadioPack.step()
+	Salvage.step()
+	Tactics.screen_armour()
 	for q in G.squads:
 		q["members"] = q["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead")
 		if q["members"].is_empty() or q.get("guard", false):
@@ -208,6 +211,11 @@ static func _fall_back(q) -> void:
 	if close < n * 2 + 1:
 		return
 	var back = G.world.fallback_point(L.team, L.pos)
+	# the smoke goes out first, then everyone runs for it behind the screen
+	for m in q["members"]:
+		if not m.is_player and m.state == "alive" and m.smokes > 0:
+			Tactics.cover_smoke(m, L.threat if L.has_threat else back * 2.0 - L.pos)
+			break
 	for m in q["members"]:
 		if not m.is_player and m.state == "alive":
 			AI.release_cover(m)

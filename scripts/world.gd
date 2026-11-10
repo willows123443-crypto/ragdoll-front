@@ -92,7 +92,10 @@ func _outskirts(core: Vector2) -> void:
 		elif r < 0.7:
 			hedge_row(x, z, rnd(10.0, 22.0), rng.randf() < 0.5)
 		elif r < 0.85:
-			house(x, z, rnd(7.0, 9.0), rnd(6.5, 8.0))
+			if rng.randf() < 0.3:
+				house(x, z, rnd(11.5, 14.0), rnd(8.5, 10.0))
+			else:
+				house(x, z, rnd(7.0, 9.0), rnd(6.5, 8.0))
 		else:
 			building(x, z, rnd(6.0, 9.0), rnd(6.0, 8.0), rnd(3.5, 5.0))
 		placed += 1
@@ -496,12 +499,9 @@ static func shape_mesh(shape: String) -> Mesh:
 			pm.size = Vector3.ONE
 			m = pm
 		"pillow":
-			var pl = SphereMesh.new()
-			pl.radius = 0.5
-			pl.height = 1.0
-			pl.radial_segments = 10
-			pl.rings = 5
-			m = pl
+			m = Props.bag_mesh()
+		"leaves":
+			m = Props.leaf_mesh()
 		"bag":
 			var cp = CapsuleMesh.new()
 			cp.radius = 0.25
@@ -526,6 +526,13 @@ func _geo() -> Node3D:
 	return edit_node if edit_node != null else geo_root
 
 func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, color: Color, opt: Dictionary = {}):
+	# leafy clumps get a ragged edge of leaves round them
+	if opt.get("shape", "") == "blob" and Props.is_leafy(color) and not opt.get("bare", false):
+		var lo = opt.duplicate()
+		lo["shape"] = "leaves"
+		lo["collide"] = false
+		lo["no_shadow"] = true
+		add_box(cx, y0 - h * 0.04, cz, w * 1.08, h * 1.08, d * 1.08, color, lo)
 	var base = 0.0 if opt.get("abs", false) else ground_y(cx, cz)
 	var bb = Basis.from_euler(Vector3(opt.get("rx", 0.0), opt.get("ry", 0.0), opt.get("rz", 0.0)))
 	var xf = Transform3D(bb.scaled(Vector3(w, h, d)), Vector3(cx, base + y0 + h / 2.0, cz))
@@ -540,7 +547,8 @@ func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, colo
 			edit_mats[key0] = em
 		var mi = MeshInstance3D.new()
 		mi.mesh = unit_box if opt.get("shape", "") == "" else shape_mesh(opt["shape"])
-		mi.material_override = edit_mats[key0]
+		var pm0 = Props.mat_for(color, opt.get("shape", ""))
+		mi.material_override = pm0 if pm0 != null else edit_mats[key0]
 		mi.transform = xf
 		edit_node.add_child(mi)
 		var nref = [mi, -2]
@@ -573,6 +581,68 @@ func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, colo
 		c.no_move = opt.get("no_move", false)
 		c.prop = opt.get("mat", 0)
 	return ref
+
+# ---------------------------------------------------------------- seeing into buildings
+# every drawn piece of a building above its ground floor, so the roof and upper storeys can be lifted off
+var cut_now: Dictionary = {}
+
+func _cut_index() -> void:
+	var grid = {}
+	for i in range(buildings.size()):
+		var b = buildings[i]
+		b["idx"] = i
+		b["upper"] = []
+		b["gy"] = ground_y(b["x"], b["z"])
+		for cx in range(floori((b["x"] - b["w"] / 2.0 - 1.0) / 6.0), floori((b["x"] + b["w"] / 2.0 + 1.0) / 6.0) + 1):
+			for cz in range(floori((b["z"] - b["d"] / 2.0 - 1.0) / 6.0), floori((b["z"] + b["d"] / 2.0 + 1.0) / 6.0) + 1):
+				var k = Vector2i(cx, cz)
+				if not grid.has(k):
+					grid[k] = []
+				grid[k].append(b)
+	if grid.is_empty():
+		return
+	for key in groups:
+		var g = groups[key]
+		if g["mm"] == null:
+			continue
+		var xs: Array = g["xforms"]
+		for i in range(xs.size()):
+			var o: Vector3 = xs[i].origin
+			if o.y < -100.0:
+				continue
+			var k = Vector2i(floori(o.x / 6.0), floori(o.z / 6.0))
+			if not grid.has(k):
+				continue
+			for b in grid[k]:
+				if absf(o.x - b["x"]) < b["w"] / 2.0 + 0.7 and absf(o.z - b["z"]) < b["d"] / 2.0 + 0.7:
+					var rel = o.y - b["gy"]
+					if rel > 2.3:
+						b["upper"].append([g, i, rel])
+					break
+
+# want: building index -> height above its ground where the cut is made
+func set_cut(want: Dictionary) -> void:
+	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
+	for bi in cut_now.keys():
+		if not want.has(bi) or absf(want[bi] - cut_now[bi]) > 0.1:
+			for e in buildings[bi].get("upper", []):
+				e[0]["mm"].set_instance_transform(e[1], e[0]["xforms"][e[1]])
+			cut_now.erase(bi)
+	for bi in want:
+		if cut_now.has(bi):
+			continue
+		var cut: float = want[bi]
+		for e in buildings[bi].get("upper", []):
+			if e[2] > cut:
+				e[0]["mm"].set_instance_transform(e[1], zero)
+		cut_now[bi] = cut
+
+func building_index(p: Vector3, pad: float = 0.0) -> int:
+	for i in range(buildings.size()):
+		var b = buildings[i]
+		if absf(p.x - b["x"]) < b["w"] / 2.0 + pad and absf(p.z - b["z"]) < b["d"] / 2.0 + pad:
+			return i
+	return -1
 
 func piece_start() -> void:
 	piece = []
@@ -622,11 +692,13 @@ func finalize_static() -> void:
 		mat.albedo_color = g["color"]
 		mat.roughness = 0.95
 		_surface(mat, g["color"], g.get("shape", ""))
-		mi.material_override = mat
+		var pm = Props.mat_for(g["color"], g.get("shape", ""))
+		mi.material_override = pm if pm != null else mat
 		if g["no_shadow"]:
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_geo().add_child(mi)
 		g["mm"] = mm
+	_cut_index()
 
 # what a static surface is made of, from its colour: tiled roofs, brick, or weathered plaster and stone
 func _surface(mat: StandardMaterial3D, c: Color, shape: String) -> void:
@@ -1128,14 +1200,13 @@ func ruin_col(c) -> void:
 				r[0].queue_free()
 			continue
 		var g = r[0]
+		g["xforms"][r[1]] = zero
 		if g["mm"]:
 			g["mm"].set_instance_transform(r[1], zero)
-		else:
-			g["xforms"][r[1]] = zero
 	if c.has_meta("bld") and c.lo.y - c.gy < 0.5 and not c.has_meta("furn"):
 		c.get_meta("bld")["fallen"] += 1
 	# leave some rubble where it stood
-	if (c.hi.x - c.lo.x) * (c.hi.z - c.lo.z) > 0.6 and c.lo.y - c.gy < 0.5:
+	if (c.hi.x - c.lo.x) * (c.hi.z - c.lo.z) > 0.6 and c.lo.y - c.gy < 0.5 and not c.has_meta("furn"):
 		var cx = (c.lo.x + c.hi.x) * 0.5
 		var cz = (c.lo.z + c.hi.z) * 0.5
 		for k in range(2):
@@ -1158,11 +1229,14 @@ func destroy_col(c, depth: int = 0) -> void:
 				r[0].queue_free()
 			continue
 		var g = r[0]
+		g["xforms"][r[1]] = zero
 		if g["mm"]:
 			g["mm"].set_instance_transform(r[1], zero)
 	if c.has_meta("tree"):
 		_tree_down(c)
 	var size: Vector3 = c.hi - c.lo
+	if c.has_meta("furn") and c.prop == 1:
+		_splinter(c)
 	var n = clampi(roundi(size.x * size.y * size.z * 3.0), 4, 14)
 	for i in range(n):
 		var p = Vector3(randf_range(c.lo.x, c.hi.x), randf_range(c.lo.y, c.hi.y), randf_range(c.lo.z, c.hi.z))
@@ -1197,6 +1271,52 @@ func destroy_col(c, depth: int = 0) -> void:
 					destroy_col(o, depth + 1)
 	update_nav_area(c.lo.x, c.lo.z, c.hi.x, c.hi.z)
 
+# wooden furniture smashed: long splinters flying, and broken boards left lying on the floor
+func _splinter(c) -> void:
+	var mid = (c.lo + c.hi) * 0.5
+	var wc: Color = c.color
+	for i in range(10):
+		var p = Vector3(randf_range(c.lo.x, c.hi.x), randf_range(c.lo.y, c.hi.y), randf_range(c.lo.z, c.hi.z))
+		G.fx.debris(p, G.flat(p - mid).normalized() * randf_range(2.0, 5.0) + Vector3(0, randf_range(1.5, 4.5), 0), 0.1, wc,
+			Vector3(randf_range(0.03, 0.06), randf_range(0.02, 0.04), randf_range(0.25, 0.7)))
+	var y0 = c.lo.y - ground_y(mid.x, mid.z)
+	var ext = c.hi - c.lo
+	(func():
+		build_now(func():
+			for k in range(3):
+				var px = mid.x + randf_range(-ext.x, ext.x) * 0.45
+				var pz = mid.z + randf_range(-ext.z, ext.z) * 0.45
+				add_box(px, y0 + 0.01 * k, pz, randf_range(0.12, 0.2), 0.04, randf_range(0.5, 1.1), wc.darkened(randf_range(0.05, 0.2)), {"collide": false, "ry": randf_range(0, 3)}))).call_deferred()
+
+# a blast nearby shoves furniture over: a wardrobe or dresser goes down on its side, a table goes up on its edge
+func knock_over(c, dir: Vector3) -> void:
+	if not c.alive or not c.has_meta("tip") or c.has_meta("tipped"):
+		return
+	for t in tables:
+		if t["c"] == c:
+			flip_table(t, -dir)
+			return
+	var size: Vector3 = c.hi - c.lo
+	var mid = (c.lo + c.hi) * 0.5
+	var col: Color = c.color
+	var hp = c.hp
+	var y0 = c.lo.y - ground_y(mid.x, mid.z)
+	ruin_col(c)
+	var along_x = absf(dir.x) >= absf(dir.z)
+	var sg = signf(dir.x if along_x else dir.z)
+	var nx = size.y if along_x else size.x
+	var nz = size.z if along_x else size.y
+	var ny = size.x if along_x else size.z
+	var cx = mid.x + (sg * (size.y * 0.5) if along_x else 0.0)
+	var cz = mid.z + (0.0 if along_x else sg * (size.y * 0.5))
+	build_now(func():
+		add_box(cx, y0, cz, nx, ny, nz, col, {"dest": true, "hp": hp, "mat": 1})
+		if not cols.is_empty():
+			cols[cols.size() - 1].set_meta("furn", true)
+			cols[cols.size() - 1].set_meta("tipped", true))
+	update_nav_area(mid.x - 2.0, mid.z - 2.0, mid.x + 2.0, mid.z + 2.0)
+	G.audio.kick(mid)
+
 func damage_area(pos: Vector3, R: float, power: float) -> void:
 	# in commander mode the HQ is dug in too deep for shells: it has to be taken on the ground
 	var hq_safe = Combat.arty and G.mode == "commander"
@@ -1211,6 +1331,9 @@ func damage_area(pos: Vector3, R: float, power: float) -> void:
 			c.hp -= 260.0 * power * (1.0 - d / R)
 			if c.hp <= 0.0:
 				destroy_col(c)
+			elif c.has_meta("tip") and d < R * 0.85:
+				var push = G.flat(cp - pos)
+				knock_over(c, push.normalized() if push.length_squared() > 0.01 else Vector3(randf() - 0.5, 0, randf() - 0.5).normalized())
 
 # ---------------------------------------------------------------- map pieces
 func wall_run(horiz: bool, fixed: float, a0: float, a1: float, h: float, color: Color, th_: float, intact: bool = false, door_at: float = -1.0) -> void:
@@ -1231,6 +1354,10 @@ func wall_run(horiz: bool, fixed: float, a0: float, a1: float, h: float, color: 
 			r = 0.1 if (door_at >= 0.0 and not made_door and absf(c - (a0 + door_at)) < seg * 0.6) else (0.4 if i % 2 == 1 else 0.9)
 			if r < 0.2:
 				made_door = true
+		elif can_open and door_at >= 0.0 and not made_door and absf(c - (a0 + door_at)) < seg * 0.75:
+			# a ruin still always has a way in on its door side
+			r = 0.1
+			made_door = true
 		if can_open and r < 0.24:
 			if ph > 2.6:
 				_wall_piece(horiz, fixed, c, seg, 2.4, ph - 2.4, color, th_, "lintel")
@@ -1300,10 +1427,11 @@ func building(x: float, z: float, w: float, d: float, h: float) -> void:
 	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h, "cols": [], "walls0": 0, "fallen": 0}
 	buildings.append(bld)
 	var c0 = cols.size()
-	wall_run(true, z - d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t)
-	wall_run(true, z + d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t)
-	wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t)
-	wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t)
+	var ds = rng.randi() % 4
+	wall_run(true, z - d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, false, w / 2.0 if ds == 0 else -1.0)
+	wall_run(true, z + d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, false, w / 2.0 if ds == 1 else -1.0)
+	wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, false, d / 2.0 if ds == 2 else -1.0)
+	wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, false, d / 2.0 if ds == 3 else -1.0)
 	flat_plane(x, z, w - 0.4, d - 0.4, Color(0.44, 0.42, 0.38), 0.02)
 	var r = rng.randf()
 	if r < 0.45:
@@ -1320,6 +1448,10 @@ const ROOFC = [Color(0.5, 0.25, 0.2), Color(0.36, 0.3, 0.27), Color(0.42, 0.22, 
 
 # an intact house: regular windows and a door, a pitched tiled roof and a chimney
 func house(x: float, z: float, w: float, d: float, h: float = 3.4) -> void:
+	# the big ones are farmhouses with two rooms and a porch
+	if w >= 11.5 and d >= 8.5 and rng.randf() < 0.7 and edit_node == null:
+		big_house(x, z, w, d)
+		return
 	# bigger houses get an upstairs
 	if w >= 8.5 and d >= 7.0 and rng.randf() < 0.45 and edit_node == null:
 		var c0u = cols.size()
@@ -1476,6 +1608,7 @@ func _furnish(x: float, z: float, w: float, d: float, y0: float, keep_south: flo
 				col.color = WOOD
 				col.vis = refs
 				col.set_meta("furn", true)
+				col.set_meta("tip", true)
 				tables.append({"c": col, "p": Vector3(tx, ground_y(tx, tz) + y0, tz), "y": y0, "flipped": false})
 			placed.append(Vector3(tx, 0, tz) + Vector3(0, 1.1, 0))
 			for e in [-1.0, 1.0]:
@@ -1485,7 +1618,7 @@ func _furnish(x: float, z: float, w: float, d: float, y0: float, keep_south: flo
 				add_box(cx + (e * 0.19 if along_x else 0.0), y0 + 0.45, cz + (0.0 if along_x else e * 0.19), 0.06 if along_x else 0.42, 0.45, 0.42 if along_x else 0.06, WOOD.lightened(0.08), {"collide": false})
 			break
 	# against the walls: a bed, a wardrobe, a stove or a dresser
-	var kinds = ["bed", "wardrobe", "stove", "dresser"]
+	var kinds = ["bed", "wardrobe", "stove", "dresser", "shelf"]
 	for i in range(kinds.size() - 1, 0, -1):
 		var j = rng.randi() % (i + 1)
 		var tmp = kinds[i]
@@ -1513,8 +1646,30 @@ func _furnish(x: float, z: float, w: float, d: float, y0: float, keep_south: flo
 					add_box(px, y0 + 0.85, pz, 0.14, 1.4, 0.14, Color(0.15, 0.15, 0.15), {"collide": false})
 				"dresser":
 					add_box(px, y0, pz, 1.1 if side < 2 else 0.5, 0.85, 0.5 if side < 2 else 1.1, WOOD.lightened(0.05), {"dest": true, "hp": 70.0, "mat": 1})
+				"shelf":
+					# a tall shelf unit against the wall, its boards lined with books, jars and boxes
+					var sw = 1.3 if side < 2 else 0.38
+					var sd = 0.38 if side < 2 else 1.3
+					add_box(px, y0, pz, sw, 1.9, sd, WOOD.darkened(0.25), {"dest": true, "hp": 60.0, "mat": 1})
+					var sc = cols[cols.size() - 1] if edit_node == null and not cols.is_empty() else null
+					var inn = [Vector3(0, 0, 1), Vector3(0, 0, -1), Vector3(1, 0, 0), Vector3(-1, 0, 0)][side]
+					piece_start()
+					var bookc = [Color(0.5, 0.16, 0.12), Color(0.18, 0.25, 0.4), Color(0.25, 0.35, 0.2), Color(0.6, 0.52, 0.32), Color(0.75, 0.72, 0.62)]
+					for sy in [0.12, 0.6, 1.08, 1.5]:
+						var fp = Vector3(px, 0, pz) + inn * 0.2
+						add_box(fp.x, y0 + sy, fp.z, sw + 0.04 if side < 2 else 0.04, 0.04, 0.04 if side < 2 else sd + 0.04, WOOD.darkened(0.1), {"collide": false})
+						var nb = rng.randi_range(3, 6)
+						for b in range(nb):
+							var o = -0.5 + (b + 0.5) / nb
+							var bp = Vector3(px, 0, pz) + inn * 0.21 + (Vector3(o * 1.1, 0, 0) if side < 2 else Vector3(0, 0, o * 1.1))
+							add_box(bp.x, y0 + sy + 0.04, bp.z, 0.14 if side < 2 else 0.04, rnd(0.2, 0.34), 0.04 if side < 2 else 0.14, bookc[rng.randi() % bookc.size()], {"collide": false})
+					if sc != null:
+						sc.vis.append_array(piece)
+					piece = null
 			if edit_node == null and not cols.is_empty():
 				cols[cols.size() - 1].set_meta("furn", true)
+				if kind in ["wardrobe", "dresser", "shelf"]:
+					cols[cols.size() - 1].set_meta("tip", true)
 			placed.append(Vector3(px, r, pz))
 			break
 
@@ -1581,6 +1736,52 @@ func _pitched_roof(x: float, z: float, w: float, d: float, h: float, rc: Color, 
 	piece = null
 
 # bigger buildings: a warehouse, a church with a steeple, or an apartment block
+# a big farmhouse: two rooms either side of an inside wall with a doorway through it, a front door under
+# a porch roof on posts, a back door, a tall pitched roof, and furniture in both rooms
+func big_house(x: float, z: float, w: float, d: float, h: float = 3.7) -> void:
+	var color: Color = WALLC[rng.randi() % WALLC.size()]
+	var t = 0.35
+	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h + 2.6, "cols": [], "walls0": 0, "fallen": 0, "kind": "bighouse"}
+	buildings.append(bld)
+	var c0 = cols.size()
+	var front = -1.0 if rng.randf() < 0.5 else 1.0
+	var door_x = w * (0.28 if rng.randf() < 0.5 else 0.72)
+	wall_run(true, z + front * d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true, door_x)
+	wall_run(true, z - front * d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true, w - door_x)
+	wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true)
+	wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true)
+	# the inside wall, with a doorway in the middle
+	var px = x + (w * 0.08 if door_x < w * 0.5 else -w * 0.08)
+	var inner = color.lightened(0.08)
+	var ia = z - d / 2.0 + t
+	var ib = z + d / 2.0 - t
+	var gap = 1.1
+	var mid = (ia + ib) * 0.5
+	for seg in [[ia, mid - gap * 0.5], [mid + gap * 0.5, ib]]:
+		var L = seg[1] - seg[0]
+		if L > 0.3:
+			add_box(px, 0.0, (seg[0] + seg[1]) * 0.5, 0.22, h, L, inner, {"dest": true, "hp": 140.0})
+	add_box(px, 2.1, mid, 0.22, h - 2.1, gap, inner, {"dest": true, "hp": 140.0})
+	flat_plane(x, z, w - 0.4, d - 0.4, Color(0.47, 0.4, 0.32), 0.02)
+	var rc = ROOFC[rng.randi() % ROOFC.size()]
+	_pitched_roof(x, z, w, d, h, rc, true, minf(w, d) * 0.38 + 0.5)
+	# the porch: a lean-to roof on posts over the front door, a board floor and a step
+	var fx = x - w / 2.0 + door_x
+	var fz = z + front * (d / 2.0 + 1.3)
+	var wood = Color(0.38, 0.28, 0.19)
+	for e in [-1.0, 1.0]:
+		add_box(fx + e * 1.5, 0.0, fz + front * 1.0, 0.16, h - 0.5, 0.16, wood, {"dest": true, "hp": 60.0, "mat": 1})
+	add_box(fx, h - 0.55, fz, 3.6, 0.1, 2.8, rc.darkened(0.1), {"collide": false, "rx": front * 0.16})
+	add_box(fx, 0.0, fz, 3.3, 0.14, 2.5, wood.lightened(0.05), {"collide": false})
+	for k in range(5):
+		add_box(fx - 1.4 + k * 0.7, 0.14, fz, 0.04, 0.01, 2.5, wood.darkened(0.25), {"collide": false})
+	_claim(bld, c0)
+	# a room each side of the inside wall
+	var lw = px - (x - w / 2.0)
+	var rw = (x + w / 2.0) - px
+	_furnish(x - w / 2.0 + lw / 2.0, z, lw, d, 0.0)
+	_furnish(px + rw / 2.0, z, rw, d, 0.0)
+
 func big_building(x: float, z: float, w: float, d: float) -> void:
 	var r = rng.randf()
 	if r < 0.34:
@@ -1901,7 +2102,7 @@ func sandbags(x: float, z: float, ln: float, along_x: bool, h: float = 1.0) -> v
 			var bx = x + o if along_x else x + rnd(-0.03, 0.03)
 			var bz = z + rnd(-0.03, 0.03) if along_x else z + o
 			var bc = Color(0.69, 0.64, 0.48) if (i + k) % 3 == 0 else (Color(0.64, 0.58, 0.44) if (i + k) % 3 == 1 else Color(0.6, 0.55, 0.41))
-			add_box(bx, k * 0.25 - 0.04, bz, 0.95 if along_x else 0.62, 0.34, 0.62 if along_x else 0.95, bc, {"collide": false, "shape": "pillow", "ry": rnd(-0.08, 0.08)})
+			add_box(bx, k * 0.25 - 0.06, bz, rnd(0.9, 0.98), rnd(0.33, 0.37), rnd(0.58, 0.64), bc, {"collide": false, "shape": "pillow", "ry": rnd(-0.1, 0.1) + (0.0 if along_x else PI / 2.0)})
 	piece_end(c, Color(0.66, 0.6, 0.45), 150.0)
 
 func hedgehog(x: float, z: float) -> void:
@@ -2087,10 +2288,21 @@ func live_tree(x: float, z: float) -> void:
 func bush(x: float, z: float, sc: float = 1.0) -> void:
 	if on_road(x, z) or on_road(x + 1.2, z) or on_road(x - 1.2, z) or on_road(x, z + 1.2) or on_road(x, z - 1.2):
 		return
-	var cl = [Color(0.26, 0.33, 0.17), Color(0.3, 0.37, 0.2), Color(0.23, 0.3, 0.15)]
-	for i in range(rng.randi_range(2, 4)):
-		var s = rnd(0.8, 1.4) * sc
-		add_box(x + rnd(-0.6, 0.6) * sc, -0.15, z + rnd(-0.6, 0.6) * sc, s * rnd(1.0, 1.3), s * 0.8, s, cl[i % 3], {"ry": rnd(0, 3), "collide": false, "shape": "blob"})
+	var cl = [Color(0.26, 0.33, 0.17), Color(0.3, 0.37, 0.2), Color(0.23, 0.3, 0.15), Color(0.33, 0.38, 0.19)]
+	# a mound of leafy clumps: big ones low down, smaller ones piled on top and out at the sides
+	var n = rng.randi_range(4, 6)
+	var hgt = 0.0
+	for i in range(n):
+		var s = (rnd(0.85, 1.25) if i < 3 else rnd(0.55, 0.85)) * sc
+		var r = (rnd(0.2, 0.65) if i < 3 else rnd(0.0, 0.45)) * sc
+		var a = rnd(0.0, TAU)
+		var y = -0.2 if i < 3 else rnd(0.25, 0.5) * sc
+		hgt = maxf(hgt, y + s * 0.8)
+		add_box(x + cos(a) * r, y, z + sin(a) * r, s * rnd(1.0, 1.3), s * rnd(0.72, 0.88), s, cl[(i + rng.randi()) % 4], {"ry": rnd(0, 3), "collide": false, "shape": "blob"})
+	# a few woody stems showing at the bottom
+	for i in range(3):
+		var a2 = rnd(0.0, TAU)
+		add_box(x + cos(a2) * 0.35 * sc, 0.0, z + sin(a2) * 0.35 * sc, 0.05, 0.45 * sc, 0.05, Color(0.24, 0.19, 0.13), {"collide": false, "rx": rnd(-0.4, 0.4), "rz": rnd(-0.4, 0.4)})
 
 func skyline(colors: Array, hmin: float, hmax: float) -> void:
 	return
@@ -2102,7 +2314,9 @@ func skyline(colors: Array, hmin: float, hmax: float) -> void:
 func base(sx: float, dist: float = 96.0) -> void:
 	var bx = sx * dist
 	for i in range(3):
-		add_box(bx + sx * 7.0, 0.0, -22.0 + i * 22.0, 6.0, 2.4, 4.0, Color(0.33, 0.38, 0.24) if sx < 0 else Color(0.42, 0.39, 0.28), {"dest": true, "hp": 120.0})
+		var tz = -22.0 + i * 22.0
+		if not near_road(bx + sx * 7.0, tz, 4.5):
+			ridge_tent(bx + sx * 7.0, tz, Color(0.33, 0.38, 0.24) if sx < 0 else Color(0.42, 0.39, 0.28))
 	add_box(bx + sx * 3.0, 0.0, 0.0, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
 	add_box(bx + sx * 3.9, 5.6, 0.0, 1.6, 1.0, 0.05, G.team_color(0 if sx < 0 else 1), {"collide": false, "no_shadow": true})
 	ammo_crate(bx + sx * 1.5, -5.0, 0 if sx < 0 else 1, true)
@@ -2120,10 +2334,37 @@ func camp(t: int, p: Vector3) -> void:
 	for i in range(3):
 		var hx = p.x - 18.0 + i * 18.0
 		var hz = p.z - inward * 9.0
-		if not inside_any(hx, hz, 3.0):
-			add_box(hx, 0.0, hz, 6.0, 2.4, 4.0, hut, {"dest": true, "hp": 120.0})
+		# never on (or right by) the road: that's where vehicles come in
+		if near_road(hx, hz, 4.5):
+			hx += 9.0 if hx >= p.x else -9.0
+		if not inside_any(hx, hz, 3.0) and not near_road(hx, hz, 4.5):
+			ridge_tent(hx, hz, hut)
 	for k in [-1.0, 1.0]:
 		sandbags(p.x + k * 9.0, p.z + inward * 8.0, 5.0, true)
+
+# a canvas ridge tent: sloping sides down to the ground, a pole at each end, a darker door flap and pegged guy lines
+func ridge_tent(x: float, z: float, col: Color) -> void:
+	var L = 6.0
+	var W = 4.0
+	var H = 2.4
+	var r0 = add_box(x, 0.0, z, W * 0.8, H * 0.55, L * 0.95, col, {"dest": true, "hp": 120.0, "no_shadow": true})
+	var c0 = cols[cols.size() - 1]
+	piece_start()
+	# the canvas (the box collider above stays hidden under it)
+	add_box(x, 0.0, z, W, H, L, col, {"shape": "prism", "collide": false})
+	add_box(x, H - 0.06, z, 0.1, 0.12, L + 0.1, col.darkened(0.25), {"collide": false})
+	for e in [-1.0, 1.0]:
+		add_box(x, 0.0, z + e * (L * 0.5 + 0.02), 0.07, H + 0.25, 0.07, Color(0.38, 0.28, 0.18), {"collide": false})
+		add_box(x, 0.0, z + e * (L * 0.5 + 0.03), W * 0.42, H * 0.7, 0.04, col.darkened(0.35), {"collide": false, "shape": "prism"})
+		for sd in [-1.0, 1.0]:
+			add_box(x + sd * (W * 0.5 + 0.9), 0.0, z + e * (L * 0.5 + 0.4), 0.06, 0.25, 0.06, Color(0.38, 0.28, 0.18), {"collide": false})
+	c0.vis.append_array(piece)
+	piece = null
+	# the collider box itself is never drawn
+	if r0[0] is Dictionary:
+		r0[0]["xforms"][r0[1]] = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
+	elif r0[0] is Node3D:
+		r0[0].visible = false
 
 # an ammo crate: stand next to it for a second to restock
 func ammo_crate(x: float, z: float, team: int, base_crate: bool = false) -> void:
@@ -2246,6 +2487,8 @@ func build_town() -> void:
 		else:
 			building(b[0], b[1], b[2], b[3], b[4])
 	tower(-24, -29, 10, 8); tower(-24, 13, 11, 8); tower(12, -28, 9, 10); tower(28, 14, 10, 9)
+	# bigger farmhouses round the edge of the town
+	big_house(26, -40, 12, 8); big_house(-27, 41, 12, 8); big_house(8, 44, 12, 7.5)
 	skyline([Color(0.54, 0.56, 0.57), Color(0.49, 0.51, 0.53), Color(0.6, 0.62, 0.62)], 10, 45)
 	for sx in [-1.0, 1.0]:
 		for z in [-36, -20, -7, 8, 22, 38]:
@@ -2318,7 +2561,7 @@ func build_field() -> void:
 				continue
 			live_tree(sx * rnd(10, 120), tz)
 		base(sx)
-	tower(2, 30, 10, 8); building(-4, -32, 12, 10, 6)
+	tower(2, 30, 10, 8); big_house(-4, -32, 13, 10)
 	for i in range(10):
 		var cz = rnd(-20, 20)
 		if absf(cz + 2.0) < 4.0:
@@ -2636,12 +2879,13 @@ func _road_strip(c: Vector3, size: Vector2) -> void:
 # ---------------------------------------------------------------- large maps
 # a cluster of houses (some with an upper floor) around a point, keeping clear of roads
 func village(cx: float, cz: float, rx: float, rz: float, n: int, towers_: int) -> void:
+	n = int(round(n * 1.3))       # busier villages
 	var placed: Array = []
 	var tries = 0
 	while placed.size() < n + towers_ and tries < 200:
 		tries += 1
 		var tw = placed.size() < towers_
-		var big = placed.size() == towers_ and n >= 5
+		var big = (placed.size() - towers_) % 4 == 0 and n >= 4
 		var w = rnd(8, 11) if tw else (rnd(13, 16) if big else rnd(6, 10))
 		var d = rnd(7, 9) if tw else (rnd(9, 11) if big else rnd(6, 9))
 		var x = cx + rnd(-rx, rx)
@@ -2668,7 +2912,10 @@ func _village_build(placed: Array, towers_: int) -> void:
 		if i < towers_:
 			tower(q[0], q[1], q[2], q[3])
 		elif q[2] >= 12.5:
-			big_building(q[0], q[1], q[2], q[3])
+			if rng.randf() < 0.55 and edit_node == null:
+				big_house(q[0], q[1], q[2], q[3])
+			else:
+				big_building(q[0], q[1], q[2], q[3])
 		elif rng.randf() < 0.45:
 			house(q[0], q[1], q[2], q[3])
 			# a garden fence along one side
@@ -2923,7 +3170,7 @@ func begin_edit(m: Dictionary) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
+	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]
 	paint = m.get("paint", PackedByteArray())
@@ -3553,6 +3800,51 @@ static func _tuft_mesh(w: float, h: float) -> ArrayMesh:
 			st.add_vertex(ps[k])
 	return st.commit()
 
+# ---------------------------------------------------------------- trampled grass
+var grass_mm: MultiMesh = null
+var grass_cells = {}
+var grass_flat = PackedFloat32Array()     # when each tuft was pressed flat (0 = standing)
+var grass_orig = []
+var grass_bent: Array = []                 # tufts lying flat, to spring back up after a while
+
+# tufts within r of p are pressed flat (by wheels, tracks, or a man lying in them); dir lays them over
+func flatten_grass(p: Vector3, r: float, dir: Vector3 = Vector3.ZERO, keep: float = 240.0) -> void:
+	if grass_mm == null:
+		return
+	var now = G.sim_time
+	for cx in range(floori((p.x - r) / 4.0), floori((p.x + r) / 4.0) + 1):
+		for cz in range(floori((p.z - r) / 4.0), floori((p.z + r) / 4.0) + 1):
+			var ck = Vector2i(cx, cz)
+			if not grass_cells.has(ck):
+				continue
+			for i in grass_cells[ck]:
+				if grass_flat[i] > 0.0:
+					continue
+				var t: Transform3D = grass_orig[i]
+				if Vector2(t.origin.x - p.x, t.origin.z - p.z).length_squared() > r * r:
+					continue
+				# pressed down and spread out, leaning the way it was pushed
+				var lay = G.flat(dir).normalized() * 0.25 if dir.length_squared() > 0.01 else Vector3.ZERO
+				var b = t.basis.scaled(Vector3(1.3, 0.18, 1.3))
+				b.y += lay * t.basis.y.length() * 0.18
+				grass_mm.set_instance_transform(i, Transform3D(b, t.origin + Vector3(0, 0.02, 0)))
+				grass_flat[i] = now + keep
+				grass_bent.append(i)
+
+# trampled grass slowly stands up again (a few each call)
+func grass_recover() -> void:
+	if grass_bent.is_empty():
+		return
+	var now = G.sim_time
+	var n = mini(30, grass_bent.size())
+	for k in range(n):
+		var i = grass_bent[0]
+		if grass_flat[i] > now:
+			break
+		grass_bent.pop_front()
+		grass_flat[i] = 0.0
+		grass_mm.set_instance_transform(i, grass_orig[i])
+
 func build_decor() -> void:
 	# grass tufts
 	var n = int(7000.0 * TW * TH_ / (260.0 * 190.0)) if G.settings["grass"] else 0
@@ -3589,6 +3881,19 @@ func build_decor() -> void:
 			bush_spots.append(Vector3(x, gy, z))
 		k += 1
 	mm.visible_instance_count = k
+	grass_mm = mm
+	grass_cells = {}
+	grass_flat = PackedFloat32Array()
+	grass_flat.resize(k)
+	grass_orig = []
+	grass_orig.resize(k)
+	for i in range(k):
+		var gt: Transform3D = mm.get_instance_transform(i)
+		grass_orig[i] = gt
+		var ck = Vector2i(floori(gt.origin.x / 4.0), floori(gt.origin.z / 4.0))
+		if not grass_cells.has(ck):
+			grass_cells[ck] = PackedInt32Array()
+		grass_cells[ck].append(i)
 	var mi = MultiMeshInstance3D.new()
 	mi.multimesh = mm
 	var gm = StandardMaterial3D.new()
@@ -3658,7 +3963,7 @@ func load_map(id: String) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
+	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	paint = PackedByteArray()
 	if id == "random":
 		var rs = RandomNumberGenerator.new()

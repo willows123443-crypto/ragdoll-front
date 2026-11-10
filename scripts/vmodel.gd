@@ -335,7 +335,7 @@ static func _extras(v) -> void:
 				cyl(v.turret, 0.17, 1.5, Vector3(0, 0.82, -1.95), CANVAS_A.darkened(0.1), "x", {"seg": 10})
 				for x in [-0.55, 0.55]:
 					box(v, v.turret, Vector3(0.04, 0.05, 0.36), Vector3(x, 0.84, -1.95), Color(0.3, 0.22, 0.14), {"b": 0.0})
-		"truck", "radar", "ambulance":
+		"truck", "radar", "ambulance", "supplytruck", "ammotruck":
 			for x in [1.25, -1.25]:
 				cyl(hull, 0.018, 0.4, Vector3(x * 1.0, 2.28, 3.32), METAL, "x", {"seg": 4})
 				box(v, hull, Vector3(0.05, 0.28, 0.18), Vector3(x * 1.17, 2.28, 3.3), dark, {"b": 0.02})
@@ -358,6 +358,8 @@ static func _build_main(v) -> void:
 	var team: int = v.team
 	var rnd = team % 2 == 0          # rounded cast style vs angular welded style
 	var base: Color = G.TEAM_UNI[team].lerp(Color(0.35, 0.36, 0.3), 0.35)
+	if v.kind == "supplytruck":
+		base = base.lerp(Color(0.62, 0.55, 0.38), 0.55)     # a sand-painted logistics truck, easy to pick out
 	var dark = base.darkened(0.35)
 	var band: Color = G.team_color(team)
 	var rim = base.darkened(0.15)
@@ -433,7 +435,7 @@ static func _build_main(v) -> void:
 			v.turret.add_child(v.gun_pivot)
 			mg(v, v.gun_pivot, Vector3(0, 0, 0.1))
 			box(v, v.gun_pivot, Vector3(0.6, 0.4, 0.04), Vector3(0, 0.1, 0.45), dark, {"b": 0.02})
-		"truck", "ambulance", "radar":
+		"truck", "ambulance", "radar", "supplytruck", "ammotruck":
 			col(v, Vector3(2.4, 0.5, 7.0), Vector3(0, 0.95, 0))
 			col(v, Vector3(2.3, 0.75, 1.8), Vector3(0, 1.55, 2.5))
 			box(v, hull, Vector3(1.6, 0.3, 7.0), Vector3(0, 0.85, 0), METAL)
@@ -509,6 +511,68 @@ static func _build_main(v) -> void:
 				for x in [-0.9, 0.9]:
 					antenna(v, hull, Vector3(x, 3.2, 0.6), 2.6)
 				insignia(v, hull, Vector3(-1.24, 2.4, -1.2), "x-", 0.35)
+				for z in [2.4, -0.4, -2.6]:
+					for x in [1.1, -1.1]:
+						wheel(v, Vector3(x, 0.55, z), 0.55, 0.4, rim)
+				return
+			if v.kind == "supplytruck":
+				# an open flatbed piled with crates, drums and sacks under a net, a yellow pennant flying
+				# from a pole at the back and broad yellow bands on the cab so it's known at a glance
+				var yel = Color(0.86, 0.68, 0.16)
+				box(v, hull, Vector3(2.45, 0.16, 4.7), Vector3(0, 1.38, -1.2), WOOD.darkened(0.2), {"b": 0.03})
+				for x in [1.2, -1.2]:
+					for z in range(6):
+						box(v, hull, Vector3(0.07, 0.7, 0.07), Vector3(x, 1.8, 0.95 - z * 0.86), METAL, {"b": 0.01})
+					box(v, hull, Vector3(0.06, 0.08, 4.6), Vector3(x, 2.13, -1.2), METAL, {"b": 0.01})
+				for k in range(9):
+					var cx = -0.6 + (k % 2) * 1.2
+					var cz = 0.6 - (k / 2) * 1.0
+					if k == 8:
+						cx = 0.0
+						cz = -2.9
+					var cc = Color(0.33, 0.35, 0.22).darkened(randf_range(0.0, 0.15)) if k % 3 != 2 else Color(0.42, 0.35, 0.24)
+					box(v, hull, Vector3(1.1, 0.55, 0.85), Vector3(cx, 1.74, cz), cc, {"b": 0.03})
+					box(v, hull, Vector3(1.12, 0.07, 0.2), Vector3(cx, 1.8, cz), yel, {"b": 0.0})
+					if k < 4:
+						box(v, hull, Vector3(0.95, 0.45, 0.75), Vector3(cx + randf_range(-0.05, 0.05), 2.24, cz), cc.lightened(0.05), {"b": 0.03})
+				for k in range(3):
+					cyl(hull, 0.3, 0.9, Vector3(-0.75 + k * 0.75, 1.92, -3.0 + (0.0 if k != 1 else 0.0)), Color(0.24, 0.3, 0.22) if k != 1 else Color(0.5, 0.18, 0.12), "y", {"seg": 10})
+				# ropes lashing the load down
+				for k in range(4):
+					box(v, hull, Vector3(2.42, 0.03, 0.03), Vector3(0, 2.49, 0.6 - k * 1.0), Color(0.55, 0.48, 0.32), {"b": 0.0})
+				for x in [1.18, -1.18]:
+					box(v, hull, Vector3(0.03, 0.22, 1.5), Vector3(x, 1.95, 2.55), yel, {"b": 0.0})
+				box(v, hull, Vector3(2.0, 0.08, 0.04), Vector3(0, 1.3, 4.66), yel, {"b": 0.0})
+				cyl(hull, 0.03, 2.4, Vector3(-1.1, 2.6, -3.45), METAL, "y", {"seg": 5})
+				box(v, hull, Vector3(0.03, 0.42, 0.72), Vector3(-1.1, 3.55, -3.85), yel, {"b": 0.0})
+				antenna(v, hull, Vector3(-1.05, 2.68, 1.8), 1.6)
+				for z in [2.4, -0.4, -2.6]:
+					for x in [1.1, -1.1]:
+						wheel(v, Vector3(x, 0.55, z), 0.55, 0.4, rim)
+				return
+			if v.kind == "ammotruck":
+				# a squat steel box body, red bands and stencilled ammunition, with the tailgate down and
+				# boxes of rounds stacked ready to hand out at the back
+				var red = Color(0.62, 0.14, 0.1)
+				var bc2 = base.darkened(0.18)
+				box(v, hull, Vector3(2.4, 1.45, 4.3), Vector3(0, 2.05, -1.0), bc2, {"b": 0.05})
+				for x in [1.21, -1.21]:
+					box(v, hull, Vector3(0.03, 0.2, 4.3), Vector3(x, 2.5, -1.0), red, {"b": 0.0})
+					for k in range(4):
+						var nd = Node3D.new()
+						nd.position = Vector3(x + signf(x) * 0.02, 1.95, 0.4 - k * 0.42)
+						hull.add_child(nd)
+						cyl(nd, 0.05, 0.36, Vector3.ZERO, Color(0.8, 0.62, 0.25), "y", {"seg": 6})
+						cyl(nd, 0.05, 0.1, Vector3(0, 0.22, 0), Color(0.8, 0.62, 0.25), "y", {"seg": 6, "r2": 0.0})
+				box(v, hull, Vector3(2.4, 0.08, 4.3), Vector3(0, 2.8, -1.0), bc2.darkened(0.1), {"b": 0.02})
+				# tailgate down, crates on it and on the ground plate
+				box(v, hull, Vector3(2.2, 0.08, 0.7), Vector3(0, 1.35, -3.55), METAL, {"b": 0.01})
+				for k in range(4):
+					box(v, hull, Vector3(0.55, 0.32, 0.36), Vector3(-0.75 + k * 0.5, 1.55, -3.55), Color(0.32, 0.34, 0.2), {"b": 0.02})
+					box(v, hull, Vector3(0.56, 0.05, 0.1), Vector3(-0.75 + k * 0.5, 1.62, -3.73), red, {"b": 0.0})
+				box(v, hull, Vector3(0.9, 0.5, 0.04), Vector3(0, 2.1, -3.16), red, {"b": 0.0})
+				insignia(v, hull, Vector3(0, 2.86, -1.0), "y", 0.5)
+				antenna(v, hull, Vector3(-1.05, 2.68, 1.8), 1.6)
 				for z in [2.4, -0.4, -2.6]:
 					for x in [1.1, -1.1]:
 						wheel(v, Vector3(x, 0.55, z), 0.55, 0.4, rim)

@@ -287,11 +287,11 @@ const RECRUIT = {
 	"rad": {"name": "Radio operator", "cost": 5, "cls": ["radio"]},
 }
 # call-ins that happen as soon as you pay (no map click needed)
-const INSTANT = ["plough", "technical", "recon", "atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance"]
+const INSTANT = ["plough", "technical", "recon", "atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance", "supplytruck", "ammotruck"]
 
 func _tabs() -> Array:
 	if G.mode == "commander":
-		return [["orders", "Orders"], ["recruit", "Recruit"], ["armour", "Vehicles"], ["support", "Fire support"], ["build", "Build"], ["upgrades", "Upgrades"]]
+		return [["recruit", "Recruit"], ["armour", "Vehicles"], ["support", "Fire support"], ["build", "Build"], ["upgrades", "Upgrades"]]
 	if Rules.free_tools():
 		return [["units", "Units"], ["vehicles", "Vehicles"], ["support", "Call-ins"], ["build", "Build"], ["command", "Command"], ["fun", "Effects"]]
 	# a real battle: you command your own side, with what this mode gives it
@@ -317,7 +317,7 @@ func _cards(t: String) -> Array:
 			for v in SB_VEH:
 				out.append(["v:" + v[0], v[1], "with crew"])
 		"support":
-			for k in (["recon", "artillery", "airstrike", "gunship", "fighter", "bomber"] if G.mode == "commander" else Support.COSTS.keys()):
+			for k in (["recon", "artillery", "airstrike", "gunship", "fighter", "bomber"] if G.mode == "commander" else Support.COSTS.keys().filter(func(x): return x != "supplytruck")):
 				if not Faction.support_ok(0, k) or not Rules.callin_ok(0, k):
 					continue
 				if not Support.unlocked(0, k):
@@ -325,7 +325,9 @@ func _cards(t: String) -> Array:
 				else:
 					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], "%d pts" % Support.COSTS[k] + ("" if k in INSTANT else " · click the map")])
 		"armour":
-			for k in ["jeep", "technical", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "ambulance", "radar", "bridger"]:
+			for k in ["supplytruck", "ammotruck", "jeep", "technical", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "ambulance", "radar", "bridger"]:
+				if k == "supplytruck" and G.mode != "commander":
+					continue
 				if not Faction.support_ok(0, k) or not Rules.callin_ok(0, k):
 					continue
 				out.append(["sup:" + k, Support.NAMES[k], ("%d pts" % Support.COSTS[k]) if Support.unlocked(0, k) else Support.need_text(k)])
@@ -1683,6 +1685,7 @@ func _perf(dt: float) -> void:
 func update_hud(dt: float) -> void:
 	_perf(dt)
 	_tip_tick(dt)
+	_order_card_tick()
 	dock_status_t -= dt
 	if dock_status != null and dock_status_t <= 0.0:
 		dock_status_t = 0.5
@@ -2103,6 +2106,88 @@ func _show_settings() -> void:
 	settings_panel.add_child(v)
 	root.add_child(settings_panel)
 
+# ---------------------------------------------------------------- order card
+# pops up just above the dock whenever you have soldiers selected: what they are, and what you can tell them to do
+var order_card: PanelContainer = null
+var order_title: Label
+var order_grid: HFlowContainer
+var order_sig = ""
+
+func _build_order_card() -> void:
+	order_card = _panel(Color(0.07, 0.08, 0.09, 0.92))
+	var sb: StyleBoxFlat = order_card.get_theme_stylebox("panel")
+	sb.set_corner_radius_all(6)
+	sb.border_width_top = 2
+	sb.border_color = Color(0.96, 0.74, 0.27, 0.8)
+	sb.set_content_margin_all(8)
+	order_card.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	order_card.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 5)
+	order_title = _label("", 13, Color(0.96, 0.9, 0.75))
+	v.add_child(order_title)
+	order_grid = HFlowContainer.new()
+	order_grid.add_theme_constant_override("h_separation", 4)
+	order_grid.add_theme_constant_override("v_separation", 4)
+	v.add_child(order_grid)
+	order_card.add_child(v)
+	order_card.visible = false
+	root.add_child(order_card)
+
+func _order_card_tick() -> void:
+	if order_card == null:
+		_build_order_card()
+	var sel = G.pc.selection.filter(func(x): return is_instance_valid(x) and x.state != "dead")
+	var show = G.started and G.player == null and not sel.is_empty() and not menu_open() and not G.editor.active and dock != null and dock.visible
+	order_card.visible = show
+	if not show:
+		order_sig = ""
+		return
+	var riding = sel.any(func(x): return x.state == "riding")
+	var smokes = sel.any(func(x): return x.smokes > 0)
+	var sig = str(sel.size()) + str(riding) + str(smokes) + G.pc._sel_summary()
+	if sig != order_sig:
+		order_sig = sig
+		order_title.text = "ORDERS  ·  " + G.pc._sel_summary()
+		for c in order_grid.get_children():
+			c.queue_free()
+		var items = [["hold", "Hold here"], ["cover", "Take cover"], ["charge", "Charge!"], ["fallback", "Fall back"]]
+		if smokes:
+			items.append(["smoke", "Smoke screen"])
+		if riding:
+			items.append(["dismount", "Dismount"])
+		items += [["free", "Act freely"], ["build", "Build…"], ["f:wedge", "Wedge"], ["f:line", "Line"], ["f:column", "Column"], ["clear", "Deselect"]]
+		for it in items:
+			var id: String = it[0]
+			var b = Button.new()
+			b.focus_mode = Control.FOCUS_NONE
+			b.text = it[1]
+			b.custom_minimum_size = Vector2(96, 32)
+			b.add_theme_font_size_override("font_size", 13)
+			var acc = id in ["charge", "fallback"]
+			b.add_theme_stylebox_override("normal", _dock_style(Color(0.16, 0.18, 0.2, 0.96), Color(0.95, 0.75, 0.25) if acc else Color(0.3, 0.33, 0.36)))
+			b.add_theme_stylebox_override("hover", _dock_style(Color(0.26, 0.29, 0.32, 1.0), Color(1.0, 0.85, 0.35)))
+			b.add_theme_stylebox_override("pressed", _dock_style(Color(0.3, 0.27, 0.15, 1.0), Color(1.0, 0.85, 0.35)))
+			b.pressed.connect(func():
+				if id == "clear":
+					G.pc.clear_selection()
+				elif id == "build":
+					tab = "build"
+					tool = _cards("build")[0][0]
+					_render_tools()
+					message("Pick a structure, place it, then right-click it with soldiers selected (Shift to queue more)")
+				elif id.begins_with("f:"):
+					G.pc.set_formation(id.substr(2))
+				else:
+					G.pc.order_selected(id))
+			order_grid.add_child(b)
+	var w = minf(6.0 * 100.0 + 20.0, 640.0)
+	order_grid.custom_minimum_size = Vector2(w - 16.0, 0)
+	order_card.offset_left = -w / 2.0
+	order_card.offset_right = w / 2.0
+	order_card.offset_bottom = dock.offset_top - 6.0
+	order_card.offset_top = order_card.offset_bottom - 112.0
+
 # ---------------------------------------------------------------- command panel
 var cmd_panel: PanelContainer = null
 var sel_rect: ColorRect = null
@@ -2193,7 +2278,7 @@ var radio_box: VBoxContainer = null
 
 func radio(team: int, text: String) -> void:
 	# you only hear your own side's radio (the enemy's orders would be cheating)
-	if team > 0 and G.mode != "sandbox":
+	if team < 0 or (team > 0 and G.mode != "sandbox"):
 		return
 	if radio_box == null:
 		radio_box = VBoxContainer.new()

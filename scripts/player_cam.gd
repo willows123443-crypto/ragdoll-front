@@ -268,7 +268,7 @@ func _ghost_tick() -> void:
 		ghost_ok = -1
 	ghost.visible = true
 	ghost.position = Vector3(p.x - ghost_p0.x, G.world.ground_y(p.x, p.z) - G.world.ground_y(ghost_p0.x, ghost_p0.z), p.z - ghost_p0.z)
-	var ok = Build.clear_at(p, kind) and Support.points.size() > team and (Build.cost(kind) == 0 or Support.points[team] >= Build.cost(kind))
+	var ok = Build.clear_at(p, kind) and not Build.too_near_hq(kind, team, p) and Support.points.size() > team and (Build.cost(kind) == 0 or Support.points[team] >= Build.cost(kind))
 	if int(ok) != ghost_ok:
 		ghost_ok = int(ok)
 		Build.ghost_tint(ghost, ok)
@@ -478,6 +478,7 @@ func select_squad(i: int) -> void:
 	G.ui.message("Squad %d selected (%d men) · right-click to send them · press %d again to look at them" % [i + 1, selection.size(), i + 1])
 
 func _process(dt: float) -> void:
+	_cut_tick(dt)
 	_update_rings()
 	_rts_overlay()
 	_ghost_tick()
@@ -585,6 +586,40 @@ func _process(dt: float) -> void:
 		Combat.shake = maxf(0.0, Combat.shake - dt * 2.5)
 	G.main.follow_sun(cam.global_position, -cam.global_basis.z)
 
+# ---------------------------------------------------------------- seeing into buildings
+# looking down on the town, the roof and upper floors lift off the house under the cursor and any house
+# your selected men are in, cut just above the floor they're standing on
+var cut_t = 0.0
+
+func _cut_tick(dt: float) -> void:
+	cut_t -= dt
+	if cut_t > 0.0:
+		return
+	cut_t = 0.12
+	var w = G.world
+	if w == null or not w.has_method("set_cut"):
+		return
+	var want = {}
+	if G.started and (G.player == null or force_free) and not G.editor.active:
+		var cp = cam.global_position
+		var mp = get_viewport().get_mouse_position()
+		var o = cam.project_ray_origin(mp)
+		var hit = G.ray(o, o + cam.project_ray_normal(mp) * 400.0, G.L_WORLD)
+		if not hit.is_empty():
+			var bi = w.building_index(hit.position, 0.4)
+			if bi >= 0 and _looks_down_on(bi, cp):
+				want[bi] = 2.3
+		for c in selection:
+			if is_instance_valid(c) and c is Soldier and c.state == "alive" and c.vehicle == null:
+				var sb = w.building_index(c.pos, -0.1)
+				if sb >= 0 and _looks_down_on(sb, cp):
+					want[sb] = maxf(want.get(sb, 0.0), maxf(2.3, c.pos.y - w.buildings[sb]["gy"] + 2.3))
+	w.set_cut(want)
+
+func _looks_down_on(bi: int, cp: Vector3) -> bool:
+	var b = G.world.buildings[bi]
+	return cp.y > b["gy"] + b["h"] + 1.5
+
 # ---------------------------------------------------------------- input
 func _unhandled_input(ev: InputEvent) -> void:
 	if G.editor.active:
@@ -629,14 +664,16 @@ func _unhandled_input(ev: InputEvent) -> void:
 			free_pitch = clampf(free_pitch - ev.relative.y * 0.004 * G.settings["sens"] * inv, -1.45, 1.45)
 	elif ev is InputEventMouseButton:
 		if ev.button_index == MOUSE_BUTTON_RIGHT and G.player == null and G.ui.tool.begins_with("b:"):
-			# placing a structure: hold the right button and move the mouse to turn it (a click turns it a quarter)
+			# placing a structure: hold the right button and move the mouse to turn it; a plain right-click puts it away
 			if ev.pressed:
 				rot_drag = true
 				rot_acc = 0.0
 				rot_moved = false
 			else:
 				if rot_drag and not rot_moved:
-					rotate_place(1)
+					G.ui.tool = "sel"
+					G.ui._render_tools()
+					G.ui.message("Blueprint put away")
 				rot_drag = false
 		elif ev.button_index == MOUSE_BUTTON_RIGHT:
 			if G.player != null:
@@ -684,6 +721,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 		_key(ev.keycode)
 
 func _key(k: int) -> void:
+	if k == KEY_R and G.player == null and G.ui.tool.begins_with("b:"):
+		rotate_place(1)
+		return
 	if k == KEY_T and G.player == null:
 		Engine.time_scale = 0.25 if Engine.time_scale > 0.5 else 1.0
 	elif k == KEY_T and G.player != null:
@@ -978,6 +1018,9 @@ func use_tool(screen: Vector2) -> void:
 		if not Build.clear_at(p, kind):
 			G.ui.message("No room for a %s there" % Build.KINDS[kind]["name"])
 			return
+		if Build.too_near_hq(kind, team, p):
+			G.ui.message("Supply dumps go at least %d m out from HQ: the trucks have to earn it" % int(Build.SUPPLY_MIN))
+			return
 		var c = Build.cost(kind)
 		if c > 0:
 			if Support.points[team] < c:
@@ -1072,6 +1115,12 @@ func _pick_up(s) -> void:
 				best = o
 	if best == null:
 		G.ui.message("Nothing to pick up here")
+		return
+	# a fallen radioman of ours: take the set off his back
+	if best.radio_pack != null and best.team == s.team and s.radio_pack == null:
+		best.give_radio(false)
+		s.give_radio(true)
+		G.ui.message("Took the radio set: you can call fire missions (class action)")
 		return
 	if best.wid == s.wid:
 		AI.scavenge(s, best)
@@ -1256,7 +1305,7 @@ func _order_move(screen: Vector2) -> void:
 		return
 	# right-click on one of our unfinished or damaged structures: go and build / fix it
 	var st = Build.site_at(p, 1.5)
-	if st != null and st["team"] == 0 and not st["dead"] and (not st["done"] or Build.needs_repair(st)) and _order_build(st):
+	if st != null and st["team"] == 0 and not st["dead"] and (not st["done"] or Build.needs_repair(st)) and _order_build(st, Input.is_key_pressed(KEY_SHIFT)):
 		return
 	var n = 0
 	var vs = []
@@ -1340,12 +1389,21 @@ func _order_board(v) -> bool:
 	G.ui.message("%d soldier%s heading for the %s" % [n, "" if n == 1 else "s", v.spec["name"].to_lower()])
 	return true
 
-# selected men go and work on a structure (anyone can build; engineers are quicker)
-func _order_build(st) -> bool:
+# selected men go and work on a structure (anyone can build; engineers are quicker).
+# With Shift held the structure goes on the end of their list, and they move on to it when the one before is finished.
+func _order_build(st, queue: bool = false) -> bool:
 	var n = 0
 	for s in selection:
 		if not is_instance_valid(s) or s.state != "alive" or s.vehicle != null or s.is_player:
 			continue
+		var q: Array = s.get_meta("build_queue", [])
+		if queue and (s.task == "construct" or not q.is_empty()):
+			if not (st in q) and s.build_site != st:
+				q.append(st)
+			s.set_meta("build_queue", q)
+			n += 1
+			continue
+		s.set_meta("build_queue", [])
 		_obey(s, st["p"])
 		s.order = {"mode": "hold", "point": Build.work_spot(st, s)}
 		ClassAI._start_construct(s, st)
@@ -1355,12 +1413,18 @@ func _order_build(st) -> bool:
 		return false
 	G.fx.order_marker(st["p"])
 	G.audio.radio_click()
-	G.ui.message("%d soldier%s sent to %s the %s" % [n, "" if n == 1 else "s", "build" if not st["done"] else "repair", st["name"].to_lower()])
+	if queue:
+		G.ui.message("Queued: the %s, next on the list for %d soldier%s" % [st["name"].to_lower(), n, "" if n == 1 else "s"])
+	else:
+		G.ui.message("%d soldier%s sent to %s the %s (Shift+right-click to queue more)" % [n, "" if n == 1 else "s", "build" if not st["done"] else "repair", st["name"].to_lower()])
 	return true
 
 func order_selected(mode: String) -> void:
 	if mode == "dismount":
 		dismount_selected(true)
+		return
+	if mode in ["fallback", "smoke", "cover"]:
+		_special_order(mode)
 		return
 	for s in selection:
 		if is_instance_valid(s) and s.state != "dead":
@@ -1370,6 +1434,74 @@ func order_selected(mode: String) -> void:
 				s.vehicle.cmd = null if mode == "free" else s.vehicle.pos
 	G.audio.radio_click()
 	G.ui.message({"free": "Selected soldiers act on their own", "hold": "Selected soldiers hold their ground", "charge": "Selected soldiers charge!"}[mode])
+
+# where the trouble is for the selected men: the nearest enemy anyone of them has seen, or straight ahead
+func _sel_threat(c: Vector3) -> Vector3:
+	var best = null
+	var bd = 1e9
+	for s in selection:
+		if is_instance_valid(s) and s.has_seen and G.sim_time - s.seen_t < 20.0:
+			var d = G.dist2d(s.threat, c)
+			if d < bd:
+				bd = d
+				best = s.threat
+	if best != null:
+		return best
+	return G.world.capture if G.dist2d(G.world.capture, c) > 10.0 else c + Vector3(0, 0, 30)
+
+func _special_order(mode: String) -> void:
+	var men = selection.filter(func(x): return is_instance_valid(x) and x.state == "alive" and x.vehicle == null and not x.is_player)
+	if men.is_empty():
+		return
+	var c = Vector3.ZERO
+	for m in men:
+		c += m.pos
+	c /= men.size()
+	var threat = _sel_threat(c)
+	var away = G.flat(c - threat).normalized()
+	match mode:
+		"smoke":
+			# a wall of smoke between them and the enemy, from whoever has a smoke grenade
+			var n = 0
+			for m in men:
+				if m.smokes > 0 and n < 3:
+					var tp = m.pos - away * 12.0 + Vector3(-away.z, 0, away.x) * (n - 1) * 6.0
+					Combat.throw_grenade(m, tp, "smoke")
+					n += 1
+			G.ui.message("Smoke out!" if n > 0 else "Nobody selected has smoke left")
+		"fallback":
+			# back the way they came, under smoke if they have it
+			var home: Vector3 = G.world.rally_point(0)
+			var dir = G.flat(home - c)
+			dir = dir.normalized() if dir.length() > 5.0 else away
+			var dest = c + dir * 30.0
+			var k = 0
+			var smoked = false
+			for m in men:
+				if not smoked and m.smokes > 0:
+					Combat.throw_grenade(m, m.pos - away * 10.0, "smoke")
+					smoked = true
+				var off = Vector3((k % 4) - 1.5, 0, int(k / 4) - 1.0) * 2.2
+				m.order = {"mode": "move", "point": dest + off}
+				_obey(m, dest + off)
+				k += 1
+			G.fx.order_marker(dest)
+			G.ui.message("Falling back%s" % (" under smoke" if smoked else ""))
+		"cover":
+			# everyone into the nearest cover facing the enemy, and stay there
+			var got = 0
+			for m in men:
+				var cp = AI.find_cover(m, threat, "defend")
+				if cp != null:
+					AI.release_cover(m)
+					m.order = {"mode": "hold", "point": cp.pos}
+					_obey(m, cp.pos)
+					got += 1
+				else:
+					m.order = {"mode": "hold", "point": m.pos}
+					m.prone_t = true
+			G.ui.message("Taking cover (%d found some, the rest go flat)" % got if got < men.size() else "Taking cover")
+	G.audio.radio_click()
 
 # get out of whatever they're riding in: troops only, or (troops=false) the crew as well
 func dismount_selected(troops: bool) -> void:
@@ -1533,7 +1665,7 @@ func _sel_summary() -> String:
 
 # B: whatever your class is good at
 func _class_action(s) -> void:
-	match s.cls:
+	match ("radio" if s.radio_pack != null else s.cls):
 		"engineer":
 			if s.kits <= 0:
 				G.ui.message("No sandbags left. Restock at an ammo crate")
@@ -1564,6 +1696,9 @@ func _class_action(s) -> void:
 			Stats.healed(s)
 			G.ui.message("Patched up %s" % ("yourself" if best == s else best.sname))
 		"radio":
+			if s.radio_pack == null:
+				G.ui.message("You've no radio set: pick one up off a fallen radioman")
+				return
 			if s.radio_cd > 0.0:
 				G.ui.message("Artillery is busy, %d s" % int(s.radio_cd))
 				return

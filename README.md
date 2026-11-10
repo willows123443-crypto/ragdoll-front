@@ -107,6 +107,24 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Fewer speech bubbles:** in big fights only the nearest few soldiers talk at once; trucks and supply crews don't chatter
 - **Maps:** no more hedges or bushes lying along roads
 - **Menus:** a new title screen and battle setup, with what each mode is about shown beside the Deploy button, and "starting soldiers" where more come in later
+- **Seeing into buildings:** looking down on a house, its roof and upper floors lift off when the cursor is over it or your selected men are inside, so you can watch the fight in the rooms
+- **Fighting from houses:** soldiers prefer cover inside buildings, and men holding a point near a house go in and take the windows facing the enemy
+- **Better lights:** weapon lights and headlights have a glowing lens with a flare when they point your way, a beam that stops at the first wall instead of shining through it, and a pool of light where they land
+- **Bushes and sandbags:** bushes are leafy mounds with a ragged edge that stir in the breeze; sandbags are proper filled sacks of coarse sacking, tied at the ends
+- **Smoke used smartly:** men pulling back under fire throw smoke first, a squad falling back screens itself, and infantry throw a smoke screen between a tank and the rocket men who've spotted it
+- **No surrender:** a man with an empty rifle, no grenades and his last pistol magazine charges with the pistol and his knife
+- **The radioman:** radio operators carry a real set with a whip aerial on their back; only a man carrying a radio can call artillery or answer a smoke marker, so kill him and his squad can't call the guns until someone runs over and takes the set off him (F to take it yourself)
+- **Abandoned vehicles:** wrecked and empty vehicles lie out in the middle of the map; whichever side gets a man to one first patches it up with his tools and drives it away
+- **Grenades thrown back:** a man near a live grenade sometimes lunges, snatches it up and throws it back
+- **Bigger explosions:** a white flash that lights up the walls round about, earth and clods thrown up in a cone, and a ring of dust rolling out along the ground
+- **Tracks and trampling:** tanks leave tread marks and wheels leave tyre tracks that fade over a few minutes; grass is pressed flat under vehicles and where men lie prone, and slowly stands up again; exhaust puffs thick and dark when a vehicle pulls away and light when it idles
+- **Interiors:** shelves of books, tables, beds and wardrobes; a blast nearby knocks wardrobes, shelves and tables over, and smashed furniture splinters and leaves broken boards on the floor
+- **More buildings:** big two-room farmhouses with a porch, more of them round towns and farms, and busier villages
+- **Commander mode build queue:** Shift + right-click more structures to queue them; the engineer builds the next one when he finishes the first, and really hammers at the wall while he works. Right-click puts a blueprint away
+- **Orders card:** with soldiers selected a card of orders pops up (hold, take cover, charge, fall back, smoke, dismount, act freely, build, formations)
+- **Supply trucks (commander mode):** each side runs at most three sand-painted supply trucks piled with crates; they load at HQ, drive out to the supply dumps and FOBs and only earn when they get there. Lose one and you buy another at HQ. Supply dumps must be at least 70 m from HQ, so the road is a risk
+- **Ammo truck:** buy one, park it behind the line and nearby soldiers run to its tailgate to restock; when it's empty, drive it back to HQ or a supply dump to load up
+- **HQs and vehicles:** each faction's HQ has its own look; vehicles come in from the map edge and leave by it, no longer get stuck at the rally point, and soldiers step aside for them and walk round them
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

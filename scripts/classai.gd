@@ -16,11 +16,11 @@ static func jobs(s, known: bool, threat: Vector3) -> bool:
 			return r == 1
 	if s.cls != "engineer" and _help_build(s):
 		return true
+	if s.radio_pack != null:
+		_radio(s)
 	match s.cls:
 		"engineer":
 			return _engineer(s, known, threat)
-		"radio":
-			_radio(s)
 		"medic":
 			return _medic(s, known)
 		"at":
@@ -28,7 +28,7 @@ static func jobs(s, known: bool, threat: Vector3) -> bool:
 	return false
 
 static func busy(s) -> bool:
-	return s.task in ["repair", "build", "mine", "patch", "construct", "defuse", "fixwheel", "sweep"]
+	return s.task in ["repair", "build", "mine", "patch", "construct", "defuse", "fixwheel", "sweep", "salvage"]
 
 static func _start_construct(s, st) -> void:
 	AI.release_cover(s)
@@ -60,7 +60,7 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 	# blow up enemy vehicles and gun nests that come close
 	if s.satchels > 0:
 		for v in G.vehicles:
-			if v.team != s.team and not v.dead and G.dist2d(v.pos, s.pos) < 22.0 and not G.blocked(s.head_pos(), v.center()):
+			if v.team != s.team and v.team >= 0 and not v.dead and G.dist2d(v.pos, s.pos) < 22.0 and not G.blocked(s.head_pos(), v.center()):
 				if G.dist2d(v.pos, s.pos) < 13.0:
 					Combat.throw_grenade(s, v.pos, "satchel")
 					return false
@@ -176,6 +176,19 @@ static func work(s) -> void:
 				s.build_site = null
 				s.decide_t = 0.0
 				s.job_cd = 4.0
+				s.carry_item(false, "", s.pos)
+				# finished (not driven off): on to the next structure on his list
+				if not close_enemy and s.supp <= 1.5:
+					var q: Array = s.get_meta("build_queue", [])
+					while not q.is_empty():
+						var nx = q.pop_front()
+						if Build.sites.has(nx) and not nx["dead"] and (not nx["done"] or Build.needs_repair(nx)):
+							s.set_meta("build_queue", q)
+							_start_construct(s, nx)
+							s.order = {"mode": "hold", "point": Build.work_spot(nx, s)}
+							G.fx.callout(s, G.pick(["Done here, on to the next one.", "Next job!", "Moving to the next build."]))
+							return
+					s.set_meta("build_queue", [])
 				return
 			_build_work(s, st)
 		"defuse":
@@ -207,6 +220,8 @@ static func work(s) -> void:
 				s.task = null
 				s.job_cd = 8.0
 				s.decide_t = 0.0
+		"salvage":
+			Salvage.work(s)
 		"repair":
 			var v = s.board_target
 			if v == null or not is_instance_valid(v) or v.dead or (v.hp >= v.spec["hp"] and not v.tracks_broken and not v.burning):
@@ -413,7 +428,7 @@ static func _sticky(s) -> void:
 	if s.stickies <= 0:
 		return
 	for v in G.vehicles:
-		if v.team == s.team or v.dead or v.spec.get("air", false):
+		if v.team == s.team or v.team < 0 or v.dead or v.spec.get("air", false):
 			continue
 		var d = G.dist2d(v.pos, s.pos)
 		if d < 11.0 and not G.blocked(s.head_pos(), v.center()):
@@ -475,7 +490,7 @@ static func _anti_tank(s) -> bool:
 	var best = null
 	var bd = 70.0
 	for v in G.vehicles:
-		if v.team != s.team and not v.dead and v.kind != "mortar":
+		if v.team != s.team and v.team >= 0 and not v.dead and v.kind != "mortar":
 			var d = G.dist2d(v.pos, s.pos)
 			if d < bd:
 				bd = d
@@ -622,14 +637,31 @@ static func _build_work(s, st) -> void:
 				return
 			AI.stop_move(s)
 			s.want = Vector3.ZERO
-			s.crouch_t = 0.75
 			s.aim_yaw = G.turn_to(s.aim_yaw, atan2(to.x, to.z), 4.0 * G.DT)
-			s.hand_t = s.pos + to.normalized() * 0.55 + Vector3(0, 0.45, 0)
+			s.hand_t = _hammer_point(s, st, to)
+			s.crouch_t = 0.8 if s.hand_t.y - s.pos.y < 0.75 else 0.0
 			s.tool_mode = "hammer"
 			Build.add_work(st, rate * G.DT)
 	job["t"] -= G.DT
 	if job["t"] <= 0.0:
 		job["m"] = ""
+
+# where the hammer comes down: on the wall in front of him if it's up yet, otherwise on the frame at the edge
+# of the footprint, each man at his own height (some kneel at the bottom course, some reach up)
+static func _hammer_point(s, st, to: Vector3) -> Vector3:
+	var dir = to.normalized()
+	var h = 0.35 + fmod(s.seed_ * 7.3, 1.0) * 0.85
+	var chest = s.pos + Vector3(0, h, 0)
+	var hit = G.ray(chest, chest + dir * 2.0, G.L_WORLD)
+	if not hit.is_empty() and chest.distance_to(hit.position) < 1.3:
+		return hit.position - dir * 0.04
+	var f = Build._front(st)
+	var r = Vector3(f.z, 0, -f.x)
+	var sz: Vector2 = Build.KINDS[st["kind"]]["size"]
+	var dl = Vector2(-dir.dot(r), -dir.dot(f))       # from the centre back toward him, in the site's own axes
+	var t = minf(sz.x * 0.5 / maxf(absf(dl.x), 0.01), sz.y * 0.5 / maxf(absf(dl.y), 0.01))
+	var d_edge = clampf(to.length() - t, 0.4, 0.75)
+	return s.pos + dir * d_edge + Vector3(0, h, 0)
 
 # the stack of materials dumped beside a site: sandbags for earthworks, timber for anything with walls
 static func _pile(st) -> Vector3:

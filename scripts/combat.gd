@@ -675,8 +675,15 @@ static func _grenade_reactions(g: RigidBody3D, fuse: float) -> void:
 			continue
 		if randf() < 0.25:
 			continue      # didn't notice it
-		var throw_back = g.get_meta("type") == "frag" and d < 2.4 and fuse > 1.5 and s.stun <= 0.0 and randf() < 0.45 and not g.has_meta("stuck_v")
+		var throw_back = g.get_meta("type") == "frag" and d < 3.4 and fuse > 1.4 + d * 0.15 and s.stun <= 0.0 and randf() < (0.5 if d < 2.0 else 0.3) and not g.has_meta("stuck_v")
 		if throw_back:
+			# a lunge to it, snatched up off the ground
+			if d > 1.0:
+				var to_g = G.flat(gp - s.pos).normalized()
+				if not G.world.solid_at(s.pos.x + to_g.x * (d - 0.8), s.pos.z + to_g.z * (d - 0.8), 0.25, s.pos.y):
+					s.pos += to_g * (d - 0.8)
+			s.crouch = 1.0
+			AI.release_cover(s)
 			var back_to: Vector3 = owner_s.pos if owner_s != null and is_instance_valid(owner_s) else s.pos + G.flat(gp - s.pos).normalized() * -12.0
 			back_to = s.pos + G.flat(back_to - s.pos).normalized() * minf(G.dist2d(back_to, s.pos), 22.0)
 			var start = s.head_pos() + Vector3(0, 0.2, 0)
@@ -701,18 +708,21 @@ static func _grenade_reactions(g: RigidBody3D, fuse: float) -> void:
 static func _marker_popped(at: Vector3, owner_s) -> void:
 	if owner_s == null:
 		return
+	# it needs a radio: the thrower's own squad's set, or another one close by
 	var best = null
-	for o in G.soldiers:
-		if o.team == owner_s.team and o.state == "alive" and o.cls == "radio" and o.radio_cd <= 0.0:
-			best = o
-			break
-	if best == null and owner_s.cls == "radio":
+	if owner_s.radio_pack != null:
 		best = owner_s
+	for o in G.soldiers:
+		if best != null:
+			break
+		if o.team == owner_s.team and o.state == "alive" and o.radio_pack != null and o.radio_cd <= 0.0 \
+				and ((owner_s.squad != null and o.squad == owner_s.squad) or G.dist2d(o.pos, at) < 90.0):
+			best = o
 	if best != null:
 		best.radio_cd = 45.0
 		ClassAI.call_artillery(best, at)
 	elif owner_s == G.player:
-		G.ui.message("No radio operator free to call in the marker")
+		G.ui.message("No radio to call in the marker: get the set off the radioman")
 
 # rifle grenades: a lobbed round on a ballistic arc, solved for the distance to the target
 static func launch_rifle_grenade(s, origin: Vector3, target: Vector3) -> void:

@@ -552,7 +552,7 @@ const DESCR = {"hq": "Headquarters: earns supply points; lose it and you lose th
 	"pillbox": "Concrete machine-gun position", "mortarpit": "Shells enemies your side has spotted",
 	"tower": "Lookout: spots the enemy from far off", "bunker": "Shelter from artillery",
 	"hospital": "Treats the wounded and gives blood", "radio": "Keeps your radio net up for call-ins",
-	"depot": "Unlocks vehicles", "aa": "Shoots down aircraft", "supply": "Earns extra supply points and restocks ammo"}
+	"depot": "Unlocks vehicles", "aa": "Shoots down aircraft", "supply": "Earns supply points when the trucks get through, and restocks ammo. Must be 70 m or more from HQ"}
 
 # how badly knocked about a finished structure is (0 = as new, 1 = gone)
 static func damage(st: Dictionary) -> float:
@@ -790,8 +790,8 @@ static func _effect(st: Dictionary, dt: float) -> void:
 						have = true
 				if not have:
 					st["amb_t"] = G.sim_time
-					var ap = G.main._free_spot(st["p"] + _front(st) * 8.0)
-					G.main.spawn_vehicle("ambulance", t, ap, atan2(_front(st).x, _front(st).z), true)
+					# it drives in from the edge of the map behind the HQ and goes straight to work
+					Reinforce.drive_in(t, "ambulance", st["p"] + _front(st) * 8.0, true, false)
 			for s in G.soldiers:
 				if s.team == t and s.state == "alive" and s.hp < 100.0 and G.dist2d(s.pos, st["p"]) < 10.0:
 					s.hp = minf(100.0, s.hp + 4.0 * dt)
@@ -859,7 +859,7 @@ static func _effect(st: Dictionary, dt: float) -> void:
 					G.ui.radio(t, "Depot: a %s is on its way in" % Vehicle.SPECS[k2]["name"].to_lower())
 		"fob", "fob2", "hq", "supply":
 			# FOBs and dumps running low call up a supply truck from HQ
-			if st["kind"] != "hq" and st.get("ammo") != null and st["ammo"]["stock"] < 55.0:
+			if st["kind"] != "hq" and st.get("ammo") != null and st["ammo"]["stock"] < 55.0 and not Prod.active():
 				var tr = st.get("truck")
 				if (tr == null or not is_instance_valid(tr) or tr.dead) and G.sim_time - st.get("truck_t", -999.0) > 60.0:
 					st["truck_t"] = G.sim_time
@@ -966,6 +966,12 @@ static func _ai_plan(t: int) -> void:
 				if not hq_alive(t):
 					continue
 				want = home + G.flat(obj - home).normalized() * 12.0 + side * 14.0
+			if item[0] == "supply" and Prod.active() and hq(t) != null:
+				# well out from HQ, part way to the front
+				var hq_st: Dictionary = hq(t)
+				var hp: Vector3 = hq_st["p"]
+				var tow = G.flat(obj - hp)
+				want = hp + tow.normalized() * minf(SUPPLY_MIN + 18.0, maxf(SUPPLY_MIN + 5.0, tow.length() - 40.0)) + side * 10.0
 			var spot = find_spot(want, item[0], 8.0, 14, false, t)
 			if spot != null:
 				place(item[0], t, spot, fw)
@@ -1025,6 +1031,18 @@ static func _held_point(t: int):
 	return null
 
 # somewhere flat and empty for a structure, near a wanted spot
+# commander mode: a supply dump has to be well out from HQ, where the trucks are at risk on the road
+const SUPPLY_MIN = 70.0
+
+static func too_near_hq(kind: String, team: int, p: Vector3) -> bool:
+	if kind != "supply" or not Prod.active():
+		return false
+	var h0 = hq(team)
+	if h0 == null:
+		return false
+	var h: Dictionary = h0
+	return G.dist2d(h["p"], p) < SUPPLY_MIN
+
 static func find_spot(want: Vector3, kind: String, spread: float, tries: int = 14, relaxed: bool = false, team: int = -1):
 	var sz: Vector2 = KINDS[kind]["size"]
 	var r = maxf(sz.x, sz.y) * 0.5
@@ -1042,7 +1060,7 @@ static func find_spot(want: Vector3, kind: String, spread: float, tries: int = 1
 		var p = want if k == 0 else want + Vector3(randf_range(-spread, spread), 0, randf_range(-spread, spread))
 		if p.x < b.position.x + r + 3.0 or p.x > b.end.x - r - 3.0 or p.z < b.position.y + r + 3.0 or p.z > b.end.y - r - 3.0:
 			continue
-		if not clear_at(p, kind, relaxed):
+		if not clear_at(p, kind, relaxed) or (team >= 0 and too_near_hq(kind, team, p)):
 			continue
 		var gp = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
 		if team < 0:
@@ -1185,6 +1203,77 @@ static func _tent(st: Dictionary, lx: float, lz: float, w: float, d: float, h: f
 		_cyl(st, lx + e * (w * 0.5 + 0.35), 0.0, lz + d * 0.5 + 0.4, 0.03, 0.4, WOODC)
 
 static func _geo_hq(st: Dictionary) -> void:
+	if Faction.militia(st["team"]):
+		_geo_hq_mil(st)
+		return
+	_geo_hq_army(st)
+	# the extras that make it read as a headquarters from above: a lattice radio mast with a dish,
+	# a generator, a parked command jeep, wire along the front and a camouflage net over the stores
+	var tcol: Color = G.team_color(st["team"])
+	for k in range(5):
+		_b(st, -6.6, k * 2.0, -3.0, 0.5 - k * 0.06, 2.0, 0.5 - k * 0.06, METALC, {"collide": k == 0})
+	_cyl(st, -6.6, 10.0, -3.0, 0.03, 3.5, METALC)
+	_b(st, -5.9, 7.2, -3.0, 1.1, 1.1, 0.12, Color(0.8, 0.8, 0.78), {"collide": false})
+	_b(st, -6.2, 0.0, 2.7, 1.4, 0.9, 0.9, Color(0.3, 0.33, 0.24), {"hp": 120.0})
+	_b(st, -6.2, 0.9, 2.7, 1.2, 0.1, 0.7, METALC, {"collide": false})
+	_b(st, 1.6, 0.0, 2.0, 1.9, 1.2, 3.4, G.TEAM_UNI[st["team"]].darkened(0.2), {"hp": 160.0})
+	_b(st, 1.6, 1.2, 2.4, 1.7, 0.08, 1.2, Color(0.3, 0.32, 0.34), {"collide": false})
+	for x in [-6.5, -2.5, 1.5]:
+		_b(st, x, 0.4, 6.6, 3.6, 0.5, 0.35, Color(0.32, 0.3, 0.27), {"collide": false, "shape": "blob"})
+	_b(st, 5.5, 2.8, 2.6, 5.4, 0.06, 3.4, Color(0.3, 0.33, 0.22), {"collide": false})
+	for p in [Vector2(2.9, 1.0), Vector2(8.1, 1.0), Vector2(2.9, 4.2), Vector2(8.1, 4.2)]:
+		_cyl(st, p.x, 0.0, p.y, 0.05, 2.8, WOODC)
+	_b(st, -3.5, 2.65, 0.6, 1.2, 0.5, 0.06, tcol, {"collide": false})
+
+# the militia's headquarters: a walled compound of breeze blocks with a gate, a block house with a
+# rusty corrugated roof, a tarp shade over a table, a water tank, tyres, drums and the black banner
+static func _geo_hq_mil(st: Dictionary) -> void:
+	var block = Color(0.66, 0.62, 0.55)
+	var rust = Color(0.5, 0.33, 0.22)
+	var tarp = [Color(0.25, 0.35, 0.55), Color(0.55, 0.45, 0.3), Color(0.35, 0.4, 0.3)][st["team"] % 3]
+	var hw = 7.6
+	var hd = 5.6
+	# the compound wall, gated at the front
+	_b(st, 0.0, 0.0, -hd, hw * 2.0, 1.8, 0.3, block, {"hp": 220.0})
+	_b(st, -hw, 0.0, 0.0, 0.3, 1.8, hd * 2.0, block, {"hp": 220.0})
+	_b(st, hw, 0.0, 0.0, 0.3, 1.8, hd * 2.0, block, {"hp": 220.0})
+	_b(st, -(hw + 2.2) / 2.0, 0.0, hd, hw - 2.2, 1.8, 0.3, block, {"hp": 220.0})
+	_b(st, (hw + 2.2) / 2.0, 0.0, hd, hw - 2.2, 1.8, 0.3, block, {"hp": 220.0})
+	for x in [-2.2, 2.2]:
+		_b(st, x, 0.0, hd, 0.5, 2.6, 0.5, block.darkened(0.1), {"hp": 260.0})
+	# the block house: walls with a doorway and windows, a sloping tin roof
+	var hx = -3.2
+	var hz = -2.0
+	_b(st, hx, 0.0, hz - 2.0, 6.0, 2.8, 0.3, block.lightened(0.05), {"hp": 260.0})
+	_b(st, hx - 2.85, 0.0, hz, 0.3, 2.8, 4.0, block.lightened(0.05), {"hp": 260.0})
+	_b(st, hx + 2.85, 0.0, hz, 0.3, 2.8, 4.0, block.lightened(0.05), {"hp": 260.0})
+	_b(st, hx - 2.0, 0.0, hz + 2.0, 2.0, 2.8, 0.3, block.lightened(0.05), {"hp": 260.0})
+	_b(st, hx + 1.9, 0.0, hz + 2.0, 2.2, 1.0, 0.3, block.lightened(0.05), {"hp": 260.0})
+	_b(st, hx + 1.9, 1.9, hz + 2.0, 2.2, 0.9, 0.3, block.lightened(0.05), {"hp": 260.0})
+	_b(st, hx - 0.15, 2.2, hz + 2.0, 1.7, 0.6, 0.3, block.lightened(0.05), {"hp": 260.0})
+	_b(st, hx, 2.85, hz, 6.6, 0.08, 4.8, rust, {"collide": false, "rx": 0.08})
+	for k in range(6):
+		_b(st, hx - 2.8 + k * 1.1, 2.9, hz, 0.06, 0.04, 4.8, rust.darkened(0.25), {"collide": false})
+	# tarp shade on poles over a table and chairs
+	for p in [Vector2(1.6, -3.6), Vector2(6.6, -3.6), Vector2(1.6, 0.4), Vector2(6.6, 0.4)]:
+		_cyl(st, p.x, 0.0, p.y, 0.05, 2.5, WOODC)
+	_b(st, 4.1, 2.45, -1.6, 5.4, 0.05, 4.4, tarp, {"collide": false})
+	_b(st, 4.1, 0.0, -1.6, 2.0, 0.75, 0.9, WOODC, {"hp": 60.0})
+	for c in [Vector2(2.7, -1.6), Vector2(5.5, -1.6)]:
+		_b(st, c.x, 0.0, c.y, 0.45, 0.45, 0.45, Color(0.6, 0.6, 0.58), {"collide": false})
+	# water tank up on a stand
+	for p in [Vector2(5.4, 3.0), Vector2(6.6, 3.0), Vector2(5.4, 4.2), Vector2(6.6, 4.2)]:
+		_b(st, p.x, 0.0, p.y, 0.12, 2.2, 0.12, METALC, {"collide": false})
+	_cyl(st, 6.0, 2.2, 3.6, 0.75, 1.2, Color(0.2, 0.3, 0.45), true)
+	# tyres, drums and crates, and the banner
+	for k in range(3):
+		_cyl(st, -6.4, k * 0.25, 4.3, 0.42, 0.24, Color(0.1, 0.1, 0.1))
+	_drums(st, 1.0, 3.8, 3)
+	_crates(st, -5.6, 1.4, 4)
+	_flagpole(st, 0.0, -4.4, 8.0, G.team_color(st["team"]))
+	_cyl(st, -6.8, 2.8, -4.8, 0.03, 4.0, METALC)
+
+static func _geo_hq_army(st: Dictionary) -> void:
 	var tc: Color = G.TEAM_UNI[st["team"]].lerp(CANVAS, 0.5)
 	# concrete command post with a doorway at the front and slits on the sides
 	var cx = -3.5
@@ -1208,7 +1297,6 @@ static func _geo_hq(st: Dictionary) -> void:
 	_drums(st, 7.2, 1.6, 3)
 	_sandbags(st, -4.0, 5.6, 6.0, true)
 	_sandbags(st, 4.5, 5.6, 6.0, true)
-	_cyl(st, -6.6, 2.9, -3.0, 0.03, 4.5, METALC)
 
 static func _geo_fob(st: Dictionary) -> void:
 	var tc: Color = G.TEAM_UNI[st["team"]].lerp(CANVAS, 0.5)

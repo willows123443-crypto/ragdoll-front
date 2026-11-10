@@ -1028,14 +1028,17 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 	elif hand_t != null and tool_mode == "hammer":
 		# hammering: the right hand swings up and down, the left steadies the work
 		var sw = sin(G.sim_time * 8.5 + seed_ * 3.0)
-		rh = hand_t + ur * 0.1 + Vector3(0, 0.1 + 0.34 * maxf(sw, -0.25), 0) - uf * 0.12 * sw
+		rh = hand_t + ur * 0.08 + Vector3(0, 0.06 + 0.42 * maxf(sw, -0.15), 0) - uf * (0.16 * sw + 0.06)
 		lh = hand_t - ur * 0.2 + uf * 0.05 + Vector3(0, -0.06, 0)
 		if sw < -0.2 and not hammer_hit:
+			# the blow lands on the work: a knock, a little dust and now and then a splinter
 			hammer_hit = true
-			if randf() < 0.6:
+			if randf() < 0.7:
 				G.audio.hammer(hand_t)
-			if randf() < 0.15:
-				G.fx.impact(hand_t, Vector3.UP)
+			if randf() < 0.35:
+				G.fx.impact(hand_t, -uf)
+			if randf() < 0.12:
+				G.fx.debris(hand_t, Vector3(randf_range(-1, 1), randf_range(1.5, 3.0), randf_range(-1, 1)), 0.06, Color(0.55, 0.42, 0.27))
 		elif sw > 0.3:
 			hammer_hit = false
 	elif zombie:
@@ -1460,6 +1463,7 @@ func set_class(c: String) -> void:
 	rgren = 3 if c == "rifleman" and wid == "rifle" else 0
 	if c == "radio":
 		smokes = 3
+		give_radio.call_deferred(true)
 	if c == "at" and wid == "rpg":
 		rockets = 6
 	fausts = 0
@@ -1714,6 +1718,45 @@ static func _mat_glow(key: String, col: Color) -> StandardMaterial3D:
 	mats[key] = m
 	return m
 
+# a field radio on the back: a big set in its canvas harness, a handset on a curly lead and a long whip aerial
+var radio_pack: Node3D = null
+
+func give_radio(on: bool) -> void:
+	if on and radio_pack == null and parts.size() > 1 and not zombie:
+		radio_pack = Node3D.new()
+		var olive = _mat("radioset", Color(0.24, 0.27, 0.19), false)
+		var dark = _mat("radioknob", Color(0.1, 0.1, 0.09), false)
+		for b in [[Vector3(0.3, 0.38, 0.16), Vector3(0, 0, 0), olive], [Vector3(0.31, 0.06, 0.17), Vector3(0, 0.16, 0), dark],
+				[Vector3(0.05, 0.05, 0.03), Vector3(-0.08, 0.1, -0.09), dark], [Vector3(0.05, 0.05, 0.03), Vector3(0.0, 0.1, -0.09), dark],
+				[Vector3(0.07, 0.14, 0.05), Vector3(0.19, -0.02, 0.03), dark], [Vector3(0.32, 0.04, 0.04), Vector3(0, -0.12, 0.08), olive]]:
+			var m = MeshInstance3D.new()
+			var bm = BoxMesh.new()
+			bm.size = b[0]
+			m.mesh = bm
+			m.position = b[1]
+			m.material_override = b[2]
+			radio_pack.add_child(m)
+		var ant = MeshInstance3D.new()
+		var cm = CylinderMesh.new()
+		cm.top_radius = 0.004
+		cm.bottom_radius = 0.009
+		cm.height = 1.5
+		cm.radial_segments = 4
+		ant.mesh = cm
+		ant.material_override = dark
+		ant.position = Vector3(0.1, 0.92, -0.03)
+		ant.rotation = Vector3(-0.12, 0, -0.08)
+		radio_pack.add_child(ant)
+		radio_pack.position = Vector3(0, 0.02, -0.24)
+		parts[1].add_child(radio_pack)
+		if leader_mark != null:
+			leader_mark.visible = false
+	elif not on and radio_pack != null:
+		radio_pack.queue_free()
+		radio_pack = null
+		if leader_mark != null:
+			leader_mark.visible = true
+
 # squad leaders carry a radio with a tall antenna so you can pick them out
 func set_leader(v: bool) -> void:
 	if zombie or zombie_next != "":
@@ -1901,6 +1944,7 @@ func go_dead() -> void:
 	carrying = null
 	set_crate(false)
 	lod_wake()
+	RadioPack.on_death(self)
 	state = "dead"
 	strength = 0.0
 	dead_t = 0.0
@@ -2025,24 +2069,14 @@ func _flashlight_tick() -> void:
 		body.rotation.x = PI / 2.0
 		body.material_override = _mat("torch", Color(0.12, 0.12, 0.12), false)
 		flashlight.add_child(body)
-		get_beam_mat()
-		var beam = MeshInstance3D.new()
-		var bm = CylinderMesh.new()
-		bm.top_radius = 1.6
-		bm.bottom_radius = 0.035
-		bm.height = 10.0
-		bm.radial_segments = 14
-		bm.rings = 6
-		bm.cap_top = false
-		bm.cap_bottom = false
-		beam.mesh = bm
-		beam.rotation.x = PI / 2.0
-		beam.position = Vector3(0, 0, 5.1)
-		beam.material_override = beam_mat
-		beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		flashlight.add_child(beam)
+		# the lens, its flare, a beam that stops at the first wall and a pool of light where it lands
+		var lp = Lamp.make(flashlight, 22.0, 0.16, 0.03, false)
+		lp.position = Vector3(0, 0, 0.075)
+		lp.name = "lamp"
 	if flashlight != null:
 		flashlight.visible = want
+		if want:
+			Lamp.update(flashlight.get_node("lamp"), get_viewport().get_camera_3d())
 
 var glint: MeshInstance3D = null
 var mag_mesh: MeshInstance3D = null
@@ -2078,7 +2112,14 @@ func _glint_tick() -> void:
 		var d = cam.global_position.distance_to(muzzle)
 		glint.scale = Vector3.ONE * clampf(d / 25.0, 0.6, 5.0) * (0.4 + k) * (0.85 + 0.3 * sin(G.sim_time * 9.0))
 
+var flat_t = 0.0
+
 func tick() -> void:
+	if prone and state == "alive" and vehicle == null:
+		flat_t -= G.DT
+		if flat_t <= 0.0:
+			flat_t = 1.0
+			G.world.flatten_grass(pos + Vector3(sin(aim_yaw), 0, cos(aim_yaw)) * 0.45, 0.75, Vector3(sin(aim_yaw), 0, cos(aim_yaw)), 90.0)
 	if heat > 0.0:
 		heat = maxf(0.0, heat - 0.16 * G.DT)
 	if cls == "sniper" and wid == "sniper":
@@ -2582,6 +2623,8 @@ func _tick_alive() -> void:
 
 # ---------------------------------------------------------------- vehicles
 func mount(v, i: int) -> bool:
+	if v.team < 0 and v.has_meta("derelict"):
+		Salvage.claim(v, team)
 	if v == null or v.dead or i < 0 or i >= v.seats.size() or v.seats[i] != null:
 		return false
 	AI.release_cover(self)

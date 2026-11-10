@@ -27,6 +27,7 @@ static func reset() -> void:
 	research = [[], []]
 	done = [{}, {}]
 	convoy_t = [20.0, 25.0]
+	Logistics.reset()
 
 static func active() -> bool:
 	return G.mode == "commander"
@@ -86,10 +87,8 @@ static func step(dt: float) -> void:
 					research[t].pop_front()
 					done[t][r["what"]] = true
 					G.ui.radio(t, "HQ: %s ready (%s)" % [UPGRADES[r["what"]]["name"], UPGRADES[r["what"]]["desc"]])
-		convoy_t[t] -= dt
-		if convoy_t[t] <= 0.0:
-			convoy_t[t] = CONVOY_EVERY
-			_send_convoys(t)
+		pass
+	Logistics.step(dt)
 
 # a finished vehicle drives out of the depot (or in from the rear if the depot's gone)
 static func _roll_out(team: int, what: String) -> void:
@@ -115,7 +114,7 @@ static func _send_convoys(team: int) -> void:
 		if tr != null and is_instance_valid(tr) and not tr.dead:
 			continue        # the last one hasn't got there yet
 		n += 1
-		var start = Reinforce.clear_entry(team)
+		var start = Reinforce.offmap(Reinforce.clear_entry(team))
 		var drop = G.main._free_spot(st["p"] + Build._front(st) * -8.0)
 		var v = Vehicle.make("truck", team, start, atan2(drop.x - start.x, drop.z - start.z))
 		var load = int(CONVOY_LOAD * (1.5 if has(team, "logistics") else 1.0))

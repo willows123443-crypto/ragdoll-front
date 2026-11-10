@@ -8,11 +8,13 @@ const COSTS = {
 	"artillery": 14, "airstrike": 20, "paradrop": 16, "heli": 20,
 	"jeep": 9, "motorbike": 7, "halftrack": 16, "armoredcar": 24, "tank": 36, "heavytank": 55, "gunship": 40,
 	"fighter": 26, "bomber": 34, "bridger": 16, "radar": 20, "ambulance": 9, "atgun": 14, "recon": 10, "technical": 8, "plough": 30,
+	"supplytruck": 12, "ammotruck": 10,
 }
 const NAMES = {
 	"artillery": "Artillery barrage", "airstrike": "Air strike", "paradrop": "Paratroopers", "heli": "Helicopter insertion",
 	"jeep": "Jeep", "motorbike": "Motorbike", "halftrack": "Half-track", "armoredcar": "Armoured car", "tank": "Tank", "gunship": "Gunship (70 s)",
 	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance", "atgun": "Anti-tank gun", "heavytank": "Heavy tank", "recon": "Recon plane (30 s)", "technical": "Technical", "plough": "Mine plough tank",
+	"supplytruck": "Supply truck", "ammotruck": "Ammo truck",
 }
 
 # in commander mode, what has to be built before you can call each one in
@@ -188,6 +190,8 @@ static func _ai_spend(t: int) -> void:
 	for v in G.vehicles:
 		if v.team == t and not v.dead and not v.spec.get("static", false):
 			veh += 1
+	if G.mode == "commander" and not G.vehicles.any(func(v): return v.team == t and not v.dead and v.kind == "ammotruck"):
+		opts.append("ammotruck")
 	if veh < 3 and G.armor != "none":
 		opts.append_array(["jeep", "halftrack", "armoredcar", "motorbike"])
 		if G.armor == "heavy":
@@ -238,10 +242,22 @@ static func can_afford(team: int, what: String) -> bool:
 static func call_in(team: int, what: String, target: Vector3, relay: bool = false) -> bool:
 	if points.is_empty() or points[team] < COSTS[what] or not unlocked(team, what) or not Faction.support_ok(team, what) or not Rules.callin_ok(team, what):
 		return false
+	if what == "supplytruck":
+		if not Logistics.can_buy_truck(team):
+			if team == 0:
+				G.ui.message("You already have %d supply trucks (the most you can run)" % Logistics.FLEET_MAX if Prod.active() else "Supply trucks are for commander battles")
+			return false
+		points[team] -= COSTS[what]
+		return Logistics.buy_truck(team)
 	# no radio: the request goes back to HQ with a runner, and is paid for when it gets there
 	if not relay and Comms.hold(team, what, target):
 		return true
 	points[team] -= COSTS[what]
+	if what == "ammotruck":
+		var dest: Vector3 = G.world.rally_point(team)
+		Reinforce.drive_in(team, "ammotruck", dest)
+		G.ui.radio(team, "Ammo truck on its way%s" % (": park it near the front and the men will come to it" if team == 0 else ""))
+		return true
 	# commander mode: vehicles are built at the depot, one after another
 	if Prod.active() and Prod.is_vehicle(what):
 		Prod.order(team, what)

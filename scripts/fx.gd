@@ -275,17 +275,49 @@ func explosion(pos: Vector3, power: float) -> void:
 	var smoke = _one_shot_smoke(pos + Vector3(0, 1.0, 0), Color(0.28, 0.27, 0.25, 0.8), 16, 4.5, 2.0 * power, 8.0 * power, false)
 	smoke.initial_velocity_max = 3.0
 	smoke.gravity = Vector3(0, 0.8, 0)
-	var dirt = _make_burst(Color(0.38, 0.33, 0.26), 60, 1.6, 12.0 * power, 0.09, false)
-	dirt.spread = 70.0
+	# earth thrown up in a cone: fine dirt, then heavier clods that tumble back down
+	var dirt = _make_burst(Color(0.38, 0.33, 0.26), 60, 1.6, 13.0 * power, 0.09, false)
+	dirt.spread = 26.0
 	dirt.direction = Vector3.UP
 	dirt.global_position = pos
 	dirt.emitting = true
 	get_tree().create_timer(2.5, false).timeout.connect(dirt.queue_free)
+	var clods = _make_burst(Color(0.3, 0.26, 0.2), int(10 + 8 * power), 2.4, 11.0 * power, 0.2, false)
+	clods.spread = 34.0
+	clods.direction = Vector3.UP
+	clods.angular_velocity_min = -400.0
+	clods.angular_velocity_max = 400.0
+	clods.scale_amount_min = 0.6
+	clods.scale_amount_max = 1.6
+	clods.global_position = pos
+	clods.emitting = true
+	get_tree().create_timer(3.0, false).timeout.connect(clods.queue_free)
+	var plume = _one_shot_smoke(pos + Vector3(0, 0.3, 0), Color(0.3, 0.26, 0.2, 0.85), int(10 + 6 * power), 1.5, 0.7 * power, 2.6 * power, false)
+	plume.direction = Vector3.UP
+	plume.spread = 18.0
+	plume.initial_velocity_min = 7.0 * power
+	plume.initial_velocity_max = 14.0 * power
+	plume.gravity = Vector3(0, -7.0, 0)
+	plume.damping_min = 1.0
+	plume.damping_max = 2.0
+	# a ring of dust rolling out low along the ground
+	var roll = _one_shot_smoke(pos + Vector3(0, 0.3, 0), Color(0.6, 0.55, 0.46, 0.7), int(18 + 10 * power), 2.6, 0.9 * power, 3.4 * power, false)
+	roll.direction = Vector3(1, 0, 0)
+	roll.spread = 180.0
+	roll.flatness = 1.0
+	roll.initial_velocity_min = 6.0 * power
+	roll.initial_velocity_max = 9.0 * power
+	roll.damping_min = 4.0 * power
+	roll.damping_max = 6.0 * power
+	roll.gravity = Vector3(0, 0.15, 0)
+	# the white-hot flash at the heart of it, lighting up the walls round about
+	var core = _one_shot_smoke(pos + Vector3(0, 0.8, 0), Color(1.0, 0.93, 0.75, 1.0), 3, 0.14, 2.6 * power, 3.6 * power, true)
+	core.initial_velocity_max = 0.3
 	var f = flash_lights[(flash_i + 2) % flash_lights.size()]
 	f["l"].global_position = pos + Vector3(0, 1.5, 0)
-	f["l"].light_energy = 8.0 * flash_boost
-	f["l"].omni_range = 22.0
-	f["t"] = 0.12
+	f["l"].light_energy = 13.0 * flash_boost
+	f["l"].omni_range = 18.0 + 10.0 * power
+	f["t"] = 0.2
 	decal(pos, randf_range(2.5, 3.5) * power, true)
 	# the dust hangs about long after the bang
 	var haze = _one_shot_smoke(pos + Vector3(0, 0.8, 0), Color(0.55, 0.5, 0.42, 0.55), 7, 14.0, 3.0 * power, 11.0 * power, false)
@@ -492,6 +524,8 @@ func _torches() -> void:
 		if v.lights_on and v.lamps != null and v.lamps.visible and v.visible:
 			# headlights count as nearer: they light far more of the scene
 			lit.append([v.pos.distance_squared_to(cam.global_position) * 0.5, v.lamps.get_node("aim"), true])
+			for lp in v.lamps.get_meta("lamps", []):
+				Lamp.update(lp, cam)
 	lit.sort_custom(func(a, b): return a[0] < b[0])
 	for i in range(torch_lights.size()):
 		var l: SpotLight3D = torch_lights[i]
@@ -543,6 +577,12 @@ func _ambient_planes(dt: float) -> void:
 
 func step(dt: float) -> void:
 	_ambient_planes(dt)
+	if marks_mat != null:
+		marks_mat.set_shader_parameter("now", G.sim_time)
+	grass_t -= dt
+	if grass_t <= 0.0 and G.world != null:
+		grass_t = 0.5
+		G.world.grass_recover()
 	if G.main.is_night() or not torch_lights.is_empty():
 		_torches()
 	_step_casings(dt)
@@ -568,6 +608,8 @@ func step(dt: float) -> void:
 	for f in flash_lights:
 		if f["t"] > 0.0:
 			f["t"] -= dt
+			if f["l"].light_energy > 9.0:
+				f["l"].light_energy *= pow(0.02, dt)      # the big flashes die away rather than blink off
 			if f["t"] <= 0.0:
 				f["l"].light_energy = 0.0
 				f["l"].omni_range = 9.0
@@ -585,7 +627,7 @@ func step(dt: float) -> void:
 				d["b"].queue_free()
 			debris_list.remove_at(i)
 
-func debris(pos: Vector3, vel: Vector3, size: float, col: Color) -> void:
+func debris(pos: Vector3, vel: Vector3, size: float, col: Color, shape: Vector3 = Vector3.ZERO) -> void:
 	if debris_list.size() > 260:
 		var old = debris_list.pop_front()
 		if is_instance_valid(old["b"]):
@@ -594,7 +636,7 @@ func debris(pos: Vector3, vel: Vector3, size: float, col: Color) -> void:
 	b.collision_layer = G.L_DEBRIS
 	b.collision_mask = G.L_WORLD | G.L_DEBRIS | G.L_BODY
 	b.mass = size * 20.0
-	var sz = Vector3(size * randf_range(0.6, 1.4), size * randf_range(0.5, 1.0), size * randf_range(0.6, 1.4))
+	var sz = Vector3(size * randf_range(0.6, 1.4), size * randf_range(0.5, 1.0), size * randf_range(0.6, 1.4)) if shape == Vector3.ZERO else shape
 	var cs = CollisionShape3D.new()
 	var bs = BoxShape3D.new()
 	bs.size = sz
@@ -616,6 +658,9 @@ func debris(pos: Vector3, vel: Vector3, size: float, col: Color) -> void:
 	debris_list.append({"b": b, "t": randf_range(150.0, 240.0)})
 
 func clear_all() -> void:
+	if marks_mm != null:
+		for i in range(marks_mm.instance_count):
+			marks_mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0)))
 	for t in tracers:
 		if t["mesh"]:
 			t["mesh"].visible = false
@@ -642,7 +687,7 @@ func callout(s, text: String) -> void:
 		return
 	# supply and logistics crews just get on with it: no chatter over trucks and ambulances
 	var sv = s.vehicle
-	if sv != null and is_instance_valid(sv) and (sv.kind in ["truck", "ambulance", "radar", "bridger"] or (sv.mission != null and sv.mission.get("type", "") in ["supply", "escort"])):
+	if sv != null and is_instance_valid(sv) and (sv.kind in ["truck", "ambulance", "radar", "bridger", "supplytruck", "ammotruck"] or (sv.mission != null and sv.mission.get("type", "") in ["supply", "escort"])):
 		return
 	# in a big fight only the nearest few get a speech bubble at once (your own squad always does)
 	var cam = get_viewport().get_camera_3d()
@@ -804,3 +849,91 @@ func rocket_trail(pos: Vector3) -> void:
 	d.initial_velocity_min = 0.05
 	d.initial_velocity_max = 0.3
 	d.gravity = Vector3(0, 0.25, 0)
+
+# ---------------------------------------------------------------- tread marks and exhaust
+var marks_mm: MultiMesh = null
+var marks_mat: ShaderMaterial = null
+var marks_i = 0
+var grass_t = 0.0
+const MARKS = 1600
+const MARK_FADE = 200.0
+
+func _marks_setup() -> void:
+	marks_mm = MultiMesh.new()
+	marks_mm.transform_format = MultiMesh.TRANSFORM_3D
+	marks_mm.use_custom_data = true
+	var pm = PlaneMesh.new()
+	pm.size = Vector2(1, 1)
+	marks_mm.mesh = pm
+	marks_mm.instance_count = MARKS
+	for i in range(MARKS):
+		marks_mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0)))
+	var sh = Shader.new()
+	sh.code = """shader_type spatial;
+render_mode depth_draw_never, cull_disabled, shadows_disabled;
+uniform float now = 0.0;
+uniform float fade = 200.0;
+varying float age;
+varying float kind;
+void vertex() {
+	age = now - INSTANCE_CUSTOM.x;
+	kind = INSTANCE_CUSTOM.y;
+}
+void fragment() {
+	float a = clamp(1.0 - age / fade, 0.0, 1.0);
+	a = a * a * 0.62;
+	float tread;
+	if (kind > 0.5) {
+		// track links: bars across, with the guide horn gap down the middle
+		tread = step(0.45, fract(UV.y * 7.0)) * (1.0 - 0.6 * step(abs(UV.x - 0.5), 0.06));
+	} else {
+		// tyre: chevron blocks
+		tread = step(0.5, fract(UV.y * 9.0 + abs(UV.x - 0.5) * 2.5));
+	}
+	float edge = smoothstep(0.0, 0.15, UV.x) * smoothstep(1.0, 0.85, UV.x);
+	float k = a * edge * (0.55 + 0.45 * tread);
+	ALBEDO = vec3(0.24, 0.2, 0.15);
+	ROUGHNESS = 1.0;
+	ALPHA = k;
+}"""
+	marks_mat = ShaderMaterial.new()
+	marks_mat.shader = sh
+	marks_mat.set_shader_parameter("fade", MARK_FADE)
+	var mi = MultiMeshInstance3D.new()
+	mi.multimesh = marks_mm
+	mi.material_override = marks_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.extra_cull_margin = 10000.0
+	add_child(mi)
+
+# one stretch of track or tyre print, lying on the ground and fading out over a few minutes
+func track_mark(p: Vector3, fwd: Vector3, w: float, l: float, tracked: bool) -> void:
+	if marks_mm == null:
+		_marks_setup()
+	var W = G.world
+	var gy = W.ground_y(p.x, p.z)
+	# lie along the slope
+	var f = G.flat(fwd).normalized()
+	var r = Vector3(f.z, 0, -f.x)
+	var y_f = W.ground_y(p.x + f.x * 0.6, p.z + f.z * 0.6) - W.ground_y(p.x - f.x * 0.6, p.z - f.z * 0.6)
+	var y_r = W.ground_y(p.x + r.x * 0.4, p.z + r.z * 0.4) - W.ground_y(p.x - r.x * 0.4, p.z - r.z * 0.4)
+	var along = (f * 1.2 + Vector3(0, y_f, 0)).normalized()
+	var side = (r * 0.8 + Vector3(0, y_r, 0)).normalized()
+	var up = side.cross(along).normalized()
+	if up.y < 0.0:
+		up = -up
+	marks_mm.set_instance_transform(marks_i, Transform3D(Basis(side * w, up, along * l), Vector3(p.x, gy + 0.035, p.z)))
+	marks_mm.set_instance_custom_data(marks_i, Color(G.sim_time, 1.0 if tracked else 0.0, 0, 0))
+	marks_i = (marks_i + 1) % MARKS
+
+# a puff from the exhaust pipe: heavy and dark under load, faint at idle
+func exhaust(p: Vector3, back: Vector3, k: float, diesel: bool) -> void:
+	var c = Color(0.16, 0.15, 0.14, 0.55 * k + 0.12) if diesel else Color(0.42, 0.42, 0.42, 0.35 * k + 0.1)
+	var e = _one_shot_smoke(p, c, 1 if k < 0.5 else 2, 1.2 + 1.2 * k, 0.18 + 0.15 * k, 0.8 + 1.4 * k, false)
+	e.direction = (back + Vector3(0, 0.6, 0)).normalized()
+	e.spread = 20.0
+	e.initial_velocity_min = 0.6 + 1.6 * k
+	e.initial_velocity_max = 1.0 + 2.4 * k
+	e.gravity = Vector3(0, 0.6, 0)
+	e.damping_min = 0.8
+	e.damping_max = 1.4

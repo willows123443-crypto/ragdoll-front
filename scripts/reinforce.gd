@@ -121,6 +121,29 @@ static func entry_point(t: int) -> Vector3:
 		z = b.position.y + 5.0 if dir.z < 0.0 else b.end.y - 5.0
 	return Vector3(x, G.world.ground_y(x, z), z)
 
+# a point just past the edge of the map, out of sight, for a vehicle to drive in from (or off to):
+# well out along a road that carries on past the edge, only a little way over open country (it rises into hills)
+static func offmap(p: Vector3) -> Vector3:
+	var b: Rect2 = G.world.bounds
+	var out = Vector3.ZERO
+	if p.x < b.position.x + 12.0:
+		out = Vector3(-1, 0, 0)
+	elif p.x > b.end.x - 12.0:
+		out = Vector3(1, 0, 0)
+	elif p.z < b.position.y + 12.0:
+		out = Vector3(0, 0, -1)
+	elif p.z > b.end.y - 12.0:
+		out = Vector3(0, 0, 1)
+	else:
+		return p
+	var on_road = G.world.near_road(p.x, p.z, 1.0)
+	var q = p + out * (40.0 if on_road else 10.0)
+	return Vector3(q.x, 0.0 if on_road else G.world.ground_y(p.x, p.z), q.z)
+
+static func outside_map(p: Vector3, margin: float) -> bool:
+	var b: Rect2 = G.world.bounds
+	return p.x < b.position.x - margin or p.x > b.end.x + margin or p.z < b.position.y - margin or p.z > b.end.y + margin
+
 # the nearest bit of map edge behind our HQ (or our rally point): where vehicles we buy drive in from
 static func edge_near_hq(t: int) -> Vector3:
 	var home: Vector3 = G.world.rally_point(t)
@@ -160,14 +183,14 @@ static func edge_near_hq(t: int) -> Vector3:
 	return Vector3(e.x, G.world.ground_y(e.x, e.z), e.z)
 
 # a vehicle we bought drives in from the edge behind our HQ and on to where it's wanted
-static func drive_in(t: int, kind: String, dest: Vector3, crew: bool = true):
+static func drive_in(t: int, kind: String, dest: Vector3, crew: bool = true, wait: bool = true):
 	if Vehicle.SPECS.get(kind, {}).get("static", false):
 		var fw = G.flat(G.world.capture - dest).normalized()
 		return G.main.spawn_vehicle(kind, t, G.main._free_spot(dest), atan2(fw.x, fw.z), crew)
-	var e = edge_near_hq(t)
+	var e = offmap(edge_near_hq(t))
 	var v = G.main.spawn_vehicle(kind, t, e, atan2(dest.x - e.x, dest.z - e.z), true)
 	# ours report to the depot or rally point and wait for orders; the AI's just drive on into the fight
-	if v != null and t == 0 and G.mode == "commander":
+	if v != null and t == 0 and G.mode == "commander" and wait:
 		v.command(G.main._free_spot(dest))
 	return v
 
@@ -193,7 +216,7 @@ static func truck(t: int, n: int, dest = null) -> void:
 	if G.map_id == "beach" and t == 0:
 		boat(t, n)
 		return
-	var entry = clear_entry(t)
+	var entry = offmap(clear_entry(t))
 	# drop them where they're needed: a little behind the front line (or wherever they were sent)
 	var drop = G.main._free_spot(dest if dest != null else forward_drop(t))
 	var yaw = atan2(drop.x - entry.x, drop.z - entry.z)

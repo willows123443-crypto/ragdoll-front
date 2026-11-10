@@ -13,7 +13,7 @@ extends RefCounted
 const DANGER_LIFE = 150.0
 
 static var danger: Array = [[], [], [], []]       # per team: {"p", "w", "t"}
-static var events = {"pinned": 0, "help": 0, "stack": 0, "danger_smoke": 0, "doorwatch": 0}
+static var events = {"pinned": 0, "help": 0, "stack": 0, "danger_smoke": 0, "doorwatch": 0, "screen": 0, "cover_smoke": 0}
 
 static func reset() -> void:
 	danger = [[], [], [], []]
@@ -277,3 +277,62 @@ static func door_watch(s) -> bool:
 	s.crouch_t = 0.6
 	events["doorwatch"] += 1
 	return true
+
+# ---------------------------------------------------------------- smoke
+# a tank that enemy rocket men have spotted gets a smoke screen thrown between it and them by the
+# infantry walking with it
+static func screen_armour() -> void:
+	for v in G.vehicles:
+		if v.dead or not (v.spec["tracked"] or v.kind in ["armoredcar", "halftrack"]) or v.spec.get("air", false) or v.spec.get("static", false):
+			continue
+		if G.sim_time - v.get_meta("screen_t", -99.0) < 22.0:
+			continue
+		var hunter = null
+		var hd = 85.0
+		for e in G.soldiers:
+			if e.team == v.team or e.state != "alive" or e.vis_veh != v:
+				continue
+			if not (e.W["rocket"] or e.W["ap"] or e.fausts > 0 or e.rockets > 0):
+				continue
+			var d = G.dist2d(e.pos, v.pos)
+			if d < hd:
+				hd = d
+				hunter = e
+		if hunter == null or hd < 10.0:
+			continue
+		var by = null
+		var bd = 28.0
+		for f in G.soldiers:
+			if f.team != v.team or f.state != "alive" or f.vehicle != null or f.is_player or f.smokes <= 0 or f.throw_t > 0.0:
+				continue
+			var d2 = G.dist2d(f.pos, v.pos)
+			if d2 < bd:
+				bd = d2
+				by = f
+		if by == null:
+			continue
+		# between the tank and the man with the rocket, as far as he can throw it
+		var dir = G.flat(hunter.pos - v.pos).normalized()
+		var at = v.pos + dir * minf(hd * 0.4, 16.0)
+		if G.dist2d(at, by.pos) > 24.0:
+			at = by.pos + G.flat(at - by.pos).normalized() * 24.0
+		Combat.throw_grenade(by, at, "smoke")
+		v.set_meta("screen_t", G.sim_time)
+		events["screen"] += 1
+		G.fx.callout(by, G.pick(["Rocket team on the tank! Smoke!", "They've seen the tank, screen it!", "Smoke out front of the armour!"]))
+
+# men pulling back under fire throw smoke between themselves and the enemy first
+static func cover_smoke(s, threat: Vector3) -> void:
+	if s.smokes <= 0 or s.is_player or s.throw_t > 0.0 or s.vehicle != null:
+		return
+	var dT = G.dist2d(threat, s.pos)
+	if dT > 80.0 or dT < 8.0:
+		return
+	var q = s.squad
+	if q != null and G.sim_time - q.get("cover_smoke_t", -99.0) < 18.0:
+		return
+	if q != null:
+		q["cover_smoke_t"] = G.sim_time
+	Combat.throw_grenade(s, s.pos + G.flat(threat - s.pos).normalized() * minf(dT * 0.35, 14.0), "smoke")
+	events["cover_smoke"] += 1
+	G.fx.callout(s, G.pick(["Smoke out! Fall back!", "Popping smoke, move!", "Smoke! Pull back behind it!"]))

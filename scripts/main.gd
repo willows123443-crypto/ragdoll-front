@@ -68,6 +68,10 @@ func _ready() -> void:
 			_depot_test()
 		if a == "--econtest":
 			_econ_test()
+		if a == "--vtrace":
+			_vtrace()
+		if a == "--distest":
+			_dis_test()
 		if a == "--rtstest":
 			_rts_test()
 		if a == "--vfeattest":
@@ -385,6 +389,10 @@ func start_game(o: Dictionary) -> void:
 	Faction.setup()
 	Fog.reset()
 	Tactics.reset()
+	RadioPack.reset()
+	Salvage.reset()
+	if o.get("armies", true) and G.armor != "none":
+		Salvage.place(3 if G.world.is_large() else 2)
 	Ops.reset()
 	Stretcher.reset()
 	Prod.reset()
@@ -1034,12 +1042,86 @@ func _shot_mode(dir: String) -> void:
 		await _look(c1 + Vector3(-4.5, 2.4, -5.0), c1 + Vector3(1.0, 0.6, 6.0))
 		await _wait(0.3)
 		await _snap(dir, "torches")
+		var jp = spawn_vehicle("jeep", 0, _free_spot(c1 + Vector3(9, 0, -6)), 0.5)
+		jp.set_meta("force_light", true)
+		await _wait(1.0)
+		await _look(jp.pos + Vector3(-6.0, 2.6, -6.5), jp.pos + Vector3(2.0, 0.4, 9.0))
+		await _snap(dir, "headlights")
 		G.ui.toggle_nv()
 		await _wait(0.3)
 		await _look(G.world.capture + Vector3(-30, 25, -30), G.world.capture)
 		await _snap(dir, "nightvision")
 		G.ui.toggle_nv()
 		await _snap(dir, "night_plain")
+	if _arg("bldshot", "") != "":
+		# a big farmhouse from outside, then looking down into it with the roof lifted off, then after a blast inside
+		var bi = -1
+		var bd = 1e9
+		for i in range(G.world.buildings.size()):
+			var b = G.world.buildings[i]
+			if b.get("kind", "") == "bighouse":
+				var dd = G.dist2d(Vector3(b["x"], 0, b["z"]), G.world.capture)
+				if dd < bd:
+					bd = dd
+					bi = i
+		if bi < 0:
+			print("BLDSHOT no big house")
+		else:
+			var b = G.world.buildings[bi]
+			var bc = Vector3(b["x"], G.world.ground_y(b["x"], b["z"]), b["z"])
+			await _look(bc + Vector3(-b["w"] * 1.1, 6.0, -b["d"] * 1.6), bc + Vector3(0, 2.0, 0))
+			await _snap(dir, "bighouse_out")
+			await _look(bc + Vector3(0.5, 4.0, -b["d"] * 1.1), bc + Vector3(0, 0.6, 0))
+			await _snap(dir, "bighouse_side")
+			G.world.set_cut({bi: 2.3})
+			await _look(bc + Vector3(-3.0, 16.0, -9.0), bc)
+			await _wait(0.2)
+			await _snap(dir, "bighouse_cut")
+			Combat.explode(bc + Vector3(b["w"] * 0.2, 0.3, 0.0), null, 0.8)
+			await _wait(2.0)
+			await _snap(dir, "bighouse_blast")
+			G.world.set_cut({})
+	if _arg("markshot", "") != "":
+		# a tank and a jeep driving off across the grass, leaving their tracks behind them
+		var mp: Vector3 = _free_spot(G.world.spawn[0].lerp(G.world.capture, 0.2))
+		var tk = spawn_vehicle("tank", 0, mp, atan2(G.world.capture.x - mp.x, G.world.capture.z - mp.z))
+		var jp = spawn_vehicle("jeep", 0, _free_spot(mp + Vector3(8, 0, 6)), atan2(G.world.capture.x - mp.x, G.world.capture.z - mp.z))
+		await _wait(float(_arg("markshot", "10")))
+		var back = -tk.forward()
+		await _look(tk.pos + back * 9.0 + Vector3(3.0, 4.0, 0), tk.pos + back * 2.0)
+		await _snap(dir, "marks_tank")
+		var mid = mp.lerp(tk.pos, 0.5)
+		await _look(mid + Vector3(-9.0, 12.0, -9.0), mid)
+		await _snap(dir, "marks_trail")
+		var gp = G.world.capture + Vector3(6, 0, 6)
+		G.fx.explosion(_free_spot(gp), 1.2)
+		await _look(gp + Vector3(-12.0, 4.5, -12.0), gp + Vector3(0, 1.5, 0))
+		await _wait(0.12)
+		await _snap(dir, "boom1")
+		await _wait(0.45)
+		await _snap(dir, "boom2")
+	if _arg("propshot", "") != "":
+		# sandbags and bushes up close
+		var pc: Vector3 = _free_spot(G.world.spawn[0].lerp(G.world.capture, 0.25) + Vector3(0, 0, 12))
+		G.world.build_now(func():
+			G.world.sandbags(pc.x, pc.z, 4.5, true, 1.0)
+			G.world.sandbags(pc.x + 2.6, pc.z + 1.9, 3.2, false, 1.0)
+			G.world.bush(pc.x - 3.5, pc.z + 3.0, 1.0)
+			G.world.bush(pc.x + 4.5, pc.z + 5.0, 1.3)
+			G.world.bush(pc.x - 1.0, pc.z + 6.5, 0.8))
+		await _wait(0.5)
+		await _look(pc + Vector3(-3.0, 2.2, -4.5), pc + Vector3(0.5, 0.4, 2.0))
+		await _snap(dir, "props_close")
+		await _look(pc + Vector3(-7.0, 5.0, -8.0), pc + Vector3(0.5, 0.4, 3.0))
+		await _snap(dir, "props_wide")
+		var tp = _free_spot(pc + Vector3(14, 0, 4))
+		var st1 = spawn_vehicle("supplytruck", 0, tp, 0.6, false)
+		var at1 = spawn_vehicle("ammotruck", 0, _free_spot(tp + Vector3(7, 0, -2)), -0.5, false)
+		await _wait(0.4)
+		await _look(tp + Vector3(-6.0, 4.0, -9.0), tp + Vector3(3.0, 1.2, 0.0))
+		await _snap(dir, "trucks_rear")
+		await _look(tp + Vector3(9.0, 3.5, 10.0), tp + Vector3(3.0, 1.2, 0.0))
+		await _snap(dir, "trucks_front")
 	if _arg("polishshot", "") != "":
 		# a tank with riders, a mine plough, a jeep, builders at work, and a machine gunner with the bipod down
 		var c2: Vector3 = _free_spot(G.world.capture + Vector3(-95, 0, 25))
@@ -1080,6 +1162,23 @@ func _shot_mode(dir: String) -> void:
 		var mgr = Vector3(-mgf.z, 0, mgf.x)
 		await _look(mg.pos + mgf * 1.6 + mgr * 1.8 + Vector3(0, 0.9, 0), mg.pos + mgf * 0.6 + Vector3(0, 0.3, 0))
 		await _snap(dir, "bipod")
+	if _arg("homeshot", "") != "":
+		# what's around each side's starting area: HQ, rally point, structures
+		await _wait(float(_arg("homeshot", "3")))
+		G.pc.rts = false
+		for t in [0, 1]:
+			var rp: Vector3 = G.world.rally_point(t)
+			await _look(rp + Vector3(0, 45, 28), rp)
+			await _snap(dir, "home%d" % t)
+			await _look(rp + Vector3(-14, 6, 16), rp + Vector3(-6, 1, 6))
+			await _snap(dir, "camp%d" % t)
+			for st in Build.sites:
+				if st["team"] == t and st["kind"] == "hq":
+					await _look(st["p"] + Vector3(14, 13, 16), st["p"])
+					await _snap(dir, "hq%d" % t)
+			for st in Build.sites:
+				if st["team"] == t:
+					print("HOMESHOT team %d site %s at %s done %s" % [t, st["kind"], str(st["p"]), str(st["done"])])
 	if _arg("dogshot", "") != "":
 		# fighters over the field: one smoking and on fire, and a pilot coming down under his canopy
 		var c0: Vector3 = G.world.capture + Vector3(0, 70, 0)
@@ -1651,6 +1750,17 @@ func _ruin_test() -> void:
 	get_tree().quit()
 
 # the newer modes: run one for a while and print how it is going
+func _inside_count() -> int:
+	var n = 0
+	for x in G.soldiers:
+		if x.state != "alive":
+			continue
+		for b in G.world.buildings:
+			if absf(x.pos.x - b["x"]) < b["w"] * 0.5 - 0.3 and absf(x.pos.z - b["z"]) < b["d"] * 0.5 - 0.3:
+				n += 1
+				break
+	return n
+
 func _mode_test(mode: String) -> void:
 	await _wait(0.5)
 	if _arg("time", "") != "":
@@ -1769,7 +1879,7 @@ func _mode_test(mode: String) -> void:
 		for v in G.vehicles:
 			if v.kind == "atgun":
 				pz += " at[%s %.1f]" % ["dead" if v.dead else ("crew" if v.gunner() != null else "nocrew"), G.sim_time - v.get_meta("fire_t", -99.0)]
-		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events)])
+		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()]])
 		if G.over:
 			break
 	get_tree().quit()
@@ -1927,6 +2037,8 @@ func _rts_test() -> void:
 	G.pc._update_rings()
 	print("RTSTEST summary: ", G.pc._sel_summary())
 	print("RTSTEST build order ", G.pc._order_build(st))
+	var st2 = Build.place("sandbags", 0, _free_spot(c + fw * 12.0 + Vector3(fw.z, 0, -fw.x) * 9.0), fw, false, true)
+	print("RTSTEST queue order ", G.pc._order_build(st2, true), " queues ", men.slice(0, 3).map(func(x): return x.get_meta("build_queue", []).size()))
 	G.pc.selection = men.slice(3, 5)
 	print("RTSTEST board order ", G.pc._order_board(mortar))
 	G.pc.selection = [men[5]]
@@ -1937,9 +2049,9 @@ func _rts_test() -> void:
 		await _wait(0.2)
 		var mm = men[5]
 		print("RTSTEST mover %.1fs went %.1f m | state %s task %s mt %s path %d want %s vel %s order %s" % [0.2 * (q + 1), G.dist2d(mm.pos, p0), mm.state, str(mm.task), str(mm.move_target), mm.path.size(), str(mm.want), str(mm.vel), str(mm.order)])
-	for k in range(8):
+	for k in range(14):
 		await _wait(3.0)
-		print("RTSTEST t%d site %.0f/%.0f done %s | mortar crew %s | builders %s" % [k * 3, st["work"], st["need"], str(st["done"]), str(mortar.seats.map(func(x): return x != null)), str(men.slice(0, 3).map(func(x): return x.task))])
+		print("RTSTEST t%d site2 %.0f/%.0f | site %.0f/%.0f done %s | mortar crew %s | builders %s" % [k * 3, st2["work"], st2["need"], st["work"], st["need"], str(st["done"]), str(mortar.seats.map(func(x): return x != null)), str(men.slice(0, 3).map(func(x): return x.task))])
 	get_tree().quit()
 
 # vehicle features: a flat tyre and a thrown track fixed by the crew, riders jumping off, a burning tank's crew
@@ -2000,6 +2112,43 @@ func _ui_shot(dir: String) -> void:
 	G.ui._show_mode_info()
 	await _wait(0.4)
 	await _snap(dir, "setup_commander")
+	get_tree().quit()
+
+# every vehicle's position, speed and where it's trying to go, every couple of seconds
+func _vtrace() -> void:
+	await _wait(0.5)
+	start_game({"map": _arg("map", "field"), "mode": _arg("mode", "commander"), "size": 10, "limit": 999, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2})
+	await _wait(0.5)
+	for k in range(int(_arg("n", "30"))):
+		await _wait(2.0)
+		for v in G.vehicles:
+			if v.dead or v.spec.get("air", false) or v.spec.get("static", false):
+				continue
+			print("VTRACE t%02d %s#%d T%d pos (%.0f,%.0f) spd %.1f tgt %s cmd %s mis %s det %s drv %s" % [k * 2, v.kind, v.get_instance_id() % 1000, v.team, v.pos.x, v.pos.z, v.speed,
+				v.why, str(v.cmd != null), str(v.mission.get("type", "") if v.mission != null else "-"), str(v.detour != null), str(v.driver() != null)])
+	get_tree().quit()
+
+# troops getting off a truck: where each man is, what he's doing and how fast, for a few seconds afterwards
+func _dis_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "capture", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	var c: Vector3 = _free_spot(G.world.rally_point(0) + Vector3(30, 0, 0))
+	var tr = spawn_vehicle(_arg("veh", "truck"), 0, c, PI / 2.0, _arg("crew", "1") == "1")
+	var men = []
+	for k in range(4):
+		var m = spawn_soldier(0, c.x, c.z + 6.0, "rifle")
+		m.mount(tr, tr.free_seat("pass"))
+		men.append(m)
+	await _wait(1.0)
+	for m in men:
+		m.dismount(false)
+	for k in range(40):
+		await _wait(0.1)
+		var line = "DIS %.2f |" % (k * 0.1)
+		for m in men:
+			line += " (%.2f,%.2f) v%.1f %s %s |" % [m.pos.x - c.x, m.pos.z - c.z, G.flat(m.vel).length(), str(m.task), "V" if m.vault != null else ""]
+		print(line)
 	get_tree().quit()
 
 # dogfight: two fighters a side meet over the field; count hits, smoke trails, kills and parachutes

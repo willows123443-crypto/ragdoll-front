@@ -792,6 +792,7 @@ static func headlamps(v) -> Node3D:
 	lamp_m.emission = Color(1.0, 0.93, 0.75)
 	lamp_m.emission_energy_multiplier = 3.0
 	var xs = [0.0] if v.kind == "motorbike" else [-v.spec["wid"] * 0.32, v.spec["wid"] * 0.32]
+	var lamps = []
 	for x in xs:
 		var l = MeshInstance3D.new()
 		var cm = CylinderMesh.new()
@@ -803,27 +804,18 @@ static func headlamps(v) -> Node3D:
 		l.position = Vector3(x, y, z)
 		l.material_override = lamp_m
 		n.add_child(l)
-		if true:
-			var beam = MeshInstance3D.new()
-			var bm = CylinderMesh.new()
-			bm.top_radius = 2.6
-			bm.bottom_radius = 0.1
-			bm.height = 10.0
-			bm.radial_segments = 14
-			bm.rings = 6
-			bm.cap_top = false
-			bm.cap_bottom = false
-			beam.mesh = bm
-			beam.rotation.x = PI / 2.0 + 0.12
-			beam.position = Vector3(x, y - 0.6, z + 5.0)
-			beam.material_override = Soldier.get_beam_mat()
-			beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			n.add_child(beam)
+		# the beam, its flare and the pool of light it throws on the road, dipped a little
+		var lp = Lamp.make(n, 40.0, 0.2, 0.1, true)
+		lp.position = Vector3(x, y, z + 0.04)
+		lp.rotation.x = 0.09
+		lp.set_meta("mask", G.L_WORLD)
+		lamps.append(lp)
 	var aim = Node3D.new()
 	aim.name = "aim"
 	aim.position = Vector3(0, y, z)
-	aim.rotation.x = -0.1
+	aim.rotation.x = 0.07
 	n.add_child(aim)
+	n.set_meta("lamps", lamps)
 	n.visible = false
 	return n
 
@@ -844,3 +836,59 @@ static func plough_blade(v) -> void:
 		tx += 0.26
 		k += 1
 	v.set_meta("blade", n)
+
+# ---------------------------------------------------------------- what a vehicle leaves behind it
+# tread marks and tyre tracks pressed into the ground, the grass flattened under it, and smoke from
+# the exhaust: a thick black puff when the driver puts his foot down, a light haze when idling
+static func ground_tick(v, dt: float, thr: float) -> void:
+	var cam = v.get_viewport().get_camera_3d()
+	var near = cam != null and cam.global_position.distance_to(v.pos) < 110.0
+	var f = v.forward()
+	var right = Vector3(f.z, 0, -f.x)
+	if v.driver() != null and near:
+		v.exh_t -= dt
+		var pushing = absf(thr) > 0.2 and absf(v.speed) < v.spec["speed"] * 0.85
+		if v.exh_t <= 0.0:
+			v.exh_t = (0.15 if pushing else 0.6) * randf_range(0.8, 1.2)
+			var tracked: bool = v.spec["tracked"]
+			var pipe = v.pos - f * (v.spec["len"] * 0.5 - (0.2 if tracked else 0.1)) - right * v.spec["wid"] * 0.3 + Vector3(0, 1.35 if tracked else 0.45, 0)
+			if v.kind == "motorbike":
+				pipe = v.pos - f * 0.75 + right * 0.15 + Vector3(0, 0.35, 0)
+			G.fx.exhaust(pipe, -f, 1.0 if pushing else 0.25, tracked or v.kind in ["truck", "halftrack", "supplytruck", "ammotruck"])
+	if absf(v.speed) < 0.4 or v.spec.get("static", false):
+		return
+	v.mark_d += absf(v.speed) * dt
+	if v.mark_d < 0.55:
+		return
+	var step = v.mark_d
+	v.mark_d = 0.0
+	var tracked2: bool = v.spec["tracked"]
+	var half = v.spec["wid"] * 0.5 - (0.32 if tracked2 else 0.24)
+	var w = 0.52 if tracked2 else (0.12 if v.kind == "motorbike" else 0.24)
+	var rear = v.pos - f * v.spec["len"] * 0.32 * signf(v.speed)
+	var xs = [0.0] if v.kind == "motorbike" else [-half, half]
+	if near and not G.world.in_water(rear.x, rear.z):
+		for x in xs:
+			G.fx.track_mark(rear + right * x, f, w, step + 0.12, tracked2)
+	G.world.flatten_grass(v.pos, v.spec["wid"] * 0.5 + 0.2, f, 300.0)
+
+# where an ammo truck parks on its own: a little way behind where our infantry are, on the side of home
+static func ammo_spot(v) -> Vector3:
+	if G.sim_time < v.get_meta("spot_t", -99.0) and v.has_meta("spot"):
+		return v.get_meta("spot")
+	var c = Vector3.ZERO
+	var n = 0
+	for s in G.soldiers:
+		if s.team == v.team and s.state == "alive" and s.vehicle == null:
+			c += s.pos
+			n += 1
+	var home: Vector3 = G.world.rally_point(v.team)
+	var spot = home
+	if n > 0:
+		c /= n
+		var back = G.flat(home - c)
+		spot = c + back.normalized() * minf(25.0, back.length()) if back.length() > 1.0 else c
+	spot = G.main._free_spot(spot)
+	v.set_meta("spot", spot)
+	v.set_meta("spot_t", G.sim_time + 12.0)
+	return spot

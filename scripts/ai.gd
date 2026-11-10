@@ -271,15 +271,17 @@ static func find_cover(s, threat: Vector3, mode: String):
 		else:
 			sc = dm + maxf(0.0, de - dme) * 0.8 + (10.0 if de < 12.0 else 0.0)
 		var hide = s.hp < 40.0 or s.supp > 1.1
-		# defenders like to fight from inside buildings
-		if (mode == "hold" or mode == "defend") and cp.get_meta("inside", -1) != 0:
+		# men like to fight from inside buildings: thick walls, windows to shoot from, a roof over them
+		if cp.get_meta("inside", -1) != 0:
 			var ins = cp.get_meta("inside", -1)
 			if ins == -1:
 				ins = 1 if Squad._building_at(cp.p) != null else 0
 				cp.set_meta("inside", ins)
 			if ins == 1:
-				sc -= 6.0
-			sc += -3.0 if hide else 7.0
+				if mode == "hold" or mode == "defend":
+					sc -= 9.0 if hide else 7.0
+				elif mode != "retreat":
+					sc -= 3.5
 		sc += absf(de - ideal) * 0.12
 		sc += Tactics.danger_at(cp.p, s.team) * 4.0      # not where our men keep getting killed
 		sc += float((i * 7919 + s.id * 31) % 100) / 50.0
@@ -300,6 +302,30 @@ static func find_cover(s, threat: Vector3, mode: String):
 			bs = sc2
 			best = cp
 	return best
+
+# the free spots inside buildings near a point that look out towards the threat, a window if there is one
+static func garrison_cover(s, center: Vector3, threat: Vector3, rad: float):
+	var cands = []
+	for cp in G.world.cover_near(center, rad):
+		if cp.upper or not cover_free(cp, s) or cp.ban > G.sim_time:
+			continue
+		var ins = cp.get_meta("inside", -1)
+		if ins == -1:
+			ins = 1 if Squad._building_at(cp.p) != null else 0
+			cp.set_meta("inside", ins)
+		if ins != 1:
+			continue
+		var de = G.dist2d(threat, cp.p)
+		if de < 8.0 or ((threat.x - cp.p.x) * cp.n.x + (threat.z - cp.p.z) * cp.n.z) / de > -0.3:
+			continue
+		cands.append([G.dist2d(cp.p, center) * 0.5 + G.dist2d(cp.p, s.pos) * 0.3 + Tactics.danger_at(cp.p, s.team) * 4.0 + float((cp.get_instance_id() + s.id * 17) % 10) * 0.2, cp])
+	if cands.is_empty():
+		return null
+	cands.sort_custom(func(a, b): return a[0] < b[0])
+	for k in range(mini(5, cands.size())):
+		if can_fire_from(cands[k][1], threat):
+			return cands[k][1]
+	return cands[0][1]
 
 static func find_post(s, threat: Vector3):
 	var best = null
@@ -568,7 +594,7 @@ static func perceive(s) -> void:
 	if s.W["rocket"] or s.W["ap"] or s.fausts > 0:
 		var bdv = s.W["range"][1] * 1.2 if (s.W["rocket"] or s.W["ap"]) else 48.0
 		for v in G.vehicles:
-			if v.team != s.team and not v.dead and v.kind != "mortar":
+			if v.team != s.team and v.team >= 0 and not v.dead and v.kind != "mortar":
 				var dv = G.dist2d(v.pos, s.pos)
 				if dv < bdv and dv > 12.0 and not G.blocked(eye, v.center()):
 					bdv = dv
@@ -768,11 +794,12 @@ static func _initiative(s, known: bool, threat: Vector3, dT: float) -> bool:
 	# enemy armour close and nothing to stop it with: get out of its sight
 	if not (s.W["rocket"] or s.W["ap"]) and s.fausts <= 0:
 		for v in G.vehicles:
-			if v.team != s.team and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar") and G.dist2d(v.pos, s.pos) < 35.0:
+			if v.team != s.team and v.team >= 0 and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar") and G.dist2d(v.pos, s.pos) < 35.0:
 				if s.in_cover and s.cover != null and G.blocked(v.center(), s.chest()):
 					break        # already out of its sight
 				var hc = find_cover(s, v.pos, "retreat")
 				if hc != null:
+					Tactics.cover_smoke(s, v.pos)
 					take_cover(s, hc)
 					s.task = "withdraw"
 					G.fx.callout(s, G.pick(["Tank! Get behind something!", "Armour, take cover!"]))
@@ -790,6 +817,8 @@ static func _initiative(s, known: bool, threat: Vector3, dT: float) -> bool:
 	if foes >= friends + 3 and s.cover_bad < 3:
 		var rc = find_cover(s, threat, "retreat")
 		if rc != null and G.dist2d(rc.p, s.pos) > 3.0:
+			if s.supp > 0.25 or foes >= friends + 5:
+				Tactics.cover_smoke(s, threat)
 			take_cover(s, rc)
 			s.task = "withdraw"
 			if randf() < 0.5:
@@ -797,6 +826,8 @@ static func _initiative(s, known: bool, threat: Vector3, dT: float) -> bool:
 			return true
 	# hurt and out in the open: get out of the line, to a field hospital if there's one close
 	if s.hp < 40.0 and not s.in_cover:
+		if s.supp > 0.3:
+			Tactics.cover_smoke(s, threat)
 		var hosp = Medical.hospital_near(s.team, s.pos, 60.0)
 		if hosp != null:
 			go_to(s, hosp["p"], 4.0)
@@ -812,8 +843,32 @@ static func decide(s) -> void:
 	s.decide_t = randf_range(1.6, 2.6)
 	if s.task == "stretcher" and Stretcher.busy(s):
 		return
-	if s.task == "flee" or s.route != null or s.task == "board":
+	if s.task == "flee" or s.route != null or s.task == "board" or s.task == "get_radio":
 		return
+	# nothing left to fight with but a pistol and a knife: straight at the nearest enemy
+	if s.has_meta("lastditch"):
+		if s.primary == null and s.wid != "pistol":
+			s.remove_meta("lastditch")        # restocked from a crate or picked up a gun
+		elif s.vehicle == null:
+			var foe = s.vis_t if (s.vis_t != null and is_instance_valid(s.vis_t) and s.vis_t.state == "alive") else null
+			var fp = foe.pos if foe != null else Vector3.ZERO
+			if foe == null:
+				var bd = 1e9
+				for e in s.intel:
+					var k = s.intel[e]
+					if is_instance_valid(e) and e.state == "alive" and G.sim_time - k["t"] < 30.0 and k["p"].distance_squared_to(s.pos) < bd:
+						bd = k["p"].distance_squared_to(s.pos)
+						fp = k["p"]
+						foe = e
+			if foe != null:
+				release_cover(s)
+				s.task = "charge"
+				s.broken = false
+				s.prone_t = false
+				s.kneel = false
+				go_to(s, fp, 5.8)
+				s.decide_t = 0.7
+				return
 	# routed: keep running to the rear, then cower in cover until morale comes back
 	if s.broken:
 		var home: Vector3 = G.world.fallback_point(s.team, s.pos)
@@ -1006,6 +1061,16 @@ static func decide(s) -> void:
 			else:
 				stop_move(s)
 		s.task = "hold"
+		# got where you sent them: dig in and fight from here; if it stays quiet, rejoin the battle
+		if s.order != null:
+			if not s.order.has("arrived"):
+				s.order["arrived"] = G.sim_time
+			var quiet = not s.has_seen or G.sim_time - s.seen_t > 15.0
+			if quiet and G.sim_time - s.order["arrived"] > 25.0:
+				s.order = null
+				s.decide_t = 0.0
+				if randf() < 0.4:
+					G.fx.callout(s, G.pick(["Nothing here. Moving up.", "All quiet, rejoining the push.", "Position's clear, let's go."]))
 		return
 	# capture mode: keep pushing onto the objective when nobody is in sight
 	if Obj.uses_points() and not Obj.points.is_empty() and s.vis_t == null and s.supp < 0.7 and s.task != "post" and G.dist2d(s.pos, objective_for(s)) < 60.0:
@@ -1063,6 +1128,9 @@ static func decide(s) -> void:
 					take_cover(s, cr)
 					s.task = "retreat"
 				return
+			# men holding a house by the objective stay in it while the enemy is in range
+			if s.task == "garrison" and dT < W["range"][1] * 1.5:
+				return
 			if can_move2 and Squad.may_bound(s) and s.morale >= Morale.SHAKEN and (s.supp < 0.5 or (too_far and s.supp < 0.9)) and ((s.vis_t == null and s.cover_time > 5.0) or too_far):
 				var ca = find_cover(s, threat, "flank" if s.role == "flanker" else "advance")
 				if ca != null:
@@ -1084,6 +1152,9 @@ static func decide(s) -> void:
 		var k3 = (s.id * 37) % 11 - 5
 		var k4 = (s.id * 13) % 7 - 3
 		var goal2 = obj + Vector3(k4 * 1.5, 0, k3 * 1.6)
+		# holding a house by the point: stay at the window while the point is still here
+		if s.task == "garrison" and s.cover != null and G.dist2d(s.cover.p, obj) < 26.0:
+			return
 		# a long walk: hop on a friendly vehicle heading up
 		if G.dist2d(s.pos, obj) > 110.0 and s.vehicle == null and G.sim_time > s.no_board_t and s.order == null:
 			for v in G.vehicles:
@@ -1095,16 +1166,40 @@ static func decide(s) -> void:
 						go_to(s, v.pos, 5.0)
 						return
 		var fs = Squad.slot(s)
+		var in_form = false
 		if fs != null and G.dist2d(s.pos, obj) > 12.0:
 			# keep formation on the squad leader while moving up
 			goal2 = fs
+			in_form = true
+		# nobody's shooting at us: no ducking into cover on the way up, keep moving
+		if s.cover != null and s.supp < 0.3 and G.dist2d(s.pos, obj) > 12.0:
+			release_cover(s)
 			if G.dist2d(s.pos, goal2) < 2.5:
 				stop_move(s)
 				s.task = "advance"
 				return
 		s.prone_t = false
-		if G.dist2d(s.pos, goal2) < 5.0:
-			var ch = find_cover(s, G.world.spawn[(s.team + 1) % G.team_count()], "hold")
+		if in_form:
+			# keeping pace with the leader: a short wait at the slot, never a dive for cover
+			if G.dist2d(s.pos, goal2) < 2.5:
+				stop_move(s)
+				s.task = "advance"
+				return
+			s.task = "advance"
+			go_to(s, goal2, 3.6)
+			return
+		if G.dist2d(s.pos, goal2) < 5.0 or (s.task == "garrison" and s.cover != null):
+			var foe_side: Vector3 = G.world.spawn[(s.team + 1) % G.team_count()]
+			# a house by the point: go in and take a window facing the way the enemy will come
+			if s.task != "garrison" and (s.id + int(G.sim_time / 30.0)) % 3 != 0:
+				var gc = garrison_cover(s, obj, foe_side, 24.0)
+				if gc != null:
+					take_cover(s, gc)
+					s.task = "garrison"
+					return
+			if s.task == "garrison" and s.cover != null:
+				return
+			var ch = find_cover(s, foe_side, "hold")
 			if ch != null:
 				take_cover(s, ch)
 			else:
@@ -1148,7 +1243,7 @@ static func _watchdog(s) -> void:
 		return
 	s.idle_t = 0.0
 	s.idle_p = s.pos
-	if s.vis_t != null or G.sim_time - s.seen_t < 8.0 or ClassAI.busy(s) or s.task in ["hold", "post", "defend", "medic"] or s.broken:
+	if s.vis_t != null or G.sim_time - s.seen_t < 8.0 or ClassAI.busy(s) or s.task in ["hold", "post", "defend", "medic", "garrison"] or s.broken:
 		return
 	var o = order_of(s)
 	if o["mode"] == "hold" or o["mode"] == "follow":
@@ -1342,6 +1437,7 @@ static func update(s) -> void:
 					s.flee = null
 					s.task = null
 	_keep_from_zombies(s)
+	_round_vehicles(s)
 	aim_and_fire(s)
 	stance(s)
 	if s.vis_t == null and s.move_target == null:
@@ -1479,6 +1575,14 @@ static func aim_and_fire(s) -> void:
 	if s.mag <= 0 and s.reserve <= 0 and s.reload_t <= 0.0 and s.to_sidearm():
 		G.fx.callout(s, "Switching to pistol!")
 		return
+	# out of everything: the rifle's empty, no grenades, the last magazine in the pistol. No surrender:
+	# up and at them, pistol in one hand and the knife in the other
+	if W["id"] == "pistol" and s.primary != null and s.reserve <= 0 and s.grenades <= 0 and tgt != null and not s.zombie \
+			and not s.is_player and s.vehicle == null and not s.has_meta("lastditch") and G.dist2d(tgt.pos, s.pos) < 60.0:
+		s.set_meta("lastditch", true)
+		s.set_meta("knife", true)
+		s.decide_t = 0.0
+		G.fx.callout(s, G.pick(["I'm out! Come on then!", "Nothing left... for the lads!", "Fix knives! At them!", "Last of it, let's go!"]))
 	# raiders and fighters with a knife finish it quietly when they're on top of someone
 	if tgt != null and s.has_meta("knife") and s.fire_cd <= 0.0 and tgt.state == "alive" and G.dist2d(tgt.pos, s.pos) < 1.7 and absf(tgt.pos.y - s.pos.y) < 1.0:
 		Combat.knife(s, tgt)
@@ -1864,3 +1968,49 @@ static func grid_ref(p: Vector3) -> String:
 	var gx = clampi(int((p.x - b.position.x) / 25.0), 0, 25)
 	var gz = clampi(int((p.z - b.position.y) / 25.0), 0, 99)
 	return "%s%d" % [cols[gx], gz + 1]
+
+# vehicles aren't on the walking map, so a man heading past one walks round it instead of through it:
+# if his next steps would take him into a vehicle's footprint, he slides along its side; if he's already
+# inside it (just climbed out, or it rolled up to him) he steps out to the nearer side
+static func _round_vehicles(s) -> void:
+	if s.vault != null or s.vehicle != null:
+		return
+	for v in G.vehicles:
+		if v.dead and not v.spec.get("static", false) and v.spec.get("air", false):
+			continue
+		if v.spec.get("air", false) and v.alt > 2.0:
+			continue
+		var rel = G.flat(s.pos - v.pos)
+		var R = v.spec["len"] * 0.5 + 1.0
+		if rel.length_squared() > R * R:
+			continue
+		var f = v.forward()
+		var r = Vector3(f.z, 0, -f.x)
+		var hl = v.spec["len"] * 0.5 + 0.35
+		var hw = v.spec["wid"] * 0.5 + 0.35
+		var lx = rel.dot(r)
+		var lz = rel.dot(f)
+		# standing inside it: out to the nearest edge
+		if absf(lx) < hw and absf(lz) < hl:
+			var ex = hw - absf(lx)
+			var ez = hl - absf(lz)
+			if ex < ez:
+				s.pos += r * signf(lx if lx != 0.0 else 1.0) * minf(ex, 0.08)
+			else:
+				s.pos += f * signf(lz if lz != 0.0 else 1.0) * minf(ez, 0.08)
+			continue
+		# about to walk into it: turn the step along its side
+		var w: Vector3 = s.want
+		if w.length_squared() < 0.01:
+			continue
+		var ahead = rel + w.normalized() * 0.9
+		var ax = ahead.dot(r)
+		var az = ahead.dot(f)
+		if absf(ax) < hw and absf(az) < hl:
+			var wl = Vector2(w.dot(r), w.dot(f))
+			# go round the short way: along the long side if we're beside it, round the end if we're at an end
+			if absf(lx) >= hw - 0.05:
+				wl = Vector2(0.0, signf(wl.y if absf(wl.y) > 0.05 else (lz if lz != 0.0 else 1.0)) * w.length())
+			else:
+				wl = Vector2(signf(lx if lx != 0.0 else 1.0) * w.length(), 0.0)
+			s.want = r * wl.x + f * wl.y

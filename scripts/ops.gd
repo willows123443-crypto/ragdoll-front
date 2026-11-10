@@ -210,7 +210,7 @@ static func tank_may_enter(v) -> bool:
 static func _learn(team: int) -> void:
 	var armour = 0
 	for v in G.vehicles:
-		if v.team != team and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar"):
+		if v.team != team and v.team >= 0 and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar"):
 			var d = v.driver()
 			if d == null:
 				continue

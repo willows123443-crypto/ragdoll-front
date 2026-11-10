@@ -117,6 +117,16 @@ const SPECS = {
 	"bridger": {"name": "Bridge layer", "len": 7.4, "wid": 3.3, "speed": 7.0, "rev": 3.0, "accel": 3.0, "turn": 0.8, "hp": 1300.0,
 		"bullet": 0.0, "tracked": true, "standoff": 0.0,
 		"seats": [{"o": Vector3(0.6, 1.0, 1.8), "role": "driver", "pose": "hidden", "face": 0.0}]},
+	"supplytruck": {"name": "Supply truck", "len": 7.2, "wid": 2.5, "speed": 10.5, "rev": 4.0, "accel": 4.2, "turn": 1.0, "hp": 600.0,
+		"bullet": 0.3, "tracked": false, "standoff": 0.0,
+		"seats": [
+			{"o": Vector3(0.5, 1.6, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.5, 1.6, 2.3), "role": "pass", "pose": "sit", "face": 0.0}]},
+	"ammotruck": {"name": "Ammo truck", "len": 7.2, "wid": 2.5, "speed": 10.0, "rev": 4.0, "accel": 4.2, "turn": 1.0, "hp": 560.0,
+		"bullet": 0.3, "tracked": false, "standoff": 0.0,
+		"seats": [
+			{"o": Vector3(0.5, 1.6, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.5, 1.6, 2.3), "role": "pass", "pose": "sit", "face": 0.0}]},
 	"ambulance": {"name": "Ambulance", "len": 7.2, "wid": 2.5, "speed": 12.0, "rev": 4.0, "accel": 5.0, "turn": 1.0, "hp": 550.0,
 		"bullet": 0.35, "tracked": false, "standoff": 0.0,
 		"seats": [
@@ -187,10 +197,13 @@ var tyres = 0               # tyres shot out (wheeled vehicles)
 var fix_by = null           # the crewman out fixing a track or a wheel
 var hit_t = -99.0           # when it was last hit
 var lights_on = false
+var why = ""
 var stop_t = 0.0
 var wake_t = 0.0
 var burn_t = 0.0
 var lamps: Node3D = null
+var exh_t = 0.0
+var mark_d = 0.0
 var burning = false
 var burn_fx = 0.0
 var bailed = false
@@ -544,6 +557,8 @@ func step(dt: float) -> void:
 				var bow = pos + forward() * spec["len"] * 0.45
 				G.fx.splash(Vector3(bow.x, wl, bow.z), 0.3)
 	_place(dt)
+	if not spec.get("boat", false):
+		VehExt.ground_tick(self, dt, thr)
 	if towing != null:
 		VehExt.tow_tick(self, dt)
 	_hit_people(f)
@@ -818,7 +833,7 @@ func _ai_gun_target(g):
 	# enemy vehicles first for the cannon
 	if kind == "tank" or kind == "armoredcar":
 		for o in G.vehicles:
-			if o.team != team and not o.dead and o.pos.distance_to(pos) < 160.0 and not G.blocked(muzzle(), o.center()):
+			if o.team != team and o.team >= 0 and not o.dead and o.pos.distance_to(pos) < 160.0 and not G.blocked(muzzle(), o.center()):
 				var d = o.pos.distance_to(pos)
 				if d < bd:
 					bd = d
@@ -830,7 +845,7 @@ func _ai_gun_target(g):
 	if kind == "atgun":
 		_at_target_is_vehicle = false
 		for o in G.vehicles:
-			if o.team != team and not o.dead and not o.spec.get("air", false) and o.pos.distance_to(pos) < (85.0 if o.spec.get("static", false) or o.kind == "atgun" else 160.0) and not G.blocked(muzzle(), o.center()):
+			if o.team != team and o.team >= 0 and not o.dead and not o.spec.get("air", false) and o.pos.distance_to(pos) < (85.0 if o.spec.get("static", false) or o.kind == "atgun" else 160.0) and not G.blocked(muzzle(), o.center()):
 				var d = o.pos.distance_to(pos)
 				if d < bd:
 					bd = d
@@ -1121,12 +1136,14 @@ func _steer_to(target: Vector3, dt: float) -> Array:
 	return [thr, steer]
 
 func _ai_drive(dt: float) -> Array:
+	why = "drive"
 	path_t -= dt
 	var d = driver()
 	var target = null
 	if mission != null:
 		target = _mission_target(dt)
 		if target == null:
+			why = "w1"
 			return [0.0, 0.0]
 		if spec.get("boat", false):
 			return _steer_to(target, dt)
@@ -1135,22 +1152,32 @@ func _ai_drive(dt: float) -> Array:
 	elif cmd != null:
 		target = cmd
 		if G.dist2d(cmd, pos) < 4.0 + spec["len"] * 0.25:
+			why = "w2"
 			return [0.0, 0.0]
 	elif kind == "ambulance":
 		target = VehExt.medevac(self, dt)
 		if target == null:
+			why = "w3"
+			return [0.0, 0.0]
+	elif kind == "ammotruck" or kind == "supplytruck":
+		target = VehExt.ammo_spot(self) if kind == "ammotruck" else G.world.rally_point(team)
+		if G.dist2d(target, pos) < 7.0:
+			why = "w4"
 			return [0.0, 0.0]
 	elif kind == "radar":
 		target = VehExt.radar_spot(self)
 		if G.dist2d(target, pos) < 6.0:
+			why = "w4"
 			return [0.0, 0.0]
 	elif fuel < 0.15 and VehExt.fuel_stop(self) != null and G.dist2d(VehExt.fuel_stop(self), pos) > 12.0:
 		target = VehExt.fuel_stop(self)
 	elif kind == "bridger":
 		if bridge_laid:
+			why = "w5"
 			return [0.0, 0.0]
 		var bsite = VehExt.bridge_site(self)
 		if bsite == null:
+			why = "w6"
 			return [0.0, 0.0]
 		var bank: Vector3 = bsite[0]
 		var bst: float = get_meta("bstuck", 0.0)
@@ -1167,9 +1194,11 @@ func _ai_drive(dt: float) -> Array:
 			var res = VehExt.lay_bridge(self)
 			if not bridge_laid and res.begins_with("Drive"):
 				return [0.5, 0.0]       # creep up to the edge
+			why = "w7"
 			return [0.0, 0.0]
 		target = bank
 	elif kind == "atgun" and G.sim_time - get_meta("fire_t", -99.0) < 25.0:
+		why = "w8"
 		return [0.0, 0.0]
 	else:
 		var obj: Vector3 = AI.objective_for(d)
@@ -1184,6 +1213,7 @@ func _ai_drive(dt: float) -> Array:
 				# too close: back away from the enemy
 				target = pos + G.flat(pos - enemy).normalized() * 15.0
 			elif de < stand:
+				why = "w9"
 				return [0.0, 0.0]        # in a good firing position: hold
 			else:
 				target = enemy
@@ -1191,14 +1221,15 @@ func _ai_drive(dt: float) -> Array:
 			target = obj
 		if hp < spec["hp"] * 0.3 and enemy != null:
 			target = G.world.rally_point(team)
+		# carrying troops (not the commander in his hatch, not men riding on the deck): take them where they're going
 		var riders = 0
 		for i in range(1, seats.size()):
-			if seats[i] != null and spec["seats"][i]["role"] == "pass":
+			if seats[i] != null and spec["seats"][i]["role"] == "pass" and not spec["seats"][i].get("turret", false) and not spec["seats"][i].get("rider", false):
 				riders += 1
 		if riders > 0:
 			for i in range(1, seats.size()):
 				var ps = seats[i]
-				if ps != null and spec["seats"][i]["role"] == "pass" and not ps.is_player:
+				if ps != null and spec["seats"][i]["role"] == "pass" and not ps.is_player and not spec["seats"][i].get("turret", false) and not spec["seats"][i].get("rider", false):
 					target = AI.objective_for(ps)
 					break
 			if G.dist2d(target, pos) < 35.0 or (enemy != null and G.dist2d(enemy, pos) < 45.0):
@@ -1206,11 +1237,14 @@ func _ai_drive(dt: float) -> Array:
 					var ps2 = seats[i]
 					if ps2 != null and spec["seats"][i]["role"] == "pass" and not ps2.is_player and not spec["seats"][i].get("turret", false) and not spec["seats"][i].get("rider", false):
 						ps2.dismount(false)
+				why = "w10"
 				return [0.0, 0.0]
 		if G.dist2d(target, pos) < 8.0:
+			why = "w11"
 			return [0.0, 0.0]
 		# armour doesn't drive into a built-up street on its own: wait for the infantry
 		if spec["tracked"] and enemy == null and not Ops.tank_may_enter(self):
+			why = "w12"
 			return [0.0, 0.0]
 	_set_goal(target)
 	# follow the path with some look-ahead
@@ -1242,11 +1276,11 @@ func _ai_drive(dt: float) -> Array:
 			var rel = G.flat(s.pos - pos)
 			var a = rel.dot(f) * signf(r[0] if r[0] != 0.0 else 1.0)
 			if a > 0.0 and a < spec["len"] * 0.5 + 5.0 and absf(rel.dot(Vector3(f.z, 0, -f.x))) < spec["wid"] * 0.5 + 0.8:
-				if mission != null and mission.get("type", "") == "escort":
-					# a convoy doesn't stop for its own escort: people ahead step off the road
-					if not s.is_player:
+				# our own men in the way step aside (the driver waits only for you, or a man who can't move)
+				if not s.is_player and s.vault == null and not s.prone and s.dragging == null:
+					if true:
 						var sd = rel.dot(Vector3(f.z, 0, -f.x))
-						s.pos += Vector3(f.z, 0, -f.x) * (1.0 if sd >= 0.0 else -1.0) * 0.12
+						s.pos += Vector3(f.z, 0, -f.x) * (1.0 if sd >= 0.0 else -1.0) * 0.07
 						s.pos = G.world.push_out_circle(s.pos, 0.33)[0]
 					if a < spec["len"] * 0.5 + 1.5:
 						return [minf(r[0], 0.15), r[1]]
@@ -1399,6 +1433,8 @@ func _mission_target(dt: float):
 						get_meta("cargo").visible = false
 					m["wait"] = 6.0
 					G.ui.radio(team, "Supplies delivered to the %s" % st["name"])
+				if m.get("fleet", false) and team < Logistics.delivered.size():
+					Logistics.delivered[team] += 1
 				if m.get("pts", 0) > 0 and st != null and not st["dead"]:
 					Support.points[team] += m["pts"]
 					G.ui.radio(team, "Convoy got through: +%d supply" % m["pts"])
@@ -1418,13 +1454,22 @@ func _mission_target(dt: float):
 		if m["wait"] <= 0.0:
 			m["stage"] = 2
 		return null
+	# a supply truck of the fleet goes back to HQ to load up again
+	if m.get("fleet", false):
+		if G.dist2d(pos, m["exit"]) < 8.0:
+			Logistics.arrived_home(self)
+			return null
+		return m["exit"]
 	# heading home: once it's well clear (or stuck, or taking too long) it simply drives off the map
 	m["exit_t"] = m.get("exit_t", 0.0) + dt
 	if absf(speed) < 0.5:
 		m["xslow"] = m.get("xslow", 0.0) + dt
 	else:
 		m["xslow"] = 0.0
-	if G.dist2d(pos, m["exit"]) < 10.0 or m["exit_t"] > 35.0 or m["xslow"] > 6.0:
+	# gone once it's off the edge of the map; if it's stuck on the way, only once nobody's watching
+	var cam = get_viewport().get_camera_3d()
+	var unseen = cam == null or cam.global_position.distance_to(pos) > 150.0 or (-cam.global_transform.basis.z).dot((pos - cam.global_position).normalized()) < 0.2
+	if Reinforce.outside_map(pos, 6.0) or G.dist2d(pos, m["exit"]) < 6.0 or ((m["exit_t"] > 60.0 or m["xslow"] > 8.0) and unseen):
 		var d = driver()
 		remove()
 		if d != null and is_instance_valid(d):
@@ -1543,6 +1588,8 @@ func _riders_tick() -> void:
 func _lights_tick() -> void:
 	var want = G.main.is_night() and not dead and driver() != null and not spec.get("air", false) and not spec.get("static", false) \
 		and not spec.get("boat", false) and G.sim_time - hit_t > 25.0
+	if has_meta("force_light"):
+		want = true
 	if want:
 		for c in seats:
 			if c != null and is_instance_valid(c) and c.vis_t != null:

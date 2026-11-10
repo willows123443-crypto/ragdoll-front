@@ -615,7 +615,7 @@ static func scout_tick(s) -> bool:
 				s.kneel = true
 		s.task = "scout"
 		return true
-	var wp = s.get_meta("scout_wp", null)
+	var wp = s.get_meta("scout_wp") if s.has_meta("scout_wp") else null
 	if wp == null or G.dist2d(s.pos, wp) < 8.0 or G.sim_time > s.get_meta("scout_wp_t", 0.0):
 		wp = _scout_point(s)
 		s.set_meta("scout_wp", wp)
@@ -644,6 +644,33 @@ static func _scout_point(s) -> Vector3:
 	p.x = clampf(p.x, b.position.x + 8.0, b.end.x - 8.0)
 	p.z = clampf(p.z, b.position.y + 8.0, b.end.y - 8.0)
 	return p
+
+# ---------------------------------------------------------------- wire cutters
+# engineers, assault troops and raiders cut through enemy wire that's in their way
+static func wire_tick(s) -> bool:
+	if s.has_meta("cut_st"):
+		var st = s.get_meta("cut_st")
+		if st == null or st["dead"] or not Build.sites.has(st):
+			s.remove_meta("cut_st")
+			return false
+		stop_move(s)
+		s.crouch_t = 0.8
+		s.hand_t = st["p"] + Vector3(0, 0.4, 0)
+		if G.sim_time > s.get_meta("cut_t", 0.0):
+			s.remove_meta("cut_st")
+			s.hand_t = null
+			Build.dismantle(st)
+			G.fx.callout(s, "Wire's cut! Through!")
+		return true
+	if not (s.cls in ["engineer", "assault"] or s.has_meta("knife")) or s.vis_t != null or s.move_target == null:
+		return false
+	for st in Build.sites:
+		if st["kind"] == "wire" and st["team"] != s.team and not st["dead"] and G.dist2d(st["p"], s.pos) < 4.5:
+			s.set_meta("cut_st", st)
+			s.set_meta("cut_t", G.sim_time + 2.5)
+			G.fx.callout(s, G.pick(["Cutting the wire!", "Cutters out, cover me!"]))
+			return true
+	return false
 
 # ---------------------------------------------------------------- ambushes
 # defenders who haven't been spotted hold their fire until the enemy is close or out in the open,
@@ -696,6 +723,8 @@ static func decide(s) -> void:
 	if s.task == "rout":
 		s.task = null
 	if s.has_meta("scout") and scout_tick(s):
+		return
+	if wire_tick(s):
 		return
 	# at night, leaders put up flares over where the enemy was last seen
 	if G.main.is_night() and s.flares > 0 and Morale.is_leader(s):
@@ -1088,6 +1117,14 @@ static func update(s) -> void:
 			stop_move(s)
 			var exposed = s.has_seen and G.sim_time - s.seen_t < 8.0 and not G.blocked(Vector3(s.threat.x, s.threat.y + 1.5, s.threat.z), w.pos + Vector3(0, 0.4, 0))
 			var dest = null
+			# a field hospital close by: carry them there, where they can be saved
+			var hosp = Medical.hospital_near(s.team, w.pos, 45.0)
+			if hosp != null and G.dist2d(hosp["p"], w.pos) > 5.0 and w.heal_t <= 0.0:
+				s.dragging = w
+				w.dragger = s
+				s.drag_to = hosp["p"] + G.flat(w.pos - hosp["p"]).normalized() * 3.0
+				G.fx.callout(s, G.pick(["Getting you to the aid station!", "Hang on, the hospital's right here!"]))
+				return
 			if exposed and w.heal_t <= 0.0:
 				var bd = 1e9
 				for cp in G.world.cover_near(w.pos, 14.0):
@@ -1204,6 +1241,13 @@ static func aim_and_fire(s) -> void:
 	if s.mag <= 0 and s.reserve <= 0 and s.reload_t <= 0.0 and s.to_sidearm():
 		G.fx.callout(s, "Switching to pistol!")
 		return
+	# raiders and fighters with a knife finish it quietly when they're on top of someone
+	if tgt != null and s.has_meta("knife") and s.fire_cd <= 0.0 and tgt.state == "alive" and G.dist2d(tgt.pos, s.pos) < 1.7 and absf(tgt.pos.y - s.pos.y) < 1.0:
+		Combat.knife(s, tgt)
+		return
+	if tgt != null and s.has_meta("knife") and G.main.is_night() and G.dist2d(tgt.pos, s.pos) < 9.0 and tgt.vis_t != s and s.task != "medic":
+		go_to(s, tgt.pos, 4.6)        # creep in for the knife rather than give ourselves away
+		return
 	if tgt != null and s.has_meta("scout") and G.dist2d(tgt.pos, s.pos) > 15.0 and s.supp < 0.3:
 		tgt = null        # scouts don't give themselves away
 	if tgt != null and ambush_hold(s, tgt):
@@ -1264,6 +1308,8 @@ static func aim_and_fire(s) -> void:
 							spread *= 0.55
 						spread *= 1.0 - 0.12 * s.vet
 						spread += 0.006       # nobody's a perfect shot under fire
+						if Faction.militia(s.team):
+							spread += 0.008   # irregulars: less training, worn-out rifles
 						Combat.fire_weapon(s, s.muzzle, dir, spread)
 						s.burst -= 1
 						s.mag -= 1

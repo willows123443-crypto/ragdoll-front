@@ -7,18 +7,18 @@ extends RefCounted
 const COSTS = {
 	"artillery": 14, "airstrike": 20, "paradrop": 16, "heli": 20,
 	"jeep": 9, "motorbike": 7, "halftrack": 16, "armoredcar": 24, "tank": 36, "heavytank": 55, "gunship": 40,
-	"fighter": 26, "bomber": 34, "bridger": 16, "radar": 20, "ambulance": 9, "atgun": 14,
+	"fighter": 26, "bomber": 34, "bridger": 16, "radar": 20, "ambulance": 9, "atgun": 14, "recon": 10, "technical": 8,
 }
 const NAMES = {
 	"artillery": "Artillery barrage", "airstrike": "Air strike", "paradrop": "Paratroopers", "heli": "Helicopter insertion",
 	"jeep": "Jeep", "motorbike": "Motorbike", "halftrack": "Half-track", "armoredcar": "Armoured car", "tank": "Tank", "gunship": "Gunship (70 s)",
-	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance", "atgun": "Anti-tank gun", "heavytank": "Heavy tank",
+	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance", "atgun": "Anti-tank gun", "heavytank": "Heavy tank", "recon": "Recon plane (30 s)", "technical": "Technical",
 }
 
 # in commander mode, what has to be built before you can call each one in
-const NEEDS = {"heavytank": "depot", "jeep": "depot", "motorbike": "depot", "halftrack": "depot", "armoredcar": "depot", "tank": "depot", "ambulance": "hospital",
+const NEEDS = {"technical": "depot", "heavytank": "depot", "jeep": "depot", "motorbike": "depot", "halftrack": "depot", "armoredcar": "depot", "tank": "depot", "ambulance": "hospital",
 	"radar": "depot", "bridger": "depot", "atgun": "depot", "gunship": "radio", "fighter": "radio", "bomber": "radio", "airstrike": "radio",
-	"paradrop": "radio", "heli": "radio"}
+	"paradrop": "radio", "heli": "radio", "recon": "radio"}
 const NEED_NAMES = {"depot": "a vehicle depot", "radio": "a radio mast", "hospital": "a field hospital"}
 
 static func unlocked(team: int, what: String) -> bool:
@@ -39,6 +39,10 @@ static var ai_t: Array = []
 static var planes: Array = []
 
 static func reset() -> void:
+	for r in recons:
+		if is_instance_valid(r["node"]):
+			r["node"].queue_free()
+	recons = []
 	points = []
 	hq_t = [0, 0, 0, 0]
 	ai_t = []
@@ -117,6 +121,7 @@ static func earn(team: int, n: int) -> void:
 
 static func step(dt: float) -> void:
 	_step_planes(dt)
+	_step_recons(dt)
 	_step_missions(dt)
 	if G.over or points.is_empty():
 		return
@@ -152,6 +157,8 @@ static func _ai_spend(t: int) -> void:
 	if tgt != null:
 		opts.append("artillery")
 		opts.append("airstrike")
+	elif AI.team_intel_center(t) == null:
+		opts.append("recon")      # no idea where they are: send a plane to look
 	var veh = 0
 	for v in G.vehicles:
 		if v.team == t and not v.dead and not v.spec.get("static", false):
@@ -188,7 +195,9 @@ static func _ai_spend(t: int) -> void:
 			broken_bridge = true
 	if broken_bridge and G.armor != "none":
 		opts.append("bridger")
-	opts = opts.filter(func(o): return COSTS[o] <= points[t] and unlocked(t, o))
+	if Faction.militia(t):
+		opts = opts.map(func(o): return "technical" if o in ["jeep", "halftrack", "armoredcar", "tank", "heavytank"] else o)
+	opts = opts.filter(func(o): return COSTS[o] <= points[t] and unlocked(t, o) and Faction.support_ok(t, o))
 	if opts.is_empty():
 		return
 	var pick = G.pick(opts)
@@ -198,7 +207,7 @@ static func can_afford(team: int, what: String) -> bool:
 	return points[team] >= COSTS[what]
 
 static func call_in(team: int, what: String, target: Vector3, relay: bool = false) -> bool:
-	if points.is_empty() or points[team] < COSTS[what] or not unlocked(team, what):
+	if points.is_empty() or points[team] < COSTS[what] or not unlocked(team, what) or not Faction.support_ok(team, what):
 		return false
 	# no radio: the request goes back to HQ with a runner, and is paid for when it gets there
 	if not relay and Comms.hold(team, what, target):
@@ -212,6 +221,8 @@ static func call_in(team: int, what: String, target: Vector3, relay: bool = fals
 		"airstrike":
 			_air_strike(team, target)
 			G.ui.radio(team, "Air strike inbound on %s" % AI.grid_ref(target))
+		"recon":
+			_recon(team)
 		"paradrop":
 			Reinforce.paradrop(team, 6)
 		"heli":
@@ -239,6 +250,52 @@ static func call_in(team: int, what: String, target: Vector3, relay: bool = fals
 			G.main.spawn_vehicle(what, team, e2, atan2(r.x - e2.x, r.z - e2.z))
 			G.ui.radio(team, "%s inbound from the rear" % NAMES[what])
 	return true
+
+# a spotter plane circles over the enemy's side for thirty seconds: everything it sees goes on our map,
+# unless their anti-aircraft guns bring it down first
+static var recons: Array = []
+
+static func _recon(team: int) -> void:
+	var enemy: Vector3 = G.world.spawn[(team + 1) % G.team_count()]
+	var c = G.world.capture.lerp(enemy, 0.45)
+	var node = Reinforce._plane_mesh(team)
+	node.scale = Vector3(0.6, 0.6, 0.6)
+	node.global_position = c + Vector3(0, 90, 0)
+	recons.append({"node": node, "team": team, "c": c, "t": 0.0, "tick": 0.0})
+	G.ui.radio(team, "Recon plane on station for thirty seconds")
+
+static func _step_recons(dt: float) -> void:
+	for i in range(recons.size() - 1, -1, -1):
+		var r = recons[i]
+		r["t"] += dt
+		var a = r["t"] * 0.35
+		var at: Vector3 = r["c"] + Vector3(cos(a) * 85.0, 90.0, sin(a) * 85.0)
+		var nxt: Vector3 = r["c"] + Vector3(cos(a + 0.1) * 85.0, 90.0, sin(a + 0.1) * 85.0)
+		r["node"].global_position = at
+		r["node"].look_at(nxt, Vector3.UP)
+		if randf() < 0.05:
+			G.audio.engine(at, 0.6, false)
+		var down = VehExt.aa_vs_plane(at, r["team"], dt * 2.5)
+		if down or r["t"] > 30.0:
+			if down:
+				G.fx.explosion(at, 1.2)
+				G.audio.boom(at)
+				G.ui.radio(r["team"], "Recon plane shot down!")
+			else:
+				G.ui.radio(r["team"], "Recon plane heading home")
+			r["node"].queue_free()
+			recons.remove_at(i)
+			continue
+		r["tick"] -= dt
+		if r["tick"] <= 0.0:
+			r["tick"] = 1.0
+			# the observer's reports: every enemy in the open goes to the whole side
+			for e in G.soldiers:
+				if e.team == r["team"] or e.state == "dead" or e.hidden_in_vehicle:
+					continue
+				for f in G.soldiers:
+					if f.team == r["team"] and f.state != "dead":
+						AI.add_intel(f, e, e.pos, 2.0, false)
 
 # a ground-attack plane runs in over the target and drops a stick of bombs
 static func _air_strike(team: int, target: Vector3) -> void:

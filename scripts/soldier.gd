@@ -378,6 +378,13 @@ func _build_body() -> void:
 	var vest = _mat("vest" + G.TEAM_VEST[team].to_html(), G.TEAM_VEST[team], true)
 	var helm = _mat("helm" + G.TEAM_HELM[team].to_html(), G.TEAM_HELM[team], false)
 	var band = _mat("band" + G.TEAM_BAND[team].to_html(), G.TEAM_BAND[team], false)
+	var militia = Faction.militia(team) and not zombie
+	if militia:
+		# no uniform: whatever they had on, a chest rig over it
+		var cl: Array = Faction.clothes(id)
+		uni = _mat("mil" + cl[0].to_html(), cl[0], true)
+		uni2 = _mat("mil" + cl[1].to_html(), cl[1], true)
+		vest = _mat("mil" + cl[2].to_html(), cl[2], true)
 	var sk = _mat("skin" + skin.to_html(false), skin, false)
 	if zombie:
 		# torn, filthy clothes and no helmet
@@ -411,7 +418,9 @@ func _build_body() -> void:
 	_mesh(parts[1], Vector3(0.46, 0.32, 0.3), Vector3(0, 0.06, 0), vest)
 	_mesh(parts[1], Vector3(0.32, 0.3, 0.14), Vector3(0, 0.05, 0.19), vest)
 	_mesh(parts[2], Vector3(0.25, 0.26, 0.25), Vector3.ZERO, sk)
-	if not zombie:
+	if militia:
+		Faction.headgear(self, parts[2])
+	elif not zombie:
 		_helmet(parts[2], helm, band, uni)
 		var pack = _mat("pack" + G.TEAM_VEST[team].to_html(), G.TEAM_VEST[team].darkened(0.18), true)
 		_mesh(parts[1], Vector3(0.3, 0.3, 0.14), Vector3(0, 0.04, -0.19), pack)

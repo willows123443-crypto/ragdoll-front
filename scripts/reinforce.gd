@@ -78,6 +78,30 @@ static func step(dt: float) -> void:
 		if G.mode == "siege" and t == 0 and timers[t] < before - 1.0:
 			Obj.supply = maxf(0.0, Obj.supply - mini(missing, 8))
 
+# behind our own front line: where the team's men are, pulled back toward home and away from known enemies
+static func forward_drop(t: int) -> Vector3:
+	var home: Vector3 = G.world.rally_point(t)
+	var sum = Vector3.ZERO
+	var n = 0
+	for s in G.soldiers:
+		if s.team == t and s.state == "alive" and s.vehicle == null and G.dist2d(s.pos, G.world.spawn[t]) > 40.0:
+			sum += s.pos
+			n += 1
+	if n < 3:
+		return home
+	var front = sum / n
+	var back = G.flat(home - front)
+	if back.length() < 30.0:
+		return home
+	var p = front + back.normalized() * 35.0
+	# not into a known enemy position
+	var c = AI.team_intel_center(t)
+	if c != null and G.dist2d(c, p) < 40.0:
+		p = p + back.normalized() * 25.0
+	if G.world.in_water(p.x, p.z):
+		return home
+	return p
+
 # where a team's trucks come in from: the team's own edge of the map, on a road if there is one
 static func entry_point(t: int) -> Vector3:
 	var b: Rect2 = G.world.bounds
@@ -115,17 +139,13 @@ static func clear_entry(t: int) -> Vector3:
 			return Vector3(q.x, G.world.ground_y(q.x, q.z), q.z)
 	return e
 
-static func truck(t: int, n: int) -> void:
+static func truck(t: int, n: int, dest = null) -> void:
 	if G.map_id == "beach" and t == 0:
 		boat(t, n)
 		return
 	var entry = clear_entry(t)
-	var home: Vector3 = G.world.rally_point(t)
-	# unload on open ground short of the base, on the way in from the edge
-	var inward = G.flat(home - entry)
-	var drop = G.main._free_spot(home)
-	if home.distance_to(G.world.spawn[t]) < 1.0 and inward.length() > 22.0:
-		drop = G.main._free_spot(entry + inward.normalized() * 18.0)
+	# drop them where they're needed: a little behind the front line (or wherever they were sent)
+	var drop = G.main._free_spot(dest if dest != null else forward_drop(t))
 	var yaw = atan2(drop.x - entry.x, drop.z - entry.z)
 	var v = Vehicle.make("truck", t, entry, yaw)
 	v.mission = {"type": "deliver", "drop": drop, "exit": entry, "stage": 0, "wait": 0.0}

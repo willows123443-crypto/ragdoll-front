@@ -380,7 +380,7 @@ static func _sticky(s) -> void:
 
 # snipers move to a new spot after a few shots, before they get spotted
 static func _sniper_move(s) -> void:
-	if s.cls != "sniper" or s.shots_here < 3:
+	if s.cls != "sniper" or s.shots_here < (1 if Faction.militia(s.team) else 3):
 		return
 	s.shots_here = 0
 	var from: Vector3 = s.pos

@@ -102,3 +102,81 @@ static func player_dress(s) -> void:
 		return
 	start(s, null, SELF_T)
 	G.ui.message("Dressing your wound… (stay put)")
+
+
+# ---------------------------------------------------------------- field hospitals and blood supply
+# Each field hospital keeps a stock of blood. Wounded brought in are patched up and go back to the line;
+# men who die close to one are worked on and, if there's blood to spare, return as reinforcements.
+static var recovering: Array = []      # {"team", "cls", "name", "t", "site"}
+static var regen_t = 0.0
+
+static func reset_hospitals() -> void:
+	recovering = []
+	regen_t = 0.0
+
+static func hospital_near(team: int, p: Vector3, r: float):
+	var best = null
+	var bd = r
+	for st in Build.sites:
+		if st["team"] == team and st["kind"] == "hospital" and Build.alive(st):
+			var d = G.dist2d(st["p"], p)
+			if d < bd:
+				bd = d
+				best = st
+	return best
+
+static func blood(st: Dictionary) -> int:
+	if not st.has("blood"):
+		st["blood"] = 6
+	return st["blood"]
+
+static func hospitals_tick(dt: float) -> void:
+	regen_t += dt
+	var regen = regen_t > 25.0
+	if regen:
+		regen_t = 0.0
+	for st in Build.sites:
+		if st["kind"] != "hospital" or not Build.alive(st):
+			continue
+		if regen:
+			st["blood"] = mini(8, blood(st) + 1)
+		# the wounded brought to the door are treated
+		for s in G.soldiers:
+			if s.team == st["team"] and s.state == "wounded" and s.dragger == null and G.dist2d(s.pos, st["p"]) < 7.0 and blood(st) > 0:
+				st["blood"] -= 1
+				s.bleed = 0.0
+				s.hp = 100.0
+				s.start_getup()
+				G.fx.callout(s, G.pick(["Patched up. Back to it.", "Thanks, doc.", "I'm good to go."]))
+	for i in range(recovering.size() - 1, -1, -1):
+		var r = recovering[i]
+		if G.sim_time < r["t"]:
+			continue
+		recovering.remove_at(i)
+		var st2 = r["site"]
+		var p: Vector3 = st2["p"] if Build.alive(st2) else G.world.rally_point(r["team"])
+		G.main.force_cls = [r["cls"]]
+		var n = G.main.spawn_soldier(r["team"], p.x + randf_range(-3, 3), p.z + randf_range(-3, 3), "")
+		G.main.force_cls = []
+		if n != null:
+			n.sname = r["name"]
+			n.hp = 80.0
+			G.ui.radio(r["team"], "%s is back on his feet and returning to the line" % r["name"])
+
+# called when a soldier dies: close to a field hospital with blood, he's saved and comes back later
+static func try_save(s) -> void:
+	if s.zombie or s.has_meta("general") or s.has_meta("pilot") or s.is_player:
+		return
+	var st = hospital_near(s.team, s.pos, 30.0)
+	if st == null or blood(st) <= 0:
+		return
+	st["blood"] -= 1
+	recovering.append({"team": s.team, "cls": s.cls, "name": s.sname, "t": G.sim_time + 30.0, "site": st})
+	G.ui.radio(s.team, "Medics are working on %s at the field hospital" % s.sname)
+	# the body is carried inside
+	var wr = weakref(s)
+	G.main.get_tree().create_timer(1.5, false).timeout.connect(func():
+		var o = wr.get_ref()
+		if o != null and o.state == "dead" and o != G.player:
+			G.soldiers.erase(o)
+			o.queue_free())

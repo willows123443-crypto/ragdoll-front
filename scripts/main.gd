@@ -284,6 +284,9 @@ func start_game(o: Dictionary) -> void:
 		G.ui.title.visible = false
 		G.ui.menu.visible = false
 	G.mode = o.get("mode", "sandbox")
+	G.factions = o.get("factions", G.factions).duplicate()
+	if Campaign.active:
+		G.factions = ["army", "army", "army", "army"]
 	G.teams = clampi(o.get("teams", G.teams), 2, 4)
 	if G.mode in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde", "general"]:
 		G.teams = 2
@@ -333,13 +336,21 @@ func start_game(o: Dictionary) -> void:
 			else:
 				base_spawn(t)
 		if G.mode == "sabotage" and t == 0:
+			# the raiders: satchels, knives, wire cutters, and silenced pistols for half of them
+			var k = 0
 			for sd in G.soldiers:
 				if sd.team == 0:
 					sd.satchels = 2
+					sd.set_meta("knife", true)
+					if k % 2 == 0 and not sd.W["rocket"]:
+						sd.set_weapon("silenced")
+					k += 1
 		elif not (G.mode == "escort" and t == 0) and o.get("armies", true) and not (Campaign.active and t == 0):
 			_starting_vehicles(t)
 	Modes.setup()
 	Ferry.setup()
+	Medical.reset_hospitals()
+	Faction.setup()
 	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2:
 		G.ui.radio(0, "Your commander is %s" % Commander.STYLE_TEXT[Commander.style_of(0)])
 	Scripted.reset()
@@ -364,9 +375,9 @@ func spawn_soldier(team: int, x: float, z: float, wid: String):
 	p = G.world.push_out_circle(p, 0.35)[0]
 	var s = Soldier.new()
 	add_child(s)
-	var cl = "rifleman" if wid != "" else (force_cls.pop_front() if not force_cls.is_empty() else G.pick_class(team))
+	var cl = "rifleman" if wid != "" else (force_cls.pop_front() if not force_cls.is_empty() else Faction.pick_class(team))
 	if wid == "":
-		wid = G.pick(G.CLASSES[cl]["w"])
+		wid = Faction.weapon_for(team, cl)
 	s.setup(team, p.x, p.z, wid)
 	s.set_class(cl)
 	var tgt: Vector3 = G.world.capture
@@ -403,18 +414,18 @@ func _starting_vehicles(t: int) -> void:
 	var enemy: Vector3 = G.world.capture
 	var yaw = atan2(enemy.x - home.x, enemy.z - home.z)
 	var side = Vector3(cos(yaw), 0, -sin(yaw))
-	spawn_vehicle("jeep", t, _free_spot(home + side * 16.0), yaw)
+	spawn_vehicle(Faction.vehicle_kind(t, "jeep"), t, _free_spot(home + side * 16.0), yaw)
 	if G.armor == "heavy":
-		spawn_vehicle("tank", t, _free_spot(home - side * 18.0), yaw)
+		spawn_vehicle(Faction.vehicle_kind(t, "tank"), t, _free_spot(home - side * 18.0), yaw)
 	# a mortar pit at the base and machine-gun nests out in front of it (two-sided battles only, to keep it fast)
 	if G.team_count() > 2:
 		return
 	var fwd = G.flat(enemy - home).normalized()
 	spawn_vehicle("mortar", t, _free_spot(home - fwd * 6.0 + side * 6.0), yaw)
-	if G.mode != "laststand" and G.mode != "sabotage":
+	if G.mode != "laststand" and G.mode != "sabotage" and not Faction.militia(t):
 		spawn_vehicle("radar", t, _free_spot(home - fwd * 16.0 - side * 8.0), yaw)
 	# an anti-tank gun covering the approach
-	if G.mode != "sabotage":
+	if G.mode != "sabotage" and not Faction.militia(t):
 		spawn_vehicle("atgun", t, _free_spot(home + fwd * minf(26.0, G.dist2d(home, enemy) * 0.2) - side * 4.0), yaw)
 	if G.mode != "laststand" or t == 0:
 		for k in [-1.0, 1.0]:
@@ -519,6 +530,8 @@ func _sim_step() -> void:
 	Obj.step(G.DT)
 	Modes.step(G.DT)
 	Ferry.step(G.DT)
+	Medical.hospitals_tick(G.DT)
+	Faction.step(G.DT)
 	Comms.step(G.DT)
 	Scripted.step(G.DT)
 	if randf() < 0.05:
@@ -827,7 +840,17 @@ func _shot_mode(dir: String) -> void:
 	G.pc.force_free = true
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "capture"), "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
-		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2"))})
+		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2")),
+		"factions": (_arg("fac", "army,army") + ",army,army").split(",")})
+	if _arg("milshot", "") != "":
+		# a few militia fighters and a technical up close
+		await _wait(1.0)
+		var ms = G.soldiers.filter(func(x): return x.team == 0 and x.state == "alive" and x.vehicle == null)
+		if not ms.is_empty():
+			var m0 = ms[0]
+			var f0 = Vector3(sin(m0.body_yaw), 0, cos(m0.body_yaw))
+			await _look(m0.pos + f0 * 4.0 + Vector3(1.5, 1.7, 0), m0.pos + Vector3(0, 1.0, 0))
+			await _snap(dir, "militia")
 	if _arg("fxshot", "") != "":
 		# a crater, a felled tree and a furnished room
 		var tree = null
@@ -1355,7 +1378,8 @@ func _mode_test(mode: String) -> void:
 		Modes.start_daily()
 		print("MODETEST daily ", Modes.daily_text(Modes.daily))
 	else:
-		start_game({"map": _arg("map", "field"), "mode": mode, "size": int(_arg("size", "10")), "limit": 100, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+		start_game({"map": _arg("map", "field"), "mode": mode, "size": int(_arg("size", "10")), "limit": 100, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2,
+			"factions": (_arg("fac", "army,army") + ",army,army").split(",")})
 	if _arg("noradio", "") != "":
 		for v in G.vehicles.duplicate():
 			if v.kind == "radar":
@@ -1442,6 +1466,13 @@ func _mode_test(mode: String) -> void:
 			for g in Modes.generals:
 				if g != null and is_instance_valid(g):
 					pz += " gen%d[%s %.0f,%.0f f%.2f hp%.0f %s %s %s %s]" % [g.team, g.state, g.pos.x, g.pos.z, Modes._frac(g.team, g.pos), g.hp, g.task, AI.order_of(g)["mode"], "BROKEN" if g.broken else "", "carried" if g.carried_by != null else ""]
+		if Faction.militia(0) or Faction.militia(1):
+			var mines_n = Combat.mines.filter(func(m): return m["kind"] == "ied").size()
+			var tech = G.vehicles.filter(func(v): return v.kind == "technical" and not v.dead).size()
+			pz += " caches %d ieds %d technicals %d tunnels %d" % [Faction.caches.filter(func(c): return c["alive"]).size(), mines_n, tech, Faction.tunnels.size()]
+		var hosp_n = Medical.recovering.size()
+		if hosp_n > 0:
+			pz += " recovering %d" % hosp_n
 		var scouts = 0
 		var sprung = 0
 		for s in G.soldiers:

@@ -45,8 +45,11 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 	else:
 		for k in range(W["pellets"]):
 			fire_ray(s, origin, spread_dir(dir, spread + (W["spread"] if W["pellets"] > 1 else 0.0)), W, k == 0 or k % 3 == 0)
-	G.fx.muzzle(origin, W["id"] == "shotgun" or W["id"] == "sniper")
-	G.audio.shot(origin, W)
+	if not W.get("silent", false):
+		G.fx.muzzle(origin, W["id"] == "shotgun" or W["id"] == "sniper")
+		G.audio.shot(origin, W)
+	else:
+		G.audio.play(G.audio.s_step, origin, -6.0, 2.6)
 	if not W["rocket"] and not W["flame"]:
 		var rt = s.gun_dir.cross(Vector3.UP).normalized()
 		G.fx.casing(origin - s.gun_dir * (W["len"] * 0.55), -rt)
@@ -56,7 +59,7 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 		if o == s or o.state == "dead" or o.team == s.team:
 			continue
 		var d = o.pos.distance_to(origin)
-		if d < 45.0:
+		if d < (6.0 if W.get("silent", false) else 45.0):
 			AI.add_intel(o, s, origin, 1.5 if d < 15.0 else d * 0.12, false)
 
 # how much material a bullet can punch through (metres of plain wall); wood and foliage count for much less
@@ -180,8 +183,12 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 				if randf() < 0.25 and ev["p"].y > G.world.ground_y(ev["p"].x, ev["p"].z) + 0.1:
 					G.audio.ricochet(ev["p"])
 				var col = ev["col"]
-				if col != null and col.alive and col.dest and col.hp < 100.0:
+				if col != null and col.alive and col.dest and col.hp < 100.0 and not col.has_meta("built"):
 					col.hp -= W["dmg"] * 0.08
+					if col.hp <= 0.0:
+						G.world.destroy_col(col)
+				elif col != null and col.alive and col.dest and col.has_meta("built") and W.get("ap", false):
+					col.hp -= W["dmg"] * 0.05
 					if col.hp <= 0.0:
 						G.world.destroy_col(col)
 	G.fx.tracer(o, d, t_end, W["tracer"], on_hit, vis)
@@ -273,6 +280,7 @@ static func kill(s, attacker, head: bool) -> void:
 		Support.earn(attacker.team, 2)
 	G.main.on_kill(s, attacker)
 	G.ui.feed(attacker, s, head)
+	Medical.try_save(s)
 	G.fx.decal(s.parts[0].global_position, randf_range(0.6, 1.0), false)
 	if attacker != null and attacker.team != s.team and attacker.state == "alive" and randf() < 0.3:
 		Voice.say(attacker, "kill")
@@ -289,6 +297,22 @@ static func kill(s, attacker, head: bool) -> void:
 			var o = wr.get_ref()
 			if o != null and G.player == o:
 				G.pc.leave_soldier())
+
+# ---------------------------------------------------------------- knives
+# a quiet kill up close; from behind (or on someone busy elsewhere) it's over at once
+static func knife(s, t) -> void:
+	if t == null or t.state == "dead" or s.state != "alive":
+		return
+	s.throw_t = 0.4
+	var f = Vector3(sin(t.body_yaw), 0, cos(t.body_yaw))
+	var from_behind = f.dot(G.flat(s.pos - t.pos).normalized()) < 0.2 or t.vis_t != s
+	G.audio.play(G.audio.s_hit, t.chest(), -10.0, 0.6)
+	if from_behind:
+		t.hp = 0.0
+		kill(t, s, false)
+	else:
+		hit_soldier(t, 1, t.chest(), G.flat(t.pos - s.pos).normalized(), 110.0, s, 1.5)
+	s.fire_cd = 0.9
 
 # ---------------------------------------------------------------- rockets
 static func launch_rocket(s, origin: Vector3, dir: Vector3, veh = null) -> void:
@@ -469,6 +493,8 @@ static func step_strikes() -> void:
 
 # ---------------------------------------------------------------- grenades and smoke
 static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -> void:
+	if type == "frag" and Faction.militia(s.team) and randf() < 0.6:
+		type = "molotov"
 	var start = s.head_pos() + Vector3(0, 0.1, 0)
 	var dist = G.dist2d(target, start)
 	var T = clampf(0.6 + dist * 0.035, 0.7, 1.6)
@@ -488,11 +514,11 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 	bm.size = bs.size
 	m.mesh = bm
 	var mat = StandardMaterial3D.new()
-	mat.albedo_color = Color(0.55, 0.57, 0.53) if type == "smoke" else (Color(0.7, 0.2, 0.15) if type == "marker" else Color(0.18, 0.21, 0.14))
+	mat.albedo_color = Color(0.55, 0.57, 0.53) if type == "smoke" else (Color(0.7, 0.2, 0.15) if type == "marker" else (Color(0.3, 0.42, 0.25) if type == "molotov" else Color(0.18, 0.21, 0.14)))
 	m.material_override = mat
 	g.add_child(m)
 	g.set_meta("type", type)
-	var fuse = {"smoke": 1.6, "marker": 1.4, "satchel": 4.0, "sticky": 3.2}.get(type, 2.6)
+	var fuse = {"smoke": 1.6, "marker": 1.4, "satchel": 4.0, "sticky": 3.2, "molotov": 1.0}.get(type, 2.6)
 	if type == "frag":
 		fuse = maxf(0.7, fuse - cook)
 	g.set_meta("fuse", fuse)
@@ -520,7 +546,7 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 	else:
 		s.grenades -= 1
 	s.throw_t = 0.55
-	G.fx.callout(s, {"smoke": "Popping smoke!", "satchel": "Satchel charge! Get back!", "sticky": "Sticky bomb!", "marker": "Marking the target!"}.get(type, "Grenade out!"))
+	G.fx.callout(s, {"smoke": "Popping smoke!", "satchel": "Satchel charge! Get back!", "sticky": "Sticky bomb!", "marker": "Marking the target!", "molotov": "Burn them out!"}.get(type, "Grenade out!"))
 
 static func smoke_at(p: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.83), big: float = 1.0) -> void:
 	var sc = SmokeCloud.new()
@@ -557,6 +583,8 @@ static func step_grenades() -> void:
 				_marker_popped(g.global_position, owner_s)
 			elif gtype == "satchel":
 				explode(g.global_position, owner_s, 2.1)
+			elif gtype == "molotov":
+				molotov(g.global_position, owner_s)
 			elif gtype == "sticky":
 				var sv = g.get_meta("stuck_v") if g.has_meta("stuck_v") else null
 				if sv != null and is_instance_valid(sv) and not sv.dead:
@@ -678,6 +706,7 @@ static func launch_rifle_grenade(s, origin: Vector3, target: Vector3) -> void:
 # ---------------------------------------------------------------- explosions
 static func explode(pos: Vector3, owner_s, power: float) -> void:
 	Doors.blast(pos, power)
+	Faction.blast(pos, power)
 	var R = 7.0 * power
 	G.fx.explosion(pos, power)
 	G.audio.boom(pos)
@@ -791,6 +820,35 @@ static func step_fires() -> void:
 			fires.remove_at(i)
 
 # ---------------------------------------------------------------- mines and satchel charges
+# a bottle of petrol: the glass breaks and a pool of fire spreads, setting alight anyone standing in it
+static func molotov(p: Vector3, owner_s) -> void:
+	G.audio.glass(p)
+	for k in range(10):
+		var q = p + Vector3(randf_range(-2.2, 2.2), 0.1, randf_range(-2.2, 2.2))
+		G.fx.flame_puff(q, Vector3(0, randf_range(1.5, 3.0), 0), randf_range(0.8, 1.4))
+	for o in G.soldiers:
+		if o.state != "dead" and G.dist2d(o.pos, p) < 3.2 and absf(o.pos.y - p.y) < 2.0:
+			o.ignite(owner_s)
+	for c in G.world.cols_in_rect(p.x - 3.0, p.z - 3.0, p.x + 3.0, p.z + 3.0):
+		if c.alive and c.prop == 1:
+			ignite_col(c)
+
+# the militia's roadside bombs: dug into the road, invisible, set off by a vehicle driving over them
+static func place_mine_at(team: int, at: Vector3, kind: String) -> void:
+	var m = MeshInstance3D.new()
+	var cm = CylinderMesh.new()
+	cm.top_radius = 0.45
+	cm.bottom_radius = 0.5
+	cm.height = 0.04
+	m.mesh = cm
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.3, 0.29, 0.28)
+	m.material_override = mat
+	G.fx.add_child(m)
+	var p = Vector3(at.x, G.world.ground_y(at.x, at.z) + 0.02, at.z)
+	m.global_position = p
+	mines.append({"p": p, "team": team, "kind": kind, "node": m, "owner": null, "arm": 2.0})
+
 static func place_mine(s, at: Vector3, kind: String) -> void:
 	var m = MeshInstance3D.new()
 	var cm = CylinderMesh.new()
@@ -822,14 +880,14 @@ static func step_mines() -> void:
 			for v in G.vehicles:
 				if v.team != m["team"] and not v.dead and not v.spec.get("air", false) and G.dist2d(v.pos, m["p"]) < v.spec["wid"] * 0.5 + 0.8:
 					boom = true
-					v.take_damage(650.0, m["owner"] if is_instance_valid(m["owner"]) else null, m["p"])
+					v.take_damage(1100.0 if m["kind"] == "ied" else 650.0, m["owner"] if m["owner"] != null and is_instance_valid(m["owner"]) else null, m["p"])
 					# the blast takes off a track or a wheel
 					if not v.dead and not v.tracks_broken:
 						v.tracks_broken = true
 						G.ui.radio(v.team, "%s hit a mine, %s gone!" % [v.spec["name"], "track" if v.spec["tracked"] else "wheel"])
 					break
 		if boom:
-			explode(m["p"] + Vector3(0, 0.2, 0), m["owner"] if is_instance_valid(m["owner"]) else null, 0.9 if m["kind"] == "ap" else 1.5)
+			explode(m["p"] + Vector3(0, 0.2, 0), m["owner"] if m["owner"] != null and is_instance_valid(m["owner"]) else null, 0.9 if m["kind"] == "ap" else (2.2 if m["kind"] == "ied" else 1.5))
 			m["node"].queue_free()
 			mines.remove_at(i)
 

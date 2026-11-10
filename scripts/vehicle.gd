@@ -48,6 +48,14 @@ const SPECS = {
 	"artillery": {"name": "Field gun", "len": 4.5, "wid": 2.4, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 600.0,
 		"bullet": 0.15, "tracked": false, "standoff": 0.0, "static": true,
 		"seats": [{"o": Vector3(0.9, 0.95, -1.6), "role": "gunner", "pose": "stand", "face": 0.0}]},
+	"technical": {"name": "Technical", "len": 4.9, "wid": 2.0, "speed": 15.0, "rev": 5.0, "accel": 7.0, "turn": 1.4, "hp": 460.0,
+		"bullet": 0.4, "tracked": false, "standoff": 34.0,
+		"seats": [
+			{"o": Vector3(0.45, 1.15, 0.6), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.0, 1.75, -1.25), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true},
+			{"o": Vector3(-0.45, 1.15, 0.6), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.6, 1.25, -1.9), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.6, 1.25, -1.9), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
 	"atgun": {"name": "Anti-tank gun", "len": 3.8, "wid": 2.0, "speed": 1.5, "rev": 1.0, "accel": 1.2, "turn": 0.4, "hp": 520.0,
 		"bullet": 0.25, "tracked": false, "standoff": 80.0,
 		"seats": [
@@ -449,13 +457,27 @@ func step(dt: float) -> void:
 				continue
 			np += res[0] - c
 			bumped = true
+	# other vehicles: each is a capsule along its length; overlapping capsules push apart
+	var ra = spec["wid"] * 0.5
+	var ha = maxf(0.0, spec["len"] * 0.5 - ra)
 	for o in G.vehicles:
-		if o == self or (o.spec.get("air", false) and o.alt > 3.0):
+		if o == self or (o.spec.get("air", false) and o.alt > 3.0) or spec.get("air", false):
 			continue
-		var dv = G.flat(np - o.pos)
-		var md = (spec["len"] + o.spec["len"]) * 0.3
-		if dv.length() < md and dv.length() > 0.01:
-			np += dv.normalized() * (md - dv.length())
+		if absf(o.pos.x - np.x) > 14.0 or absf(o.pos.z - np.z) > 14.0:
+			continue
+		var rb = o.spec["wid"] * 0.5
+		var hb = maxf(0.0, o.spec["len"] * 0.5 - rb)
+		var fo = o.forward()
+		var cl = _seg_closest(np - f * ha, np + f * ha, o.pos - fo * hb, o.pos + fo * hb)
+		var dv = G.flat(cl[0] - cl[1])
+		var dl = dv.length()
+		var md = ra + rb + 0.15
+		if dl < md:
+			var nrm = dv / dl if dl > 0.01 else G.flat(np - o.pos).normalized()
+			if nrm.length_squared() < 0.01:
+				nrm = Vector3(1, 0, 0)
+			# the one that's moving does the giving way; a parked or wrecked one stays put
+			np += nrm * (md - dl)
 			bumped = true
 	if bumped and absf(speed) > 3.0:
 		speed *= 0.4
@@ -534,7 +556,7 @@ func _gun_dir() -> Vector3:
 func muzzle() -> Vector3:
 	if gun_pivot == null:
 		return center()
-	return gun_pivot.global_transform * Vector3(0, 0.02, {"jeep": 1.45, "nest": 1.3, "mortar": 1.15, "halftrack": 1.35, "motorbike": 0.65, "armoredcar": 1.7, "artillery": 3.4, "gunship": 0.95, "atgun": 2.7}.get(kind, 3.7))
+	return gun_pivot.global_transform * Vector3(0, 0.02, {"jeep": 1.45, "nest": 1.3, "mortar": 1.15, "halftrack": 1.35, "motorbike": 0.65, "armoredcar": 1.7, "artillery": 3.4, "gunship": 0.95, "atgun": 2.7, "technical": 1.45}.get(kind, 3.7))
 
 func _weapons(dt: float) -> void:
 	fire_cd -= dt
@@ -910,10 +932,46 @@ func destroy(attacker) -> void:
 		G.ui.feed(attacker, null, false, spec["name"])
 	Stats.vehicle_lost(team)
 
+# closest points between segments a0-a1 and b0-b1 (on the ground plane)
+static func _seg_closest(a0: Vector3, a1: Vector3, b0: Vector3, b1: Vector3) -> Array:
+	var d1 = G.flat(a1 - a0)
+	var d2 = G.flat(b1 - b0)
+	var r = G.flat(a0 - b0)
+	var a = d1.dot(d1)
+	var e = d2.dot(d2)
+	var f = d2.dot(r)
+	var s = 0.0
+	var t = 0.0
+	if a < 1e-5 and e < 1e-5:
+		return [a0, b0]
+	if a < 1e-5:
+		t = clampf(f / e, 0.0, 1.0)
+	else:
+		var c = d1.dot(r)
+		if e < 1e-5:
+			s = clampf(-c / a, 0.0, 1.0)
+		else:
+			var b = d1.dot(d2)
+			var den = a * e - b * b
+			s = clampf((b * f - c * e) / den, 0.0, 1.0) if den > 1e-5 else 0.0
+			t = (b * s + f) / e
+			if t < 0.0:
+				t = 0.0
+				s = clampf(-c / a, 0.0, 1.0)
+			elif t > 1.0:
+				t = 1.0
+				s = clampf((b - c) / a, 0.0, 1.0)
+	return [a0 + (a1 - a0) * s, b0 + (b1 - b0) * t]
+
 func _wreck_paint(n: Node) -> void:
 	for m in n.get_children():
 		if m is MeshInstance3D:
-			m.material_override = _m("wreck", Color(0.12, 0.11, 0.1))
+			# scorched: every part keeps its own shade, blackened and rusted, so the wreck still reads as the vehicle it was
+			var cur = m.material_override
+			var c0 = cur.albedo_color if cur is StandardMaterial3D else Color(0.3, 0.3, 0.28)
+			var burnt = c0.darkened(0.62).lerp(Color(0.32, 0.17, 0.09), 0.22 if randf() < 0.5 else 0.08)
+			burnt.a = 1.0
+			m.material_override = VModel.mat(burnt)
 		if m.get_child_count() > 0:
 			_wreck_paint(m)
 
@@ -1121,6 +1179,13 @@ func _ai_drive(dt: float) -> Array:
 	# unstick: if we want to move but aren't, back up for a moment
 	if reverse_t > 0.0:
 		reverse_t -= dt
+		# never back over our own men
+		for s2 in G.soldiers:
+			if s2.team == team and s2.state != "dead" and s2.vehicle == null:
+				var rel2 = G.flat(s2.pos - pos)
+				if rel2.dot(f) < 0.0 and rel2.dot(f) > -(spec["len"] * 0.5 + 4.0) and absf(rel2.dot(lv)) < spec["wid"] * 0.5 + 1.0:
+					reverse_t = 0.0
+					return [0.0, r[1]]
 		return [-1.0, -r[1]]
 	if absf(r[0]) > 0.3 and absf(speed) < 0.6:
 		stuck_t += dt
@@ -1185,6 +1250,14 @@ func _mission_target(dt: float):
 	m["go_t"] = m.get("go_t", 0.0) + dt
 	if spec.get("boat", false) and ramp != null:
 		ramp.rotation.x = lerpf(ramp.rotation.x, 1.3 if m["stage"] == 1 else 0.0, dt * 3.0)
+	# held up on the way (traffic, wrecks, a blocked road) or taking far too long: everyone out here
+	if m["stage"] == 0 and not spec.get("air", false) and not spec.get("boat", false):
+		if absf(speed) < 0.5:
+			m["slow_t"] = m.get("slow_t", 0.0) + dt
+		else:
+			m["slow_t"] = maxf(0.0, m.get("slow_t", 0.0) - dt * 0.5)
+		if (m["slow_t"] > 6.0 and m["go_t"] > 8.0) or m["go_t"] > 110.0:
+			m["drop"] = pos
 	if m["stage"] == 0:
 		if G.dist2d(pos, m["drop"]) < 6.0:
 			if absf(speed) > 0.4 and not spec.get("air", false):
@@ -1212,7 +1285,13 @@ func _mission_target(dt: float):
 		if m["wait"] <= 0.0:
 			m["stage"] = 2
 		return null
-	if G.dist2d(pos, m["exit"]) < 6.0:
+	# heading home: once it's well clear (or stuck, or taking too long) it simply drives off the map
+	m["exit_t"] = m.get("exit_t", 0.0) + dt
+	if absf(speed) < 0.5:
+		m["xslow"] = m.get("xslow", 0.0) + dt
+	else:
+		m["xslow"] = 0.0
+	if G.dist2d(pos, m["exit"]) < 10.0 or m["exit_t"] > 35.0 or m["xslow"] > 6.0:
 		var d = driver()
 		remove()
 		if d != null and is_instance_valid(d):

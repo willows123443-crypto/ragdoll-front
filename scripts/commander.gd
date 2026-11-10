@@ -144,7 +144,7 @@ static func _plan(team: int, off) -> void:
 		return
 	var said = false
 	var home: Vector3 = G.world.spawn[team]
-	if G.mode == "destroy":
+	if G.mode == "destroy" or G.mode == "commander":
 		_base_plan(team, qs, home)
 		return
 	if G.mode == "sabotage":

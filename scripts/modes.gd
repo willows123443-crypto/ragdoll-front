@@ -68,7 +68,7 @@ static func setup() -> void:
 		"commander":
 			G.pc.set_rts(true)
 			Support.points[0] = 30
-			G.ui.message("You command Alpha. Buy squads, vehicles and fire support with supply points, and mark out buildings for your engineers. Click or drag to select, right-click to send. WASD pans, wheel zooms, Q/E turn")
+			G.ui.message("You command Alpha. Destroy the enemy HQ to win. Buy squads, vehicles and fire support with supply points, and mark out buildings for your engineers. Click or drag to select, right-click to send. WASD pans, wheel zooms, Q/E turn")
 		"horde":
 			G.ui.message("Hold out! Wave after wave of the dead are coming. Survive %d waves" % HORDE_WIN)
 

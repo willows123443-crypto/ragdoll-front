@@ -6,7 +6,7 @@ extends RefCounted
 # Below SHAKEN a soldier fights worse and hugs cover; below BROKEN they run for the rear until they recover.
 
 const SHAKEN = 32.0
-const BROKEN = 12.0
+const BROKEN = -1.0      # nobody breaks and runs any more: they fight to the end
 const RECOVER = 42.0
 
 static func shock(s, amount: float) -> void:

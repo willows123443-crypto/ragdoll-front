@@ -206,6 +206,30 @@ func _build_team() -> int:
 	var team: int = G.ui.build_team
 	return team if team < G.team_count() else 0
 
+# where a ray from the camera meets the terrain
+func ground_hit(o: Vector3, d: Vector3):
+	var t0 = 0.0
+	var t1 = -1.0
+	var t = 0.0
+	while t < 600.0:
+		var q = o + d * t
+		if q.y <= G.world.ground_y(q.x, q.z):
+			t1 = t
+			break
+		t0 = t
+		t += 2.0
+	if t1 < 0.0:
+		return null
+	for k in range(14):
+		var tm = (t0 + t1) * 0.5
+		var q2 = o + d * tm
+		if q2.y <= G.world.ground_y(q2.x, q2.z):
+			t1 = tm
+		else:
+			t0 = tm
+	var r = o + d * t1
+	return Vector3(r.x, G.world.ground_y(r.x, r.z), r.z)
+
 func _ghost_tick() -> void:
 	var tool: String = G.ui.tool
 	var show = G.started and G.player == null and tool.begins_with("b:") and not G.ui.menu_open() and not G.editor.active
@@ -218,12 +242,14 @@ func _ghost_tick() -> void:
 	var mp = get_viewport().get_mouse_position() if test_mouse == null else test_mouse
 	var o = cam.project_ray_origin(mp)
 	var d = cam.project_ray_normal(mp)
-	var hit = G.ray(o, o + d * 500.0, G.L_WORLD)
-	if hit.is_empty():
+	# the ground under the mouse (not the preview itself, or it chases its own tail and shakes)
+	var gh = ground_hit(o, d)
+	if gh == null:
 		if ghost != null:
 			ghost.visible = false
 		return
-	var p: Vector3 = hit.position
+	var p: Vector3 = gh
+	p = Vector3(snappedf(p.x, 0.5), p.y, snappedf(p.z, 0.5))
 	var kind = tool.substr(2)
 	var team = _build_team()
 	var f = place_front(p, team)
@@ -317,8 +343,7 @@ func _rts_overlay() -> void:
 				rts_labels.append(l)
 			var lb: Label3D = rts_labels[used]
 			used += 1
-			lb.visible = true
-			lb.text = ("Squad %d (%d men)" % [qi + 1, n]) if qi < 9 else ("%d men" % n)
+			lb.visible = false        # no squad captions: the selection rings say enough
 			lb.modulate = Color(1.0, 0.9, 0.3) if selected else Color(0.85, 0.9, 1.0)
 			lb.global_position = c + Vector3(0, 4.0, 0)
 		if not any_line:
@@ -594,6 +619,10 @@ func _key(k: int) -> void:
 					b.remove_collision_exception_with(v.body)
 				s.mount(v, i)
 				G.ui.message("Seat %d: %s" % [i + 1, v.spec["seats"][i]["role"]])
+		elif k == KEY_F and s.state == "alive" and _knife_target(s) != null:
+			Combat.knife(s, _knife_target(s))
+		elif k == KEY_F and s.state == "alive" and Faction.player_tunnel(s):
+			pass
 		elif k == KEY_F and s.state == "alive" and _carry_or_crate(s):
 			pass
 		elif k == KEY_F and s.state == "alive":
@@ -690,6 +719,14 @@ func _key(k: int) -> void:
 			possess(pick_soldier(cam.global_position, d))
 
 # take apart whatever is at a point: a whole construction, an emplacement, or one piece of a building
+# an enemy right in front of you: F is a knife
+func _knife_target(s):
+	var f = Vector3(sin(s.aim_yaw), 0, cos(s.aim_yaw))
+	for o in G.soldiers:
+		if o.team != s.team and o.state == "alive" and G.dist2d(o.pos, s.pos) < 1.8 and f.dot(G.flat(o.pos - s.pos).normalized()) > 0.5:
+			return o
+	return null
+
 func dismantle_at(p: Vector3, hit: Dictionary) -> bool:
 	for v in G.vehicles:
 		if v.spec.get("static", false) and G.dist2d(v.pos, p) < 2.2:
@@ -705,8 +742,12 @@ func dismantle_at(p: Vector3, hit: Dictionary) -> bool:
 	var st = Build.site_at(p, 0.3)
 	if st != null:
 		var nm = st["name"]
+		var mine = G.player == null or st["team"] == G.player.team
+		if not mine and st["kind"] != "wire":
+			G.ui.message("You can't take apart the enemy's %s by hand (but you can cut their wire)" % nm.to_lower())
+			return true
 		Build.dismantle(st)
-		G.ui.message("Dismantled the %s" % nm)
+		G.ui.message("Cut through the wire" if not mine else "Dismantled the %s" % nm)
 		return true
 	if not hit.is_empty() and hit.has("collider") and is_instance_valid(hit["collider"]) and hit["collider"].has_meta("col"):
 		var c = hit["collider"].get_meta("col")
@@ -745,7 +786,7 @@ func use_tool(screen: Vector2) -> void:
 	var d = cam.project_ray_normal(screen)
 	var hit = G.ray(o, o + d * 400.0, G.L_WORLD)
 	var tool = G.ui.tool
-	if G.mode == "commander" and not (tool == "sel" or tool.begins_with("b:") or tool.begins_with("sup:") or tool in ["up", "camo", "rep", "dis"]):
+	if G.mode == "commander" and not (tool == "sel" or tool.begins_with("b:") or tool.begins_with("sup:") or tool.begins_with("r:") or tool in ["up", "camo", "rep", "dis"]):
 		return
 	if tool == "ctl":
 		possess(pick_soldier(o, d))
@@ -787,6 +828,11 @@ func use_tool(screen: Vector2) -> void:
 		Combat.smoke_at(p, 26.0)
 	elif tool == "flare":
 		Combat.flare(p + Vector3(0, 0, 0), p)
+	elif tool.begins_with("r:"):
+		# the recruits' truck drives them to the spot you clicked
+		G.ui._recruit(tool.substr(2), p)
+		G.ui.tool = "sel"
+		G.ui._render_tools()
 	elif tool.begins_with("sup:"):
 		var what = tool.substr(4)
 		if Support.call_in(0, what, p):
@@ -802,6 +848,9 @@ func use_tool(screen: Vector2) -> void:
 	elif tool.begins_with("b:"):
 		var kind = tool.substr(2)
 		var team: int = _build_team()
+		var gh = ground_hit(o, d)
+		if gh != null:
+			p = Vector3(snappedf(gh.x, 0.5), gh.y, snappedf(gh.z, 0.5))
 		if G.mode == "commander":
 			team = 0
 		var to = place_front(p, team)
@@ -816,6 +865,9 @@ func use_tool(screen: Vector2) -> void:
 			Support.points[team] -= c
 		Build.place(kind, team, p, to, false, true)
 		G.ui.message("%s site marked out for %s%s · engineers will build it" % [Build.KINDS[kind]["name"], G.TEAM_NAMES[team], (" (-%d points)" % c) if c > 0 else ""])
+		# placed: put the blueprint away (pick the card again to place another)
+		G.ui.tool = "sel" if G.mode == "commander" else "ctl"
+		G.ui._render_tools()
 	elif tool == "dis":
 		dismantle_at(p, hit)
 	elif tool == "up" or tool == "camo" or tool == "rep":

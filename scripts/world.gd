@@ -1857,29 +1857,44 @@ func crate(x: float, z: float, s: float) -> void:
 	add_box(x, 0.0, z, s, s, s, Color(0.43, 0.35, 0.23), {"dest": true, "hp": 70.0, "mat": 1})
 
 func truck(x: float, z: float, along_z: bool) -> void:
-	var c = Color(0.23, 0.22, 0.2)
 	var gy = ground_y(x, z)
 	if along_z:
-		add_box(x, 0.5, z, 2.4, 1.6, 6.0, c, {"collide": false}); add_box(x, 0.5, z + 3.6, 2.3, 2.1, 1.6, Color(0.2, 0.19, 0.18), {"collide": false})
-		add_col(x, gy, z + 0.8, 2.4, 2.2, 7.6)
+		add_col(x, gy, z + 0.3, 2.4, 2.2, 7.2)
+		wreck_prop("truck", x, z + 0.3, 0.0)
 	else:
-		add_box(x, 0.5, z, 6.0, 1.6, 2.4, c, {"collide": false}); add_box(x + 3.6, 0.5, z, 1.6, 2.1, 2.3, Color(0.2, 0.19, 0.18), {"collide": false})
-		add_col(x + 0.8, gy, z, 7.6, 2.2, 2.4)
-	for o in [-2.0, 2.0]:
-		for s in [-1.25, 1.25]:
-			if along_z:
-				add_box(x + s, 0.0, z + o, 0.4, 0.9, 0.9, Color(0.11, 0.11, 0.11), {"collide": false})
-			else:
-				add_box(x + o, 0.0, z + s, 0.9, 0.9, 0.4, Color(0.11, 0.11, 0.11), {"collide": false})
+		add_col(x + 0.3, gy, z, 7.2, 2.2, 2.4)
+		wreck_prop("truck", x + 0.3, z, PI / 2.0)
 	smoke_sources.append(Vector3(x, gy + 2.4, z))
 
 func tank(x: float, z: float) -> void:
 	var gy = ground_y(x, z)
-	add_box(x, 0.0, z, 7.0, 1.3, 3.6, Color(0.29, 0.3, 0.24), {"collide": false})
-	add_box(x, 1.3, z, 3.4, 0.9, 2.8, Color(0.27, 0.28, 0.23), {"collide": false})
-	add_box(x + 3.0, 1.65, z, 3.6, 0.22, 0.22, Color(0.23, 0.24, 0.2), {"collide": false})
 	add_col(x, gy, z, 7.0, 2.2, 3.6)
+	wreck_prop("tank", x, z, PI / 2.0 + rnd(-0.15, 0.15))
 	smoke_sources.append(Vector3(x, gy + 2.5, z))
+
+# a burnt-out vehicle left on the map: the real model, scorched, sitting a little askew
+func wreck_prop(kind: String, x: float, z: float, yaw: float) -> void:
+	var v = Vehicle.new()
+	v.kind = kind
+	v.spec = Vehicle.SPECS[kind]
+	v.team = rng.randi() % 2
+	v.dead = true
+	_geo().add_child(v)
+	var gy = ground_y(x, z)
+	var xf = Transform3D(Basis(Vector3.UP, yaw) * Basis(Vector3(0, 0, 1), rnd(-0.05, 0.05)) * Basis(Vector3(1, 0, 0), rnd(-0.03, 0.03)), Vector3(x, gy - 0.12, z))
+	v.global_transform = xf
+	v.body = AnimatableBody3D.new()
+	v.body.collision_layer = 0
+	v.body.collision_mask = 0
+	_geo().add_child(v.body)
+	VModel.build(v)
+	v._wreck_paint(v)
+	if v.turret != null:
+		v.turret.rotation.y = rnd(-0.8, 0.8)
+	if v.gun_pivot != null:
+		v.gun_pivot.rotation.x = rnd(-0.15, 0.05)
+	v.set_process(false)
+	v.set_physics_process(false)
 
 func dead_tree(x: float, z: float) -> void:
 	var h = rnd(4.0, 7.0)

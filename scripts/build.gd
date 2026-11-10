@@ -160,7 +160,7 @@ static func _tint_all(n: Node, m: Material, am: Material) -> void:
 
 # modes where reinforcements need a base to arrive at
 static func bases_matter() -> bool:
-	return G.reinforce and G.mode in ["deathmatch", "capture", "frontline", "assault", "destroy", "breakthrough", "siege"]
+	return G.reinforce and G.mode in ["deathmatch", "capture", "frontline", "assault", "destroy", "breakthrough", "siege", "commander"]
 
 # ---------------------------------------------------------------- placing and building
 static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: bool = false, player: bool = false):
@@ -213,6 +213,10 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 			c.hp = maxf(c.hp, 600.0)
 		elif kind == "fob2" or kind == "concrete" or kind == "pillbox":
 			c.hp = maxf(c.hp, 900.0)
+		else:
+			c.hp = maxf(c.hp, 320.0)
+		# built properly: rifle fire barely scratches it, it takes explosives to bring it down
+		c.set_meta("built", true)
 		st["cols"].append(c)
 	var parts = []
 	for ch in root.get_children():
@@ -402,6 +406,12 @@ static func _check_alive(st: Dictionary) -> void:
 
 static func _lose(st: Dictionary, loud: bool) -> void:
 	st["dead"] = true
+	# a wrecked structure is gone for good: it has to be paid for and built again from scratch
+	if st["kind"] != "hq":
+		var wr = st
+		G.main.get_tree().create_timer(12.0, false).timeout.connect(func():
+			if sites.has(wr):
+				_remove_quietly(wr))
 	if st["ammo"] != null:
 		G.world.ammo_points.erase(st["ammo"])
 		st["ammo"] = null
@@ -457,7 +467,7 @@ static func needs_repair(st: Dictionary) -> bool:
 	for c in st["cols"]:
 		if not c.alive:
 			lost += 1
-	return st["dead"] or (st["cols"].size() > 0 and float(lost) / st["cols"].size() > 0.25)
+	return not st["dead"] and st["cols"].size() > 0 and float(lost) / st["cols"].size() > 0.25
 
 static func rebuild(st: Dictionary):
 	var kind: String = st["kind"]
@@ -816,7 +826,7 @@ static func _effect(st: Dictionary, dt: float) -> void:
 
 # in modes with bases, a team with no base and nobody left is out
 static func _check_out() -> void:
-	if not bases_matter() or G.over or G.mode == "destroy":
+	if not bases_matter() or G.over or G.mode == "destroy" or G.mode == "commander":
 		return
 	var left = []
 	for t in range(G.team_count()):

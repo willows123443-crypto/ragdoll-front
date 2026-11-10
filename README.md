@@ -59,6 +59,12 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Scouts and commanders:** each side sends scouts ahead who radio back what they see; commanders are reckless, cautious or cunning and fight that way; defenders who haven't been spotted hold their fire for an ambush
 - **Better looks:** brick, weathered plaster and tiled roofs; worn paint, track links, tow cables, jerrycans and tools on the vehicles; camouflage nets that drape over their poles
 - **Commander mode economy:** the HQ only brings in a trickle of supply; build supply dumps for real income. Vehicles need a vehicle depot and air support a radio mast before you can buy them, and the maps are bigger, with farms and woods round the edges. A heavy tank joins the vehicles
+- **Factions:** pick what each side plays in the setup screen: the regular army or the **Black Banner Militia**, in civilian clothes with scarves and balaclavas, technicals instead of tanks, plenty of RPGs and molotovs, hidden weapons caches where fresh fighters keep turning up (blow the caches to stop them), roadside bombs on the roads, tunnels across their side of the map, and snipers who move after every shot; but no air support, no tanks and no radio operators
+- **Fight to the end:** nobody breaks and runs any more
+- **Field hospitals:** each keeps a blood supply; wounded brought in are patched up, and men who fall close by are worked on and come back as reinforcements
+- **Night raid tools:** silenced pistols, knives (F on an enemy right in front of you) and cutting enemy wire (I)
+- **Recon plane:** a call-in that circles the enemy's side for thirty seconds and puts everything it sees on your map, unless their anti-aircraft guns bring it down
+- **Commander mode** is now won by destroying the enemy HQ; recruits are driven to wherever you click
 - **After-action report** (J) and first-person view (Y)
 
 ## Controls

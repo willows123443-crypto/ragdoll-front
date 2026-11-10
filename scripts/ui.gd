@@ -8,7 +8,7 @@ const TIPS = {"s1": "Click the ground to drop in a soldier", "s5": "Click the gr
 	"sp": "Click where this side's reinforcements should arrive", "mv": "Click a point to send the whole side there",
 	"up": "Click a structure to upgrade it: sandbags → concrete wall, MG nest → pillbox, FOB tent → hut",
 	"camo": "Click a structure to throw a camouflage net over it (aircraft and artillery won't see it until the enemy gets close)",
-	"rep": "Click a damaged or wrecked structure to have engineers rebuild it",
+	"rep": "Click a damaged structure to have engineers repair it (anything destroyed is gone and has to be built again)",
 	"dis": "Click a structure, wall, building piece or emplacement to take it apart",
 	"bteam": "Click to change which team the next construction site is for","sel": "Click or drag a box to select soldiers (Shift adds), then right-click the ground to send them there",
 	"mvA": "Click to send the whole Alpha team to a point", "mvB": "Click to send the whole Bravo team to a point",
@@ -75,6 +75,8 @@ var opt_limit: OptionButton
 var opt_reinf: OptionButton
 var opt_armor: OptionButton
 var opt_teams: OptionButton
+var opt_fac0: OptionButton
+var opt_fac1: OptionButton
 var opt_time: OptionButton
 var seed_edit: LineEdit
 var teams_panel: PanelContainer
@@ -263,7 +265,7 @@ var dock_cards_list: Array = []      # [id, button] in order, for the number key
 var dock_pts_shown = -1
 
 const SB_VEH = [["jeep", "Jeep"], ["truck", "Truck"], ["motorbike", "Motorbike"], ["halftrack", "Half-track"], ["armoredcar", "Armoured car"],
-	["tank", "Tank"], ["heavytank", "Heavy tank"], ["ambulance", "Ambulance"], ["radar", "Command truck"], ["bridger", "Bridge layer"], ["gunship", "Gunship"],
+	["tank", "Tank"], ["heavytank", "Heavy tank"], ["technical", "Technical"], ["ambulance", "Ambulance"], ["radar", "Command truck"], ["bridger", "Bridge layer"], ["gunship", "Gunship"],
 	["fighter", "Fighter"], ["bomber", "Dive bomber"], ["nest", "MG nest"], ["mortar", "Mortar"], ["artillery", "Field gun"], ["aagun", "AA gun"], ["atgun", "AT gun"], ["dinghy", "Assault boat"]]
 const BUILD_LIST = [["fob", "FOB"], ["sandbags", "Sandbags"], ["wire", "Barbed wire"], ["traps", "Tank traps"], ["mgnest", "MG nest"],
 	["mortarpit", "Mortar pit"], ["aa", "AA gun"], ["tower", "Watchtower"], ["bunker", "Bunker"], ["hospital", "Field hospital"],
@@ -278,7 +280,7 @@ const RECRUIT = {
 	"rad": {"name": "Radio operator", "cost": 5, "cls": ["radio"]},
 }
 # call-ins that happen as soon as you pay (no map click needed)
-const INSTANT = ["atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance"]
+const INSTANT = ["technical", "recon", "atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance"]
 
 func _tabs() -> Array:
 	if G.mode == "commander":
@@ -296,24 +298,30 @@ func _cards(t: String) -> Array:
 			for v in SB_VEH:
 				out.append(["v:" + v[0], v[1], "with crew"])
 		"support":
-			for k in (["artillery", "airstrike", "gunship", "fighter", "bomber"] if G.mode == "commander" else Support.COSTS.keys()):
+			for k in (["recon", "artillery", "airstrike", "gunship", "fighter", "bomber"] if G.mode == "commander" else Support.COSTS.keys()):
+				if not Faction.support_ok(0, k):
+					continue
 				if not Support.unlocked(0, k):
 					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], Support.need_text(k)])
 				else:
 					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], "%d pts" % Support.COSTS[k] + ("" if k in INSTANT else " · click the map")])
 		"armour":
-			for k in ["jeep", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "atgun", "ambulance", "radar", "bridger"]:
+			for k in ["jeep", "technical", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "atgun", "ambulance", "radar", "bridger"]:
+				if not Faction.support_ok(0, k):
+					continue
 				out.append(["sup:" + k, Support.NAMES[k], ("%d pts" % Support.COSTS[k]) if Support.unlocked(0, k) else Support.need_text(k)])
 		"recruit":
 			for k in RECRUIT:
-				out.append(["r:" + k, "%s ×%d" % [RECRUIT[k]["name"], RECRUIT[k]["cls"].size()], "%d pts · by truck" % RECRUIT[k]["cost"]])
+				out.append(["r:" + k, "%s ×%d" % [RECRUIT[k]["name"], RECRUIT[k]["cls"].size()], "%d pts · click where" % RECRUIT[k]["cost"]])
+			if Faction.militia(0):
+				return out
 			out.append(["sup:paradrop", "Paratroopers ×6", ("%d pts" % Support.COSTS["paradrop"]) if Support.unlocked(0, "paradrop") else Support.need_text("paradrop")])
 			out.append(["sup:heli", "Heli assault ×6", ("%d pts" % Support.COSTS["heli"]) if Support.unlocked(0, "heli") else Support.need_text("heli")])
 		"build":
 			for b in BUILD_LIST:
 				var c = Build.cost(b[0])
 				out.append(["b:" + b[0], b[1], ("%d pts" % c) if c > 0 else "%d s to build" % int(Build.KINDS[b[0]]["work"])])
-			out += [["up", "Upgrade", "click a structure"], ["camo", "Camo net", "click a structure"], ["rep", "Rebuild", "click a wreck"], ["dis", "Dismantle", "click anything built"]]
+			out += [["up", "Upgrade", "click a structure"], ["camo", "Camo net", "click a structure"], ["rep", "Repair", "click a damaged structure"], ["dis", "Dismantle", "click anything built"]]
 		"command", "orders":
 			out = [["sel", "Select", "click or drag a box"], ["o:hold", "Hold", "selected soldiers"], ["o:charge", "Charge", "selected soldiers"],
 				["o:free", "Act freely", "selected soldiers"], ["o:clear", "Deselect", ""]]
@@ -470,7 +478,7 @@ func _cost(id: String) -> int:
 	return 0
 
 func _is_action(id: String) -> bool:
-	return id.begins_with("r:") or id.begins_with("o:") or id.begins_with("f:") or (id.begins_with("sup:") and id.substr(4) in INSTANT)
+	return (id.begins_with("r:") and G.mode != "commander") or id.begins_with("o:") or id.begins_with("f:") or (id.begins_with("sup:") and id.substr(4) in INSTANT)
 
 # a card was clicked: actions happen now, everything else becomes the tool for the next map click
 func _card_clicked(id: String) -> void:
@@ -484,7 +492,7 @@ func _card_clicked(id: String) -> void:
 	if id.begins_with("f:"):
 		G.pc.set_formation(id.substr(2))
 		return
-	if id.begins_with("r:"):
+	if id.begins_with("r:") and G.mode != "commander":
 		_recruit(id.substr(2))
 		return
 	if id.begins_with("sup:") and not Support.unlocked(0, id.substr(4)):
@@ -502,16 +510,18 @@ func _card_clicked(id: String) -> void:
 	tool = id
 	_render_tools()
 
-func _recruit(k: String) -> void:
+func _recruit(k: String, dest = null) -> void:
 	var r = RECRUIT[k]
 	if Support.points[0] < r["cost"]:
 		message("Not enough supply points: %s costs %d, you have %d" % [r["name"], r["cost"], Support.points[0]])
 		return
 	Support.points[0] -= r["cost"]
 	G.main.force_cls = r["cls"].duplicate()
-	Reinforce.truck(0, r["cls"].size())
+	Reinforce.truck(0, r["cls"].size(), dest)
 	G.main.force_cls = []
-	message("%s on the way by truck (-%d pts)" % [r["name"], r["cost"]])
+	message("%s on the way by truck%s (-%d pts)" % [r["name"], " to the marked spot" if dest != null else "", r["cost"]])
+	if dest != null:
+		G.fx.order_marker(dest)
 	_dock_points()
 
 func pick_tool(i: int) -> void:
@@ -736,6 +746,11 @@ func _build_menu() -> void:
 	_row(v, "Vehicles at the start", opt_armor)
 	opt_teams = _option(["2 sides", "3 sides", "4 sides"], 0)
 	_row(v, "Sides (3–4 in sandbox, deathmatch, capture)", opt_teams)
+	var fnames = Faction.LIST.map(func(f): return Faction.NAMES[f])
+	opt_fac0 = _option(fnames, maxi(0, Faction.LIST.find(G.factions[0])))
+	_row(v, "Your side (Alpha) plays as", opt_fac0)
+	opt_fac1 = _option(fnames, maxi(0, Faction.LIST.find(G.factions[1])))
+	_row(v, "Against (Bravo)", opt_fac1)
 	_section(v, "World")
 	opt_time = _option(["Day", "Dusk", "Night", "Dawn till nightfall (time passes)", "Endless day and night cycle"], maxi(0, ["day", "dusk", "night", "dawn", "cycle"].find(G.settings["time"])))
 	opt_time.item_selected.connect(func(i):
@@ -1112,7 +1127,8 @@ func _deploy() -> void:
 	G.main.start_game({"map": mid, "mode": MODE_IDS[opt_mode.selected],
 		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": _limit_value(),
 		"reinforce": opt_reinf.selected != 4, "reinf_mode": ["truck", "para", "heli", "instant", "truck"][opt_reinf.selected],
-		"armor": ["none", "light", "heavy"][opt_armor.selected], "teams": opt_teams.selected + 2})
+		"armor": ["none", "light", "heavy"][opt_armor.selected], "teams": opt_teams.selected + 2,
+		"factions": [Faction.LIST[opt_fac0.selected], Faction.LIST[opt_fac1.selected], "army", "army"]})
 	G.save_prefs()
 	menu.visible = false
 	title.visible = false
@@ -1122,7 +1138,6 @@ func _deploy() -> void:
 const LIMITS = {
 	"deathmatch": ["Kills to win", [25, 50, 100, 200], 1],
 	"capture": ["Points to win", [100, 200, 400, 800], 1],
-	"commander": ["Points to win", [100, 200, 400, 800], 1],
 	"koth": ["Points to win", [60, 120, 240, 480], 1],
 	"frontline": ["Tickets per side", [50, 100, 200, 400], 1],
 	"assault": ["Attackers' tickets", [50, 100, 200, 400], 1],
@@ -1302,6 +1317,7 @@ func _build_help() -> void:
 		"  U (hold)  help build a friendly construction site · I  dismantle what you aim at (within 6 m)\n" + \
 		"  Shift+G  cook a grenade · middle mouse  rifle grenade · Shift+K  sticky bomb · Shift+V  red smoke (calls artillery)\n" + \
 		"  T  flashlight · F next to a wounded friend: carry them · F at a crate: pick up an ammo box, F again to drop it\n" + \
+		"  F on an enemy right in front of you: knife · F at a militia tunnel mouth: out the other end · I at enemy wire: cut it\n" + \
 		"  Walk into a closed door to kick it open · F at a window: smash the glass · grenades go in through windows\n" + \
 		"  In a vehicle: Q tows a gun or broken vehicle (bridge layer: Q lays the bridge) · planes: mouse steers, Shift+click bombs\n" + \
 		"  F  next to a vehicle: get in · in a vehicle: WASD drive, mouse aim, click fire, 1–4 change seat, F get out\n\n" + \
@@ -1427,7 +1443,7 @@ func update_hud(dt: float) -> void:
 		var cv = m.get_shader_parameter("amount")
 		var cur: float = cv if cv != null else 0.0
 		m.set_shader_parameter("amount", lerpf(cur, want, minf(1.0, dt * 5.0)))
-	var cap = G.mode in ["capture", "commander", "koth"]
+	var cap = G.mode in ["capture", "koth"]
 	var tick = G.mode == "frontline"
 	lbl_sa.text = str(int(G.cap_score[0])) if cap else (str(Obj.tickets[0]) if tick and not Obj.tickets.is_empty() else str(G.score[0]))
 	lbl_sb.text = str(int(G.cap_score[1])) if cap else (str(Obj.tickets[1]) if tick and not Obj.tickets.is_empty() else str(G.score[1]))

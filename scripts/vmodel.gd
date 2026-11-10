@@ -664,6 +664,35 @@ static func _build_main(v) -> void:
 			box(v, v.gun_pivot, Vector3(0.36, 0.34, 1.1), Vector3(0, 0, 0.2), dark, {"b": 0.06})
 			cyl(v.gun_pivot, 0.09, 2.8, Vector3(0, 0, 1.9), dark, "z", {"r2": 0.08, "seg": 10})
 			cyl(v.gun_pivot, 0.13, 0.3, Vector3(0, 0, 3.25), dark, "z", {"seg": 10})
+		"technical":
+			# a civilian pickup with a machine gun on a post in the back, welded plate round the gunner
+			var paint = [Color(0.75, 0.73, 0.68), Color(0.55, 0.2, 0.16), Color(0.25, 0.3, 0.38), Color(0.62, 0.55, 0.38)][v.get_instance_id() % 4]
+			col(v, Vector3(1.9, 0.9, 4.8), Vector3(0, 0.85, 0))
+			box(v, hull, Vector3(1.6, 0.18, 4.7), Vector3(0, 0.48, 0), METAL)
+			box(v, hull, Vector3(1.9, 0.5, 1.6), Vector3(0, 0.88, 1.55), paint, {"b": 0.1})
+			box(v, hull, Vector3(1.85, 0.7, 1.45), Vector3(0, 1.38, 0.35), paint, {"b": 0.12})
+			box(v, hull, Vector3(1.7, 0.42, 0.03), Vector3(0, 1.5, 1.08), Color.WHITE, {"m": glass(), "b": 0.0, "rot": Vector3(-0.35, 0, 0)})
+			for x in [0.93, -0.93]:
+				box(v, hull, Vector3(0.03, 0.35, 0.8), Vector3(x, 1.5, 0.35), Color.WHITE, {"m": glass(), "b": 0.0})
+				box(v, hull, Vector3(0.08, 0.5, 2.0), Vector3(x, 0.98, -1.35), paint, {"b": 0.03})
+				cyl(hull, 0.1, 0.08, Vector3(x * 0.72, 1.0, 2.36), Color.WHITE, "z", {"m": lamp()})
+			box(v, hull, Vector3(1.9, 0.5, 0.08), Vector3(0, 0.98, -2.35), paint, {"b": 0.03})
+			box(v, hull, Vector3(1.7, 0.12, 2.0), Vector3(0, 0.72, -1.35), paint.darkened(0.3), {"b": 0.02})
+			box(v, hull, Vector3(1.6, 0.3, 0.1), Vector3(0, 0.7, 2.38), METAL, {"b": 0.03})
+			# welded shield and the gun post
+			box(v, hull, Vector3(1.4, 0.6, 0.06), Vector3(0, 1.55, -0.62), METAL.lightened(0.15), {"b": 0.01})
+			box(v, hull, Vector3(0.36, 0.42, 0.28), Vector3(0.6, 0.95, -2.0), Color(0.3, 0.3, 0.22), {"b": 0.03})
+			for z in [1.45, -1.55]:
+				for x in [0.92, -0.92]:
+					wheel(v, Vector3(x, 0.4, z), 0.4, 0.28, METAL.lightened(0.2))
+			box(v, hull, Vector3(1.7, 0.06, 0.04), Vector3(0, 1.25, -2.4), G.team_color(v.team), {"b": 0.0})
+			v.turret = Node3D.new()
+			v.turret.position = Vector3(0, 1.75, -1.0)
+			hull.add_child(v.turret)
+			cyl(v.turret, 0.05, 0.9, Vector3(0, -0.45, 0), METAL, "y", {"seg": 6})
+			v.gun_pivot = Node3D.new()
+			v.turret.add_child(v.gun_pivot)
+			mg(v, v.gun_pivot, Vector3(0, 0.05, 0.05), 1.0)
 		"atgun":
 			# a towed anti-tank gun: split trails, two wheels, an angled shield and a long barrel with a muzzle brake
 			col(v, Vector3(1.8, 1.0, 0.5), Vector3(0, 0.8, 0.35))

@@ -167,7 +167,7 @@ static func drive_in(t: int, kind: String, dest: Vector3, crew: bool = true):
 	var e = edge_near_hq(t)
 	var v = G.main.spawn_vehicle(kind, t, e, atan2(dest.x - e.x, dest.z - e.z), true)
 	# ours report to the depot or rally point and wait for orders; the AI's just drive on into the fight
-	if v != null and t == 0 and G.mode != "sandbox":
+	if v != null and t == 0 and G.mode == "commander":
 		v.command(G.main._free_spot(dest))
 	return v
 

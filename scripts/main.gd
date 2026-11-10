@@ -280,6 +280,9 @@ func _clear() -> void:
 	AI.batch_stack.clear()
 	Combat.clear_all()
 	G.fx.clear_all()
+	if G.ui.nv != null:
+		G.ui.nv_on = false
+		G.ui.nv.visible = false
 	G.score = []
 	G.cap_score = []
 	for t in range(G.team_count()):
@@ -1650,6 +1653,9 @@ func _ruin_test() -> void:
 # the newer modes: run one for a while and print how it is going
 func _mode_test(mode: String) -> void:
 	await _wait(0.5)
+	if _arg("time", "") != "":
+		G.settings["time"] = _arg("time", "day")
+		apply_time()
 	if mode == "daily":
 		Modes.start_daily()
 		print("MODETEST daily ", Modes.daily_text(Modes.daily))

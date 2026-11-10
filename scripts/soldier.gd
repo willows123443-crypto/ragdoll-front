@@ -699,6 +699,31 @@ var detector: Node3D = null
 # a sandbag or plank carried in both arms while building
 var carried: MeshInstance3D = null
 
+# tools and loads live under the effects node: take them with us when this soldier is removed
+func _exit_tree() -> void:
+	for n in [tool_node, detector, carried]:
+		if n != null and is_instance_valid(n):
+			n.queue_free()
+
+# the beam material shared by weapon lights and headlights
+static func get_beam_mat() -> ShaderMaterial:
+	if beam_mat == null:
+		var sh = Shader.new()
+		sh.code = """shader_type spatial;
+render_mode unshaded, blend_add, cull_disabled, depth_draw_never, shadows_disabled;
+uniform vec3 col = vec3(0.86, 0.92, 1.0);
+uniform float strength = 0.16;
+varying float along;
+void vertex() { along = clamp((VERTEX.y + 5.0) / 10.0, 0.0, 1.0); }
+void fragment() {
+	float edge = pow(abs(dot(NORMAL, VIEW)), 1.6);
+	float fade = pow(1.0 - along, 1.8) * smoothstep(0.0, 0.04, along);
+	ALBEDO = col * strength * fade * edge;
+}"""
+		beam_mat = ShaderMaterial.new()
+		beam_mat.shader = sh
+	return beam_mat
+
 func carry_item(on: bool, kind: String, at: Vector3) -> void:
 	if not on:
 		if carried != null:
@@ -2000,23 +2025,7 @@ func _flashlight_tick() -> void:
 		body.rotation.x = PI / 2.0
 		body.material_override = _mat("torch", Color(0.12, 0.12, 0.12), false)
 		flashlight.add_child(body)
-		if beam_mat == null:
-			# a cool white beam, brightest at the lens and fading out along its length and toward its edges,
-			# so it reads as light in the air rather than a solid cone
-			var sh = Shader.new()
-			sh.code = """shader_type spatial;
-render_mode unshaded, blend_add, cull_disabled, depth_draw_never, shadows_disabled;
-uniform vec3 col = vec3(0.86, 0.92, 1.0);
-uniform float strength = 0.16;
-varying float along;
-void vertex() { along = clamp((VERTEX.y + 5.0) / 10.0, 0.0, 1.0); }
-void fragment() {
-	float edge = pow(abs(dot(NORMAL, VIEW)), 1.6);
-	float fade = pow(1.0 - along, 1.8) * smoothstep(0.0, 0.04, along);
-	ALBEDO = col * strength * fade * edge;
-}"""
-			beam_mat = ShaderMaterial.new()
-			beam_mat.shader = sh
+		get_beam_mat()
 		var beam = MeshInstance3D.new()
 		var bm = CylinderMesh.new()
 		bm.top_radius = 1.6

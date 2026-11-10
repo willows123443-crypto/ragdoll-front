@@ -1244,8 +1244,15 @@ func _order_move(screen: Vector2) -> void:
 		return
 	var p: Vector3 = hit.position
 	# right-click on one of our vehicles or guns: climb in / man it
-	var tv = pick_vehicle(o, d)
-	if tv != null and tv.team == 0 and not tv.dead and not tv.spec.get("air", false) and _order_board(tv):
+	var tv = null
+	var vh = G.ray(o, o + d * 600.0, G.L_WORLD | G.L_VEH)
+	if not vh.is_empty() and vh.collider.has_meta("vehicle"):
+		tv = vh.collider.get_meta("vehicle")
+	else:
+		for gv in G.vehicles:
+			if gv.spec.get("static", false) and not gv.dead and G.dist2d(gv.pos, p) < 1.8:
+				tv = gv
+	if tv != null and is_instance_valid(tv) and tv.team == 0 and not tv.dead and not tv.spec.get("air", false) and _order_board(tv):
 		return
 	# right-click on one of our unfinished or damaged structures: go and build / fix it
 	var st = Build.site_at(p, 1.5)

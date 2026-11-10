@@ -83,7 +83,7 @@ static func _ok(t) -> bool:
 	if t["w"].state != "wounded":
 		return false
 	for k in ["a", "b"]:
-		if t[k].state != "alive" or t[k].vehicle != null:
+		if t[k].state != "alive" or t[k].vehicle != null or t[k].is_player:
 			return false
 	t["t"] += G.DT
 	return t["t"] < 150.0 and (t["stage"] == 1 or t["t"] < 30.0)

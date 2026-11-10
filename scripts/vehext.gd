@@ -803,7 +803,7 @@ static func headlamps(v) -> Node3D:
 		l.position = Vector3(x, y, z)
 		l.material_override = lamp_m
 		n.add_child(l)
-		if Soldier.beam_mat != null:
+		if true:
 			var beam = MeshInstance3D.new()
 			var bm = CylinderMesh.new()
 			bm.top_radius = 2.6
@@ -816,7 +816,7 @@ static func headlamps(v) -> Node3D:
 			beam.mesh = bm
 			beam.rotation.x = PI / 2.0 + 0.12
 			beam.position = Vector3(x, y - 0.6, z + 5.0)
-			beam.material_override = Soldier.beam_mat
+			beam.material_override = Soldier.get_beam_mat()
 			beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			n.add_child(beam)
 	var aim = Node3D.new()

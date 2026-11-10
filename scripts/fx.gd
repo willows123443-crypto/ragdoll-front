@@ -489,7 +489,7 @@ func _torches() -> void:
 		if s.light_on and s.flashlight != null and s.flashlight.visible:
 			lit.append([s.pos.distance_squared_to(cam.global_position), s.flashlight, false])
 	for v in G.vehicles:
-		if v.lights_on and v.lamps != null and v.lamps.visible:
+		if v.lights_on and v.lamps != null and v.lamps.visible and v.visible:
 			# headlights count as nearer: they light far more of the scene
 			lit.append([v.pos.distance_squared_to(cam.global_position) * 0.5, v.lamps.get_node("aim"), true])
 	lit.sort_custom(func(a, b): return a[0] < b[0])

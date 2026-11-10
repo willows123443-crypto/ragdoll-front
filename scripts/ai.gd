@@ -859,7 +859,7 @@ static func decide(s) -> void:
 		var armour = dry or G.vehicles.any(func(v): return v.team != s.team and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar") and G.dist2d(v.pos, s.pos) < 120.0)
 		if armour:
 			for o in G.soldiers:
-				if o.state != "dead" or o.gun_body == null or not is_instance_valid(o.gun_body) or o.reserve + o.mag <= 0 or o.wid == s.wid:
+				if o.state != "dead" or o.zombie or o.gun_body == null or not is_instance_valid(o.gun_body) or o.reserve + o.mag <= 0 or o.wid == s.wid:
 					continue
 				if not dry and not o.W["rocket"]:
 					continue

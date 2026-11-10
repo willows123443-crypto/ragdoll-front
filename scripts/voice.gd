@@ -18,6 +18,8 @@ const LINES = {
 	"kill": ["Target down!", "Got him!", "Enemy down!", "Scratch one!", "He's down!"],
 	"grenade": ["Grenade!", "Frag, get clear!", "Grenade, move!"],
 	"suppressed": ["I'm pinned!", "Can't move!", "They've got us pinned!", "Too much fire!"],
+	"smoke": ["Smoke out! Cross under the smoke!", "Popping smoke!", "Smoke, then move!"],
+	"suppress": ["Base of fire, keep them down!", "Everything on that position!", "Suppressing fire, now!"],
 	"fallback": ["Fall back to the line!", "Back, back, back!", "Pull back!", "Regroup at the rear!"],
 	"order_attack": ["Command says push!", "We're going in, on me!", "Orders are to attack!"],
 	"order_defend": ["Dig in, we hold here!", "Hold this position!", "Nobody falls back!"],

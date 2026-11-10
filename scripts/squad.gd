@@ -11,7 +11,7 @@ const FORMS = {
 }
 
 static var tick_t = 0.0
-static var events = {"flank": 0, "breach": 0, "bound": 0}
+static var events = {"flank": 0, "breach": 0, "bound": 0, "suppress": 0, "smoke": 0, "fallback": 0}
 
 static func step(dt: float) -> void:
 	tick_t -= dt
@@ -25,6 +25,10 @@ static func step(dt: float) -> void:
 		_bounding(q)
 		_flank(q)
 		_breach(q)
+		_suppress(q)
+		_smoke_cross(q)
+		_fall_back(q)
+		release_fallback(q)
 
 static func leader_of(q):
 	var l = q.get("leader")
@@ -129,8 +133,98 @@ static func _flank(q) -> void:
 	if n > 0:
 		events["flank"] += 1
 		q["flank_cd"] = G.sim_time + 30.0
+		# the rest of the squad keeps the target's head down while the flankers move
+		q["supp_until"] = G.sim_time + 14.0
+		q["supp_tgt"] = tgt
 		Voice.say(L, "flank")
 		G.ui.radio(L.team, "%s: pinned an enemy at %s, flanking %s" % [L.sname, AI.grid_ref(tgt.pos), "right" if side > 0.0 else "left"])
+
+# ---------------------------------------------------------------- base of fire
+# while part of the squad flanks, the rest keep shooting at where the enemy is, seen or not
+static func _suppress(q) -> void:
+	if G.sim_time > q.get("supp_until", 0.0):
+		return
+	var tgt = q.get("supp_tgt")
+	if tgt == null or not is_instance_valid(tgt) or tgt.state == "dead":
+		q["supp_until"] = 0.0
+		return
+	var said = false
+	for m in q["members"]:
+		if m.is_player or m.state != "alive" or m.task == "flank_move" or m.ammo_frac() < 0.3:
+			continue
+		AI.add_intel(m, tgt, tgt.pos, 1.0, true)
+		m.target = tgt
+		if not said and randf() < 0.3:
+			Voice.say(m, "suppress")
+			said = true
+	events["suppress"] += 1
+
+# ---------------------------------------------------------------- smoke before open ground
+static func _smoke_cross(q) -> void:
+	if G.sim_time < q.get("smoke_cd", 0.0):
+		return
+	var L = leader_of(q)
+	if L == null or L.is_player or L.move_target == null or not L.has_seen or G.sim_time - L.seen_t > 15.0:
+		return
+	var to = G.flat(L.move_target - L.pos)
+	if to.length() < 18.0:
+		return
+	# open ground: hardly any cover along the way
+	var mid = L.pos + to * 0.5
+	if G.world.cover_near(mid, 8.0).size() >= 3:
+		return
+	var thrower = null
+	for m in q["members"]:
+		if m.state == "alive" and not m.is_player and m.smokes > 0 and G.dist2d(m.pos, L.pos) < 12.0:
+			thrower = m
+			break
+	if thrower == null:
+		return
+	# the screen goes between the enemy and the crossing
+	var th = G.flat(L.threat - mid)
+	var spot = mid + (th.normalized() * minf(10.0, th.length() * 0.4) if th.length() > 1.0 else Vector3.ZERO)
+	Combat.throw_grenade(thrower, spot, "smoke")
+	Voice.say(thrower, "smoke")
+	q["smoke_cd"] = G.sim_time + 40.0
+	events["smoke"] += 1
+
+# ---------------------------------------------------------------- pulling back when it's hopeless
+static func _fall_back(q) -> void:
+	if G.sim_time < q.get("fb_cd", 0.0) or G.mode in ["laststand", "horde", "siege"]:
+		return
+	var L = leader_of(q)
+	if L == null or L.is_player:
+		return
+	var n = q["members"].size()
+	q["peak"] = maxi(q.get("peak", 0), n)
+	if n * 3 > q["peak"] or q["peak"] < 4:
+		return
+	# count the enemies they know are close
+	var close = 0
+	for e in L.intel:
+		if is_instance_valid(e) and e.state == "alive" and G.sim_time - L.intel[e]["t"] < 10.0 and G.dist2d(L.intel[e]["p"], L.pos) < 45.0:
+			close += 1
+	if close < n * 2 + 1:
+		return
+	var back = G.world.fallback_point(L.team, L.pos)
+	for m in q["members"]:
+		if not m.is_player and m.state == "alive":
+			AI.release_cover(m)
+			m.order = {"mode": "move", "point": back + Vector3(randf_range(-4, 4), 0, randf_range(-4, 4))}
+			m.decide_t = 0.0
+	Voice.say(L, "fallback")
+	G.ui.radio(L.team, "%s's squad is falling back to regroup" % L.sname)
+	q["fb_cd"] = G.sim_time + 60.0
+	q["fb_until"] = G.sim_time + 20.0
+	q["peak"] = n
+	events["fallback"] += 1
+
+static func release_fallback(q) -> void:
+	if q.get("fb_until", 0.0) > 0.0 and G.sim_time > q["fb_until"]:
+		q["fb_until"] = 0.0
+		for m in q["members"]:
+			if not m.is_player and m.order != null and m.order.get("mode", "") == "move":
+				m.order = null
 
 # ---------------------------------------------------------------- clearing buildings
 static func _building_at(p: Vector3):

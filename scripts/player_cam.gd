@@ -175,6 +175,73 @@ func player_update(s) -> void:
 		trig_latch = false
 
 # ---------------------------------------------------------------- camera
+# ---------------------------------------------------------------- placing structures: blueprint, facing, rotation
+var ghost: Node3D = null
+var ghost_key = ""
+var ghost_p0 = Vector3.ZERO
+var ghost_ok = -1
+var test_mouse = null       # screenshots: pretend the mouse is here
+var place_dir = -1          # 0..3 = +x, +z, -x, -z; -1 = face the enemy
+var rot_drag = false
+var rot_acc = 0.0
+var rot_moved = false
+const PLACE_DIRS = [Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(-1, 0, 0), Vector3(0, 0, -1)]
+
+func place_front(p: Vector3, team: int) -> Vector3:
+	if place_dir >= 0:
+		return PLACE_DIRS[place_dir]
+	var to = G.flat(Build._objective(team) - p)
+	if absf(to.x) >= absf(to.z):
+		return Vector3(signf(to.x) if to.x != 0.0 else 1.0, 0, 0)
+	return Vector3(0, 0, signf(to.z))
+
+func rotate_place(step: int) -> void:
+	if place_dir < 0:
+		var f = place_front(ghost_p0, _build_team())
+		place_dir = PLACE_DIRS.find(f)
+	place_dir = (place_dir + step + 4) % 4
+	G.ui.message("Facing " + ["east", "south", "west", "north"][place_dir])
+
+func _build_team() -> int:
+	var team: int = G.ui.build_team
+	return team if team < G.team_count() else 0
+
+func _ghost_tick() -> void:
+	var tool: String = G.ui.tool
+	var show = G.started and G.player == null and tool.begins_with("b:") and not G.ui.menu_open() and not G.editor.active
+	if not show:
+		if ghost != null:
+			ghost.queue_free()
+			ghost = null
+			ghost_key = ""
+		return
+	var mp = get_viewport().get_mouse_position() if test_mouse == null else test_mouse
+	var o = cam.project_ray_origin(mp)
+	var d = cam.project_ray_normal(mp)
+	var hit = G.ray(o, o + d * 500.0, G.L_WORLD)
+	if hit.is_empty():
+		if ghost != null:
+			ghost.visible = false
+		return
+	var p: Vector3 = hit.position
+	var kind = tool.substr(2)
+	var team = _build_team()
+	var f = place_front(p, team)
+	var key = "%s:%d:%d" % [kind, int(f.x), int(f.z)]
+	if ghost == null or key != ghost_key or G.dist2d(p, ghost_p0) > 30.0:
+		if ghost != null:
+			ghost.queue_free()
+		ghost = Build.ghost(kind, p, f)
+		ghost_key = key
+		ghost_p0 = p
+		ghost_ok = -1
+	ghost.visible = true
+	ghost.position = Vector3(p.x - ghost_p0.x, G.world.ground_y(p.x, p.z) - G.world.ground_y(ghost_p0.x, ghost_p0.z), p.z - ghost_p0.z)
+	var ok = Build.clear_at(p, kind) and Support.points.size() > team and (Build.cost(kind) == 0 or Support.points[team] >= Build.cost(kind))
+	if int(ok) != ghost_ok:
+		ghost_ok = int(ok)
+		Build.ghost_tint(ghost, ok)
+
 var rts_lines: MeshInstance3D = null
 var rts_labels: Array = []
 var last_squad_key = -1
@@ -285,6 +352,7 @@ func select_squad(i: int) -> void:
 func _process(dt: float) -> void:
 	_update_rings()
 	_rts_overlay()
+	_ghost_tick()
 	bloom = maxf(0.0, bloom - dt * 0.08)
 	kick = maxf(0.0, kick - dt * 1.6)
 	var fov_t = 65.0
@@ -416,7 +484,13 @@ func _unhandled_input(ev: InputEvent) -> void:
 		elif G.player == null and drag_from != null:
 			drag_to = ev.position
 			G.ui.sel_box_changed()
-		if G.player == null and r_drag and rts:
+		if G.player == null and rot_drag:
+			rot_acc += ev.relative.x
+			if absf(rot_acc) > 70.0:
+				rotate_place(1 if rot_acc > 0.0 else -1)
+				rot_acc = 0.0
+				rot_moved = true
+		elif G.player == null and r_drag and rts:
 			if ev.position.distance_to(r_press) > 6.0:
 				r_moved = true
 			rts_yaw -= ev.relative.x * 0.004 * G.settings["sens"]
@@ -426,7 +500,17 @@ func _unhandled_input(ev: InputEvent) -> void:
 			free_yaw -= ev.relative.x * 0.004 * G.settings["sens"]
 			free_pitch = clampf(free_pitch - ev.relative.y * 0.004 * G.settings["sens"] * inv, -1.45, 1.45)
 	elif ev is InputEventMouseButton:
-		if ev.button_index == MOUSE_BUTTON_RIGHT:
+		if ev.button_index == MOUSE_BUTTON_RIGHT and G.player == null and G.ui.tool.begins_with("b:"):
+			# placing a structure: hold the right button and move the mouse to turn it (a click turns it a quarter)
+			if ev.pressed:
+				rot_drag = true
+				rot_acc = 0.0
+				rot_moved = false
+			else:
+				if rot_drag and not rot_moved:
+					rotate_place(1)
+				rot_drag = false
+		elif ev.button_index == MOUSE_BUTTON_RIGHT:
 			if G.player != null:
 				rmb_down = ev.pressed
 			else:
@@ -582,6 +666,9 @@ func _key(k: int) -> void:
 			else:
 				G.ui.message("No satchel charges (engineers carry them)")
 	else:
+		if k == KEY_R and G.ui.tool.begins_with("b:"):
+			rotate_place(1)
+			return
 		if k == KEY_V and G.started and G.mode != "commander":
 			set_rts(not rts)
 			if rts:
@@ -654,11 +741,13 @@ func use_tool(screen: Vector2) -> void:
 	var d = cam.project_ray_normal(screen)
 	var hit = G.ray(o, o + d * 400.0, G.L_WORLD)
 	var tool = G.ui.tool
+	if G.mode == "commander" and not (tool == "sel" or tool.begins_with("b:") or tool.begins_with("sup:") or tool in ["up", "camo", "rep", "dis"]):
+		return
 	if tool == "ctl":
 		possess(pick_soldier(o, d))
 		return
-	if tool == "mvA" or tool == "mvB":
-		var team = 0 if tool == "mvA" else 1
+	if tool == "mvA" or tool == "mvB" or tool == "mv":
+		var team = 0 if tool == "mvA" else (1 if tool == "mvB" else _build_team())
 		var gp = G.ray(o, o + d * 500.0, G.L_WORLD)
 		if not gp.is_empty():
 			G.orders[team] = {"mode": "move", "point": gp.position}
@@ -678,10 +767,10 @@ func use_tool(screen: Vector2) -> void:
 	if hit.is_empty():
 		return
 	var p: Vector3 = hit.position
-	if tool == "a1" or tool == "b1":
-		G.main.spawn_soldier(0 if tool == "a1" else 1, p.x, p.z, "")
-	elif tool == "a5" or tool == "b5":
-		var team = 0 if tool == "a5" else 1
+	if tool == "a1" or tool == "b1" or tool == "s1":
+		G.main.spawn_soldier(0 if tool == "a1" else (1 if tool == "b1" else _build_team()), p.x, p.z, "")
+	elif tool == "a5" or tool == "b5" or tool == "s5":
+		var team = 0 if tool == "a5" else (1 if tool == "b5" else _build_team())
 		var fw = 1.0 if team == 0 else -1.0
 		for off in [[0, 0], [-1.6, -1.6], [1.6, -1.6], [-3.2, -3.2], [3.2, -3.2]]:
 			G.main.spawn_soldier(team, p.x + off[1] * fw, p.z + off[0], "")
@@ -703,20 +792,26 @@ func use_tool(screen: Vector2) -> void:
 	elif tool.begins_with("v:"):
 		var parts = tool.split(":")
 		var kind: String = parts[1]
-		var team = int(parts[2])
+		var team = int(parts[2]) if parts.size() > 2 else _build_team()
 		var en: Vector3 = G.world.rally_point((team + 1) % G.team_count())
 		G.main.spawn_vehicle(kind, team, p, atan2(en.x - p.x, en.z - p.z), kind != "truck")
 	elif tool.begins_with("b:"):
 		var kind = tool.substr(2)
-		var team: int = G.ui.build_team
-		if team >= G.team_count():
+		var team: int = _build_team()
+		if G.mode == "commander":
 			team = 0
-		var to = G.flat(Build._objective(team) - p)
+		var to = place_front(p, team)
 		if not Build.clear_at(p, kind):
 			G.ui.message("No room for a %s there" % Build.KINDS[kind]["name"])
 			return
+		var c = Build.cost(kind)
+		if c > 0:
+			if Support.points[team] < c:
+				G.ui.message("Not enough supply points: a %s costs %d, you have %d" % [Build.KINDS[kind]["name"], c, Support.points[team]])
+				return
+			Support.points[team] -= c
 		Build.place(kind, team, p, to, false, true)
-		G.ui.message("%s site marked out for %s" % [Build.KINDS[kind]["name"], G.TEAM_NAMES[team]])
+		G.ui.message("%s site marked out for %s%s · engineers will build it" % [Build.KINDS[kind]["name"], G.TEAM_NAMES[team], (" (-%d points)" % c) if c > 0 else ""])
 	elif tool == "dis":
 		dismantle_at(p, hit)
 	elif tool == "up" or tool == "camo" or tool == "rep":
@@ -735,8 +830,8 @@ func use_tool(screen: Vector2) -> void:
 			G.ui.message("Engineers will rebuild the %s" % st["name"])
 		else:
 			G.ui.message("The %s doesn't need rebuilding" % st["name"])
-	elif tool == "spA" or tool == "spB":
-		G.world.spawn[0 if tool == "spA" else 1] = Vector3(p.x, 0, p.z)
+	elif tool == "spA" or tool == "spB" or tool == "sp":
+		G.world.spawn[0 if tool == "spA" else (1 if tool == "spB" else _build_team())] = Vector3(p.x, 0, p.z)
 		G.main.refresh_markers()
 
 # F while controlling a soldier: take the gun of a fallen soldier at your feet (with their ammo),

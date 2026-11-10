@@ -44,7 +44,7 @@ static func step(dt: float) -> void:
 	if trickle >= 6.0:
 		trickle = 0.0
 		for t in range(points.size()):
-			points[t] += 1
+			points[t] += 2 if (G.mode == "commander" and t == 0) else 1
 	# AI sides spend what they have
 	for t in range(points.size()):
 		if t == 0 and (G.player != null or G.mode == "commander"):

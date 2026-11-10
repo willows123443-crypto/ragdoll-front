@@ -56,8 +56,8 @@ static func setup() -> void:
 			_setup_rescue()
 		"commander":
 			G.pc.set_rts(true)
-			G.ui.tool = "sel"
-			G.ui.message("You command Alpha. Click a soldier to select his squad, drag to box-select, right-click to send them. WASD pans, wheel zooms, Q/E turn")
+			Support.points[0] = 30
+			G.ui.message("You command Alpha. Buy squads, vehicles and fire support with supply points, and mark out buildings for your engineers. Click or drag to select, right-click to send. WASD pans, wheel zooms, Q/E turn")
 		"horde":
 			G.ui.message("Hold out! Wave after wave of the dead are coming. Survive %d waves" % HORDE_WIN)
 
@@ -495,24 +495,52 @@ static func _spawn_pack(n: int) -> void:
 			break
 	for i in range(n):
 		var q = G.main._free_spot(p + Vector3(randf_range(-5, 5), 0, randf_range(-5, 5)))
-		Soldier.zombie_next = true
+		var kind = _pick_type()
+		Soldier.zombie_next = kind
 		var z = G.main.spawn_soldier(1, q.x, q.z, "pistol")
-		Soldier.zombie_next = false
+		Soldier.zombie_next = ""
 		if z != null:
-			make_zombie(z)
+			make_zombie(z, kind)
 
-static func make_zombie(z) -> void:
+# later waves bring more of the fast and the big ones
+static func _pick_type() -> String:
+	var r = randf()
+	var w = float(horde_wave)
+	if horde_wave >= 2 and r < 0.04 + 0.012 * w:
+		return "brute"
+	r = randf()
+	if r < 0.12 + 0.025 * w:
+		return "runner"
+	if randf() < 0.12:
+		return "crawler"
+	return "walker"
+
+const ZOMBIES = {
+	"walker": {"hp": 110.0, "hpw": 6.0, "speed": [2.4, 3.2], "dmg": [16.0, 24.0], "name": "Walker"},
+	"runner": {"hp": 70.0, "hpw": 4.0, "speed": [5.0, 5.8], "dmg": [12.0, 18.0], "name": "Runner"},
+	"brute": {"hp": 430.0, "hpw": 25.0, "speed": [2.2, 2.6], "dmg": [34.0, 44.0], "name": "Brute"},
+	"crawler": {"hp": 55.0, "hpw": 3.0, "speed": [2.6, 3.0], "dmg": [9.0, 14.0], "name": "Crawler"},
+}
+
+static func make_zombie(z, kind: String = "walker") -> void:
+	var zs = ZOMBIES[kind]
 	z.zombie = true
+	z.ztype = kind
 	z.grenades = 0
 	z.smokes = 0
 	z.satchels = 0
 	z.rgren = 0
 	z.gun_node.visible = false
-	z.hp = 110.0 + horde_wave * 6.0
+	z.hp = zs["hp"] + horde_wave * zs["hpw"]
+	z.zspeed = randf_range(zs["speed"][0], zs["speed"][1])
 	z.think = randf_range(0.0, 0.6)
-	z.sname = "Walker"
+	z.groan_t = randf_range(0.5, 6.0)
+	z.sname = zs["name"]
+	if kind == "crawler":
+		z.prone_t = true
+		z.prone = true
 
-# what a zombie does instead of thinking: shamble towards the nearest living soldier and claw at him
+# what a zombie does instead of thinking: lurch towards the nearest living soldier, then lunge and bite
 static func zombie_tick(s) -> void:
 	s.think -= G.DT
 	if s.think <= 0.0:
@@ -529,30 +557,52 @@ static func zombie_tick(s) -> void:
 	var t = s.target
 	s.ready_ = false
 	s.ads = false
-	s.crouch_t = 0.18
-	s.prone_t = false
+	s.crouch_t = 0.12 if s.ztype != "brute" else 0.0
+	s.prone_t = s.ztype == "crawler"
 	s.tool_mode = ""
+	s.hand_t = null
+	s.groan_t -= G.DT
+	if s.groan_t <= 0.0:
+		s.groan_t = randf_range(3.0, 8.0)
+		G.audio.groan(s.pos, "brute" if s.ztype == "brute" else ("screech" if s.ztype == "runner" and randf() < 0.5 else "groan"))
 	if t == null or not is_instance_valid(t) or t.state == "dead":
 		AI.stop_move(s)
 		s.want = Vector3.ZERO
+		s.lunge_t = 0.0
 		return
 	var to = G.flat(t.pos - s.pos)
 	var d = to.length()
 	var yaw = atan2(to.x, to.z)
 	s.aim_yaw = G.turn_to(s.aim_yaw, yaw, 3.0 * G.DT)
 	s.aim_pitch = 0.0
-	# arms out in front
-	var f = Vector3(sin(s.body_yaw), 0, cos(s.body_yaw))
-	s.hand_t = s.chest() + f * 0.75 + Vector3(0, 0.1 + sin(G.sim_time * 3.0 + s.seed_) * 0.08, 0)
-	var spd = 2.8 + float(s.id % 3) * 0.45 + (2.0 if s.id % 4 == 0 else 0.0)    # one in four runs
-	if d < 1.25:
+	var spd: float = s.zspeed
+	var reach = 1.0 if s.ztype == "crawler" else 1.25
+	# the attack: a short wind-up, a lunge and a bite
+	if s.lunge_t > 0.0:
+		s.lunge_t -= G.DT
+		AI.stop_move(s)
+		if s.lunge_t > 0.3:
+			s.want = Vector3.ZERO
+		else:
+			s.want = s.lunge_dir * (minf(spd * 1.9, 6.5) / s.W["speed"]) if s.ztype != "crawler" else s.lunge_dir * 0.6
+			if s.melee_t <= 0.0 and d < reach:
+				s.melee_t = 1.1 if s.ztype != "brute" else 1.5
+				_claw(s, t)
+		if s.lunge_t <= 0.0:
+			s.melee_t = maxf(s.melee_t, 0.5)
+		return
+	s.melee_t -= G.DT
+	if d < (2.4 if s.ztype != "crawler" else 1.4) and s.melee_t <= 0.0:
+		s.lunge_t = 0.55 if s.ztype != "runner" else 0.42
+		s.lunge_dir = to / maxf(d, 0.01)
+		s.melee_t = 0.0
+		G.audio.groan(s.pos, "snarl")
+		return
+	if d < 1.1:
 		AI.stop_move(s)
 		s.want = Vector3.ZERO
-		s.melee_t -= G.DT
-		if s.melee_t <= 0.0:
-			s.melee_t = 0.95
-			_claw(s, t)
-	elif s.bad_t < G.sim_time and (d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
+		return
+	if s.bad_t < G.sim_time and (d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
 		AI.stop_move(s)
 		var dir = to / d
 		# slide round posts and corners rather than pushing into them
@@ -562,7 +612,9 @@ static func zombie_tick(s) -> void:
 				if not G.world.solid_at(s.pos.x + nd.x * 0.6, s.pos.z + nd.z * 0.6, 0.22, s.pos.y):
 					dir = nd
 					break
-		s.want = dir * (spd / s.W["speed"])
+		# a lurching walk: speed surges and sags
+		var surge = 1.0 if s.ztype == "runner" else 0.75 + 0.35 * absf(sin(G.sim_time * 1.6 + s.seed_))
+		s.want = dir * (spd * surge / s.W["speed"])
 		# not getting anywhere (a wall, a fence, a crowd)? find a way round for a while
 		s.prog_t += G.DT
 		if s.prog_t > 1.5:
@@ -580,8 +632,6 @@ static func zombie_tick(s) -> void:
 			var res = AI.follow_path(s)
 			if res == "stuck" or res == "arrived":
 				AI.stop_move(s)
-	if randf() < 0.002:
-		G.fx.callout(s, G.pick(["Uhhhh...", "Grrraaah", "Hnnnngh"]))
 
 static func _vaultable_ahead(s, dir: Vector3) -> bool:
 	for c in G.world.cell_at(s.pos.x + dir.x * 0.7, s.pos.z + dir.z * 0.7):
@@ -590,7 +640,8 @@ static func _vaultable_ahead(s, dir: Vector3) -> bool:
 	return false
 
 static func _claw(z, t) -> void:
-	var dmg = randf_range(16.0, 26.0)
+	var zr = ZOMBIES.get(z.ztype, ZOMBIES["walker"])["dmg"]
+	var dmg = randf_range(zr[0], zr[1])
 	t.hp -= dmg
 	t.last_attacker = z
 	G.fx.bleed(t.chest(), G.flat(t.pos - z.pos).normalized(), false)
@@ -599,8 +650,10 @@ static func _claw(z, t) -> void:
 		Combat.shake = maxf(Combat.shake, 0.35)
 	if t.hp <= 0.0:
 		Combat.kill(t, z, false)
-	elif t.state == "alive" and randf() < 0.25:
-		t.fall(1.2)
+	elif t.state == "alive" and (z.ztype == "brute" or randf() < 0.2):
+		t.fall(1.6 if z.ztype == "brute" else 1.2)
+		if z.ztype == "brute":
+			t.push(1, G.flat(t.pos - z.pos).normalized() * 6.0 + Vector3(0, 2.5, 0), 0.5)
 	if t.state == "alive" and not t.is_player:
 		Morale.shock(t, 8.0)
 

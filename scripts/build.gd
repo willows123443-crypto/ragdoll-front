@@ -63,6 +63,101 @@ static func reset() -> void:
 		no_spawn_said.append(false)
 		out.append(false)
 
+# what a structure costs in commander mode (supply points)
+const COSTS = {"fob": 24, "sandbags": 2, "wire": 2, "traps": 3, "mgnest": 8, "mortarpit": 10, "aa": 10, "tower": 6, "bunker": 14,
+	"hospital": 12, "radio": 10, "depot": 16, "supply": 8}
+
+static func cost(kind: String) -> int:
+	return COSTS.get(kind, 0) if G.mode == "commander" else 0
+
+# a see-through blueprint of a structure for placing it: same pieces as the real thing, no colliders
+static var ghost_mats = {}
+static func ghost(kind: String, p: Vector3, front: Vector3) -> Node3D:
+	var f = G.flat(front).normalized()
+	if f.length_squared() < 0.01:
+		f = Vector3(1, 0, 0)
+	var ax = absf(f.z) >= absf(f.x)
+	var fs = signf(f.z) if ax else signf(f.x)
+	var root = Node3D.new()
+	G.world.geo_root.add_child(root)
+	var st = {"kind": kind, "team": 0, "p": Vector3(p.x, G.world.ground_y(p.x, p.z), p.z), "ax": ax, "fs": fs,
+		"work": 0.0, "need": 1.0, "done": false, "born": 0.0, "dead": false, "root": root, "parts": [], "cols": [],
+		"hidden": [], "shown": 0, "scaf": null, "label": null, "veh": null, "player": true, "t": 0.0, "ammo": null, "name": "", "pct": -1}
+	var keep_piece = G.world.piece
+	G.world.edit_node = root
+	G.world.dyn_mode = false
+	G.world.piece = null
+	match kind:
+		"fob": _geo_fob(st)
+		"sandbags": _geo_sandbags(st)
+		"wire": _geo_wire(st)
+		"traps": _geo_traps(st)
+		"mgnest": _geo_mgnest(st)
+		"mortarpit": _geo_mortarpit(st)
+		"tower": _geo_tower(st)
+		"bunker": _geo_bunker(st)
+		"hospital": _geo_hospital(st)
+		"radio": _geo_radio(st)
+		"depot": _geo_depot(st)
+		"supply": _geo_supply(st)
+		"aa": _geo_aa(st)
+	G.world.edit_node = null
+	G.world.piece = keep_piece
+	# the outline of its footprint and an arrow out of the front
+	var sz: Vector2 = KINDS[kind]["size"]
+	var fw = Vector3(0, 0, fs) if ax else Vector3(fs, 0, 0)
+	var half_len = (sz.y if true else sz.x) * 0.5
+	var foot = MeshInstance3D.new()
+	var fm = BoxMesh.new()
+	fm.size = Vector3(sz.x, 0.06, sz.y) if ax else Vector3(sz.y, 0.06, sz.x)
+	foot.mesh = fm
+	foot.position = st["p"] + Vector3(0, 0.08, 0)
+	foot.set_meta("ghost_foot", true)
+	root.add_child(foot)
+	var arrow = Node3D.new()
+	var shaft = MeshInstance3D.new()
+	var sm = BoxMesh.new()
+	sm.size = Vector3(0.5, 0.12, 2.6)
+	shaft.mesh = sm
+	shaft.position = Vector3(0, 0, 1.3)
+	arrow.add_child(shaft)
+	var head = MeshInstance3D.new()
+	var hm = PrismMesh.new()
+	hm.size = Vector3(1.6, 1.6, 0.12)
+	head.mesh = hm
+	head.rotation = Vector3(PI / 2.0, 0, 0)
+	head.position = Vector3(0, 0, 3.2)
+	arrow.add_child(head)
+	arrow.set_meta("ghost_arrow", true)
+	root.add_child(arrow)
+	arrow.position = st["p"] + fw * (half_len + 0.6) + Vector3(0, 0.3, 0)
+	arrow.rotation.y = atan2(fw.x, fw.z)
+	return root
+
+# tint a blueprint: blue-green when it fits, red when it doesn't
+static func ghost_tint(root: Node3D, ok: bool) -> void:
+	var key = "ok" if ok else "bad"
+	if not ghost_mats.has(key):
+		var m = StandardMaterial3D.new()
+		m.albedo_color = Color(0.35, 0.85, 1.0, 0.38) if ok else Color(1.0, 0.3, 0.25, 0.42)
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		ghost_mats[key] = m
+		var a = StandardMaterial3D.new()
+		a.albedo_color = Color(1.0, 0.85, 0.2) if ok else Color(1.0, 0.45, 0.3)
+		a.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		a.no_depth_test = true
+		ghost_mats[key + "_arrow"] = a
+	_tint_all(root, ghost_mats[key], ghost_mats[key + "_arrow"])
+
+static func _tint_all(n: Node, m: Material, am: Material) -> void:
+	for ch in n.get_children():
+		if ch is MeshInstance3D:
+			ch.material_override = am if (n.has_meta("ghost_arrow") or ch.has_meta("ghost_foot")) else m
+			ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_tint_all(ch, m, am)
+
 # modes where reinforcements need a base to arrive at
 static func bases_matter() -> bool:
 	return G.reinforce and G.mode in ["deathmatch", "capture", "frontline", "assault", "destroy", "breakthrough", "siege"]

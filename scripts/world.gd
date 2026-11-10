@@ -39,6 +39,12 @@ var NW = 520
 var NH = 380
 var astar = AStarGrid2D.new()
 var nav_vault = PackedByteArray()      # 1 where a low wall can be vaulted
+# vehicles path on a coarser grid where everything solid is grown by a vehicle's half-width
+const VCS = 2.0
+const VCLEAR = 1.6
+var vastar = AStarGrid2D.new()
+var VW = 130
+var VH = 95
 
 const WALLC = [Color(0.78, 0.71, 0.56), Color(0.73, 0.64, 0.49), Color(0.61, 0.59, 0.55), Color(0.56, 0.33, 0.27), Color(0.82, 0.76, 0.62)]
 var MAPS = {
@@ -244,6 +250,12 @@ func build_terrain(base: Color) -> void:
 	var hi = base.lightened(0.12)
 	var r = RandomNumberGenerator.new()
 	r.seed = 77
+	# big soft patches of drier and lusher ground so fields aren't one flat colour
+	var noise = FastNoiseLite.new()
+	noise.seed = 1234
+	noise.frequency = 0.018
+	var dry = base.lerp(Color(0.62, 0.56, 0.38), 0.4)
+	var lush = base.lerp(Color(0.3, 0.42, 0.22), 0.35)
 	var verts = PackedVector3Array()
 	var norms = PackedVector3Array()
 	var colors = PackedColorArray()
@@ -258,7 +270,8 @@ func build_terrain(base: Color) -> void:
 			var hd = th[i - W] if iz > 0 else h
 			var hu = th[i + W] if iz < TH_ else h
 			norms[i] = Vector3(hl - hr, 2.0, hd - hu).normalized()
-			var c = base
+			var nz = noise.get_noise_2d(TX0 + ix, TZ0 + iz)
+			var c = base.lerp(dry, clampf(nz * 1.6, 0.0, 1.0)).lerp(lush, clampf(-nz * 1.6, 0.0, 1.0))
 			if painted and paint[i] > 0 and paint[i] < PAINT.size():
 				c = PAINT[paint[i]]
 			if h < -0.2:
@@ -684,6 +697,7 @@ func build_nav() -> void:
 	nav_vault.resize(NW * NH)
 	for c in cols:
 		_nav_mark(c)
+	_build_vnav()
 	for w in water:
 		var ix0 = maxi(0, int((w[0] - NX0) / NCS))
 		var ix1 = mini(NW - 1, int((w[1] - NX0) / NCS))
@@ -706,6 +720,7 @@ func update_nav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 			nav_vault[iz * NW + ix] = 0
 	for c in cols_in_rect(x0 - 2.0, z0 - 2.0, x1 + 2.0, z1 + 2.0):
 		_nav_mark(c)
+	_vnav_area(x0, z0, x1, z1)
 	# water stays slow going
 	for iz in range(a.y, b.y + 1):
 		for ix in range(a.x, b.x + 1):
@@ -713,6 +728,107 @@ func update_nav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 			var pz = NZ0 + (iz + 0.5) * NCS
 			if not water.is_empty() and in_water(px, pz) and not astar.is_point_solid(Vector2i(ix, iz)):
 				astar.set_point_weight_scale(Vector2i(ix, iz), 12.0)
+
+# ---------------------------------------------------------------- vehicle navigation
+func _build_vnav() -> void:
+	VW = maxi(1, int(ceil(TW / VCS)))
+	VH = maxi(1, int(ceil(TH_ / VCS)))
+	vastar = AStarGrid2D.new()
+	vastar.region = Rect2i(0, 0, VW, VH)
+	vastar.cell_size = Vector2(1, 1)
+	vastar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	vastar.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	vastar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	vastar.update()
+	for c in cols:
+		_vnav_mark(c)
+	_vnav_water(0, 0, VW - 1, VH - 1)
+
+func vnav_cell(x: float, z: float) -> Vector2i:
+	return Vector2i(clampi(int(floor((x - TX0) / VCS)), 0, VW - 1), clampi(int(floor((z - TZ0) / VCS)), 0, VH - 1))
+
+func _vnav_mark(c) -> void:
+	if not blocks_move(c) or c.hi.y - c.gy < 0.35:
+		return
+	var ix0 = maxi(0, int(floor((c.lo.x - VCLEAR - TX0) / VCS)))
+	var ix1 = mini(VW - 1, int(floor((c.hi.x + VCLEAR - TX0) / VCS)))
+	var iz0 = maxi(0, int(floor((c.lo.z - VCLEAR - TZ0) / VCS)))
+	var iz1 = mini(VH - 1, int(floor((c.hi.z + VCLEAR - TZ0) / VCS)))
+	for iz in range(iz0, iz1 + 1):
+		for ix in range(ix0, ix1 + 1):
+			vastar.set_point_solid(Vector2i(ix, iz), true)
+
+func _vnav_water(ix0: int, iz0: int, ix1: int, iz1: int) -> void:
+	if water.is_empty():
+		return
+	for iz in range(iz0, iz1 + 1):
+		for ix in range(ix0, ix1 + 1):
+			var x = TX0 + (ix + 0.5) * VCS
+			var z = TZ0 + (iz + 0.5) * VCS
+			if in_water(x, z):
+				vastar.set_point_solid(Vector2i(ix, iz), true)
+
+func _vnav_area(x0: float, z0: float, x1: float, z1: float) -> void:
+	if vastar.region.size.x != VW:
+		return
+	var a = vnav_cell(x0 - VCLEAR - 2.0, z0 - VCLEAR - 2.0)
+	var b = vnav_cell(x1 + VCLEAR + 2.0, z1 + VCLEAR + 2.0)
+	for iz in range(a.y, b.y + 1):
+		for ix in range(a.x, b.x + 1):
+			vastar.set_point_solid(Vector2i(ix, iz), false)
+	var m = VCLEAR + VCS * 2.0
+	for c in cols_in_rect(TX0 + a.x * VCS - m, TZ0 + a.y * VCS - m, TX0 + (b.x + 1) * VCS + m, TZ0 + (b.y + 1) * VCS + m):
+		_vnav_mark(c)
+	_vnav_water(a.x, a.y, b.x, b.y)
+
+func _vnearest_free(c: Vector2i) -> Vector2i:
+	if not vastar.is_point_solid(c):
+		return c
+	for r in range(1, 7):
+		for dz in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if absi(dx) != r and absi(dz) != r:
+					continue
+				var p = Vector2i(c.x + dx, c.y + dz)
+				if vastar.is_in_boundsv(p) and not vastar.is_point_solid(p):
+					return p
+	return Vector2i(-1, -1)
+
+func _vwalk_line(a: Vector2i, b: Vector2i) -> bool:
+	var d = Vector2(b - a)
+	var n = int(ceil(d.length() * 2.0))
+	for i in range(1, n + 1):
+		var t = float(i) / n
+		if vastar.is_point_solid(Vector2i(roundi(a.x + d.x * t), roundi(a.y + d.y * t))):
+			return false
+	return true
+
+# a path a vehicle fits along (clear of walls, wrecks and everything built), or [] if there is none
+func find_vpath(from: Vector3, to: Vector3) -> Array:
+	if vastar.region.size.x != VW:
+		return find_path(from, to)
+	var s = _vnearest_free(vnav_cell(from.x, from.z))
+	var t = _vnearest_free(vnav_cell(to.x, to.z))
+	if s.x < 0 or t.x < 0:
+		return find_path(from, to)
+	var ids: Array = vastar.get_id_path(s, t, true)
+	if ids.is_empty():
+		return find_path(from, to)
+	var out: Array = []
+	var i = 0
+	while i < ids.size() - 1:
+		var j = mini(ids.size() - 1, i + 20)
+		while j > i + 1 and not _vwalk_line(ids[i], ids[j]):
+			j -= 1
+		var x = TX0 + (ids[j].x + 0.5) * VCS
+		var z = TZ0 + (ids[j].y + 0.5) * VCS
+		out.append(Vector3(x, ground_y(x, z), z))
+		i = j
+	if out.is_empty():
+		out.append(Vector3(to.x, ground_y(to.x, to.z), to.z))
+	elif ids[ids.size() - 1] == vnav_cell(to.x, to.z):
+		out[out.size() - 1] = Vector3(to.x, ground_y(to.x, to.z), to.z)
+	return out
 
 # colliders overlapping a rectangle, found through the spatial grid
 func cols_in_rect(x0: float, z0: float, x1: float, z1: float) -> Array:

@@ -31,8 +31,13 @@ const UPREF = {1: [0, 0.56, 0], 0: [0, 0.77, 0.03], 3: [-0.21, 0.51, 0], 6: [0.2
 static var mats = {}
 static var camo_tex: ImageTexture = null
 static var next_id = 0
-static var zombie_next = false    # the horde: the next soldier made is one of the walking dead
+static var zombie_next = ""       # the horde: the next soldier made is one of the walking dead (walker, runner, brute, crawler)
 var zombie = false
+var ztype = ""
+var zspeed = 2.8
+var lunge_t = 0.0
+var lunge_dir = Vector3.FORWARD
+var groan_t = 0.0
 var melee_t = 0.0
 
 var id = 0
@@ -223,9 +228,12 @@ func setup(team_: int, x: float, z: float, weapon_id: String) -> void:
 	phase = randf() * 6.0
 	seed_ = randf() * 100.0
 	skin = G.pick(G.SKINS)
-	zombie = zombie_next
+	zombie = zombie_next != ""
+	ztype = zombie_next
 	if zombie:
-		skin = Color(0.5, 0.57, 0.42).lerp(Color(0.6, 0.6, 0.5), randf() * 0.5)
+		skin = [Color(0.55, 0.6, 0.48), Color(0.62, 0.62, 0.55), Color(0.5, 0.55, 0.5), Color(0.58, 0.55, 0.45)][randi() % 4]
+		if ztype == "brute":
+			skin = Color(0.47, 0.5, 0.42)
 	callout_cd = randf_range(0.0, 3.0)
 	burst_cd = randf_range(0.3, 1.2)
 	nade_cd = randf_range(4.0, 10.0)
@@ -390,6 +398,11 @@ func _build_body() -> void:
 	_mesh(parts[2], Vector3(0.25, 0.26, 0.25), Vector3.ZERO, sk)
 	if not zombie:
 		_helmet(parts[2], helm, band, uni)
+		var pack = _mat("pack" + G.TEAM_VEST[team].to_html(), G.TEAM_VEST[team].darkened(0.18), true)
+		_mesh(parts[1], Vector3(0.3, 0.3, 0.14), Vector3(0, 0.04, -0.19), pack)
+		_mesh(parts[0], Vector3(0.09, 0.13, 0.08), Vector3(0.17, 0.0, -0.08), _mat("canteen", Color(0.24, 0.26, 0.2), false))
+	else:
+		_zombie_look(sk, uni, uni2)
 	for i in [3, 5]:
 		_mesh(parts[i], Vector3(0.13, 0.32, 0.13), Vector3.ZERO, uni)
 	_mesh(parts[3], Vector3(0.15, 0.08, 0.15), Vector3(0, -0.03, 0), band)
@@ -642,6 +655,26 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 				G.fx.impact(hand_t, Vector3.UP)
 		elif sw > 0.3:
 			hammer_hit = false
+	elif zombie:
+		var zt = G.sim_time + seed_
+		if lunge_t > 0.3:
+			# wind-up: arms come up
+			rh = rsh + uf * 0.15 + Vector3(0, 0.28, 0) - ur * 0.05
+			lh = lsh + uf * 0.15 + Vector3(0, 0.28, 0) + ur * 0.05
+		elif lunge_t > 0.0:
+			# the grab
+			rh = rsh + uf * 0.58 + Vector3(0, -0.02, 0) + ur * 0.04
+			lh = lsh + uf * 0.58 + Vector3(0, -0.02, 0) - ur * 0.04
+		elif ztype == "runner":
+			var k = sin(phase)
+			rh = rsh + uf * (0.12 + 0.22 * k) + Vector3(0, -0.22 + 0.1 * absf(k), 0)
+			lh = lsh + uf * (0.12 - 0.22 * k) + Vector3(0, -0.22 + 0.1 * absf(k), 0)
+		elif ztype == "brute":
+			rh = rsh + uf * 0.22 - ur * 0.18 + Vector3(0, -0.32 + sin(zt * 1.3) * 0.04, 0)
+			lh = lsh + uf * 0.22 + ur * 0.18 + Vector3(0, -0.32 + sin(zt * 1.1) * 0.04, 0)
+		else:
+			rh = rsh + uf * 0.42 - ur * 0.02 + Vector3(0, -0.06 + sin(zt * 2.1) * 0.06, 0)
+			lh = lsh + uf * (0.34 + 0.06 * sin(zt * 1.3)) + ur * 0.02 + Vector3(0, -0.12 + sin(zt * 1.7) * 0.07, 0)
 	elif hand_t != null:
 		rh = hand_t + ur * 0.13
 		lh = hand_t - ur * 0.13
@@ -704,6 +737,9 @@ func stand_pose() -> void:
 	var sprint = not ready_ and spd > 4.6
 	var al = 0.06 + 0.3 * c + minf(spd, 6.0) * 0.028 + (0.12 if sprint else 0.0) + breath
 	var th = lean * 0.42
+	if zombie:
+		al += {"walker": 0.42, "runner": 0.3, "brute": 0.5}.get(ztype, 0.4) + (0.3 if lunge_t > 0.0 and lunge_t < 0.3 else 0.0)
+		th += sin(t * 0.9) * 0.14 + (0.1 if id % 2 == 0 else -0.1)
 	var tw = clampf(G.wrap_a(aim_yaw - body_yaw), -1.1, 1.1)
 	var uy = body_yaw + tw
 	var uf = Vector3(sin(uy), 0, cos(uy))
@@ -721,6 +757,9 @@ func stand_pose() -> void:
 		P[i] = P[2] + ur * x2 + uf * z1 + Vector3(0, y2 + breath, 0)
 	if not ready_ and spd < 0.3:
 		P[0] = P[0] + ur * (sin(t * 0.35) * 0.05)
+	if zombie:
+		# head lolls to one side and juts forward
+		P[1] = P[1] + uf * (0.06 + (0.1 if lunge_t > 0.0 and lunge_t < 0.3 else 0.0)) + ur * (0.05 * sin(t * 0.6) + (0.04 if id % 2 == 0 else -0.04)) - Vector3(0, 0.04, 0)
 	var A = minf(spd * 0.12, 0.45)
 	var lmx = mlx * mn
 	var lmz = mlz * mn
@@ -733,6 +772,9 @@ func stand_pose() -> void:
 		var ph = phase + (PI if side == 1 else 0.0)
 		var sw = sin(ph)
 		var lift = maxf(0.0, cos(ph)) * A * 0.6
+		if zombie and ztype != "runner" and side == id % 2:
+			sw *= 0.45          # the bad leg drags
+			lift = 0.0
 		var hi = 12 if side == 1 else 9
 		var cz = -0.24 * c if side == 1 else 0.3 * c
 		var foot = base + r * (sd * 0.13 + lmx * sw * A) + f * (lmz * sw * A + cz)
@@ -976,9 +1018,53 @@ func resupply() -> void:
 	if wid == "rpg":
 		rockets = 3
 
+# the walking dead: glowing eyes, a slack jaw, blood down the front, torn sleeves; brutes are bulked out
+func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
+	var eye = _mat_glow("zeye", Color(0.95, 0.85, 0.35))
+	var blood = _mat("zblood", Color(0.32, 0.05, 0.04), false)
+	var dark = _mat("zrot", Color(0.22, 0.2, 0.17), false)
+	for e in [-1.0, 1.0]:
+		_mesh(parts[2], Vector3(0.05, 0.03, 0.02), Vector3(e * 0.06, 0.03, 0.126), eye)
+	_mesh(parts[2], Vector3(0.12, 0.05, 0.05), Vector3(0, -0.11, 0.1), dark)
+	_mesh(parts[2], Vector3(0.14, 0.04, 0.03), Vector3(0.03, 0.09, 0.12), blood)
+	_mesh(parts[1], Vector3(0.22, 0.26, 0.02), Vector3(0.05, 0.02, 0.165), blood)
+	_mesh(parts[1], Vector3(0.12, 0.14, 0.02), Vector3(-0.12, -0.14, 0.13), blood)
+	_mesh(parts[1], Vector3(0.1, 0.1, 0.02), Vector3(0.1, -0.05, -0.155), dark)
+	# one arm torn bare
+	var bare = 3 if id % 2 == 0 else 5
+	_mesh(parts[bare], Vector3(0.135, 0.33, 0.135), Vector3.ZERO, sk)
+	_mesh(parts[bare + 1], Vector3(0.05, 0.08, 0.13), Vector3(0, 0.06, 0.02), blood)
+	if ztype == "brute":
+		_mesh(parts[1], Vector3(0.62, 0.5, 0.4), Vector3(0, 0.05, 0.02), sk)
+		_mesh(parts[1], Vector3(0.56, 0.2, 0.36), Vector3(0, -0.2, 0.0), uni)
+		for i in [3, 5]:
+			_mesh(parts[i], Vector3(0.22, 0.36, 0.22), Vector3.ZERO, sk)
+		for i in [4, 6]:
+			_mesh(parts[i], Vector3(0.2, 0.32, 0.2), Vector3(0, -0.02, 0), sk)
+			_mesh(parts[i], Vector3(0.16, 0.14, 0.16), Vector3(0, 0.17, 0), dark)
+		_mesh(parts[2], Vector3(0.3, 0.2, 0.26), Vector3(0, -0.04, 0), sk)
+	elif ztype == "runner":
+		_mesh(parts[1], Vector3(0.38, 0.5, 0.2), Vector3.ZERO, sk)
+		_mesh(parts[1], Vector3(0.3, 0.07, 0.21), Vector3(0, 0.08, 0.0), blood)
+	elif ztype == "crawler":
+		for i in [8, 10]:
+			for ch in parts[i].get_children():
+				if ch is MeshInstance3D:
+					ch.visible = false
+			_mesh(parts[i], Vector3(0.15, 0.12, 0.15), Vector3(0, 0.18, 0), blood)
+
+static func _mat_glow(key: String, col: Color) -> StandardMaterial3D:
+	if mats.has(key):
+		return mats[key]
+	var m = StandardMaterial3D.new()
+	m.albedo_color = col
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mats[key] = m
+	return m
+
 # squad leaders carry a radio with a tall antenna so you can pick them out
 func set_leader(v: bool) -> void:
-	if zombie:
+	if zombie or zombie_next != "":
 		return
 	if rec != null:
 		rec["leader"] = rec["leader"] or v
@@ -1582,7 +1668,9 @@ func _tick_alive() -> void:
 			return
 	if not far:
 		check_gun_clip()
-	if prone:
+	if prone and zombie:
+		crawl_pose()
+	elif prone:
 		prone_pose()
 	else:
 		stand_pose()

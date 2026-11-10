@@ -10,6 +10,7 @@ var point_flags: Array = []
 var spawn_flags: Array = []
 var tick_us = 0
 var prof = [0, 0]
+var force_cls: Array = []   # classes for the next soldiers made (bought squads)
 var sim_ms = 0.0        # smoothed cost of one simulation tick, for the performance readout
 var tick_n = 0
 
@@ -63,7 +64,7 @@ func _build_environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	var sky = Sky.new()
 	var sm = ProceduralSkyMaterial.new()
-	sm.sky_top_color = Color(0.45, 0.55, 0.66)
+	sm.sky_top_color = Color(0.36, 0.52, 0.72)
 	sm.sky_horizon_color = Color(0.68, 0.7, 0.71)
 	sm.ground_horizon_color = Color(0.6, 0.6, 0.58)
 	sm.ground_bottom_color = Color(0.3, 0.29, 0.26)
@@ -81,8 +82,16 @@ func _build_environment() -> void:
 	env.glow_intensity = 0.4
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.66, 0.69, 0.7)
-	env.fog_density = 0.003
-	env.fog_aerial_perspective = 0.4
+	env.fog_density = 0.0016
+	env.fog_aerial_perspective = 0.25
+	env.fog_sky_affect = 0.6
+	# a little more punch: contrast and colour
+	env.adjustment_enabled = true
+	env.adjustment_contrast = 1.1
+	env.adjustment_saturation = 1.18
+	env.adjustment_brightness = 1.0
+	env.glow_bloom = 0.05
+	env.glow_hdr_threshold = 1.1
 	sky_mat = sm
 	var we = WorldEnvironment.new()
 	we.environment = env
@@ -92,6 +101,8 @@ func _build_environment() -> void:
 	sun.light_energy = float(_arg("sun", "0.95"))
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 140.0
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.shadow_blur = 1.4
 	sun.rotation = Vector3(deg_to_rad(-52), deg_to_rad(-35), 0)
 	add_child(sun)
 	apply_time()
@@ -144,8 +155,8 @@ func apply_time() -> void:
 			env.tonemap_exposure = ex * 1.4
 			G.view_range = 45.0
 		_:
-			sky_mat.sky_top_color = Color(0.45, 0.55, 0.66)
-			sky_mat.sky_horizon_color = Color(0.68, 0.7, 0.71)
+			sky_mat.sky_top_color = Color(0.36, 0.52, 0.72)
+			sky_mat.sky_horizon_color = Color(0.7, 0.74, 0.76)
 			sky_mat.ground_horizon_color = Color(0.6, 0.6, 0.58)
 			sun.light_color = Color(1.0, 0.95, 0.86)
 			sun.light_energy = sn
@@ -306,7 +317,7 @@ func spawn_soldier(team: int, x: float, z: float, wid: String):
 	p = G.world.push_out_circle(p, 0.35)[0]
 	var s = Soldier.new()
 	add_child(s)
-	var cl = "rifleman" if wid != "" else G.pick_class(team)
+	var cl = "rifleman" if wid != "" else (force_cls.pop_front() if not force_cls.is_empty() else G.pick_class(team))
 	if wid == "":
 		wid = G.pick(G.CLASSES[cl]["w"])
 	s.setup(team, p.x, p.z, wid)
@@ -765,6 +776,30 @@ func _shot_mode(dir: String) -> void:
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "capture"), "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
 		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2"))})
+	if _arg("menushot", "") != "":
+		G.ui.visible = true
+		G.ui.show_menu()
+		await _wait(0.5)
+		await _snap(dir, "menu")
+	if _arg("uishot", "") != "":
+		# the HUD and tool dock as a player sees them, with a structure being placed
+		G.ui.visible = true
+		G.ui.menu.visible = false
+		G.ui.help.visible = false
+		G.pc.force_free = false
+		G.pc.free_pos = G.world.capture + Vector3(-30, 18, 10)
+		G.pc.free_yaw = PI / 2.0
+		G.pc.free_pitch = -0.45
+		G.ui.tab = _arg("uitab", "build")
+		G.ui.tool = _arg("uitool", "b:bunker")
+		G.ui._render_tools()
+		var mv = _arg("mouse", "640,360").split(",")
+		G.pc.test_mouse = Vector2(float(mv[0]), float(mv[1]))
+		if _arg("rot", "") != "":
+			for k in range(int(_arg("rot", "0"))):
+				G.pc.rotate_place(1)
+		await _wait(float(_arg("uishot", "2")))
+		await _snap(dir, "ui")
 	if _arg("rtsshot", "") != "":
 		await _wait(float(_arg("rtsshot", "5")))
 		G.pc.force_free = false

@@ -848,7 +848,7 @@ func _set_goal(p: Vector3) -> void:
 	if p.distance_to(goal) < 4.0 and path_t > 0.0 and not path.is_empty():
 		return
 	goal = p
-	path = G.world.find_path(pos, _leg(p))
+	path = G.world.find_vpath(pos, _leg(p)) if not spec.get("boat", false) else G.world.find_path(pos, _leg(p))
 	path_i = 0
 	path_t = 4.0
 
@@ -959,7 +959,7 @@ func _ai_drive(dt: float) -> Array:
 		aim = path[path_i]
 	if path_t <= 0.0:
 		path_t = 4.0
-		path = G.world.find_path(pos, _leg(goal))
+		path = G.world.find_vpath(pos, _leg(goal)) if not spec.get("boat", false) else G.world.find_path(pos, _leg(goal))
 		path_i = 0
 	var r = _steer_to(aim, dt)
 	# whiskers: veer away from walls just ahead

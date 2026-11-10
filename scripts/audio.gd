@@ -13,6 +13,9 @@ var s_rocket: AudioStreamWAV
 var s_engine: AudioStreamWAV
 var s_hammer: AudioStreamWAV
 var s_kick: AudioStreamWAV
+var s_groans: Array = []
+var s_snarl: AudioStreamWAV
+var s_screech: AudioStreamWAV
 var s_glass: AudioStreamWAV
 var players: Array = []
 var pi = 0
@@ -43,6 +46,10 @@ func _ready() -> void:
 	s_hammer = _noise(0.09, 0.025, 0.55, 3.0, 30.0)
 	s_kick = _noise(0.35, 0.07, 0.12, 2.4, 70.0)
 	s_glass = _glass_sound()
+	for k in range(3):
+		s_groans.append(_groan(1.1 + k * 0.35, 85.0 + k * 22.0, 0.55))
+	s_snarl = _groan(0.55, 140.0, 1.0)
+	s_screech = _groan(0.7, 260.0, 1.2)
 	for i in range(28):
 		var p = AudioStreamPlayer3D.new()
 		p.bus = "World"
@@ -335,10 +342,45 @@ func bark(s, text: String) -> void:
 	var vol = int(clampf(100.0 * G.settings["volume"] * (1.0 - minf(d, 40.0) / 55.0), 10.0, 100.0))
 	var pitch = 0.82 + fmod(s.seed_, 1.0) * 0.36
 	var rate = 1.2 if text.ends_with("!") else 1.05
-	if s.zombie:
-		pitch = 0.35
-		rate = 0.6
 	DisplayServer.tts_speak(text, voice, vol, pitch, rate)
+
+# the dead: a voiced moan through a throaty filter, wobbling in pitch, with breath noise
+func _groan(len_s: float, f0: float, rough: float) -> AudioStreamWAV:
+	var n = int(len_s * RATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var ph = 0.0
+	var lp = 0.0
+	var bp1 = 0.0
+	var bp2 = 0.0
+	var wob = randf() * 6.0
+	for i in range(n):
+		var t = float(i) / RATE
+		var k = t / len_s
+		var env = minf(1.0, t * 12.0) * (1.0 - k) * (0.7 + 0.3 * sin(t * 9.0 + wob))
+		var f = f0 * (1.0 + 0.12 * sin(t * 5.3 + wob) - 0.25 * k) * (1.0 + (randf() - 0.5) * 0.04 * rough)
+		ph += f / RATE
+		var saw = 2.0 * fmod(ph, 1.0) - 1.0
+		var v = saw * 0.6 + (randf() * 2.0 - 1.0) * 0.35 * rough
+		# a crude vocal-tract resonance
+		bp1 += (v - bp1) * 0.12
+		bp2 += (bp1 - bp2) * 0.12
+		lp += ((bp1 - bp2 * 0.6) - lp) * 0.5
+		out[i] = lp * env * 1.6
+	return _wav(out)
+
+func groan(pos: Vector3, kind: String) -> void:
+	if cam_dist(pos) > 45.0:
+		return
+	match kind:
+		"snarl":
+			play(s_snarl, pos, -2.0, randf_range(0.8, 1.1))
+		"screech":
+			play(s_screech, pos, -1.0, randf_range(0.9, 1.15))
+		"brute":
+			play(s_groans[randi() % s_groans.size()], pos, 2.0, 0.6)
+		_:
+			play(s_groans[randi() % s_groans.size()], pos, -5.0, randf_range(0.8, 1.15))
 
 func step(pos: Vector3) -> void:
 	if cam_dist(pos) < 12.0:

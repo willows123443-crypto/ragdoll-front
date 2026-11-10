@@ -60,6 +60,7 @@ func _ready() -> void:
 	root = Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.theme = G.ui._theme()
 	add_child(root)
 	visible = false
 	G.ui.refresh_maps()

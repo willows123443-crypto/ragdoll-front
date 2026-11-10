@@ -58,6 +58,10 @@ func _ready() -> void:
 			_order_test()
 		if a == "--spittest":
 			_spit_test()
+		if a == "--prodtest":
+			_prod_test()
+		if a == "--hordetest":
+			_horde_test()
 		if a.begins_with("--mapshots="):
 			_map_shots(a.substr(11))
 		if a == "--camptest2":
@@ -358,6 +362,8 @@ func start_game(o: Dictionary) -> void:
 	Ferry.setup()
 	Medical.reset_hospitals()
 	Faction.setup()
+	Fog.reset()
+	Prod.reset()
 	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2:
 		G.ui.radio(0, "Your commander is %s" % Commander.STYLE_TEXT[Commander.style_of(0)])
 	Scripted.reset()
@@ -536,6 +542,8 @@ func _sim_step() -> void:
 	Stats.step(G.DT)
 	Squad.step(G.DT)
 	Support.step(G.DT)
+	Fog.step(G.DT)
+	Prod.step(G.DT)
 	Commander.step(G.DT)
 	Obj.step(G.DT)
 	Modes.step(G.DT)
@@ -880,6 +888,8 @@ func _shot_mode(dir: String) -> void:
 			if sx != null:
 				sx.order = {"mode": "hold", "point": sx.pos}
 				sx.face(0.0)
+				if _arg("fwid", "") != "":
+					sx.set_weapon(_arg("fwid", "").split(",")[i % _arg("fwid", "").split(",").size()])
 				row.append(sx)
 		await _wait(1.2)
 		for sx in row:
@@ -1647,6 +1657,51 @@ func _map_shots(list: String) -> void:
 		await _look(c + Vector3(22, 3.5, 18), c + Vector3(0, 2, 0))
 		await _snap(dir, m + "_c")
 		print("MAPSHOT ", m)
+	get_tree().quit()
+
+# zombie mode: the shop and boarded windows
+func _horde_test() -> void:
+	await _wait(0.5)
+	Engine.time_scale = 2.0
+	start_game({"map": "town", "mode": "horde", "size": 10, "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	await _wait(1.0)
+	Support.points[0] = 100
+	var bi = -1
+	var bd = 1e9
+	for i in range(G.world.buildings.size()):
+		var b = G.world.buildings[i]
+		var d = G.dist2d(Vector3(b["x"], 0, b["z"]), G.world.capture)
+		var nwin = Doors.panes.filter(func(pn): return pn["b"] == i).size()
+		if d < bd and nwin > 0:
+			bd = d
+			bi = i
+	var bp = Vector3(G.world.buildings[bi]["x"], 0, G.world.buildings[bi]["z"])
+	print("HORDETEST board: ", Modes.shop("board", bp))
+	print("HORDETEST lmg: ", Modes.shop("lmg", G.world.capture), " | ammo: ", Modes.shop("ammo", G.world.capture), " | points left ", Support.points[0])
+	print("HORDETEST lmgs now ", G.soldiers.filter(func(x): return x.team == 0 and x.wid == "lmg").size(), " boards ", G.world.cols.filter(func(c): return c.alive and c.has_meta("board")).size())
+	for k in range(6):
+		await _wait(10.0)
+		print("HORDETEST t%d wave %d left %d alive %d points %d boards %d" % [k * 10, Modes.horde_wave, Modes.horde_left, G.alive_count(0), Support.points[0], G.world.cols.filter(func(c): return c.alive and c.has_meta("board")).size()])
+	get_tree().quit()
+
+# commander economy: a depot queue, an upgrade and a supply convoy
+func _prod_test() -> void:
+	await _wait(0.5)
+	Engine.time_scale = 3.0
+	start_game({"map": "field", "mode": "commander", "size": 6, "limit": 999, "reinforce": true, "armor": "light", "teams": 2})
+	await _wait(1.0)
+	var home: Vector3 = G.world.rally_point(0)
+	var fw = G.flat(G.world.capture - home).normalized()
+	var dep = Build.place("depot", 0, _free_spot(home - fw * 20.0 + Vector3(fw.z, 0, -fw.x) * 20.0), fw, true)
+	var dump = Build.place("supply", 0, _free_spot(home + Vector3(fw.z, 0, -fw.x) * -18.0), fw, true)
+	Support.points[0] = 200
+	var v0 = G.vehicles.filter(func(x): return x.team == 0 and not x.dead).size()
+	print("PRODTEST call jeep ", Support.call_in(0, "jeep", G.world.capture), " tank ", Support.call_in(0, "tank", G.world.capture), " research ", Prod.start_research(0, "armour"))
+	print("PRODTEST points after orders ", Support.points[0], " | ", Prod.status(0))
+	Prod.convoy_t[0] = 1.0
+	for k in range(12):
+		await _wait(8.0)
+		print("PRODTEST t%d | %s | points %d | vehicles %d (from %d) | armour %s | fog hidden enemies %d" % [k * 8, Prod.status(0), Support.points[0], G.vehicles.filter(func(x): return x.team == 0 and not x.dead).size(), v0, str(Prod.has(0, "armour")), G.soldiers.filter(func(x): return x.team == 1 and Fog.hidden(x)).size()])
 	get_tree().quit()
 
 # a spitter against a soldier who can't shoot back

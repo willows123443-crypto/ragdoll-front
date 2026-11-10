@@ -638,12 +638,19 @@ static func _horde(dt: float) -> void:
 	if horde_wave >= HORDE_WIN:
 		G.main.end_game(0)
 		return
+	if horde_t >= BREAK - 0.01 and horde_wave > 0:
+		G.ui.message("Wave %d beaten: %d s to dig in. Build barricades, board up windows, buy weapons (Armoury tab)" % [horde_wave, int(BREAK)])
+		G.ui.radio(0, "Wave %d done. Points for kills: %d to spend" % [horde_wave, Support.points[0]])
 	horde_t -= dt
 	if horde_t > 0.0:
 		return
 	horde_wave += 1
 	horde_left = 10 + horde_wave * 8 + G.team_size
-	horde_t = 14.0
+	# after dark they come in greater numbers (and faster: see make_zombie)
+	if G.main.is_night():
+		horde_left = int(horde_left * 1.4)
+		G.ui.radio(0, "It's dark: there'll be more of them, and they're faster")
+	horde_t = BREAK
 	var fresh = G.team_size - G.alive_count(0)
 	for i in range(maxi(0, fresh)):
 		G.main.base_spawn(0)
@@ -820,6 +827,94 @@ static func clear_spits() -> void:
 	spits = []
 	puddles = []
 
+const BREAK = 30.0
+
+# the zombie-mode shop: points come from kills and pay for weapons, supplies and boarding up windows
+const SHOP = {
+	"board": {"name": "Board up windows", "cost": 6, "tip": "Click a building: planks go up over every window (the dead have to tear them down)"},
+	"lmg": {"name": "Machine guns ×3", "cost": 12, "tip": "Click near your men: the three closest get machine guns"},
+	"shotgun": {"name": "Shotguns ×4", "cost": 8, "tip": "Click near your men: the four closest get shotguns"},
+	"flamer": {"name": "Flamethrower", "cost": 10, "tip": "Click near your men: the closest gets a flamethrower"},
+	"ammo": {"name": "Ammo for all", "cost": 5, "tip": ""},
+	"heal": {"name": "Patch everyone up", "cost": 6, "tip": ""},
+	"man": {"name": "Extra man", "cost": 6, "tip": ""},
+}
+
+static func shop_instant(k: String) -> bool:
+	return k in ["ammo", "heal", "man"]
+
+# buy something; p is where the player clicked (for the ones that need a place)
+static func shop(k: String, p: Vector3) -> String:
+	var c: int = SHOP[k]["cost"]
+	if Support.points[0] < c:
+		return "Not enough points: %s costs %d, you have %d (kills earn points)" % [SHOP[k]["name"], c, Support.points[0]]
+	match k:
+		"board":
+			var n = board_up(p)
+			if n == 0:
+				return "No windows to board up there: click a building"
+			Support.points[0] -= c
+			return "%d windows boarded up" % n
+		"lmg", "shotgun", "flamer":
+			var want = {"lmg": 3, "shotgun": 4, "flamer": 1}[k]
+			var men = G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive" and not s.is_player and s.wid != k)
+			men.sort_custom(func(a, b): return G.dist2d(a.pos, p) < G.dist2d(b.pos, p))
+			if men.is_empty():
+				return "Nobody to hand them to"
+			Support.points[0] -= c
+			for i in range(mini(want, men.size())):
+				men[i].set_weapon(k)
+				G.fx.callout(men[i], G.pick(["Now we're talking!", "Got it!", "Let them come!"]))
+			return "%s handed out" % SHOP[k]["name"]
+		"ammo":
+			Support.points[0] -= c
+			for s in G.soldiers:
+				if s.team == 0 and s.state != "dead":
+					s.reserve = s.W["mag"] * s.W["mags"]
+					s.grenades = maxi(s.grenades, 2)
+			return "Everyone restocked"
+		"heal":
+			Support.points[0] -= c
+			for s in G.soldiers:
+				if s.team == 0 and (s.state == "alive" or s.state == "wounded"):
+					s.hp = 100.0
+					s.bleed = 0.0
+					if s.state == "wounded":
+						s.start_getup()
+			return "Everyone patched up"
+		"man":
+			Support.points[0] -= c
+			G.main.base_spawn(0)
+			return "A survivor joins you"
+	return ""
+
+# planks over every window of the building at p: they block the window until torn or blown down
+static func board_up(p: Vector3) -> int:
+	var b = Doors.building_at(p)
+	if b < 0:
+		return 0
+	var list = []
+	for pn in Doors.panes:
+		if pn["b"] == b and not pn.get("boarded", false):
+			list.append(pn)
+	if list.is_empty():
+		return 0
+	var before = G.world.cols.size()
+	G.world.build_now(func():
+		for pn in list:
+			Doors.shatter(pn, false)
+			pn["boarded"] = true
+			var c: Vector3 = pn["c"] + pn["n"] * 0.07
+			var w: float = pn["w"] + 0.2
+			for k in range(3):
+				var y = c.y - pn["h"] * 0.32 + k * pn["h"] * 0.32
+				var sz = Vector3(w, 0.16, 0.05) if pn["horiz"] else Vector3(0.05, 0.16, w)
+				G.world.add_box(c.x, y - 0.08, c.z, sz.x, sz.y, sz.z, Color(0.5, 0.38, 0.24).darkened(randf_range(0.0, 0.2)), {"abs": true, "dest": true, "hp": 140.0}))
+	for i in range(before, G.world.cols.size()):
+		G.world.cols[i].set_meta("board", true)
+	G.audio.hammer(p)
+	return list.size()
+
 static func make_zombie(z, kind: String = "walker") -> void:
 	var zs = ZOMBIES[kind]
 	z.zombie = true
@@ -830,7 +925,7 @@ static func make_zombie(z, kind: String = "walker") -> void:
 	z.rgren = 0
 	z.gun_node.visible = false
 	z.hp = zs["hp"] + horde_wave * zs["hpw"]
-	z.zspeed = randf_range(zs["speed"][0], zs["speed"][1])
+	z.zspeed = randf_range(zs["speed"][0], zs["speed"][1]) * (1.2 if G.main.is_night() else 1.0)
 	z.think = randf_range(0.0, 0.6)
 	z.groan_t = randf_range(0.5, 6.0)
 	z.sname = zs["name"]
@@ -930,8 +1025,21 @@ static func zombie_tick(s) -> void:
 		s.prog_t += G.DT
 		if s.prog_t > 1.5:
 			if G.dist2d(s.pos, s.prog_p) < 0.6 and s.vault == null:
-				s.bad_t = G.sim_time + 6.0
-				AI.go_to(s, t.pos, spd)
+				# boarded-up windows in the way get torn at
+				var tore = false
+				for c in G.world.cols_in_rect(s.pos.x - 1.3, s.pos.z - 1.3, s.pos.x + 1.3, s.pos.z + 1.3):
+					if c.alive and c.has_meta("board"):
+						c.hp -= 55.0 if s.ztype != "brute" else 140.0
+						s.lunge_t = 0.5
+						s.lunge_dir = G.flat(((c.lo + c.hi) * 0.5) - s.pos).normalized()
+						G.audio.hammer(s.pos)
+						if c.hp <= 0.0:
+							G.world.destroy_col(c)
+						tore = true
+						break
+				if not tore:
+					s.bad_t = G.sim_time + 6.0
+					AI.go_to(s, t.pos, spd)
 			s.prog_t = 0.0
 			s.prog_p = s.pos
 	else:

@@ -285,6 +285,9 @@ static func kill(s, attacker, head: bool) -> void:
 		return
 	if attacker != null and not is_instance_valid(attacker):
 		attacker = null
+	# zombie mode: kills earn points to spend between waves
+	if G.mode == "horde" and s.zombie and attacker != null and attacker.team == 0:
+		Support.earn(0, {"brute": 4, "armored": 3, "bloater": 2, "spitter": 2}.get(s.ztype, 1))
 	if s.zombie and s.ztype == "bloater" and not s.has_meta("burst"):
 		# a bloater bursts: a gas blast that knocks down (and hurts) anyone close, zombies included
 		s.set_meta("burst", true)

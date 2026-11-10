@@ -555,7 +555,7 @@ func clear_all() -> void:
 
 # ---------------------------------------------------------------- speech bubbles
 func callout(s, text: String) -> void:
-	if not G.settings["callouts"] or s.callout_cd > 0.0 or s.zombie:
+	if not G.settings["callouts"] or s.callout_cd > 0.0 or s.zombie or Fog.hidden(s):
 		return
 	s.callout_cd = randf_range(4.0, 7.0)
 	if callouts.size() >= 8:

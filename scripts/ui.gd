@@ -259,6 +259,9 @@ func _build_side() -> void:
 # structures are for. In commander mode it becomes a shop: you pay for everything.
 var dock: PanelContainer
 var dock_tabs: HBoxContainer
+var dock_status: Label
+var dock_status_t = 0.0
+var up_sig = ""
 var dock_cards: HFlowContainer
 var dock_side: Button
 var dock_pts: Label
@@ -285,7 +288,7 @@ const INSTANT = ["technical", "recon", "atgun", "heavytank", "paradrop", "heli",
 
 func _tabs() -> Array:
 	if G.mode == "commander":
-		return [["orders", "Orders"], ["recruit", "Recruit"], ["armour", "Vehicles"], ["support", "Fire support"], ["build", "Build"]]
+		return [["orders", "Orders"], ["recruit", "Recruit"], ["armour", "Vehicles"], ["support", "Fire support"], ["build", "Build"], ["upgrades", "Upgrades"]]
 	if Rules.free_tools():
 		return [["units", "Units"], ["vehicles", "Vehicles"], ["support", "Call-ins"], ["build", "Build"], ["command", "Command"], ["fun", "Effects"]]
 	# a real battle: you command your own side, with what this mode gives it
@@ -294,6 +297,8 @@ func _tabs() -> Array:
 		out.append(["support", "Call-ins"])
 	if not Rules.build(0).is_empty():
 		out.append(["build", "Build"])
+	if G.mode == "horde":
+		out.append(["armoury", "Armoury"])
 	return out
 
 # the cards on a tab: [id, title, cost line]
@@ -342,6 +347,15 @@ func _cards(t: String) -> Array:
 			if t == "command":
 				out.append(["mv", "Send the side", "click a point"])
 			out += [["f:wedge", "Wedge", "formation"], ["f:line", "Line", "formation"], ["f:column", "Column", "formation"]]
+		"armoury":
+			for k in Modes.SHOP:
+				var sh = Modes.SHOP[k]
+				out.append(["h:" + k, sh["name"], "%d pts%s" % [sh["cost"], "" if Modes.shop_instant(k) else " · click where"]])
+		"upgrades":
+			for k in Prod.UPGRADES:
+				var u = Prod.UPGRADES[k]
+				var st = "done" if Prod.done[0].has(k) else ("%d pts · %d s" % [u["cost"], int(u["time"])] if Prod.can_research(0, k) else "in progress")
+				out.append(["u:" + k, u["name"], st])
 		"fun":
 			out = [["boom", "Explosion", ""], ["mortar", "Mortar strike", ""], ["smoke", "Smoke", ""], ["flare", "Flare", "lights up the night"], ["push", "Shove", "knock a soldier over"]]
 	return out
@@ -369,9 +383,11 @@ func _build_tools() -> void:
 	dock_tabs = HBoxContainer.new()
 	dock_tabs.add_theme_constant_override("separation", 3)
 	head.add_child(dock_tabs)
-	var sp = Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	head.add_child(sp)
+	# commander mode: what the depot and HQ are working on, and when the next convoy leaves
+	dock_status = _label("", 13, Color(0.8, 0.85, 0.75))
+	dock_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dock_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	head.add_child(dock_status)
 	dock_side = _button("", func():
 		build_team = (build_team + 1) % maxi(1, G.team_count())
 		_render_tools())
@@ -463,7 +479,7 @@ func _render_tools() -> void:
 	dock.offset_bottom = -8.0
 	tip.offset_top = -h - 34.0
 	tip.offset_bottom = -h - 14.0
-	tip.text = TIPS.get(tool, "")
+	tip.text = TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.SHOP[tool.substr(2)]["tip"]
 
 func _pts() -> int:
 	var t = 0 if G.mode == "commander" else (mini(build_team, G.team_count() - 1) if tab != "support" else 0)
@@ -476,7 +492,7 @@ func _dock_points() -> void:
 	if p == dock_pts_shown:
 		return
 	dock_pts_shown = p
-	var show_pts = G.mode == "commander" or tab in ["support"]
+	var show_pts = G.mode == "commander" or G.mode == "horde" or tab in ["support"]
 	dock_pts.text = ("Supply  %d pts" % p) if show_pts else ""
 	for e in dock_cards_list:
 		var c = _cost(e[0])
@@ -489,10 +505,14 @@ func _cost(id: String) -> int:
 		return RECRUIT[id.substr(2)]["cost"]
 	if id.begins_with("b:"):
 		return Build.cost(id.substr(2))
+	if id.begins_with("u:"):
+		return Prod.UPGRADES[id.substr(2)]["cost"]
+	if id.begins_with("h:"):
+		return Modes.SHOP[id.substr(2)]["cost"]
 	return 0
 
 func _is_action(id: String) -> bool:
-	return (id.begins_with("r:") and G.mode != "commander") or id.begins_with("o:") or id.begins_with("f:") or (id.begins_with("sup:") and id.substr(4) in INSTANT)
+	return id.begins_with("u:") or (id.begins_with("r:") and G.mode != "commander") or id.begins_with("o:") or id.begins_with("f:") or (id.begins_with("sup:") and id.substr(4) in INSTANT)
 
 # a card was clicked: actions happen now, everything else becomes the tool for the next map click
 func _card_clicked(id: String) -> void:
@@ -505,6 +525,20 @@ func _card_clicked(id: String) -> void:
 		return
 	if id.begins_with("f:"):
 		G.pc.set_formation(id.substr(2))
+		return
+	if id.begins_with("h:") and Modes.shop_instant(id.substr(2)):
+		message(Modes.shop(id.substr(2), G.world.capture))
+		_dock_points()
+		return
+	if id.begins_with("u:"):
+		var up = id.substr(2)
+		if not Prod.can_research(0, up):
+			message("%s is already done or under way" % Prod.UPGRADES[up]["name"])
+		elif not Prod.start_research(0, up):
+			message("Not enough supply points: %s costs %d" % [Prod.UPGRADES[up]["name"], Prod.UPGRADES[up]["cost"]])
+		else:
+			message("Researching %s at HQ: %s" % [Prod.UPGRADES[up]["name"].to_lower(), Prod.UPGRADES[up]["desc"]])
+		_render_tools()
 		return
 	if id.begins_with("r:") and G.mode != "commander":
 		_recruit(id.substr(2))
@@ -1140,7 +1174,7 @@ func _deploy() -> void:
 	var mid = _map_id(opt_map.selected)
 	G.main.start_game({"map": mid, "mode": MODE_IDS[opt_mode.selected],
 		"size": int(opt_size.get_item_text(opt_size.selected)), "limit": _limit_value(),
-		"reinforce": opt_reinf.selected != 4, "reinf_mode": ["truck", "para", "heli", "instant", "truck"][opt_reinf.selected],
+		"reinforce": opt_reinf.selected != 4 or opt_reinf.disabled, "reinf_mode": ["truck", "para", "heli", "instant", "truck"][opt_reinf.selected],
 		"armor": ["none", "light", "heavy"][opt_armor.selected], "teams": opt_teams.selected + 2,
 		"factions": [Faction.LIST[opt_fac0.selected], Faction.LIST[opt_fac1.selected], "army", "army"]})
 	G.save_prefs()
@@ -1191,6 +1225,31 @@ func _show_mode_info() -> void:
 		mode_info.text = Obj.MODE_INFO.get(id, "") + extra
 		if id != "sandbox":
 			mode_info.text += "\n" + Rules.mode_text(id)
+		_mode_settings(id)
+
+# settings that mean nothing in a mode are greyed out (and the mode's own value shown)
+func _mode_settings(id: String) -> void:
+	if opt_teams == null:
+		return
+	var multi = id in ["sandbox", "deathmatch", "capture", "destroy"]
+	opt_teams.disabled = not multi
+	if not multi:
+		opt_teams.select(0)
+	# waves, raids and bought troops: the mode decides who turns up
+	var own_reinf = id in ["laststand", "horde", "sabotage", "commander"]
+	opt_reinf.disabled = own_reinf
+	opt_reinf.tooltip_text = "This mode brings in its own troops" if own_reinf else ""
+	# no starting vehicles in the raid, the last stand or against the dead
+	var no_armor = id in ["sabotage", "horde", "laststand"]
+	opt_armor.disabled = no_armor
+	if no_armor:
+		opt_armor.select(0)
+	# the raid is always at night
+	opt_time.disabled = id == "sabotage"
+	if id == "sabotage":
+		opt_time.select(2)
+	# the other side is the walking dead
+	opt_fac1.disabled = id == "horde"
 
 # the title screen (and, during a battle, the pause menu)
 var title: Control
@@ -1451,6 +1510,15 @@ func _perf(dt: float) -> void:
 
 func update_hud(dt: float) -> void:
 	_perf(dt)
+	dock_status_t -= dt
+	if dock_status != null and dock_status_t <= 0.0:
+		dock_status_t = 0.5
+		dock_status.text = Prod.status(0) if Prod.active() and G.started else ""
+		if tab == "upgrades" and Prod.active():
+			var sig = str(Prod.done[0].keys()) + str(Prod.research[0].size())
+			if sig != up_sig:
+				up_sig = sig
+				_render_tools()
 	_info_tick(dt)
 	if vignette != null:
 		var want = 0.0
@@ -1537,6 +1605,7 @@ func update_hud(dt: float) -> void:
 			cap_lbl.text = "Point %s neutral" % focus["name"]
 	var show_game = G.started
 	top_bar.visible = show_game
+	btn_reinf.visible = G.mode == "sandbox"        # in a battle the mode decides
 	side.visible = show_game
 	var ctl = G.player != null
 	dock.visible = show_game and not ctl
@@ -1590,7 +1659,7 @@ func update_hud(dt: float) -> void:
 			p_ammo.text += "     BLEEDING — H to dress it (%d dressing%s)" % [s.dressings, "" if s.dressings == 1 else "s"]
 		tip.text = "" if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else "Click to aim — X to leave this soldier"
 	else:
-		tip.text = TIPS.get(tool, "") if show_game else ""
+		tip.text = (TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.SHOP[tool.substr(2)]["tip"]) if show_game else ""
 		if show_game and tool.begins_with("sup:"):
 			tip.text = "Click the map where the %s should hit · supply points come over time, for kills and for holding points" % Support.NAMES[tool.substr(4)].to_lower()
 		elif show_game and tool.begins_with("v:"):

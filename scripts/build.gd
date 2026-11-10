@@ -68,7 +68,7 @@ const COSTS = {"fob": 24, "sandbags": 2, "wire": 2, "traps": 3, "mgnest": 8, "mo
 	"hospital": 12, "radio": 10, "depot": 16, "supply": 8}
 
 static func cost(kind: String) -> int:
-	return COSTS.get(kind, 0) if G.mode == "commander" else 0
+	return COSTS.get(kind, 0) if G.mode in ["commander", "horde"] else 0
 
 # a see-through blueprint of a structure for placing it: same pieces as the real thing, no colliders
 static var ghost_mats = {}
@@ -301,6 +301,8 @@ static func _scaffold(st: Dictionary) -> void:
 static func add_work(st: Dictionary, amt: float) -> bool:
 	if st["done"] or st["dead"]:
 		return false
+	if Prod.has(st["team"], "engineers"):
+		amt *= 2.0
 	st["work"] += amt
 	var frac = clampf(st["work"] / st["need"], 0.0, 1.0)
 	var want = ceili(frac * st["parts"].size())

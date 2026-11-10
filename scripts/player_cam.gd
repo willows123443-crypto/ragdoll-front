@@ -309,7 +309,7 @@ func _rts_overlay() -> void:
 		return
 	# one line per squad on foot (from where its men actually are) and one per vehicle (from the vehicle)
 	var team = 0
-	var groups = {}
+	var glines = {}
 	for s in G.soldiers:
 		if s.team != team or not (s.state == "alive" or s.state == "riding") or s.is_player:
 			continue
@@ -331,9 +331,9 @@ func _rts_overlay() -> void:
 			dest = s.order["point"]
 		if dest == null:
 			continue
-		if not groups.has(key):
-			groups[key] = {"c": Vector3.ZERO, "d": Vector3.ZERO, "n": 0, "sel": false}
-		var g = groups[key]
+		if not glines.has(key):
+			glines[key] = {"c": Vector3.ZERO, "d": Vector3.ZERO, "n": 0, "sel": false}
+		var g = glines[key]
 		g["c"] += at
 		g["d"] += dest
 		g["n"] += 1
@@ -341,8 +341,8 @@ func _rts_overlay() -> void:
 			g["sel"] = true
 	im.surface_begin(Mesh.PRIMITIVE_LINES)
 	var any_line = false
-	for key in groups:
-		var g = groups[key]
+	for key in glines:
+		var g = glines[key]
 		var c: Vector3 = g["c"] / g["n"]
 		var dest: Vector3 = g["d"] / g["n"]
 		if G.dist2d(c, dest) < 5.0:
@@ -361,6 +361,27 @@ func _rts_overlay() -> void:
 		im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
 		im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
 	im.surface_end()
+
+# control groups: Ctrl+number saves the selection, the number brings it back (twice to look at it)
+var groups = {}
+
+func select_group(i: int) -> void:
+	var g: Array = groups[i].filter(func(x): return is_instance_valid(x) and x.state != "dead")
+	groups[i] = g
+	if g.is_empty():
+		groups.erase(i)
+		G.ui.message("Group %d is gone" % (i + 1))
+		return
+	selection = g.duplicate()
+	sel_vehicle = null
+	var c = Vector3.ZERO
+	for m in g:
+		c += m.pos
+	c /= g.size()
+	if last_squad_key == 100 + i:
+		rts_focus = c
+	last_squad_key = 100 + i
+	G.ui.message("Group %d (%d) · press %d again to look at them" % [i + 1, g.size(), i + 1])
 
 # number keys in commander view: pick that squad; press it again to look at it
 func select_squad(i: int) -> void:
@@ -719,7 +740,15 @@ func _key(k: int) -> void:
 			G.ui.message("Commander view: WASD pans, wheel zooms, Q/E turn, click selects a squad, right-click sends it · V to leave" if rts else "Free camera")
 			return
 		if k >= KEY_1 and k <= KEY_9 and rts:
-			select_squad(k - KEY_1)
+			var gi = k - KEY_1
+			if Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_META):
+				# Ctrl+number: remember this selection as a group
+				groups[gi] = selection.duplicate()
+				G.ui.message("Group %d: %d soldier%s" % [gi + 1, groups[gi].size(), "" if groups[gi].size() == 1 else "s"])
+			elif groups.has(gi):
+				select_group(gi)
+			else:
+				select_squad(gi)
 		elif k >= KEY_1 and k <= KEY_9:
 			G.ui.pick_tool(k - KEY_1)
 		elif k == KEY_F:
@@ -795,7 +824,7 @@ func use_tool(screen: Vector2) -> void:
 	var d = cam.project_ray_normal(screen)
 	var hit = G.ray(o, o + d * 400.0, G.L_WORLD)
 	var tool = G.ui.tool
-	if not Rules.free_tools() and G.mode != "commander" and not (tool in ["sel", "ctl", "mv"] or tool.begins_with("b:") or tool.begins_with("sup:") or tool in ["up", "camo", "rep", "dis"]):
+	if not Rules.free_tools() and G.mode != "commander" and not (tool in ["sel", "ctl", "mv"] or tool.begins_with("b:") or tool.begins_with("sup:") or tool.begins_with("h:") or tool in ["up", "camo", "rep", "dis"]):
 		return
 	if G.mode == "commander" and not (tool == "sel" or tool.begins_with("b:") or tool.begins_with("sup:") or tool.begins_with("r:") or tool in ["up", "camo", "rep", "dis"]):
 		return
@@ -846,6 +875,9 @@ func use_tool(screen: Vector2) -> void:
 		G.ui._recruit(tool.substr(2), p)
 		G.ui.tool = "sel"
 		G.ui._render_tools()
+	elif tool.begins_with("h:"):
+		G.ui.message(Modes.shop(tool.substr(2), p))
+		G.ui._dock_points()
 	elif tool.begins_with("sup:"):
 		var what = tool.substr(4)
 		if Support.call_in(0, what, p):

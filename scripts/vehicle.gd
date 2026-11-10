@@ -9,7 +9,7 @@ const SPECS = {
 		"bullet": 0.35, "tracked": false, "standoff": 38.0,
 		"seats": [
 			{"o": Vector3(0.45, 1.12, 0.15), "role": "driver", "pose": "sit", "face": 0.0},
-			{"o": Vector3(0.0, 1.73, -1.2), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true},
+			{"o": Vector3(0.0, 2.0, -1.25), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true},
 			{"o": Vector3(-0.45, 1.12, 0.15), "role": "pass", "pose": "sit", "face": 0.0},
 			{"o": Vector3(-0.5, 1.12, -0.85), "role": "pass", "pose": "sit", "face": 0.0}]},
 	"truck": {"name": "Truck", "len": 7.2, "wid": 2.5, "speed": 11.0, "rev": 4.0, "accel": 4.5, "turn": 1.0, "hp": 650.0,
@@ -52,7 +52,7 @@ const SPECS = {
 		"bullet": 0.4, "tracked": false, "standoff": 34.0,
 		"seats": [
 			{"o": Vector3(0.45, 0.9, 0.45), "role": "driver", "pose": "sit", "face": 0.0},
-			{"o": Vector3(0.0, 1.75, -1.25), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true},
+			{"o": Vector3(0.0, 2.27, -1.45), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true},
 			{"o": Vector3(-0.45, 0.9, 0.45), "role": "pass", "pose": "sit", "face": 0.0},
 			{"o": Vector3(0.6, 1.25, -1.9), "role": "pass", "pose": "sit", "face": -PI / 2.0},
 			{"o": Vector3(-0.6, 1.25, -1.9), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
@@ -612,7 +612,8 @@ func _weapons(dt: float) -> void:
 	var flat_d = G.dist2d(want, piv)
 	var tp = atan2(want.y - piv.y, flat_d) - pitch * cos(turret_yaw)
 	var pmax = 1.45 if kind == "aagun" else (0.9 if kind == "bomber" else 0.4)
-	gun_pitch = clampf(gun_pitch + clampf(tp - gun_pitch, -1.5 * dt, 1.5 * dt), -0.15 if kind == "tank" else -0.35, pmax)
+	var pmin = -0.15 if kind in ["tank", "jeep", "technical"] else -0.35     # mounted guns can't point down into their own car
+	gun_pitch = clampf(gun_pitch + clampf(tp - gun_pitch, -1.5 * dt, 1.5 * dt), pmin, pmax)
 	_apply_turret()
 	var err = absf(wrapf(ty - turret_yaw, -PI, PI))
 	if not shoot or err > 0.08:
@@ -875,6 +876,8 @@ func _crew_tick(dt: float) -> void:
 func take_damage(amount: float, attacker, at: Vector3) -> void:
 	if dead:
 		return
+	if Prod.has(team, "armour"):
+		amount *= 0.67
 	hp -= amount
 	# where it was hit matters: tracks and running gear along the sides, the engine up front
 	if amount >= 120.0 and not spec.get("air", false) and not spec.get("static", false):
@@ -1017,7 +1020,9 @@ func remove() -> void:
 func command(p: Vector3) -> void:
 	if spec.get("static", false) or spec.get("air", false) or dead:
 		return
-	if mission != null and mission.get("type", "") != "escort":
+	if mission != null and mission.get("type", "") in ["escort", "supply"]:
+		return          # convoys keep to their route
+	if mission != null:
 		mission = null
 	cmd = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
 	path_t = 0.0
@@ -1305,7 +1310,7 @@ func _mission_target(dt: float):
 	if spec.get("boat", false) and ramp != null:
 		ramp.rotation.x = lerpf(ramp.rotation.x, 1.3 if m["stage"] == 1 else 0.0, dt * 3.0)
 	# held up on the way (traffic, wrecks, a blocked road) or taking far too long: everyone out here
-	if m["stage"] == 0 and not spec.get("air", false) and not spec.get("boat", false):
+	if m["stage"] == 0 and not spec.get("air", false) and not spec.get("boat", false) and m.get("type", "") != "supply":
 		if absf(speed) < 0.5:
 			m["slow_t"] = m.get("slow_t", 0.0) + dt
 		else:
@@ -1326,6 +1331,12 @@ func _mission_target(dt: float):
 						get_meta("cargo").visible = false
 					m["wait"] = 6.0
 					G.ui.radio(team, "Supplies delivered to the %s" % st["name"])
+				if m.get("pts", 0) > 0 and st != null and not st["dead"]:
+					Support.points[team] += m["pts"]
+					G.ui.radio(team, "Convoy got through: +%d supply" % m["pts"])
+					m["pts"] = 0
+					if has_meta("cargo"):
+						get_meta("cargo").visible = false
 			for i in range(1, seats.size()):
 				var s = seats[i]
 				if s != null and is_instance_valid(s):

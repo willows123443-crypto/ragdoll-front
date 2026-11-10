@@ -131,18 +131,16 @@ static func step(dt: float) -> void:
 		for t in range(points.size()):
 			if G.mode == "commander":
 				# the HQ alone brings in a trickle; supply dumps are where the real income is
+				# the HQ brings in a trickle; supply dumps only pay when a convoy gets through (see Prod)
 				hq_t[t] = hq_t[t] + 1
 				if hq_t[t] % 2 == 0:
 					points[t] += 1
-				for st in Build.sites:
-					if st["team"] == t and st["kind"] == "supply" and Build.alive(st):
-						points[t] += 1
 			else:
 				points[t] += 1
 	# AI sides spend what they have
 	for t in range(points.size()):
-		if t == 0 and (G.player != null or G.mode == "commander"):
-			continue
+		if t == 0 and (G.player != null or G.mode == "commander" or G.mode == "horde"):
+			continue        # the player's own purse
 		if t == 1 and G.mode == "horde":
 			continue
 		ai_t[t] -= dt
@@ -152,6 +150,11 @@ static func step(dt: float) -> void:
 		_ai_spend(t)
 
 static func _ai_spend(t: int) -> void:
+	# an AI commander puts spare points into upgrades now and then
+	if Prod.active() and points[t] >= 40 and randf() < 0.35:
+		for up in Prod.UPGRADES.keys():
+			if Prod.can_research(t, up) and Prod.start_research(t, up):
+				return
 	var opts = []
 	var tgt = ClassAI.artillery_target(t, G.world.spawn[t], 30.0)
 	if tgt != null:
@@ -213,9 +216,16 @@ static func call_in(team: int, what: String, target: Vector3, relay: bool = fals
 	if not relay and Comms.hold(team, what, target):
 		return true
 	points[team] -= COSTS[what]
+	# commander mode: vehicles are built at the depot, one after another
+	if Prod.active() and Prod.is_vehicle(what):
+		Prod.order(team, what)
+		return true
 	match what:
 		"artillery":
-			fire_mission(team, target, null, 8, 12.0, 1.6)
+			if Prod.has(team, "artillery"):
+				fire_mission(team, target, null, 12, 13.0, 2.0)
+			else:
+				fire_mission(team, target, null, 8, 12.0, 1.6)
 		"airstrike":
 			_air_strike(team, target)
 			G.ui.radio(team, "Air strike inbound on %s" % AI.grid_ref(target))
@@ -235,19 +245,22 @@ static func call_in(team: int, what: String, target: Vector3, relay: bool = fals
 			var v = G.main.spawn_vehicle("gunship", team, e, atan2(G.world.capture.x - e.x, G.world.capture.z - e.z))
 			v.life_t = 70.0
 			G.ui.radio(team, "Gunship on station for seventy seconds")
-		"atgun":
-			# towed up behind a truck and unhitched by the rally point
-			var r0: Vector3 = G.world.rally_point(team)
-			var fw = G.flat(G.world.capture - r0).normalized()
-			G.main.spawn_vehicle("atgun", team, G.main._free_spot(r0 + fw * 12.0), atan2(fw.x, fw.z))
-			G.ui.radio(team, "Anti-tank gun set up at the rally point")
 		_:
-			# ground vehicles drive in from the team's edge of the map
-			var e2 = Reinforce.clear_entry(team)
-			var r: Vector3 = G.world.rally_point(team)
-			G.main.spawn_vehicle(what, team, e2, atan2(r.x - e2.x, r.z - e2.z))
-			G.ui.radio(team, "%s inbound from the rear" % NAMES[what])
+			deliver(team, what)
 	return true
+
+# a ground vehicle arrives: anti-tank guns are towed up and unhitched at the rally point, the rest drive in from the rear
+static func deliver(team: int, what: String) -> void:
+	if what == "atgun":
+		var r0: Vector3 = G.world.rally_point(team)
+		var fw = G.flat(G.world.capture - r0).normalized()
+		G.main.spawn_vehicle("atgun", team, G.main._free_spot(r0 + fw * 12.0), atan2(fw.x, fw.z))
+		G.ui.radio(team, "Anti-tank gun set up at the rally point")
+		return
+	var e2 = Reinforce.clear_entry(team)
+	var r: Vector3 = G.world.rally_point(team)
+	G.main.spawn_vehicle(what, team, e2, atan2(r.x - e2.x, r.z - e2.z))
+	G.ui.radio(team, "%s inbound from the rear" % NAMES[what])
 
 # a spotter plane circles over the enemy's side for thirty seconds: everything it sees goes on our map,
 # unless their anti-aircraft guns bring it down first

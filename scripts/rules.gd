@@ -58,13 +58,16 @@ static func ai_build(t: int) -> Array:
 static func callins(t: int, mode: String = "") -> Array:
 	var m = mode if mode != "" else G.mode
 	var veh = [] if G.armor == "none" else LIGHT + (ARMOUR if G.armor == "heavy" or m in ["commander", "destroy", "sandbox"] else ["halftrack", "armoredcar", "atgun"])
+	# extra troops are only bought in sandbox and commander mode: everywhere else reinforcements come free
 	match m:
-		"sandbox", "commander", "destroy", "frontline":
+		"sandbox", "commander":
 			return FIRE + TROOPS + AIR + veh
+		"destroy", "frontline":
+			return FIRE + AIR + veh
 		"deathmatch", "capture", "koth":
-			return FIRE + TROOPS + veh
+			return FIRE + veh
 		"assault", "breakthrough":
-			return FIRE + TROOPS + AIR + veh if t == 0 else ["artillery", "recon", "atgun"]
+			return FIRE + AIR + veh if t == 0 else ["artillery", "recon", "atgun"]
 		"laststand":
 			return ["artillery", "airstrike"] if t == 0 else []
 		"horde":
@@ -76,9 +79,9 @@ static func callins(t: int, mode: String = "") -> Array:
 		"escort":
 			return ["artillery", "recon", "airstrike"] if t == 0 else ["artillery"]
 		"rescue":
-			return ["artillery", "recon", "heli"] if t == 0 else ["recon"]
+			return ["artillery", "recon"] if t == 0 else ["recon"]
 		"general":
-			return ["recon", "artillery", "paradrop"] + LIGHT
+			return ["recon", "artillery"] + LIGHT
 	return FIRE
 
 static func callin_ok(t: int, what: String) -> bool:

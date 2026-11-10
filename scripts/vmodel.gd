@@ -394,7 +394,8 @@ static func _build_main(v) -> void:
 			for x in [0.93, -0.93]:
 				door(v, hull, Vector3(x, 0.76, 0.62), 0.95, 0.46 if rnd else 0.52, base, -signf(x) * 1.2)
 			# windscreen
-			var tilt = 0.0 if rnd else -0.22
+			# the windscreen is folded flat onto the bonnet so the gun can fire over it
+			var tilt = -1.42
 			var ws = Node3D.new()
 			ws.position = Vector3(0, 1.22, 0.78)
 			ws.rotation.x = tilt
@@ -421,10 +422,12 @@ static func _build_main(v) -> void:
 			for z in [1.35, -1.3]:
 				for x in [0.95, -0.95]:
 					wheel(v, Vector3(x, 0.42, z), 0.42, 0.3, rim)
+			# the gun on a tall post, the gunner on a step behind it, both well above the car
+			box(v, hull, Vector3(0.7, 0.28, 0.6), Vector3(0, 0.92, -1.25), dark, {"b": 0.03})
 			v.turret = Node3D.new()
-			v.turret.position = Vector3(0, 1.6, -0.62)
+			v.turret.position = Vector3(0, 1.88, -0.62)
 			hull.add_child(v.turret)
-			cyl(v.turret, 0.06, 0.85, Vector3(0, -0.42, 0), dark, "y", {"seg": 8})
+			cyl(v.turret, 0.06, 1.2, Vector3(0, -0.6, 0), dark, "y", {"seg": 8})
 			v.gun_pivot = Node3D.new()
 			v.gun_pivot.position = Vector3(0, 0.15, 0)
 			v.turret.add_child(v.gun_pivot)
@@ -708,7 +711,7 @@ static func _build_main(v) -> void:
 			box(v, hull, Vector3(1.7, 0.12, 2.0), Vector3(0, 0.72, -1.35), paint.darkened(0.3), {"b": 0.02})
 			box(v, hull, Vector3(1.6, 0.3, 0.1), Vector3(0, 0.7, 2.38), METAL, {"b": 0.03})
 			# welded shield and the gun post
-			box(v, hull, Vector3(1.4, 0.6, 0.06), Vector3(0, 1.55, -0.62), METAL.lightened(0.15), {"b": 0.01})
+			box(v, hull, Vector3(1.0, 0.45, 0.05), Vector3(0, 2.25, -0.68), METAL.lightened(0.15), {"b": 0.01})
 			box(v, hull, Vector3(0.36, 0.42, 0.28), Vector3(0.6, 0.95, -2.0), Color(0.3, 0.3, 0.22), {"b": 0.03})
 			for z in [1.45, -1.55]:
 				for x in [0.92, -0.92]:
@@ -718,10 +721,12 @@ static func _build_main(v) -> void:
 			cyl(hull, 0.025, 1.9, Vector3(-0.86, 1.95, -2.25), METAL, "y", {"seg": 6})
 			box(v, hull, Vector3(0.02, 0.42, 0.7), Vector3(-0.86, 2.68, -2.62), G.TEAM_BAND[v.team].darkened(0.1) if not Faction.militia(v.team) else Color(0.08, 0.08, 0.08), {"b": 0.0})
 			box(v, hull, Vector3(0.025, 0.08, 0.6), Vector3(-0.86, 2.68, -2.62), G.team_color(v.team), {"b": 0.0})
+			# a firing step for the gunner, the gun on a post above the cab roof
+			box(v, hull, Vector3(1.0, 0.55, 0.8), Vector3(0, 1.05, -1.4), METAL.lightened(0.1), {"b": 0.03})
 			v.turret = Node3D.new()
-			v.turret.position = Vector3(0, 1.75, -1.0)
+			v.turret.position = Vector3(0, 2.4, -1.0)
 			hull.add_child(v.turret)
-			cyl(v.turret, 0.05, 0.9, Vector3(0, -0.45, 0), METAL, "y", {"seg": 6})
+			cyl(v.turret, 0.05, 1.3, Vector3(0, -0.65, 0), METAL, "y", {"seg": 6})
 			v.gun_pivot = Node3D.new()
 			v.turret.add_child(v.gun_pivot)
 			mg(v, v.gun_pivot, Vector3(0, 0.05, 0.05), 1.0)

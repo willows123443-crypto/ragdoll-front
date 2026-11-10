@@ -40,6 +40,7 @@ var cap_contested = false
 var mode = "sandbox"      # sandbox, deathmatch, capture
 var map_id = "town"
 var team_size = 10
+var team_caps: Array = []     # campaign battles: each side's own strength
 var reinforce = true
 var limit = 50
 var started = false
@@ -148,9 +149,10 @@ var WEAPONS = {
 	"pistol":  {"id": "pistol", "mags": 3, "name": "Pistol", "mag": 8, "rof": 0.22, "auto": false, "dmg": 26.0, "pellets": 1, "spread": 0.018, "move_spread": 0.02, "force": 2.4, "reload": 1.6, "recoil": 0.03, "len": 0.3, "hold": 0.12, "snd_pitch": 1.4, "snd_vol": -3.0, "zoom": 50.0, "tracer": 300.0, "range": [2.0, 30.0], "burst": [1, 2], "speed": 1.05, "rocket": false},
 	"flamer":  {"id": "flamer", "mags": 1, "name": "Flamethrower", "mag": 120, "rof": 0.05, "auto": true, "dmg": 0.0, "pellets": 1, "spread": 0.06, "move_spread": 0.02, "force": 0.0, "reload": 5.0, "recoil": 0.0, "len": 0.9, "hold": 0.32, "snd_pitch": 0.4, "snd_vol": -4.0, "zoom": 55.0, "tracer": 0.0, "range": [2.0, 17.0], "burst": [12, 24], "speed": 0.9, "rocket": false, "flame": true},
 	"atrifle": {"id": "atrifle", "mags": 4, "name": "Anti-tank rifle", "mag": 5, "rof": 1.6, "auto": false, "dmg": 130.0, "pellets": 1, "spread": 0.002, "move_spread": 0.05, "force": 9.0, "reload": 3.5, "recoil": 0.08, "len": 1.5, "hold": 0.5, "snd_pitch": 0.55, "snd_vol": 5.0, "zoom": 30.0, "tracer": 600.0, "range": [20.0, 140.0], "burst": [1, 1], "speed": 0.85, "rocket": false, "ap": true},
-	"rpg":     {"id": "rpg", "mags": 2, "name": "Rocket launcher", "mag": 1, "rof": 1.0, "auto": false, "dmg": 0.0, "pellets": 1, "spread": 0.007, "move_spread": 0.03, "force": 5.0, "reload": 3.6, "recoil": 0.035, "len": 1.12, "hold": 0.42, "snd_pitch": 0.5, "snd_vol": 4.0, "zoom": 38.0, "tracer": 0.0, "range": [16.0, 85.0], "burst": [1, 1], "speed": 0.9, "rocket": true},
+	"rpg":     {"id": "rpg", "mags": 2, "name": "Bazooka", "mag": 1, "rof": 1.0, "auto": false, "dmg": 0.0, "pellets": 1, "spread": 0.007, "move_spread": 0.03, "force": 5.0, "reload": 3.6, "recoil": 0.035, "len": 1.12, "hold": 0.42, "snd_pitch": 0.5, "snd_vol": 4.0, "zoom": 38.0, "tracer": 0.0, "range": [16.0, 85.0], "burst": [1, 1], "speed": 0.9, "rocket": true},
+	"pfaust":  {"id": "pfaust", "mags": 0, "name": "Panzerfaust", "mag": 1, "rof": 1.0, "auto": false, "dmg": 0.0, "pellets": 1, "spread": 0.012, "move_spread": 0.04, "force": 4.0, "reload": 1.0, "recoil": 0.03, "len": 1.0, "hold": 0.4, "snd_pitch": 0.6, "snd_vol": 3.0, "zoom": 44.0, "tracer": 0.0, "range": [8.0, 45.0], "burst": [1, 1], "speed": 0.95, "rocket": true},
 }
-const WEAPON_LIST = ["rifle", "lmg", "sniper", "shotgun", "rpg", "smg", "pistol", "flamer", "atrifle"]
+const WEAPON_LIST = ["rifle", "lmg", "sniper", "shotgun", "rpg", "smg", "pistol", "flamer", "atrifle", "pfaust"]
 
 # gun models: [x, y, z, w, h, l, colour] along the gun (z forward from the grip)
 const C_DARK = Color(0.14, 0.15, 0.15)
@@ -172,6 +174,7 @@ var GUN_MODELS = {
 	"flamer": [[0, 0.03, 0.15, 0.06, 0.08, 0.5, C_DARK], [0, 0.04, 0.55, 0.05, 0.05, 0.32, C_MID], [0, -0.07, 0.15, 0.04, 0.1, 0.05, C_DARK], [0, 0.04, 0.74, 0.07, 0.07, 0.06, C_DARK]],
 	"atrifle": [[0, -0.01, -0.2, 0.06, 0.12, 0.25, C_WOOD], [0, 0.02, 0.2, 0.07, 0.09, 0.6, C_DARK], [0, 0.04, 0.95, 0.04, 0.04, 0.9, C_DARK], [0, 0.04, 1.42, 0.08, 0.06, 0.1, C_DARK],
 		[0.06, -0.08, 1.1, 0.015, 0.2, 0.015, C_DARK], [-0.06, -0.08, 1.1, 0.015, 0.2, 0.015, C_DARK], [0, 0.11, 0.18, 0.045, 0.045, 0.22, C_DARK]],
+	"pfaust": [[0, 0.02, 0.2, 0.055, 0.055, 0.9, C_OLIVE], [0, 0.02, 0.76, 0.16, 0.16, 0.2, C_GREEN], [0, 0.02, 0.9, 0.11, 0.11, 0.12, C_GREEN], [0, 0.02, 0.98, 0.05, 0.05, 0.08, C_DARK], [0, 0.09, 0.38, 0.025, 0.07, 0.03, C_DARK], [0, -0.05, 0.3, 0.035, 0.06, 0.04, C_DARK]],
 	"rpg": [[0, 0.02, 0.3, 0.11, 0.11, 1.12, C_OLIVE], [0, 0.02, 0.93, 0.15, 0.15, 0.22, C_GREEN], [0, -0.08, 0.12, 0.04, 0.11, 0.05, C_DARK], [0.07, 0.08, 0.28, 0.03, 0.07, 0.05, C_DARK], [0, -0.07, 0.36, 0.04, 0.1, 0.05, C_DARK]],
 }
 
@@ -182,6 +185,18 @@ func _fill_weapon_defaults() -> void:
 			w["flame"] = false
 		if not w.has("ap"):
 			w["ap"] = false
+
+# the area round a side's spawn and rally point, where fresh troops and vehicles arrive: no shelling it
+func near_spawn(p: Vector3, r: float = 40.0) -> bool:
+	if world == null:
+		return false
+	for t in range(team_count()):
+		if dist2d(p, world.spawn[t]) < r or dist2d(p, world.rally_point(t)) < r * 0.8:
+			return true
+	return false
+
+func size_of(t: int) -> int:
+	return team_caps[t] if t < team_caps.size() else team_size
 
 func team_count() -> int:
 	return teams

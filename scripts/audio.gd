@@ -8,6 +8,7 @@ var s_whizz: AudioStreamWAV
 var s_rico: AudioStreamWAV
 var s_whistle: AudioStreamWAV
 var s_step: AudioStreamWAV
+var s_splash: AudioStreamWAV
 var s_hit: AudioStreamWAV
 var s_rocket: AudioStreamWAV
 var s_engine: AudioStreamWAV
@@ -44,6 +45,7 @@ func _ready() -> void:
 	s_rico = _sweep(2400.0, 800.0, 0.28, 0.25)
 	s_whistle = _sweep(1400.0, 380.0, 1.15, 0.22)
 	s_step = _noise(0.06, 0.02, 0.15, 1.0)
+	s_splash = _noise(0.32, 0.09, 0.62, 1.4)
 	s_hit = _sweep(1400.0, 1200.0, 0.05, 0.25)
 	s_rocket = _noise(0.7, 0.25, 0.3, 1.0)
 	s_engine = _engine_loop()
@@ -450,6 +452,10 @@ func groan(pos: Vector3, kind: String) -> void:
 func step(pos: Vector3) -> void:
 	if cam_dist(pos) < 12.0:
 		play(s_step, pos, -14.0, randf_range(0.8, 1.2))
+
+func splash(pos: Vector3, deep: bool) -> void:
+	if cam_dist(pos) < 18.0:
+		play(s_splash, pos, -10.0 if deep else -15.0, randf_range(0.7, 1.1) if deep else randf_range(1.0, 1.4))
 
 # engines: short rumbles re-triggered while driving, pitched up with speed
 func engine(pos: Vector3, load_: float, heavy: bool) -> void:

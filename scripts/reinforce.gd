@@ -15,6 +15,16 @@ static func reset() -> void:
 			p["node"].queue_free()
 	planes = []
 
+static func foot_count(t: int) -> int:
+	var n = 0
+	for s in G.soldiers:
+		if s.team == t and s.state != "dead":
+			var v = s.vehicle
+			# on foot, or still on the way up in a truck, boat or helicopter
+			if v == null or not is_instance_valid(v) or (v.mission != null and v.mission.get("type", "deliver") == "deliver" and v.driver() != s):
+				n += 1
+	return n
+
 static func step(dt: float) -> void:
 	_step_planes(dt)
 	if not G.reinforce or G.over:
@@ -22,7 +32,10 @@ static func step(dt: float) -> void:
 	for t in range(G.team_count()):
 		if G.mode == "laststand" or (G.mode == "horde" and t == 1) or (G.mode == "commander" and t == 0):
 			continue          # waves are handled by the game mode
-		var missing = G.team_size - G.alive_count(t)
+		# men crewing guns and vehicles don't count toward the infantry strength
+		var missing = G.size_of(t) - foot_count(t)
+		if not Campaign.reinforce_ok(t):
+			continue
 		if missing <= 0:
 			timers[t] = minf(timers[t], 0.0)
 			continue
@@ -39,21 +52,27 @@ static func step(dt: float) -> void:
 			missing = mini(missing, int(Obj.supply))
 		var before = timers[t]
 		# fresh troops are gathered and sent forward in groups, which takes a while
+		var thr = {"instant": 7.0, "para": 35.0 if missing >= 4 else 55.0, "heli": 38.0 if missing >= 4 else 58.0}.get(G.reinf_mode, 30.0 if missing >= 4 else 50.0)
+		if timers[t] > thr and G.reinf_mode != "instant" and not Comms.reinforce_allowed(t):
+			timers[t] = thr       # waiting on a runner to ask for them
+			continue
+		if timers[t] > thr and G.reinf_mode != "instant":
+			Comms.used_reinf(t)
 		match G.reinf_mode:
 			"instant":
-				if timers[t] > 7.0:
+				if timers[t] > thr:
 					timers[t] = 0.0
 					G.main.base_spawn(t)
 			"para":
-				if timers[t] > (35.0 if missing >= 4 else 55.0):
+				if timers[t] > thr:
 					timers[t] = -20.0
 					paradrop(t, mini(missing, 6))
 			"heli":
-				if timers[t] > (38.0 if missing >= 4 else 58.0):
+				if timers[t] > thr:
 					timers[t] = -20.0
 					heli(t, mini(missing, 6))
 			_:
-				if timers[t] > (30.0 if missing >= 4 else 50.0):
+				if timers[t] > thr:
 					timers[t] = -20.0
 					truck(t, mini(missing, 8))
 		if G.mode == "siege" and t == 0 and timers[t] < before - 1.0:
@@ -78,11 +97,29 @@ static func entry_point(t: int) -> Vector3:
 		z = b.position.y + 5.0 if dir.z < 0.0 else b.end.y - 5.0
 	return Vector3(x, G.world.ground_y(x, z), z)
 
+# somewhere just in from the edge with nothing parked on it (wrecks and other arrivals block the road)
+static func clear_entry(t: int) -> Vector3:
+	var e = entry_point(t)
+	var inward = G.flat(G.world.rally_point(t) - e).normalized()
+	var perp = Vector3(-inward.z, 0, inward.x)
+	var b: Rect2 = G.world.bounds
+	for k in range(16):
+		var q = e + inward * (6.0 + (k / 4) * 6.0) + perp * [0.0, 9.0, -9.0, 18.0][k % 4]
+		q.x = clampf(q.x, b.position.x + 5.0, b.end.x - 5.0)
+		q.z = clampf(q.z, b.position.y + 5.0, b.end.y - 5.0)
+		var ok = not G.world.inside_any(q.x, q.z, 2.0) and not G.world.in_water(q.x, q.z)
+		for v in G.vehicles:
+			if G.dist2d(v.pos, q) < 10.0:
+				ok = false
+		if ok:
+			return Vector3(q.x, G.world.ground_y(q.x, q.z), q.z)
+	return e
+
 static func truck(t: int, n: int) -> void:
 	if G.map_id == "beach" and t == 0:
 		boat(t, n)
 		return
-	var entry = entry_point(t)
+	var entry = clear_entry(t)
 	var home: Vector3 = G.world.rally_point(t)
 	# unload on open ground short of the base, on the way in from the edge
 	var inward = G.flat(home - entry)
@@ -106,7 +143,7 @@ static func truck(t: int, n: int) -> void:
 
 # a transport helicopter flies troops in and lands them at the rally point
 static func heli(t: int, n: int) -> void:
-	var entry = entry_point(t)
+	var entry = clear_entry(t)
 	var drop = G.main._free_spot(G.world.rally_point(t) + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6)))
 	var v = Vehicle.make("heli", t, entry, atan2(drop.x - entry.x, drop.z - entry.z))
 	v.mission = {"type": "deliver", "drop": drop, "exit": entry, "stage": 0, "wait": 0.0}
@@ -164,8 +201,10 @@ static func _step_planes(dt: float) -> void:
 		var at: Vector3 = p["from"].lerp(p["to"], p["t"])
 		p["node"].global_position = at
 		p["drop_t"] -= dt
-		if p["left"] > 0 and absf(at.z - p["zone"].z) < 14.0 and p["drop_t"] <= 0.0:
-			p["drop_t"] = 0.45
+		# once over the zone, the whole stick goes out the door one after another
+		if p["left"] > 0 and (p.get("dropping", false) or absf(at.z - p["zone"].z) < 22.0) and p["drop_t"] <= 0.0:
+			p["dropping"] = true
+			p["drop_t"] = 0.2
 			p["left"] -= 1
 			var x = at.x + randf_range(-3, 3)
 			var s = G.main.spawn_soldier(p["team"], x, at.z, "")

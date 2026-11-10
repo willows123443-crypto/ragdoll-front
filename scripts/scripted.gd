@@ -15,7 +15,7 @@ const WHEN = ["time", "enter", "clear", "point", "losses"]
 const WHEN_NAMES = ["After a time", "Team enters area", "Area cleared of team", "Team takes a point", "Team has lost N men"]
 const THEN = ["reinforce", "vehicle", "artillery", "airstrike", "smoke", "message", "attack", "win"]
 const THEN_NAMES = ["Reinforcements arrive", "Vehicle arrives", "Artillery barrage", "Air strike", "Smoke screen", "Show a message", "Team attacks the spot", "Team wins"]
-const VEHICLES = ["jeep", "truck", "halftrack", "armoredcar", "tank", "artillery", "mortar", "nest", "aagun"]
+const VEHICLES = ["jeep", "truck", "halftrack", "armoredcar", "tank", "artillery", "mortar", "nest", "aagun", "atgun"]
 
 static var groups: Array = []          # placed units at play time: {"u": unit, "members": [], "veh": v, "wi": waypoint index}
 static var triggers: Array = []

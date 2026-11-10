@@ -21,7 +21,13 @@ static func mat(c: Color) -> StandardMaterial3D:
 	if not mats.has(k):
 		var m = StandardMaterial3D.new()
 		m.albedo_color = c
-		m.roughness = 0.75
+		m.roughness = 0.72
+		# worn paint, chips and dust; dark parts (tyres, steel) get a duller, plainer finish
+		if c.get_luminance() > 0.12:
+			Tex.apply(m, "paint", 0.9, false, 0.45)
+		else:
+			Tex.apply(m, "plain", 1.4, false, 0.0)
+			m.roughness = 0.9
 		mats[k] = m
 	return mats[k]
 
@@ -275,6 +281,80 @@ static func sandbag_ring(v, parent: Node3D, pts: Array, rows: int, c: Color) -> 
 				ball(parent, Vector3(0.46, 0.26, 0.68), p, bc, {"rot": Vector3(0, yaw + randf_range(-0.06, 0.06), 0)})
 
 static func build(v) -> void:
+	_build_main(v)
+	_extras(v)
+	if v.heavy:
+		_make_heavy(v)
+
+# the heavy tank: the tank scaled up, with side skirts, a thicker mantlet and a longer gun
+static func _make_heavy(v) -> void:
+	var k = 1.16
+	for c in v.get_children():
+		if c is Node3D and c != v.body:
+			c.position *= k
+			c.scale *= k
+	for c in v.body.get_children():
+		if c is CollisionShape3D:
+			c.position *= k
+			if c.shape is BoxShape3D:
+				var bs: BoxShape3D = c.shape.duplicate()
+				bs.size *= k
+				c.shape = bs
+	var base: Color = G.TEAM_UNI[v.team].lerp(Color(0.35, 0.36, 0.3), 0.35).darkened(0.12)
+	for x in [1.0, -1.0]:
+		for z in range(5):
+			box(v, v, Vector3(0.06, 0.62, 1.3), Vector3(x * 2.0, 0.95, -2.9 + z * 1.45), base, {"b": 0.01, "rot": Vector3(0, 0, x * 0.05)})
+	if v.gun_pivot != null:
+		box(v, v.gun_pivot, Vector3(1.1, 0.7, 0.45), Vector3(0, 0, 0.2), base.darkened(0.2), {"b": 0.05})
+		cyl(v.gun_pivot, 0.13, 1.4, Vector3(0, 0, 4.0), base.darkened(0.35), "z", {"seg": 12})
+		box(v, v.gun_pivot, Vector3(0.42, 0.26, 0.45), Vector3(0, 0, 4.75), base.darkened(0.35), {"b": 0.03})
+
+# the clutter that makes a vehicle look used: track cleats, tow cables, jerrycans, tools, mirrors, mud flaps
+static func _extras(v) -> void:
+	var base: Color = G.TEAM_UNI[v.team].lerp(Color(0.35, 0.36, 0.3), 0.35)
+	var dark = base.darkened(0.35)
+	var can_c = base.darkened(0.2)
+	var hull: Node3D = v
+	match v.kind:
+		"tank":
+			var tr = Color(0.16, 0.15, 0.13)
+			for x in [1.45, -1.45]:
+				for k in range(21):
+					box(v, hull, Vector3(0.74, 0.05, 0.13), Vector3(x, 0.995, -3.1 + k * 0.31), tr, {"b": 0.01})
+				cyl(hull, 0.035, 4.0, Vector3(signf(x) * 1.52, 1.5, -0.6), METAL.lightened(0.1), "z", {"seg": 5})
+			for x in [0.85, 1.2]:
+				box(v, hull, Vector3(0.3, 0.42, 0.17), Vector3(x, 2.02, -2.55), can_c, {"b": 0.03})
+				box(v, hull, Vector3(0.08, 0.05, 0.1), Vector3(x, 2.25, -2.55), dark, {"b": 0.01})
+			for k in range(4):
+				box(v, hull, Vector3(0.36, 0.06, 0.16), Vector3(-0.6 + k * 0.4, 1.47, 2.62), tr, {"b": 0.01, "rot": Vector3(0.45, 0, 0)})
+			# shovel and pick on the front fender
+			box(v, hull, Vector3(0.05, 0.04, 1.1), Vector3(1.3, 1.1, 2.3), Color(0.42, 0.32, 0.2), {"b": 0.0})
+			box(v, hull, Vector3(0.18, 0.03, 0.24), Vector3(1.3, 1.11, 2.9), METAL, {"b": 0.0})
+			if v.turret != null:
+				mg(v, v.turret, Vector3(0.5, 1.15, -0.15), 0.75)
+				cyl(v.turret, 0.17, 1.5, Vector3(0, 0.82, -1.95), CANVAS_A.darkened(0.1), "x", {"seg": 10})
+				for x in [-0.55, 0.55]:
+					box(v, v.turret, Vector3(0.04, 0.05, 0.36), Vector3(x, 0.84, -1.95), Color(0.3, 0.22, 0.14), {"b": 0.0})
+		"truck", "radar", "ambulance":
+			for x in [1.25, -1.25]:
+				cyl(hull, 0.018, 0.4, Vector3(x * 1.0, 2.28, 3.32), METAL, "x", {"seg": 4})
+				box(v, hull, Vector3(0.05, 0.28, 0.18), Vector3(x * 1.17, 2.28, 3.3), dark, {"b": 0.02})
+				box(v, hull, Vector3(0.45, 0.5, 0.03), Vector3(x * 0.88, 0.55, -3.25), Color(0.08, 0.08, 0.08), {"b": 0.0})
+			if v.kind == "truck":
+				for z in [1.05, 0.75]:
+					box(v, hull, Vector3(0.17, 0.42, 0.3), Vector3(1.28, 1.2, z), can_c, {"b": 0.03})
+		"jeep":
+			for x in [0.98, -0.98]:
+				box(v, hull, Vector3(0.04, 0.04, 0.9), Vector3(x, 1.02, -0.45), Color(0.42, 0.32, 0.2), {"b": 0.0})
+			box(v, hull, Vector3(0.03, 0.2, 0.16), Vector3(0.98, 1.02, -0.95), METAL, {"b": 0.0})
+			box(v, hull, Vector3(0.03, 0.12, 0.2), Vector3(-0.98, 1.06, 0.0), METAL, {"b": 0.0})
+		"halftrack":
+			var tr2 = Color(0.16, 0.15, 0.13)
+			for x in [1.1, -1.1]:
+				for k in range(14):
+					box(v, hull, Vector3(0.47, 0.05, 0.13), Vector3(x, 0.915, -2.95 + k * 0.31), tr2, {"b": 0.01})
+
+static func _build_main(v) -> void:
 	var team: int = v.team
 	var rnd = team % 2 == 0          # rounded cast style vs angular welded style
 	var base: Color = G.TEAM_UNI[team].lerp(Color(0.35, 0.36, 0.3), 0.35)
@@ -584,6 +664,59 @@ static func build(v) -> void:
 			box(v, v.gun_pivot, Vector3(0.36, 0.34, 1.1), Vector3(0, 0, 0.2), dark, {"b": 0.06})
 			cyl(v.gun_pivot, 0.09, 2.8, Vector3(0, 0, 1.9), dark, "z", {"r2": 0.08, "seg": 10})
 			cyl(v.gun_pivot, 0.13, 0.3, Vector3(0, 0, 3.25), dark, "z", {"seg": 10})
+		"atgun":
+			# a towed anti-tank gun: split trails, two wheels, an angled shield and a long barrel with a muzzle brake
+			col(v, Vector3(1.8, 1.0, 0.5), Vector3(0, 0.8, 0.35))
+			box(v, hull, Vector3(1.5, 0.14, 0.32), Vector3(0, 0.55, 0.2), dark)
+			for x in [0.88, -0.88]:
+				wheel(v, Vector3(x, 0.52, 0.2), 0.52, 0.16, rim)
+				# trail legs spread back to the spades
+				box(v, hull, Vector3(0.12, 0.14, 2.2), Vector3(x * 0.35, 0.36, -1.05), dark, {"rot": Vector3(0.14, x * 0.18, 0)})
+				box(v, hull, Vector3(0.26, 0.24, 0.06), Vector3(x * 0.58, 0.12, -2.1), METAL, {"rot": Vector3(-0.4, 0, 0)})
+				box(v, hull, Vector3(0.05, 0.05, 0.3), Vector3(x * 0.55, 0.42, -1.95), METAL, {"rot": Vector3(0, 0, PI / 2.0)})
+			v.turret = Node3D.new()
+			v.turret.position = Vector3(0, 0.82, 0.25)
+			hull.add_child(v.turret)
+			# shield: two plates, the top edge cut and bent back
+			box(v, v.turret, Vector3(1.55, 0.95, 0.05), Vector3(0, 0.12, 0.42), base, {"b": 0.015, "rot": Vector3(-0.18, 0, 0)})
+			box(v, v.turret, Vector3(1.4, 0.14, 0.05), Vector3(0, 0.64, 0.33), base.darkened(0.06), {"b": 0.01, "rot": Vector3(-0.7, 0, 0)})
+			box(v, v.turret, Vector3(0.2, 0.18, 0.05), Vector3(0.38, 0.32, 0.47), dark, {"b": 0.0})
+			insignia(v, v.turret, Vector3(-0.42, 0.25, 0.47), "z+", 0.13)
+			v.gun_pivot = Node3D.new()
+			v.gun_pivot.position = Vector3(0, 0.22, 0.05)
+			v.turret.add_child(v.gun_pivot)
+			box(v, v.gun_pivot, Vector3(0.3, 0.28, 1.0), Vector3(0, 0, -0.1), dark, {"b": 0.05})
+			cyl(v.gun_pivot, 0.05, 0.9, Vector3(0, 0.17, -0.15), METAL, "z", {"seg": 8})
+			cyl(v.gun_pivot, 0.065, 2.3, Vector3(0, 0, 1.45), dark, "z", {"r2": 0.055, "seg": 10})
+			cyl(v.gun_pivot, 0.1, 0.24, Vector3(0, 0, 2.62), dark, "z", {"seg": 10})
+			box(v, v.gun_pivot, Vector3(0.24, 0.09, 0.18), Vector3(0, 0, 2.62), METAL, {"b": 0.01})
+			box(v, v.gun_pivot, Vector3(0.06, 0.1, 0.24), Vector3(0.2, 0.06, -0.1), METAL, {"b": 0.01})
+			# a couple of shell boxes stacked by the wheel
+			box(v, hull, Vector3(0.5, 0.2, 0.3), Vector3(1.25, 0.1, -0.6), WOOD, {"b": 0.02})
+			box(v, hull, Vector3(0.5, 0.2, 0.3), Vector3(1.25, 0.3, -0.62), WOOD.darkened(0.1), {"b": 0.02, "rot": Vector3(0, 0.15, 0)})
+		"dinghy":
+			# a small open assault boat: wooden hull, gunwales, ribs, an outboard motor
+			var hc2 = Color(0.36, 0.34, 0.28).lerp(base, 0.4)
+			col(v, Vector3(1.8, 0.5, 5.0), Vector3(0, 0.45, 0))
+			box(v, hull, Vector3(1.6, 0.18, 4.6), Vector3(0, 0.28, -0.1), hc2.darkened(0.15), {"b": 0.06})
+			for x in [0.86, -0.86]:
+				box(v, hull, Vector3(0.08, 0.5, 4.4), Vector3(x, 0.55, -0.2), hc2, {"b": 0.03, "rot": Vector3(0, 0, signf(x) * -0.18)})
+				box(v, hull, Vector3(0.14, 0.06, 4.4), Vector3(x * 1.04, 0.82, -0.2), hc2.darkened(0.25), {"b": 0.02})
+				insignia(v, hull, Vector3(x * 1.0, 0.56, 0.6), "x+" if x > 0 else "x-", 0.17)
+			# the bow narrows to a point
+			for x in [0.5, -0.5]:
+				box(v, hull, Vector3(0.08, 0.5, 1.15), Vector3(x * 0.95, 0.6, 2.35), hc2, {"b": 0.03, "rot": Vector3(-0.15, signf(x) * -0.65, 0)})
+			box(v, hull, Vector3(0.9, 0.16, 0.9), Vector3(0, 0.4, 2.2), hc2.darkened(0.15), {"b": 0.05, "rot": Vector3(-0.2, 0, 0)})
+			box(v, hull, Vector3(1.7, 0.5, 0.08), Vector3(0, 0.6, -2.4), hc2, {"b": 0.03})
+			for z in [1.3, 0.4, -0.5, -1.4]:
+				box(v, hull, Vector3(1.6, 0.06, 0.24), Vector3(0, 0.55, z), WOOD, {"b": 0.01})
+			# outboard motor on the transom
+			box(v, hull, Vector3(0.36, 0.42, 0.42), Vector3(0, 0.95, -2.62), Color(0.18, 0.2, 0.18), {"b": 0.07})
+			box(v, hull, Vector3(0.12, 0.7, 0.14), Vector3(0, 0.45, -2.72), METAL, {"b": 0.02})
+			cyl(hull, 0.02, 0.6, Vector3(0, 1.0, -2.1), METAL, "z", {"seg": 5})
+			for k in range(3):
+				box(v, hull, Vector3(0.05, 0.05, 1.6), Vector3(0.6 - k * 0.6, 0.62, 0.2), WOOD.darkened(0.2), {"b": 0.0, "rot": Vector3(0, 0, PI / 2.0)})
+			v.turret = null
 		"heli", "gunship":
 			var big = v.kind == "heli"
 			var hc = base.darkened(0.05)

@@ -282,7 +282,7 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 	var best = null
 	var bn = 2
 	for o in G.soldiers:
-		if o.team == team or o.state == "dead" or o.hidden_in_vehicle or G.dist2d(o.pos, from) < min_d:
+		if o.team == team or o.state == "dead" or o.hidden_in_vehicle or G.dist2d(o.pos, from) < min_d or G.near_spawn(o.pos):
 			continue
 		var seen = false
 		for f in G.soldiers:
@@ -308,7 +308,7 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 		for st in Build.sites:
 			if st["team"] == team or st["dead"] or not st["done"] or not (st["kind"] in ["fob", "fob2", "hq", "bunker", "mgnest", "pillbox", "mortarpit", "depot", "radio", "aa"]):
 				continue
-			if G.dist2d(st["p"], from) < min_d or not Build.spotted(st, team):
+			if G.dist2d(st["p"], from) < min_d or not Build.spotted(st, team) or (st["kind"] != "hq" and G.near_spawn(st["p"])):
 				continue
 			var spotted = false
 			var friends2 = false

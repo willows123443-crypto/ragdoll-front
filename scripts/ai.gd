@@ -63,7 +63,7 @@ static func order_of(s) -> Dictionary:
 static func assign_squad(s) -> void:
 	var q = null
 	for sq in G.squads:
-		if sq["team"] == s.team:
+		if sq["team"] == s.team and not sq.get("guard", false):
 			sq["members"] = sq["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead")
 			if sq["members"].size() < 5:
 				q = sq
@@ -380,11 +380,16 @@ static func follow_path(s) -> String:
 		return "moving"
 	var dir = G.flat(wp - s.pos) / maxf(d, 0.01)
 	# slide round corners and posts instead of walking into them
-	if d > 0.8 and G.world.solid_at(s.pos.x + dir.x * 0.6, s.pos.z + dir.z * 0.6, 0.22, s.pos.y):
+	s.slide_t -= G.DT
+	if s.slide_t > 0.0 and s.slide_dir.dot(dir) > 0.0:
+		dir = s.slide_dir       # keep going the way we picked round the corner, no dithering
+	elif d > 0.8 and G.world.solid_at(s.pos.x + dir.x * 0.6, s.pos.z + dir.z * 0.6, 0.22, s.pos.y):
 		for ang in [0.6, -0.6, 1.1, -1.1, 1.6, -1.6]:
 			var nd = dir.rotated(Vector3.UP, ang)
 			if not G.world.solid_at(s.pos.x + nd.x * 0.6, s.pos.z + nd.z * 0.6, 0.22, s.pos.y):
 				dir = nd
+				s.slide_dir = nd
+				s.slide_t = 0.5
 				break
 	s.want = dir * sp
 	s.prog_t += G.DT
@@ -403,15 +408,50 @@ static func follow_path(s) -> String:
 				s.stuck_n = 0
 				s.bad_spot = s.move_target
 				s.bad_t = G.sim_time + 12.0
+				# stuck over and over in the same spot: step out to the nearest open ground
+				if G.dist2d(s.pos, s.wedge_p) < 2.0:
+					s.wedge_n += 1
+				else:
+					s.wedge_n = 1
+					s.wedge_p = s.pos
+				if s.wedge_n >= 2 and not AI.upstairs(s):
+					s.wedge_n = 0
+					unwedge(s)
 				return "stuck"
 		else:
 			s.stuck_n = 0
 	return "moving"
 
+static func unwedge(s) -> void:
+	var W = G.world
+	var best = null
+	for k in range(24):
+		var a = randf() * TAU
+		var q = s.pos + Vector3(cos(a), 0, sin(a)) * (1.5 + (k % 6) * 0.5)
+		if not W.inside_any(q.x, q.z, 0.45) and not W.astar.is_point_solid(W.nav_cell(q.x, q.z)) and not W.in_water(q.x, q.z):
+			best = q
+			break
+	if best == null:
+		best = W.nav_pos(W._nearest_free(W.nav_cell(s.pos.x, s.pos.z)))
+	if G.dist2d(best, s.pos) < 8.0:
+		s.pos = Vector3(best.x, W.surface_y(best.x, best.z, s.pos.y + 0.5), best.z)
+		s.vel = Vector3.ZERO
+		s.need_path = true
+
 static func follow_route(s) -> void:
 	var R = s.route
+	if s.climb != null:
+		return
 	var wp: Vector3 = R["pts"][R["i"]]
 	var d = G.dist2d(wp, s.pos)
+	# a ladder instead of stairs: at its foot (or the top) climb it in one go
+	var T = s.tower
+	if T != null and T.get("ladder", false) and R["i"] <= 1 and R["pts"].size() > 1:
+		var end0: Vector3 = R["pts"][0]
+		if G.dist2d(end0, s.pos) < 1.3 and absf(end0.y - s.pos.y) < 1.2:
+			s.start_climb(T, R["pts"][1].y > end0.y + 1.0)
+			R["i"] = 2 if R["pts"].size() > 2 else 1
+			return
 	if d < 0.4 and absf(wp.y - s.pos.y) < 1.2:
 		R["i"] += 1
 		if R["i"] >= R["pts"].size():
@@ -488,8 +528,8 @@ static func perceive(s) -> void:
 	s.peek_vis = peek_only
 	# anti-tank weapons look for enemy vehicles too
 	s.vis_veh = null
-	if s.W["rocket"] or s.W["ap"]:
-		var bdv = s.W["range"][1] * 1.2
+	if s.W["rocket"] or s.W["ap"] or s.fausts > 0:
+		var bdv = s.W["range"][1] * 1.2 if (s.W["rocket"] or s.W["ap"]) else 48.0
 		for v in G.vehicles:
 			if v.team != s.team and not v.dead and v.kind != "mortar":
 				var dv = G.dist2d(v.pos, s.pos)
@@ -538,6 +578,103 @@ static func perceive(s) -> void:
 					s.hand_t = null
 				break
 
+# ---------------------------------------------------------------- scouts
+# a scout creeps forward alone, lies up where he can watch, radios back what he sees,
+# and slips away rather than getting into a fight
+static func scout_tick(s) -> bool:
+	if s.order != null and s.order.get("mode", "") == "move":
+		return false
+	var t = s.team
+	var n = 0
+	var c = Vector3.ZERO
+	for e in s.intel.keys():
+		var k = s.intel[e]
+		if k["seen"] and G.sim_time - k["t"] < 3.0 and is_instance_valid(e) and e.state != "dead":
+			n += 1
+			c += k["p"]
+	if n > 0:
+		c /= n
+		if Comms.ok(t):
+			Commander.report(t, c, n)
+			if G.sim_time - s.get_meta("rep_t", -99.0) > 25.0:
+				s.set_meta("rep_t", G.sim_time)
+				G.ui.radio(t, "Scout %s: %d enemy near %s" % [s.sname, n, grid_ref(c)])
+				G.fx.callout(s, G.pick(["Scout to command: contact, %d men, %s." % [n, bearing_text(s.pos, c)], "I see %d of them. Reporting." % n]))
+		if G.dist2d(c, s.pos) < 30.0 or s.supp > 0.25 or s.hp < 70.0:
+			# too close: back off the way he came
+			release_cover(s)
+			s.task = "scout"
+			go_to(s, s.pos + G.flat(s.pos - c).normalized() * 25.0, 4.4)
+			return true
+		if s.cover == null:
+			var cv = find_cover(s, c, "hold")
+			if cv != null:
+				take_cover(s, cv)
+			else:
+				stop_move(s)
+				s.kneel = true
+		s.task = "scout"
+		return true
+	var wp = s.get_meta("scout_wp", null)
+	if wp == null or G.dist2d(s.pos, wp) < 8.0 or G.sim_time > s.get_meta("scout_wp_t", 0.0):
+		wp = _scout_point(s)
+		s.set_meta("scout_wp", wp)
+		s.set_meta("scout_wp_t", G.sim_time + 50.0)
+	if s.cover != null:
+		release_cover(s)
+	s.task = "scout"
+	go_to(s, wp, 3.0)
+	return true
+
+# somewhere on the enemy's side worth a look, usually out on a flank
+static func _scout_point(s) -> Vector3:
+	var t = s.team
+	var enemy: Vector3 = G.world.spawn[(t + 1) % G.team_count()]
+	var mid: Vector3 = G.world.capture
+	var cands = []
+	for pt in Obj.points:
+		if pt["owner"] != t:
+			cands.append(pt["p"])
+	var axis = G.flat(enemy - mid)
+	var perp = Vector3(-axis.z, 0, axis.x).normalized()
+	for k in range(3):
+		cands.append(mid + axis * randf_range(0.15, 0.6) + perp * randf_range(-1.0, 1.0) * clampf(axis.length() * 0.8, 20.0, 70.0))
+	var p: Vector3 = G.pick(cands)
+	var b: Rect2 = G.world.bounds
+	p.x = clampf(p.x, b.position.x + 8.0, b.end.x - 8.0)
+	p.z = clampf(p.z, b.position.y + 8.0, b.end.y - 8.0)
+	return p
+
+# ---------------------------------------------------------------- ambushes
+# defenders who haven't been spotted hold their fire until the enemy is close or out in the open,
+# then the whole squad opens up at once
+static var ambushes = 0
+static var ambush_waits = 0
+
+static func ambush_hold(s, tgt) -> bool:
+	if tgt == null or s.is_player or s.squad == null or Commander.style_of(s.team) == "reckless":
+		return false
+	var q = s.squad
+	if G.sim_time - q.get("sprung_t", -99.0) < 25.0:
+		return false
+	var holding = q.get("dig", false) or (q.get("cmd") != null and q["cmd"]["job"] == "defend") or order_of(s)["mode"] == "hold"
+	if not holding or not s.in_cover or s.task == "charge":
+		return false
+	var d = G.dist2d(tgt.pos, s.pos)
+	var open = not tgt.in_cover and tgt.vehicle == null
+	var spotted = s.supp > 0.15 or s.hurt_t > 0.0
+	if d < 22.0 or (open and d < 38.0) or spotted:
+		q["sprung_t"] = G.sim_time
+		ambushes += 1
+		var L = Squad.leader_of(q)
+		G.fx.callout(L if L != null else s, G.pick(["Now! Open fire!", "Fire! Fire!", "Let 'em have it!"]))
+		return false
+	ambush_waits += 1
+	if G.sim_time - q.get("wait_said", -99.0) > 20.0:
+		q["wait_said"] = G.sim_time
+		G.fx.callout(s, G.pick(["Hold your fire... wait for it.", "Steady. Let them come closer.", "Nobody shoots yet."]))
+	return true
+
 # ---------------------------------------------------------------- decisions
 static func decide(s) -> void:
 	s.decide_t = randf_range(1.6, 2.6)
@@ -558,6 +695,8 @@ static func decide(s) -> void:
 		return
 	if s.task == "rout":
 		s.task = null
+	if s.has_meta("scout") and scout_tick(s):
+		return
 	# at night, leaders put up flares over where the enemy was last seen
 	if G.main.is_night() and s.flares > 0 and Morale.is_leader(s):
 		s.flare_cd -= 2.0
@@ -820,7 +959,10 @@ static func decide(s) -> void:
 		s.task = "advance"
 		go_to(s, goal2, 3.6)
 		return
-	var mode = "defend" if (s.supp > 0.45 or s.hp < 55.0 or s.vis_t != null or s.morale < Morale.SHAKEN) else ("flank" if s.role == "flanker" else "advance")
+	var stl = Commander.style_of(s.team)
+	var supp_lim = 0.75 if stl == "reckless" else (0.3 if stl == "cautious" else 0.45)
+	var hp_lim = 40.0 if stl == "reckless" else (65.0 if stl == "cautious" else 55.0)
+	var mode = "defend" if (s.supp > supp_lim or s.hp < hp_lim or (s.vis_t != null and stl != "reckless") or s.morale < Morale.SHAKEN) else ("flank" if s.role == "flanker" else "advance")
 	var c3 = find_cover(s, threat, mode)
 	if c3 != null:
 		take_cover(s, c3)
@@ -1039,7 +1181,7 @@ static func aim_and_fire(s) -> void:
 		if s.reload_t <= 0.0:
 			s.finish_reload()
 	s.fire_cd -= G.DT
-	if s.dragging != null or (s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and G.dist2d(s.patient.pos, s.pos) < 1.3):
+	if s.swim or s.dragging != null or (s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and G.dist2d(s.patient.pos, s.pos) < 1.3):
 		s.burst = 0
 		return
 	var tgt = null
@@ -1047,13 +1189,26 @@ static func aim_and_fire(s) -> void:
 		tgt = s.vis_t
 		if s.broken and tgt.pos.distance_to(s.pos) > 12.0:
 			tgt = null
+	# a tank in panzerfaust range: out with it
+	if s.fausts > 0 and s.vis_veh != null and is_instance_valid(s.vis_veh) and not s.vis_veh.dead and not W["rocket"] and not W["ap"] and s.task != "medic" \
+			and G.dist2d(s.vis_veh.pos, s.pos) < 46.0 and s.reload_t <= 0.0 and s.to_faust():
+		G.fx.callout(s, G.pick(["Panzerfaust!", "I've got a faust, cover me!", "Tank! Going for it!"]))
+		return
+	if W["id"] == "pfaust" and (s.vis_veh == null or not is_instance_valid(s.vis_veh) or s.vis_veh.dead):
+		s.from_sidearm()
+		return
 	# rocket launchers swap to a rifle up close or when out of rockets
-	if W["rocket"] and (s.rockets <= 0 or (tgt != null and tgt.pos.distance_to(s.pos) < 14.0)):
+	if W["rocket"] and W["id"] != "pfaust" and (s.rockets <= 0 or (tgt != null and tgt.pos.distance_to(s.pos) < 14.0)):
 		s.set_weapon("rifle")
 		return
 	if s.mag <= 0 and s.reserve <= 0 and s.reload_t <= 0.0 and s.to_sidearm():
 		G.fx.callout(s, "Switching to pistol!")
 		return
+	if tgt != null and s.has_meta("scout") and G.dist2d(tgt.pos, s.pos) > 15.0 and s.supp < 0.3:
+		tgt = null        # scouts don't give themselves away
+	if tgt != null and ambush_hold(s, tgt):
+		tgt = null
+		s.want_peek = false
 	var veh_t = s.vis_veh
 	if veh_t != null and (not is_instance_valid(veh_t) or veh_t.dead or not (W["rocket"] or W["ap"]) or s.task == "medic"):
 		veh_t = null
@@ -1108,6 +1263,7 @@ static func aim_and_fire(s) -> void:
 						if s.cls == "sniper" and s.partner != null and is_instance_valid(s.partner) and s.partner.state == "alive" and G.dist2d(s.partner.pos, s.pos) < 10.0:
 							spread *= 0.55
 						spread *= 1.0 - 0.12 * s.vet
+						spread += 0.006       # nobody's a perfect shot under fire
 						Combat.fire_weapon(s, s.muzzle, dir, spread)
 						s.burst -= 1
 						s.mag -= 1
@@ -1124,7 +1280,7 @@ static func aim_and_fire(s) -> void:
 				s.burst_cd -= G.DT
 				if s.burst_cd <= 0.0:
 					var far = W["id"] != "sniper" and s.pos.distance_to(point) > W["range"][1] * 1.4
-					if W["rocket"] and tgt == null:
+					if W["rocket"] and tgt == null and veh_t == null:
 						s.burst = 0
 					elif far:
 						s.burst = randi_range(1, 3) if randf() < 0.35 else 0
@@ -1187,7 +1343,12 @@ static func stance(s) -> void:
 		s.prone_t = false
 	if s.in_cover and s.cover != null:
 		var cp = s.cover
-		var peek = s.want_peek and (s.peek_vis or s.force_peek)
+		var peek_now = s.want_peek and (s.peek_vis or s.force_peek)
+		s.peek_hold -= G.DT
+		if peek_now != s.peek_on and s.peek_hold <= 0.0:
+			s.peek_on = peek_now
+			s.peek_hold = 1.1 if peek_now else 0.7
+		var peek = s.peek_on
 		if cp.type == "low":
 			s.crouch_t = 0.0 if peek else 1.0
 		elif cp.type == "corner" or (cp.type == "wall" and cp.side != 0.0):
@@ -1208,7 +1369,7 @@ static func stance(s) -> void:
 		else:
 			s.crouch_t = 1.0
 		return
-	var dark_creep = G.main.is_night() and s.vis_t == null and s.task != "charge" and s.task != "flee"
+	var dark_creep = (G.main.is_night() or s.has_meta("scout")) and s.vis_t == null and s.task != "charge" and s.task != "flee"
 	if s.want.length_squared() > 0.1:
 		s.kneel = false
 		s.crouch_t = 0.3 if s.supp > 0.8 else (0.35 if dark_creep else 0.0)

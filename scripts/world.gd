@@ -63,6 +63,47 @@ var MAPS = {
 	"factory": {"name": "Tank factory (indoor)", "ground": Color(0.44, 0.43, 0.4), "seed": 6060, "size": Vector2(300, 200)},
 }
 
+# the extra ground round a map enlarged for commander mode: woods, hedges, farms and ruins,
+# and the two bases pushed out toward the new edges
+func _outskirts(core: Vector2) -> void:
+	var W2 = TW / 2.0
+	var D2 = TH_ / 2.0
+	var cx = core.x / 2.0 - 6.0
+	var cz = core.y / 2.0 - 6.0
+	var outside = func(x: float, z: float) -> bool:
+		return absf(x) > cx or absf(z) > cz
+	var tries = 0
+	var placed = 0
+	while placed < 26 and tries < 400:
+		tries += 1
+		var x = rnd(-W2 + 15.0, W2 - 15.0)
+		var z = rnd(-D2 + 15.0, D2 - 15.0)
+		if not outside.call(x, z) or inside_any(x, z, 9.0):
+			continue
+		var r = rng.randf()
+		if r < 0.45:
+			for k in range(rng.randi_range(4, 9)):
+				var tx = x + rnd(-9.0, 9.0)
+				var tz = z + rnd(-9.0, 9.0)
+				if outside.call(tx, tz) and not inside_any(tx, tz, 1.5):
+					live_tree(tx, tz)
+		elif r < 0.7:
+			hedge_row(x, z, rnd(10.0, 22.0), rng.randf() < 0.5)
+		elif r < 0.85:
+			house(x, z, rnd(7.0, 9.0), rnd(6.5, 8.0))
+		else:
+			building(x, z, rnd(6.0, 9.0), rnd(6.0, 8.0), rnd(3.5, 5.0))
+		placed += 1
+	for k in range(30):
+		var bx = rnd(-W2 + 8.0, W2 - 8.0)
+		var bz = rnd(-D2 + 8.0, D2 - 8.0)
+		if outside.call(bx, bz) and not inside_any(bx, bz, 2.0):
+			bush(bx, bz)
+	# bases out near the new edges, so there's ground to fight over
+	for t in range(mini(2, spawn.size())):
+		var sx = signf(spawn[t].x) if spawn[t].x != 0.0 else (1.0 if t == 1 else -1.0)
+		spawn[t] = Vector3(sx * (W2 - 45.0), 0, spawn[t].z)
+
 # the map's terrain, navigation grid and playable bounds all come from its size
 func _set_size(w: float, d: float) -> void:
 	TW = int(w)
@@ -546,11 +587,29 @@ func finalize_static() -> void:
 		var mat = StandardMaterial3D.new()
 		mat.albedo_color = g["color"]
 		mat.roughness = 0.95
+		_surface(mat, g["color"], g.get("shape", ""))
 		mi.material_override = mat
 		if g["no_shadow"]:
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_geo().add_child(mi)
 		g["mm"] = mm
+
+# what a static surface is made of, from its colour: tiled roofs, brick, or weathered plaster and stone
+func _surface(mat: StandardMaterial3D, c: Color, shape: String) -> void:
+	for rc in ROOFC:
+		if _near_col(c, rc, 0.03) or (shape == "prism"):
+			Tex.apply(mat, "tiles", 0.28, true, 0.8)
+			return
+	if c.r > 0.5 and c.g < 0.4 and c.b < 0.35 and c.r - c.g > 0.18:
+		Tex.apply(mat, "brick", 0.6, true, 0.8)
+		return
+	if c.g > c.r + 0.05 and c.g > c.b + 0.05:
+		Tex.apply(mat, "plain", 0.3, true, 0.0)      # greenery
+		return
+	Tex.apply(mat, "plaster", 0.35, true, 0.3)
+
+func _near_col(a: Color, b: Color, tol: float) -> bool:
+	return absf(a.r - b.r) < tol and absf(a.g - b.g) < tol and absf(a.b - b.b) < tol
 
 func flat_plane(x: float, z: float, w: float, d: float, color: Color, y: float = 0.012) -> void:
 	var m = MeshInstance3D.new()
@@ -654,7 +713,8 @@ func vaultable(c) -> bool:
 		return false
 	var cx: float = (c.lo.x + c.hi.x) / 2.0
 	var cz: float = (c.lo.z + c.hi.z) / 2.0
-	return not inside_at(cx, c.hi.y + 0.9, cz) and not inside_at(cx, c.hi.y + 1.4, cz)
+	# room above for a body to go over: low walls, and window sills with the lintel well above
+	return not inside_at(cx, c.hi.y + 0.6, cz) and not inside_at(cx, c.hi.y + 0.95, cz)
 
 # ---------------------------------------------------------------- navigation
 func nav_cell(x: float, z: float) -> Vector2i:
@@ -1216,6 +1276,10 @@ func house(x: float, z: float, w: float, d: float, h: float = 3.4) -> void:
 		var bldu = {"x": x, "z": z, "w": w, "d": d, "h": 8.6, "cols": [], "walls0": 0, "fallen": 0}
 		_claim(bldu, c0u)
 		return
+	# some have a flat roof you can get up onto by a ladder on the outside
+	if w <= 10.0 and d <= 9.0 and rng.randf() < 0.35 and edit_node == null:
+		flat_house(x, z, w, d, h)
+		return
 	var color: Color = WALLC[rng.randi() % WALLC.size()]
 	var t = 0.35
 	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h + 1.8, "cols": [], "walls0": 0, "fallen": 0}
@@ -1228,6 +1292,88 @@ func house(x: float, z: float, w: float, d: float, h: float = 3.4) -> void:
 	wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true, d / 2.0 if door_side == 3 else -1.0)
 	flat_plane(x, z, w - 0.4, d - 0.4, Color(0.44, 0.42, 0.38), 0.02)
 	_pitched_roof(x, z, w, d, h, ROOFC[rng.randi() % ROOFC.size()], true)
+	_furnish(x, z, w, d, 0.0)
+	_claim(bld, c0)
+
+# a single storey with a flat roof and a parapet; a ladder against one wall goes up to the roof
+func flat_house(x: float, z: float, w: float, d: float, h: float = 3.3) -> void:
+	var color: Color = WALLC[rng.randi() % WALLC.size()].lerp(Color(0.8, 0.76, 0.66), 0.25)
+	var t = 0.35
+	var bld = {"x": x, "z": z, "w": w, "d": d, "h": h + 1.0, "cols": [], "walls0": 0, "fallen": 0}
+	buildings.append(bld)
+	var c0 = cols.size()
+	var door_side = rng.randi() % 4
+	var ladder_side = (door_side + 1 + rng.randi() % 3) % 4
+	wall_run(true, z - d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true, w / 2.0 if door_side == 0 else -1.0)
+	wall_run(true, z + d / 2.0, x - w / 2.0, x + w / 2.0, h, color, t, true, w / 2.0 if door_side == 1 else -1.0)
+	wall_run(false, x - w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true, d / 2.0 if door_side == 2 else -1.0)
+	wall_run(false, x + w / 2.0, z - d / 2.0 + t / 2.0, z + d / 2.0 - t / 2.0, h, color, t, true, d / 2.0 if door_side == 3 else -1.0)
+	flat_plane(x, z, w - 0.4, d - 0.4, Color(0.44, 0.42, 0.38), 0.02)
+	# the roof slab, with a parapet round it (a gap where the ladder comes up)
+	var rh = h + 0.25
+	var roofc = Color(0.5, 0.48, 0.45)
+	add_box(x, h, z, w + 0.2, 0.25, d + 0.2, roofc, {"dest": true, "hp": 260.0})
+	var pc = color.darkened(0.08)
+	var lad_n = [Vector3(0, 0, -1), Vector3(0, 0, 1), Vector3(-1, 0, 0), Vector3(1, 0, 0)][ladder_side]
+	# the ladder sits a third of the way along its wall
+	var along = Vector3(1, 0, 0) if ladder_side < 2 else Vector3(0, 0, 1)
+	var half = (w if ladder_side < 2 else d) / 2.0
+	var off = half * 0.4 * (1.0 if rng.randf() < 0.5 else -1.0)
+	var wall_c = Vector3(x, 0, z) + lad_n * ((d if ladder_side < 2 else w) / 2.0) + along * off
+	for side in range(4):
+		var n = [Vector3(0, 0, -1), Vector3(0, 0, 1), Vector3(-1, 0, 0), Vector3(1, 0, 0)][side]
+		var horiz = side < 2
+		var L = w + 0.2 if horiz else d + 0.2
+		var cx = x + n.x * (w / 2.0)
+		var cz = z + n.z * (d / 2.0)
+		if side == ladder_side:
+			# two stretches either side of a 1 m gap
+			var g0 = off - 0.55
+			var g1 = off + 0.55
+			for seg in [[-L / 2.0, g0], [g1, L / 2.0]]:
+				var sl = seg[1] - seg[0]
+				if sl < 0.2:
+					continue
+				var mid = (seg[0] + seg[1]) / 2.0
+				if horiz:
+					add_box(x + mid, rh, cz, sl, 0.6, 0.22, pc, {"dest": true, "hp": 120.0})
+				else:
+					add_box(cx, rh, z + mid, 0.22, 0.6, sl, pc, {"dest": true, "hp": 120.0})
+		elif horiz:
+			add_box(x, rh, cz, L, 0.6, 0.22, pc, {"dest": true, "hp": 120.0})
+		else:
+			add_box(cx, rh, z, 0.22, 0.6, L, pc, {"dest": true, "hp": 120.0})
+	# the ladder: two rails and rungs, leaning against the wall
+	var base = wall_c + lad_n * 0.75
+	var gy = ground_y(base.x, base.z)
+	var top_y = ground_y(x, z) + rh
+	var ladc = Color(0.4, 0.3, 0.2)
+	var rl = top_y + 0.9 - gy
+	for e in [-0.25, 0.25]:
+		var rp = wall_c + lad_n * 0.42 + along * e
+		add_box(rp.x, 0.0, rp.z, 0.07, rl, 0.07, ladc, {"collide": false})
+	var nr = int(rl / 0.3)
+	for k in range(1, nr):
+		var ry = k * 0.3
+		var rp2 = wall_c + lad_n * 0.42
+		if ladder_side < 2:
+			add_box(rp2.x, ry, rp2.z, 0.5, 0.04, 0.05, ladc.darkened(0.1), {"collide": false})
+		else:
+			add_box(rp2.x, ry, rp2.z, 0.05, 0.04, 0.5, ladc.darkened(0.1), {"collide": false})
+	var T = {"x": x, "z": z, "w": w, "d": d, "floor_y": top_y, "posts": [], "cps": [], "rect": [x - w / 2.0 - 1.2, x + w / 2.0 + 1.2, z - d / 2.0 - 1.2, z + d / 2.0 + 1.2], "ladder": true, "n": lad_n,
+		"stair_bottom": Vector3(base.x, gy, base.z), "stair_top": Vector3(wall_c.x, top_y, wall_c.z) - lad_n * 0.9, "lad_x": Vector3(wall_c.x, 0, wall_c.z) + lad_n * 0.42}
+	T["inside"] = T["stair_bottom"] + lad_n * 1.5
+	# firing spots along the parapet, facing out
+	for side in range(4):
+		var n2 = [Vector3(0, 0, -1), Vector3(0, 0, 1), Vector3(-1, 0, 0), Vector3(1, 0, 0)][side]
+		var L2 = w if side < 2 else d
+		var al2 = Vector3(1, 0, 0) if side < 2 else Vector3(0, 0, 1)
+		for k in [-0.3, 0.3]:
+			var pp = Vector3(x, 0, z) + n2 * ((d if side < 2 else w) / 2.0 - 0.55) + al2 * L2 * k
+			if side == ladder_side and absf(L2 * k - off) < 1.2:
+				continue
+			T["posts"].append([pp.x, pp.z, n2.x, n2.z])
+	towers.append(T)
 	_furnish(x, z, w, d, 0.0)
 	_claim(bld, c0)
 
@@ -3346,6 +3492,10 @@ func load_map(id: String) -> void:
 	var sz: Vector2 = MAPS.get(id, {}).get("size", Vector2(260, 190))
 	if id == "custom":
 		sz = G.custom_map["size"]
+	# commander battles get more room: smaller maps grow outward, with farmland and woods round the edges
+	var core = sz
+	if G.mode == "commander" and id != "custom" and sz.x < 500.0:
+		sz = Vector2(roundf(sz.x * 1.6), roundf(sz.y * 1.4))
 	_set_size(sz.x, sz.y)
 	objectives = []
 	th = PackedFloat32Array()
@@ -3382,6 +3532,8 @@ func load_map(id: String) -> void:
 		build_custom(G.custom_map)
 	else:
 		build_trenches()
+	if sz != core:
+		_outskirts(core)
 	if objectives.is_empty():
 		objectives = [{"p": capture, "name": "A"}]
 	# third and fourth teams get a small camp at the north and south edges

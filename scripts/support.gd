@@ -5,23 +5,42 @@ extends RefCounted
 # The player spends Alpha's points from the Support tab; AI commanders spend for their own side.
 
 const COSTS = {
-	"artillery": 10, "airstrike": 16, "paradrop": 12, "heli": 16,
-	"jeep": 8, "motorbike": 6, "halftrack": 14, "armoredcar": 20, "tank": 30, "gunship": 34,
-	"fighter": 22, "bomber": 28, "bridger": 14, "radar": 18, "ambulance": 8,
+	"artillery": 14, "airstrike": 20, "paradrop": 16, "heli": 20,
+	"jeep": 9, "motorbike": 7, "halftrack": 16, "armoredcar": 24, "tank": 36, "heavytank": 55, "gunship": 40,
+	"fighter": 26, "bomber": 34, "bridger": 16, "radar": 20, "ambulance": 9, "atgun": 14,
 }
 const NAMES = {
 	"artillery": "Artillery barrage", "airstrike": "Air strike", "paradrop": "Paratroopers", "heli": "Helicopter insertion",
 	"jeep": "Jeep", "motorbike": "Motorbike", "halftrack": "Half-track", "armoredcar": "Armoured car", "tank": "Tank", "gunship": "Gunship (70 s)",
-	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance",
+	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance", "atgun": "Anti-tank gun", "heavytank": "Heavy tank",
 }
 
+# in commander mode, what has to be built before you can call each one in
+const NEEDS = {"heavytank": "depot", "jeep": "depot", "motorbike": "depot", "halftrack": "depot", "armoredcar": "depot", "tank": "depot", "ambulance": "hospital",
+	"radar": "depot", "bridger": "depot", "atgun": "depot", "gunship": "radio", "fighter": "radio", "bomber": "radio", "airstrike": "radio",
+	"paradrop": "radio", "heli": "radio"}
+const NEED_NAMES = {"depot": "a vehicle depot", "radio": "a radio mast", "hospital": "a field hospital"}
+
+static func unlocked(team: int, what: String) -> bool:
+	if G.mode != "commander" or not NEEDS.has(what):
+		return true
+	for st in Build.sites:
+		if st["team"] == team and st["kind"] == NEEDS[what] and Build.alive(st):
+			return true
+	return false
+
+static func need_text(what: String) -> String:
+	return "needs " + NEED_NAMES.get(NEEDS.get(what, ""), "a building")
+
 static var points: Array = []
+static var hq_t: Array = [0, 0, 0, 0]
 static var trickle = 0.0
 static var ai_t: Array = []
 static var planes: Array = []
 
 static func reset() -> void:
 	points = []
+	hq_t = [0, 0, 0, 0]
 	ai_t = []
 	for t in range(G.team_count()):
 		points.append(10)
@@ -105,7 +124,16 @@ static func step(dt: float) -> void:
 	if trickle >= 6.0:
 		trickle = 0.0
 		for t in range(points.size()):
-			points[t] += 2 if (G.mode == "commander" and t == 0) else 1
+			if G.mode == "commander":
+				# the HQ alone brings in a trickle; supply dumps are where the real income is
+				hq_t[t] = hq_t[t] + 1
+				if hq_t[t] % 2 == 0:
+					points[t] += 1
+				for st in Build.sites:
+					if st["team"] == t and st["kind"] == "supply" and Build.alive(st):
+						points[t] += 1
+			else:
+				points[t] += 1
 	# AI sides spend what they have
 	for t in range(points.size()):
 		if t == 0 and (G.player != null or G.mode == "commander"):
@@ -131,7 +159,7 @@ static func _ai_spend(t: int) -> void:
 	if veh < 3 and G.armor != "none":
 		opts.append_array(["jeep", "halftrack", "armoredcar", "motorbike"])
 		if G.armor == "heavy":
-			opts.append_array(["tank", "gunship"])
+			opts.append_array(["tank", "gunship", "heavytank"])
 	if G.alive_count(t) < G.team_size * 0.6:
 		opts.append_array(["paradrop", "heli"])
 	# answer enemy aircraft with fighters; dive bombers against armour and bases
@@ -147,13 +175,20 @@ static func _ai_spend(t: int) -> void:
 		opts.append_array(["fighter", "fighter"])
 	if (enemy_armour or G.mode == "destroy") and G.armor == "heavy":
 		opts.append("bomber")
+	if enemy_armour:
+		var guns = 0
+		for v in G.vehicles:
+			if v.team == t and not v.dead and v.kind == "atgun":
+				guns += 1
+		if guns < 2:
+			opts.append_array(["atgun", "atgun"])
 	var broken_bridge = false
 	for b in G.world.bridges:
 		if not b[5].alive:
 			broken_bridge = true
 	if broken_bridge and G.armor != "none":
 		opts.append("bridger")
-	opts = opts.filter(func(o): return COSTS[o] <= points[t])
+	opts = opts.filter(func(o): return COSTS[o] <= points[t] and unlocked(t, o))
 	if opts.is_empty():
 		return
 	var pick = G.pick(opts)
@@ -162,9 +197,12 @@ static func _ai_spend(t: int) -> void:
 static func can_afford(team: int, what: String) -> bool:
 	return points[team] >= COSTS[what]
 
-static func call_in(team: int, what: String, target: Vector3) -> bool:
-	if points.is_empty() or points[team] < COSTS[what]:
+static func call_in(team: int, what: String, target: Vector3, relay: bool = false) -> bool:
+	if points.is_empty() or points[team] < COSTS[what] or not unlocked(team, what):
 		return false
+	# no radio: the request goes back to HQ with a runner, and is paid for when it gets there
+	if not relay and Comms.hold(team, what, target):
+		return true
 	if G.mode == "sabotage" and team == 0 and what in ["paradrop", "heli", "jeep", "halftrack", "armoredcar", "tank", "motorbike"]:
 		return false      # the raiders are on their own
 	points[team] -= COSTS[what]
@@ -188,9 +226,15 @@ static func call_in(team: int, what: String, target: Vector3) -> bool:
 			var v = G.main.spawn_vehicle("gunship", team, e, atan2(G.world.capture.x - e.x, G.world.capture.z - e.z))
 			v.life_t = 70.0
 			G.ui.radio(team, "Gunship on station for seventy seconds")
+		"atgun":
+			# towed up behind a truck and unhitched by the rally point
+			var r0: Vector3 = G.world.rally_point(team)
+			var fw = G.flat(G.world.capture - r0).normalized()
+			G.main.spawn_vehicle("atgun", team, G.main._free_spot(r0 + fw * 12.0), atan2(fw.x, fw.z))
+			G.ui.radio(team, "Anti-tank gun set up at the rally point")
 		_:
 			# ground vehicles drive in from the team's edge of the map
-			var e2 = Reinforce.entry_point(team)
+			var e2 = Reinforce.clear_entry(team)
 			var r: Vector3 = G.world.rally_point(team)
 			G.main.spawn_vehicle(what, team, e2, atan2(r.x - e2.x, r.z - e2.z))
 			G.ui.radio(team, "%s inbound from the rear" % NAMES[what])

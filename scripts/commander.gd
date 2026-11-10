@@ -3,13 +3,96 @@ extends RefCounted
 # A commander for each AI side. Every so often it looks at what the team knows and hands squads jobs:
 # attack the front objective, defend a threatened point, swing round a flank, or wait in reserve.
 # Each side has an officer; while he's alive orders come quickly and soldiers nearby fight harder.
+# Every commander has a personality:
+#   reckless  attacks straight away and keeps attacking, the nearest objective first
+#   cautious  waits until it has the numbers, digs in and sets ambushes, avoids strong points
+#   cunning   sends its weight where the scouts say the enemy is thin, with a feint and flanks
+# and a couple of scouts who creep ahead and radio back what they see.
 
 static var timers: Array = []
+static var style: Array = []
+static var sightings: Array = []     # per side: [{"p", "n", "t"}] reported by scouts
+static var scout_t: Array = []
+static var held: Array = []          # how long a cautious side has been sitting tight
+const STYLES = ["reckless", "cautious", "cunning"]
+const STYLE_TEXT = {"reckless": "reckless: attacks at once and keeps coming", "cautious": "cautious: digs in and waits for the numbers", "cunning": "cunning: probes with scouts and hits weak spots"}
 
 static func reset() -> void:
 	timers = []
+	style = []
+	sightings = []
+	scout_t = []
 	for t in range(G.team_count()):
 		timers.append(randf_range(6.0, 10.0))
+		style.append(STYLES[randi() % STYLES.size()])
+		sightings.append([])
+		scout_t.append(3.0)
+		held.append(0.0)
+
+static func style_of(t: int) -> String:
+	return style[t] if t >= 0 and t < style.size() else "cunning"
+
+# how many enemies this side believes are near a spot: what its soldiers know, plus scout reports
+static func strength(team: int, p: Vector3, r: float) -> float:
+	var seen = {}
+	for s in G.soldiers:
+		if s.team != team or s.state == "dead":
+			continue
+		for e in s.intel.keys():
+			var k = s.intel[e]
+			if G.sim_time - k["t"] < 30.0 and G.dist2d(k["p"], p) < r:
+				seen[e] = true
+	var n = float(seen.size())
+	if team < sightings.size():
+		for sg in sightings[team]:
+			if G.sim_time - sg["t"] < 90.0 and G.dist2d(sg["p"], p) < r:
+				n += sg["n"] * 0.6
+	return n
+
+# a scout's report goes into the picture (it needs a working radio to get back)
+static func report(team: int, p: Vector3, n: int) -> void:
+	if team >= sightings.size():
+		return
+	var list: Array = sightings[team]
+	for sg in list:
+		if G.dist2d(sg["p"], p) < 14.0:
+			sg["p"] = sg["p"].lerp(p, 0.5)
+			sg["n"] = maxi(sg["n"], n)
+			sg["t"] = G.sim_time
+			return
+	list.append({"p": p, "n": n, "t": G.sim_time})
+	if list.size() > 24:
+		list.pop_front()
+
+# keep one or two scouts out on each side
+static func _keep_scouts(t: int) -> void:
+	if G.mode in ["horde", "laststand", "sandbox", "escort"] or (G.mode == "commander" and t == 0) or (G.mode == "sabotage" and t == 0):
+		return
+	var want = 2 if G.team_size >= 14 else 1
+	var have = 0
+	for s in G.soldiers:
+		if s.team == t and s.state == "alive" and s.has_meta("scout"):
+			have += 1
+	if have >= want:
+		return
+	var best = null
+	for s in G.soldiers:
+		if s.team == t and s.state == "alive" and not s.is_player and s.vehicle == null and s.cls in ["rifleman", "sniper"] \
+				and not Morale.is_leader(s) and not s.has_meta("guard") and not s.has_meta("runner") and not s.has_meta("general"):
+			best = s
+			break
+	if best == null:
+		return
+	best.set_meta("scout", true)
+	best.order = null
+	# scouts work alone: out of the squad, so squad tactics leave them be
+	var sq = {"team": t, "members": [], "id": G.squads.size(), "form": "wedge", "bound": 0, "guard": true, "follow": true}
+	G.squads.append(sq)
+	if best.squad != null:
+		best.squad["members"].erase(best)
+	sq["members"].append(best)
+	best.squad = sq
+	G.fx.callout(best, G.pick(["Going forward to have a look.", "Scouting ahead.", "I'll see what's out there."]))
 
 static func officer(team: int):
 	for s in G.soldiers:
@@ -29,6 +112,9 @@ static func step(dt: float) -> void:
 			continue
 		var off = officer(t)
 		timers[t] = 14.0 if off != null else 30.0
+		if style_of(t) == "reckless":
+			timers[t] *= 0.75
+		_keep_scouts(t)
 		if VehExt.has_radar(t):
 			timers[t] *= 0.6       # the command truck keeps the picture fresh
 		_plan(t, off)
@@ -64,6 +150,17 @@ static func _plan(team: int, off) -> void:
 	if G.mode == "sabotage":
 		_raid_plan(team, qs, home)
 		return
+	# a cautious commander won't attack into a stronger enemy: dig in and let them come
+	if style_of(team) == "cautious" and G.mode not in ["assault", "breakthrough", "siege", "general"] and not (G.mode == "assault" and team == 0):
+		var mine = G.alive_count(team)
+		var theirs = strength(team, G.world.capture, 9999.0)
+		if theirs > mine * 1.05 and G.sim_time > 20.0 and held[team] < 75.0:
+			held[team] += timers[team]
+			_hold_ground(team, qs, home)
+			return
+		if held[team] >= 75.0:
+			held[team] = 0.0
+			G.ui.radio(team, "Command: we've waited long enough. All squads, advance")
 	if Obj.uses_points() and not Obj.points.is_empty() and G.mode != "laststand":
 		_spread_over_points(team, qs, home)
 		return
@@ -71,12 +168,15 @@ static func _plan(team: int, off) -> void:
 	var ec = _enemy_center(team)
 	if ec == null:
 		return
+	var st = style_of(team)
 	for k in range(qs.size()):
 		var q = qs[k]
 		var job = "attack"
-		if qs.size() >= 3 and k == qs.size() - 1:
+		if st == "cunning" and qs.size() >= 2 and k % 2 == 1:
 			job = "flank"
-		elif qs.size() >= 4 and k == 0:
+		elif st != "reckless" and qs.size() >= 3 and k == qs.size() - 1:
+			job = "flank"
+		elif st != "reckless" and qs.size() >= 4 and k == 0:
 			job = "defend"
 		_assign(q, job, ec if job != "defend" else home + G.flat(ec - home).normalized() * 25.0, home)
 	G.ui.radio(team, "Command: enemy concentrating near %s, all squads engage" % AI.grid_ref(ec))
@@ -101,6 +201,18 @@ static func _spread_over_points(team: int, qs: Array, home: Vector3) -> void:
 			v = 0.0
 		if G.mode == "assault" and team == 1 and pt["owner"] == 1:
 			v = 2.6 if i == Obj.front(0) else 1.0
+		# what the commander believes is there (scout reports included) bends the choice
+		if v > 0.0 and pt["owner"] != team:
+			var est = strength(team, pt["p"], 30.0)
+			match style_of(team):
+				"cunning":
+					v = maxf(0.3, v + 0.8 - est * 0.35)
+				"cautious":
+					v = maxf(0.2, v - est * 0.5)
+				"reckless":
+					v += 0.4
+		elif pt["owner"] == team and style_of(team) == "cautious":
+			v += 0.5
 		vals.append(v)
 	var count = []
 	for i in range(pts.size()):
@@ -168,7 +280,24 @@ static func _raid_plan(team: int, qs: Array, home: Vector3) -> void:
 				_assign(q, "attack", ec, home)
 		k += 1
 
+# dig in around what we hold (or in front of the base) and wait: the troops hold fire for an ambush
+static func _hold_ground(team: int, qs: Array, home: Vector3) -> void:
+	var spots = []
+	for pt in Obj.points:
+		if pt["owner"] == team:
+			spots.append(pt["p"])
+	if spots.is_empty():
+		spots.append(home + G.flat(G.world.capture - home).normalized() * minf(45.0, G.dist2d(home, G.world.capture) * 0.35))
+	var k = 0
+	for q in qs:
+		_assign(q, "defend", spots[k % spots.size()], home)
+		q["dig"] = true
+		k += 1
+	if randf() < 0.5:
+		G.ui.radio(team, "Command: they outnumber us. Dig in, hold fire until they're close")
+
 static func _assign(q, job: String, target: Vector3, home: Vector3) -> void:
+	q["dig"] = false
 	var p = target
 	if job == "flank":
 		var to = G.flat(target - home).normalized()

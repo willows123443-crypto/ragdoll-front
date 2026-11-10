@@ -123,6 +123,16 @@ var burst_cd = 0.5
 var grenades = 2
 var smokes = 1
 var rockets = 3
+var clip_n = 0
+var peek_hold = 0.0        # peeking (or ducking) is kept up for a moment, no flickering in and out
+var peek_on = false
+var wedge_n = 0
+var wedge_p = Vector3.ZERO
+var slide_dir = Vector3.ZERO
+var slide_t = 0.0
+var fausts = 0            # one-shot panzerfausts carried as well as the main gun
+var swim = false
+var climb = null          # going up or down a ladder
 var stickies = 0
 var rgren = 0             # rifle grenades
 var heat = 0.0            # machine gun barrel heat (0..1)
@@ -638,7 +648,14 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 	else:
 		rh = rsh + uf * 0.2 - ur * 0.05 + Vector3(0, -0.3 + sin(phase * 2.0) * 0.02 * minf(spd, 3.0), 0)
 	anchor_l = false
-	if throw_t > 0.0:
+	if swim and state == "alive":
+		# breaststroke
+		var k = G.sim_time * 3.2 + seed_
+		var sw = sin(k)
+		var reach = Vector3(0, -0.12 + 0.06 * cos(k), 0) + uf * (0.32 + 0.22 * sw)
+		rh = rsh + reach - ur * (0.08 + 0.22 * maxf(0.0, -sw))
+		lh = lsh + reach + ur * (0.08 + 0.22 * maxf(0.0, -sw))
+	elif throw_t > 0.0:
 		var k = 1.0 - throw_t / 0.55
 		if k < 0.45:
 			rh = rsh - uf * 0.32 + ur * 0.1 + Vector3(0, 0.2, 0)
@@ -741,6 +758,8 @@ func stand_pose() -> void:
 	P[12] = base + r * (0.11 + lean * 0.05) + Vector3(0, pY - 0.05, 0) + f * (-0.04 * c)
 	var sprint = not ready_ and spd > 4.6
 	var al = 0.06 + 0.3 * c + minf(spd, 6.0) * 0.028 + (0.12 if sprint else 0.0) + breath
+	if swim:
+		al = 1.05 + sin(t * 3.2) * 0.05
 	var th = lean * 0.42
 	if zombie:
 		al += {"walker": 0.42, "runner": 0.3, "brute": 0.5}.get(ztype, 0.4) + (0.3 if lunge_t > 0.0 and lunge_t < 0.3 else 0.0)
@@ -783,7 +802,14 @@ func stand_pose() -> void:
 		var hi = 12 if side == 1 else 9
 		var cz = -0.24 * c if side == 1 else 0.3 * c
 		var foot = base + r * (sd * 0.13 + lmx * sw * A) + f * (lmz * sw * A + cz)
-		if vault != null or vy < -0.5:
+		if swim:
+			# frog kick, legs trailing behind
+			var kk = sin(t * 3.2 + (PI if side == 1 else 0.0))
+			foot = P[hi] - f * 0.72 + r * sd * (0.18 + 0.12 * kk) + Vector3(0, -0.28 + 0.12 * kk, 0)
+			P[hi + 2] = foot
+			P[hi + 1] = _ik(P[hi], foot, 0.45, 0.45, Vector3(0, -1, 0))
+			continue
+		if vault != null or vy < -0.5 or climb != null:
 			foot.y = gy + 0.07 + lift
 		else:
 			foot.y = G.world.surface_y(foot.x, foot.z, gy + 0.3) + 0.07 + lift
@@ -973,6 +999,11 @@ func set_class(c: String) -> void:
 		smokes = 3
 	if c == "at" and wid == "rpg":
 		rockets = 4
+	fausts = 0
+	if c == "rifleman" and randf() < 0.35:
+		fausts = 1
+	elif c == "at":
+		fausts = 2 if wid == "atrifle" else 1
 	if c == "spotter" or c == "sniper":
 		for o in G.soldiers:
 			if o != self and o.team == team and o.state != "dead" and o.partner == null and ((c == "spotter" and o.cls == "sniper") or (c == "sniper" and o.cls == "spotter")):
@@ -982,6 +1013,17 @@ func set_class(c: String) -> void:
 				var sn = self if c == "sniper" else o
 				sp.order = {"mode": "follow", "who": sn, "point": null}
 				break
+
+# a general: gold braid on the cap, shoulder boards and a Sam Browne belt
+func general_look() -> void:
+	var gold = _mat("gold", Color(0.86, 0.68, 0.22), false)
+	_hpart(parts[2], "cyl", Vector3(0.315, 0.04, 0.325), Vector3(0, 0.135, 0), gold)
+	for x in [0.17, -0.17]:
+		_mesh(parts[1], Vector3(0.12, 0.03, 0.15), Vector3(x, 0.255, 0), gold)
+	var brown = _mat("belt", Color(0.3, 0.17, 0.08), false)
+	_mesh(parts[1], Vector3(0.44, 0.05, 0.27), Vector3(0, -0.2, 0), brown)
+	_mesh(parts[1], Vector3(0.05, 0.5, 0.26), Vector3(0.06, 0.0, 0), brown)
+	_mesh(parts[1], Vector3(0.1, 0.06, 0.02), Vector3(-0.1, 0.12, 0.125), _mat("ribbons", Color(0.7, 0.15, 0.12), false))
 
 # out of ammunition for the main gun: fall back on the pistol
 func to_sidearm() -> bool:
@@ -995,7 +1037,126 @@ func from_sidearm() -> void:
 	if primary == null:
 		return
 	set_weapon(primary[0])
+	mag = primary[1]
+	reserve = primary[2]
 	primary = null
+
+# ---------------------------------------------------------------- ladders
+# the player walks into the foot of a ladder (or toward its top from the roof) to use it
+func _ladder_check() -> void:
+	if want.length_squared() < 1.0:
+		return
+	for T in G.world.towers:
+		if not T.get("ladder", false):
+			continue
+		var n: Vector3 = T["n"]
+		var lo: Vector3 = T["stair_bottom"]
+		var hi: Vector3 = T["stair_top"]
+		var wd = G.flat(want).normalized()
+		if G.dist2d(pos, lo) < 0.9 and absf(pos.y - lo.y) < 0.8 and wd.dot(-n) > 0.6:
+			start_climb(T, true)
+			return
+		if G.dist2d(pos, hi) < 0.9 and absf(pos.y - hi.y) < 0.8 and wd.dot(n) > 0.6:
+			start_climb(T, false)
+			return
+
+func start_climb(T: Dictionary, up: bool) -> void:
+	if climb != null or state != "alive":
+		return
+	climb = {"T": T, "up": up, "t": 0.0, "dur": 2.6}
+	release_ladder_gun(true)
+
+func release_ladder_gun(hide: bool) -> void:
+	if gun_node != null and vehicle == null:
+		gun_node.visible = not hide
+
+func _tick_climb() -> void:
+	var c = climb
+	var T: Dictionary = c["T"]
+	c["t"] += G.DT / c["dur"]
+	var k = clampf(c["t"], 0.0, 1.0)
+	var kk = k if c["up"] else 1.0 - k
+	var n: Vector3 = T["n"]
+	var lad: Vector3 = T["lad_x"]
+	var lo: Vector3 = T["stair_bottom"]
+	var hi: Vector3 = T["stair_top"]
+	var foot = Vector3(lad.x + n.x * 0.32, lo.y, lad.z + n.z * 0.32)
+	# up the rungs, then over the parapet onto the roof
+	if kk < 0.12:
+		pos = lo.lerp(foot, kk / 0.12)
+	elif kk < 0.82:
+		pos = Vector3(foot.x, lerpf(lo.y, hi.y, (kk - 0.12) / 0.7), foot.z)
+	else:
+		pos = Vector3(foot.x, hi.y, foot.z).lerp(hi, (kk - 0.82) / 0.18)
+	vel = Vector3.ZERO
+	want = Vector3.ZERO
+	vy = 0.0
+	body_yaw = atan2(-n.x, -n.z)
+	aim_yaw = body_yaw
+	crouch = 0.0
+	ready_ = false
+	stand_pose()
+	if kk > 0.1 and kk < 0.86:
+		var f = -n
+		var r = Vector3(-f.z, 0, f.x)
+		var ph = pos.y * 5.2
+		var rail = Vector3(lad.x, 0, lad.z)
+		var rh = rail + r * 0.2 + Vector3(0, pos.y + 1.55 + 0.14 * sin(ph), 0)
+		var lh = rail - r * 0.2 + Vector3(0, pos.y + 1.55 - 0.14 * sin(ph), 0)
+		P[8] = _reach(P[6], rh, 0.59)
+		P[5] = _reach(P[3], lh, 0.59)
+		P[7] = _ik(P[6], P[8], 0.3, 0.3, Vector3(0, -1, 0) + n * 0.6 + r * 0.4)
+		P[4] = _ik(P[3], P[5], 0.3, 0.3, Vector3(0, -1, 0) + n * 0.6 - r * 0.4)
+		for side in range(2):
+			var sd = 1.0 if side == 1 else -1.0
+			var hip = 12 if side == 1 else 9
+			var fy = pos.y + 0.12 + 0.15 * sin(ph + (PI if side == 1 else 0.0))
+			var ft = rail + r * sd * 0.12 + n * 0.05 + Vector3(0, fy, 0)
+			P[hip + 2] = _reach(P[hip], ft, 0.88)
+			P[hip + 1] = _ik(P[hip], P[hip + 2], 0.45, 0.45, n + Vector3(0, 0.3, 0))
+		if sin(ph) * sin(ph - 5.2 * 0.9 * G.DT) < 0.0:
+			G.audio.step(pos)
+	strength = 0.5
+	drive()
+	if c["t"] >= 1.0:
+		pos = hi if c["up"] else lo
+		climb = null
+		release_ladder_gun(false)
+
+# into or out of deep water: the rifle goes over the shoulder, and comes back out on the far bank
+func _swim_change() -> void:
+	if swim:
+		G.fx.splash(Vector3(pos.x, G.world.water_level(pos.x, pos.z), pos.z), 1.0)
+		if gun_node != null:
+			gun_node.visible = false
+		ready_ = false
+		burst = 0
+		if not is_player and randf() < 0.3:
+			G.fx.callout(self, G.pick(["It's deep!", "Swim for it!", "Keep your rifle dry!"]))
+	elif gun_node != null and vehicle == null:
+		gun_node.visible = true
+
+# pull a panzerfaust off the back for a tank that's come close
+func to_faust() -> bool:
+	if fausts <= 0 or wid == "pfaust" or primary != null:
+		return false
+	primary = [wid, mag, reserve]
+	set_weapon("pfaust")
+	fire_cd = 0.6
+	return true
+
+# fired: throw the empty tube away and go back to the rifle
+func spent_faust() -> void:
+	if wid != "pfaust" or state == "dead":
+		return
+	var f = Vector3(sin(body_yaw), 0, cos(body_yaw))
+	G.fx.debris(hand_r() + Vector3(0, 0.1, 0), Vector3(-f.z, 1.2, f.x) * 2.0 - f, 0.12, G.C_OLIVE)
+	if fausts > 0:
+		fausts -= 1
+	if primary != null:
+		from_sidearm()
+	elif not is_player:
+		set_weapon("rifle")
 
 # ---------------------------------------------------------------- ammunition
 func start_reload() -> bool:
@@ -1159,7 +1320,15 @@ func check_gun_clip() -> void:
 	var a = _aim_vector(G.sim_time + seed_, 0.0)
 	var L: float = W["len"] + 0.12
 	var from: Vector3 = parts[5].global_position + Vector3(0, 0.05, 0)
-	gun_blocked = not G.ray(from, from + a * L, G.L_WORLD).is_empty()
+	# a little hysteresis so the gun doesn't flick up and down against a wall edge
+	var hit = not G.ray(from, from + a * L, G.L_WORLD).is_empty()
+	if hit != gun_blocked:
+		clip_n += 1
+		if clip_n >= 3:
+			gun_blocked = hit
+			clip_n = 0
+	else:
+		clip_n = 0
 
 func drop_gun() -> void:
 	if gun_body != null:
@@ -1183,6 +1352,9 @@ func drop_gun() -> void:
 func fall(t: float = -1.0) -> void:
 	if state == "dead":
 		return
+	if climb != null:
+		climb = null
+		release_ladder_gun(false)
 	if vehicle != null:
 		dismount(true)
 	if state == "chute":
@@ -1205,6 +1377,9 @@ var death_style = ""
 var fall_t = 0.0
 
 func go_dead() -> void:
+	if climb != null:
+		climb = null
+		release_ladder_gun(false)
 	# how this one goes down
 	var r = randf()
 	death_style = "slump" if r < 0.25 else ("knees" if r < 0.45 else ("clutch" if r < 0.65 else ("stagger" if r < 0.82 else "spin")))
@@ -1318,7 +1493,17 @@ func start_vault(c) -> bool:
 	var ty: float = G.world.surface_y(tx, tz, pos.y + 0.5)
 	if G.world.inside_any(tx, tz, 0.3, ty) or absf(ty - pos.y) > 0.9:
 		return false
-	vault = {"a": pos, "b": Vector3(tx, ty, tz), "h": maxf(0.2, c.hi.y - maxf(pos.y, ty) + 0.15), "t": 0.0}
+	var cx = (c.lo.x + c.hi.x) * 0.5
+	var cz = (c.lo.z + c.hi.z) * 0.5
+	# a window: dive through low, and the glass goes if it's still in
+	var win = G.world.inside_at(cx, c.hi.y + 1.4, cz)
+	vault = {"a": pos, "b": Vector3(tx, ty, tz), "h": maxf(0.2, c.hi.y - maxf(pos.y, ty) + (0.02 if win else 0.15)), "t": 0.0, "dive": win}
+	if win:
+		var pane = Doors.pane_near(Vector3(cx, c.hi.y + 0.6, cz), 1.4)
+		if pane != null:
+			Doors.shatter(pane)
+		if not is_player and randf() < 0.25:
+			G.fx.callout(self, G.pick(["Through the window!", "Going in the window!"]))
 	return true
 
 # ---------------------------------------------------------------- per-tick update
@@ -1630,21 +1815,40 @@ func _tick_alive() -> void:
 	else:
 		AI.update(self)
 	if state != "alive":
+		climb = null
 		return
+	if climb != null:
+		_tick_climb()
+		return
+	if is_player:
+		_ladder_check()
 	var sm: float = W["speed"] * (0.3 if prone else 1.0)
-	var wading = not G.world.water.is_empty() and G.world.in_water(pos.x, pos.z)
-	if wading:
-		sm *= 0.4
+	# water: wading slows you down the deeper it gets; past chest height you swim, rifle slung
+	var was_swim = swim
+	swim = false
+	var swim_y = 0.0
+	if not G.world.water.is_empty() and G.world.in_water(pos.x, pos.z):
+		var wl = G.world.water_level(pos.x, pos.z)
+		var dep = wl - G.world.ground_y(pos.x, pos.z)
 		prone_t = false
+		if dep > 1.25:
+			swim = true
+			swim_y = wl - 1.3
+			sm *= 0.3
+		else:
+			sm *= lerpf(0.7, 0.42, clampf(dep / 1.25, 0.0, 1.0))
+	if swim != was_swim:
+		_swim_change()
 	if vault != null:
 		vault["t"] += G.DT / 0.6
-		var k = G.smooth01(vault["t"])
+		var vt = clampf(vault["t"], 0.0, 1.0)
+		var k = G.smooth01(vt)
 		var a: Vector3 = vault["a"]
 		var b: Vector3 = vault["b"]
 		pos = a.lerp(b, k)
-		pos.y += sin(PI * minf(1.0, vault["t"])) * vault["h"]
+		pos.y += sin(PI * vt) * vault["h"]
 		vel = G.flat(b - a) / 0.6
-		crouch = 0.55
+		crouch = 1.0 if vault.get("dive", false) else 0.55
 		if vault["t"] >= 1.0:
 			pos = b
 			vault = null
@@ -1689,7 +1893,10 @@ func _tick_alive() -> void:
 		pos.x = clampf(pos.x, bnd.position.x, bnd.end.x)
 		pos.z = clampf(pos.z, bnd.position.y, bnd.end.y)
 		var sy: float = G.world.surface_y(pos.x, pos.z, pos.y)
-		if sy >= pos.y - 0.06 and vy >= 0.0:
+		if swim:
+			pos.y = move_toward(pos.y, maxf(sy, swim_y), 2.5 * G.DT)
+			vy = 0.0
+		elif sy >= pos.y - 0.06 and vy >= 0.0:
 			pos.y = minf(sy, pos.y + 8.0 * G.DT) if sy > pos.y else sy
 			vy = 0.0
 		else:
@@ -1730,7 +1937,12 @@ func _tick_alive() -> void:
 	var ph0 = sin(phase)
 	phase += (spd * (5.0 if prone else 2.3) + (6.0 if turning else 0.0) + (9.0 if stumble > 0.0 else 0.0)) * G.DT
 	if ph0 * sin(phase) < 0.0 and (spd > 0.8 or stumble > 0.0) and not prone:
-		G.audio.step(pos)
+		if not G.world.water.is_empty() and G.world.in_water(pos.x, pos.z):
+			if not _lod_far():
+				G.fx.ripple(Vector3(pos.x, G.world.water_level(pos.x, pos.z), pos.z), 0.7 if swim else 0.5)
+			G.audio.splash(pos, swim)
+		else:
+			G.audio.step(pos)
 	stumble = maxf(0.0, stumble - G.DT)
 	kick_t = maxf(0.0, kick_t - G.DT)
 	# far away in a big battle: pose and body only every third tick, and no balance checks
@@ -1796,7 +2008,7 @@ func mount(v, i: int) -> bool:
 		b.add_collision_exception_with(v.body)
 	hidden_in_vehicle = false
 	visible = true
-	gun_node.visible = v.spec["seats"][i]["role"] != "gunner"
+	gun_node.visible = v.spec["seats"][i]["role"] != "gunner" and v.spec["seats"][i]["pose"] != "push"
 	mount_from = pos
 	mount_t = MOUNT_TIME
 	_place_in_seat()
@@ -1824,12 +2036,25 @@ func dismount(eject: bool) -> void:
 		if not v.dead:
 			v.open_door(seat)
 	var out: Vector3 = pos
+	var delay = 0.0
+	var rear = false
 	if is_instance_valid(v):
 		var side = Vector3(cos(v.yaw), 0, -sin(v.yaw))
 		var o: Vector3 = v.spec["seats"][seat]["o"]
-		side *= 1.0 if o.x >= 0.0 else -1.0
-		out = v.pos + side * (v.spec["wid"] * 0.5 + 0.9) + v.forward() * o.z
+		var role: String = v.spec["seats"][seat]["role"]
+		rear = role == "pass" and v.kind in ["truck", "halftrack", "ambulance", "radar"] and not eject
+		if rear:
+			# troops hop down over the tailgate one after another and fan out behind
+			var k = seat - 1
+			delay = k * 0.35
+			var fan = (1.0 if k % 2 == 0 else -1.0) * (0.5 + 0.35 * (k / 2))
+			out = v.pos - v.forward() * (v.spec["len"] * 0.5 + 1.1 + 0.45 * (k / 2)) + side * fan
+		else:
+			side *= 1.0 if o.x >= 0.0 else -1.0
+			out = v.pos + side * (v.spec["wid"] * 0.5 + 0.9) + v.forward() * o.z
 		out = G.world.push_out_circle(out, 0.35)[0]
+		if rear and G.world.inside_any(out.x, out.z, 0.3):
+			out = G.world.push_out_circle(v.pos + side * (v.spec["wid"] * 0.5 + 1.0), 0.35)[0]
 		if hidden_in_vehicle and v.turret != null:
 			start = v.turret.global_position + Vector3(0, 0.9, 0) - Vector3(0, 0.95, 0)
 		for b in parts:
@@ -1864,7 +2089,7 @@ func dismount(eject: bool) -> void:
 		fall(randf_range(1.5, 2.5))
 	elif state == "alive":
 		# hop down: the vault movement carries them from the seat to the ground beside the vehicle
-		vault = {"a": start, "b": out, "t": 0.0, "h": 0.3}
+		vault = {"a": start, "b": out, "t": -delay / 0.6, "h": 0.6 if rear else 0.3}
 		vy = 0.0
 
 func _place_in_seat() -> void:
@@ -1925,6 +2150,20 @@ func _tick_riding() -> void:
 		ready_ = false
 		crouch = 0.6
 		stand_pose()
+		strength = 0.5
+		drive()
+		return
+	if spose == "push":
+		# leaning into the gun's trail handles, walking it forward
+		ready_ = false
+		crouch = 0.35
+		var vf: Vector3 = v.forward()
+		vel = vf * v.speed
+		phase += absf(v.speed) * 2.6 * G.DT
+		aim_yaw = body_yaw
+		hand_t = pos + vf * 0.55 + Vector3(0, 0.62, 0)
+		stand_pose()
+		hand_t = null
 		strength = 0.5
 		drive()
 		return

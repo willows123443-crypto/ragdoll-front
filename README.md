@@ -49,6 +49,16 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Sound:** each weapon sounds different, shots echo between buildings, far-off fire becomes a dull thud, and rounds crack or whizz overhead depending on how close they pass
 - **Bigger explosions:** a shockwave ring, dust that hangs in the air, debris that stays on the ground, and craters that dig into the terrain and can be used as cover
 - **Ragdolls:** soldiers clutch wounds, slump, drop to their knees, stagger or spin as they die, and reach out to a wall to catch themselves when knocked down
+- **Water:** wade through shallows (slower the deeper it gets) or swim deep water with your rifle slung; on the river map each side has assault boats that ferry squads across and drop them in the shallows
+- **Time passes:** "Dawn till nightfall" starts a battle at first light and runs into the night over about eighteen minutes, with the sun moving across the sky and night tactics kicking in when it gets dark (or pick the endless day and night cycle)
+- **Anti-tank weapons:** bazookas, one-shot panzerfausts that riflemen pull out when a tank gets close (0 picks one), and anti-tank guns that their crews push into position, fire only from a standstill, and shoot armour-piercing at tanks and high explosive at infantry
+- **Kill the general:** each side's general hides in a house on its own half with a bodyguard; scouts and patrols search for theirs, and once he's spotted everyone converges while he tries to slip away further back
+- **Climbing:** vault through windows (smashing the glass) as well as over low walls, and climb ladders onto flat roofs, where snipers and machine gunners set up
+- **Campaign map:** twelve regions and armies on both sides; move each army once a turn, take empty ground at once or fight for occupied regions with the armies' real strength; supply lines run back to your HQ, and cut-off armies wither; Bravo counter-attacks where you're thin
+- **Radio and runners:** artillery, air support and reinforcements need a radio operator, command truck or radio mast; without one a runner has to carry the request back to HQ on foot
+- **Scouts and commanders:** each side sends scouts ahead who radio back what they see; commanders are reckless, cautious or cunning and fight that way; defenders who haven't been spotted hold their fire for an ambush
+- **Better looks:** brick, weathered plaster and tiled roofs; worn paint, track links, tow cables, jerrycans and tools on the vehicles; camouflage nets that drape over their poles
+- **Commander mode economy:** the HQ only brings in a trickle of supply; build supply dumps for real income. Vehicles need a vehicle depot and air support a radio mast before you can buy them, and the maps are bigger, with farms and woods round the edges. A heavy tank joins the vehicles
 - **After-action report** (J) and first-person view (Y)
 
 ## Controls
@@ -56,6 +66,7 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 **Command tab:** click or drag a box to select soldiers, right-click the ground to send them there.
 **Controlling a soldier:** mouse aim, left-click fire, right mouse aim down sights, Q/E lean, Shift sprint, C crouch, Z prone, R reload, G grenade, V smoke, L flare, 1–5 weapons, Y first person, O squad follows you, F pick up a fallen soldier's gun or get into a vehicle, hold U to help build a friendly site, I to dismantle what you aim at, X leave the soldier.
 **In a vehicle:** WASD drive, mouse aims the turret, left-click fire, 1–4 change seat, F get out.
+**Controlling a soldier (more):** walk into a ladder to climb it, 0 for a panzerfaust.
 **Anywhere:** M or Esc menu, H help (dresses your wound while controlling a bleeding soldier), J battle report, P pause, T slow motion.
 
 ## I couldn't run this, so please report problems

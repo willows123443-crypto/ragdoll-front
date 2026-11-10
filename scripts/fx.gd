@@ -318,6 +318,39 @@ func dust_cloud(pos: Vector3, size: float) -> void:
 	var d = _one_shot_smoke(pos, Color(0.62, 0.58, 0.5, 0.7), 8, 3.0, 1.2 * clampf(size, 1.0, 3.0), 4.5, false)
 	d.initial_velocity_max = 1.5
 
+# water thrown up: spray that falls back, and a pale ring on the surface
+func splash(pos: Vector3, size: float) -> void:
+	var d = _one_shot_smoke(pos, Color(0.85, 0.9, 0.92, 0.75), int(6 + 6 * size), 0.9, 0.35 * size, 1.4 * size, false)
+	d.direction = Vector3(0, 1, 0)
+	d.spread = 35.0
+	d.initial_velocity_min = 1.5 * size
+	d.initial_velocity_max = 3.5 * size
+	d.gravity = Vector3(0, -9.0, 0)
+	ripple(pos, size)
+
+func ripple(pos: Vector3, size: float) -> void:
+	var m = MeshInstance3D.new()
+	var tm = TorusMesh.new()
+	tm.inner_radius = 0.42
+	tm.outer_radius = 0.5
+	tm.rings = 16
+	tm.ring_segments = 4
+	m.mesh = tm
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.9, 0.95, 1.0, 0.45)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.material_override = mat
+	m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(m)
+	m.global_position = pos + Vector3(0, 0.03, 0)
+	m.scale = Vector3(0.6, 0.15, 0.6) * size
+	var tw = create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(m, "scale", Vector3(3.0, 0.15, 3.0) * size, 1.4)
+	tw.tween_property(mat, "albedo_color:a", 0.0, 1.4)
+	tw.chain().tween_callback(m.queue_free)
+
 func wreck_smoke(pos: Vector3, parent: Node) -> void:
 	var p = CPUParticles3D.new()
 	p.amount = 40

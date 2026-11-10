@@ -6,6 +6,7 @@ extends RefCounted
 #   koth       one hill to hold, and it moves somewhere else every 90 seconds
 #   commander  a capture battle you fight from above: select squads and send them where you want
 #   horde      Alpha holds out against waves of the walking dead
+#   general    each side's general hides somewhere on its half with bodyguards; kill theirs first
 # and the daily challenge: a battle picked from today's date, the same for everyone.
 
 static var convoy: Array = []
@@ -26,6 +27,10 @@ static var horde_t = 0.0
 static var horde_spawn_t = 0.0
 static var check_t = 0.0
 static var daily: Dictionary = {}       # today's challenge while one is being played
+static var generals: Array = []
+static var gen_known: Array = []         # what each side knows of the enemy general: {"p", "t"} or null
+static var gen_move_t: Array = []
+static var gen_search: Array = []        # places each side means to search, in the enemy half
 
 const RESCUE_TIME = 720.0
 const KOTH_EVERY = 90.0
@@ -46,6 +51,10 @@ static func reset() -> void:
 	horde_t = 10.0
 	horde_spawn_t = 0.0
 	check_t = 0.0
+	generals = []
+	gen_known = [null, null]
+	gen_move_t = [0.0, 0.0]
+	gen_search = [[], []]
 
 # ---------------------------------------------------------------- setup
 static func setup() -> void:
@@ -54,6 +63,8 @@ static func setup() -> void:
 			_setup_escort()
 		"rescue":
 			_setup_rescue()
+		"general":
+			_setup_general()
 		"commander":
 			G.pc.set_rts(true)
 			Support.points[0] = 30
@@ -208,9 +219,168 @@ static func _setup_rescue() -> void:
 	G.ui.radio(0, "Pilot down behind enemy lines! Find him and bring him home")
 	G.ui.radio(1, "An enemy pilot went down near the marker. Find him before they do")
 
+# ---------------------------------------------------------------- kill the general
+# how far a point is from team t's spawn toward the enemy's, 0 at home and 1 at theirs
+static func _frac(t: int, p: Vector3) -> float:
+	var a: Vector3 = G.world.spawn[t]
+	var b: Vector3 = G.world.spawn[1 - t]
+	var ab = G.flat(b - a)
+	return G.flat(p - a).dot(ab) / maxf(1.0, ab.length_squared())
+
+# a house in team t's half to hide in; further back each time he has to move
+static func _hideout(t: int, lo: float, hi: float, avoid = null) -> Vector3:
+	var cands = []
+	for b in G.world.buildings:
+		var p = Vector3(b["x"], 0, b["z"])
+		var f = _frac(t, p)
+		if f > lo and f < hi and b["w"] >= 4.5 and b["d"] >= 4.5 and b.get("fallen", 0) < 3:
+			if avoid != null and G.dist2d(p, avoid) < 15.0:
+				continue
+			# away from the base and its vehicles, which draw fire
+			var busy = G.dist2d(p, G.world.spawn[t]) < 24.0
+			for v in G.vehicles:
+				if G.dist2d(v.pos, p) < 18.0:
+					busy = true
+			if not busy:
+				cands.append(p)
+	if not cands.is_empty():
+		var p2: Vector3 = G.pick(cands)
+		return p2
+	# open country: dig him in behind some sandbags off to one side
+	var a: Vector3 = G.world.spawn[t]
+	var b2: Vector3 = G.world.spawn[1 - t]
+	var axis = G.flat(b2 - a).normalized()
+	var perp = Vector3(-axis.z, 0, axis.x)
+	var bnd: Rect2 = G.world.bounds
+	var q0 = a.lerp(b2, randf_range(maxf(lo, 0.04), maxf(hi, 0.1))) + perp * randf_range(-30.0, 30.0)
+	q0.x = clampf(q0.x, bnd.position.x + 10.0, bnd.end.x - 10.0)
+	q0.z = clampf(q0.z, bnd.position.y + 10.0, bnd.end.y - 10.0)
+	var q = G.main._free_spot(q0)
+	G.world.build_now(func():
+		G.world.sandbags(q.x, q.z + 2.2, 4.0, false)
+		G.world.sandbags(q.x, q.z - 2.2, 4.0, false))
+	return q
+
+static func _setup_general() -> void:
+	generals = [null, null]
+	for t in range(2):
+		var spot = _hideout(t, -0.15, 0.3)
+		var g = G.main.spawn_soldier(t, spot.x, spot.z, "smg")
+		if g == null:
+			continue
+		g.set_class("officer")
+		g.general_look()
+		g.sname = "Gen. " + g.sname
+		g.set_meta("general", true)
+		g.hp = 140.0
+		g.order = {"mode": "hold", "point": g.pos}
+		generals[t] = g
+		# the general and his bodyguard are a squad of their own that never goes off on attacks
+		var gq = {"team": t, "members": [], "id": G.squads.size(), "form": "wedge", "bound": 0, "guard": true, "follow": true, "leader": g}
+		G.squads.append(gq)
+		_join(g, gq)
+		g.set_leader(true)
+		for k in range(4):
+			var b = G.main.spawn_soldier(t, spot.x + randf_range(-3, 3), spot.z + randf_range(-3, 3), "")
+			if b != null:
+				b.set_meta("guard", true)
+				b.order = {"mode": "follow", "who": g, "point": null}
+				_join(b, gq)
+		# where to look for theirs: houses in the enemy half
+		var cands = []
+		for bd in G.world.buildings:
+			var p = Vector3(bd["x"], 0, bd["z"])
+			var f = _frac(1 - t, p)
+			if f > 0.05 and f < 0.65 and bd["w"] >= 4.5:
+				cands.append(p)
+		if cands.is_empty():
+			var a: Vector3 = G.world.spawn[1 - t]
+			for k in range(6):
+				cands.append(a.lerp(G.world.capture, 0.2 + k * 0.1) + Vector3(randf_range(-35, 35), 0, randf_range(-35, 35)))
+		cands.shuffle()
+		gen_search[t] = cands
+	G.ui.radio(0, "Find and kill the enemy general. Keep ours alive: he's hiding in our half with his bodyguard")
+	G.ui.radio(1, "Find and kill the enemy general. Keep ours alive: he's hiding in our half with his bodyguard")
+
+static func _join(s, q: Dictionary) -> void:
+	if s.squad != null:
+		s.squad["members"].erase(s)
+		if s.squad.get("leader") == s:
+			s.squad["leader"] = null
+			s.set_leader(false)
+	q["members"].append(s)
+	s.squad = q
+
+static func _general_check() -> void:
+	for t in range(2):
+		var g = generals[t] if t < generals.size() else null
+		if g == null or not is_instance_valid(g) or g.state == "dead":
+			G.ui.radio(1 - t, "The enemy general is dead!")
+			G.ui.radio(t, "We've lost the general!")
+			G.main.end_game(1 - t)
+			return
+	for t in range(2):
+		var g = generals[t]
+		# has anyone on the other side laid eyes on him?
+		var seen = false
+		for o in G.soldiers:
+			if o.team == 1 - t and o.state == "alive" and o.intel.has(g):
+				var k = o.intel[g]
+				if k["seen"] and G.sim_time - k["t"] < 1.0:
+					seen = true
+					break
+		if seen:
+			var first = gen_known[1 - t] == null or G.sim_time - gen_known[1 - t]["t"] > 30.0
+			gen_known[1 - t] = {"p": g.pos, "t": G.sim_time}
+			if first:
+				G.ui.radio(1 - t, "Enemy general spotted at %s! All squads, converge!" % AI.grid_ref(g.pos))
+				G.ui.radio(t, "They've seen the general! Get him out of there!")
+		# enemies close by, or his hideout's known: move him further back
+		var danger = seen
+		for e in g.intel.keys():
+			if is_instance_valid(e) and e.state == "alive" and g.intel[e]["seen"] and G.sim_time - g.intel[e]["t"] < 3.0 and G.dist2d(e.pos, g.pos) < 28.0:
+				danger = true
+		if danger and G.sim_time > gen_move_t[t] and g.state == "alive":
+			gen_move_t[t] = G.sim_time + 70.0
+			var lo = maxf(0.0, _frac(t, g.pos) - 0.25)
+			var to = _hideout(t, lo, maxf(lo + 0.12, _frac(t, g.pos) - 0.02), g.pos)
+			g.order = {"mode": "move", "point": to}
+			g.set_meta("hide_at", to)
+			G.fx.callout(g, G.pick(["Fall back! Move!", "We're leaving, now!", "Get me out of here!"]))
+		elif g.has_meta("hide_at") and G.dist2d(g.pos, g.get_meta("hide_at")) < 3.0:
+			g.order = {"mode": "hold", "point": g.pos}
+			g.remove_meta("hide_at")
+
+static func _general_target(s):
+	if generals.size() < 2:
+		return null
+	var mine = generals[s.team]
+	var theirs = generals[1 - s.team]
+	if s == mine or s.has_meta("guard"):
+		return null
+	var q = s.squad["id"] if s.squad != null else s.id
+	var a = float(s.id) * 2.39
+	var off = Vector3(cos(a), 0, sin(a)) * (3.0 + float(s.id % 4) * 2.5)
+	# every third squad screens our own general
+	if q % 3 == 2 and mine != null and is_instance_valid(mine) and mine.state != "dead":
+		return mine.pos + G.flat(G.world.capture - mine.pos).normalized() * 16.0 + off
+	var k = gen_known[s.team]
+	if k != null and G.sim_time - k["t"] < 90.0:
+		if theirs != null and is_instance_valid(theirs) and G.sim_time - k["t"] < 6.0:
+			return theirs.pos + off
+		return k["p"] + off
+	# nobody knows where he is: squads search the houses in the enemy half, a different one each in turn
+	var cands: Array = gen_search[s.team]
+	if cands.is_empty():
+		return null
+	var i = (q + int(G.sim_time / 50.0)) % cands.size()
+	return cands[i] + off
+
 # ---------------------------------------------------------------- where the AI should go in these modes
 static func target_for(s):
 	match G.mode:
+		"general":
+			return _general_target(s)
 		"escort":
 			var lead = _lead_truck()
 			if lead == null:
@@ -295,6 +465,10 @@ static func step(dt: float) -> void:
 				_move_hill()
 		"horde":
 			_horde(dt)
+		"general":
+			if check_t <= 0.0:
+				check_t = 0.5
+				_general_check()
 
 static func _rescue_check() -> void:
 	if pilot == null or not is_instance_valid(pilot) or pilot.state == "dead":
@@ -660,6 +834,16 @@ static func _claw(z, t) -> void:
 # ---------------------------------------------------------------- HUD line
 static func status_text() -> String:
 	match G.mode:
+		"general":
+			if generals.size() < 2 or generals[0] == null or generals[1] == null:
+				return ""
+			var k = gen_known[0]
+			var their = "location unknown" if k == null else ("spotted %d s ago" % int(G.sim_time - k["t"]))
+			var guards = 0
+			for s in G.soldiers:
+				if s.team == 0 and s.state == "alive" and s.has_meta("guard"):
+					guards += 1
+			return "their general: %s · ours: %d guards" % [their, guards]
 		"escort":
 			var alive = 0
 			for v in convoy:
@@ -681,7 +865,7 @@ static func status_text() -> String:
 
 # ---------------------------------------------------------------- the daily challenge
 const DAILY_MAPS = ["town", "field", "trenches", "forest", "city", "factory", "valley", "river", "pass", "front", "random"]
-const DAILY_MODES = ["capture", "frontline", "laststand", "destroy", "escort", "rescue", "koth", "horde", "breakthrough", "siege"]
+const DAILY_MODES = ["capture", "frontline", "laststand", "destroy", "escort", "rescue", "koth", "horde", "breakthrough", "siege", "general"]
 const DAILY_PATH = "user://daily.dat"
 
 static func today() -> String:
@@ -724,6 +908,7 @@ static func start_daily() -> void:
 	G.settings["time"] = c["time"]
 	G.main.apply_time()
 	G.settings["time"] = keep_t
+	Campaign.active = false
 	G.main.start_game({"map": c["map"], "mode": c["mode"], "size": c["size"], "limit": G.default_limit(c["mode"]), "reinforce": not ("no reinforcements" in c["mods"]),
 		"reinf_mode": "truck", "armor": c["armor"], "teams": 2})
 	if "veterans" in c["mods"]:

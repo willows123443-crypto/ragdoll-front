@@ -52,6 +52,10 @@ func _ready() -> void:
 			_big_test()
 		if a == "--doortest":
 			_door_test()
+		if a == "--laddertest":
+			_ladder_test()
+		if a == "--camptest2":
+			_camp_test2()
 		if a == "--ruintest":
 			_ruin_test()
 		if a.begins_with("--modetest="):
@@ -111,18 +115,36 @@ func _build_environment() -> void:
 var clock = 0.25          # 0.25 = midday ... 0.6 = dusk ... 0.8 = night ... 1.25 = midday again
 var clock_t = 0.0
 
+var was_night = false
+
 func _cycle_step(dt: float) -> void:
-	if G.settings["time"] != "cycle":
+	var tm = G.settings["time"]
+	if tm != "cycle" and tm != "dawn":
 		return
-	clock += dt / 900.0          # a full day in fifteen minutes
+	if tm == "dawn":
+		# one long day: first light to full dark over about eighteen minutes, then it stays night
+		if clock < 0.8:
+			clock = minf(0.8, clock + dt * 0.72 / 1080.0)
+	else:
+		clock += dt / 900.0          # a full day in fifteen minutes
 	clock_t -= dt
 	if clock_t <= 0.0:
 		clock_t = 1.0
 		apply_time()
+		var n = is_night()
+		if n != was_night and G.started and not G.over:
+			for t in range(G.team_count()):
+				G.ui.radio(t, "Night is falling. Lights out, keep your heads down." if n else "First light. Eyes open.")
+		was_night = n
+
+# the hour shown on the HUD for the passing day
+func hour_text() -> String:
+	var h = fposmod(6.0 + (fposmod(clock, 1.0) - 0.1) * 25.0, 24.0)
+	return "%02d:%02d" % [int(h), int(fposmod(h, 1.0) * 60.0)]
 
 func apply_time() -> void:
 	var t = G.settings["time"]
-	if t == "cycle":
+	if t == "cycle" or t == "dawn":
 		_blend_time(fposmod(clock, 1.0))
 		return
 	var amb = float(_arg("amb", "0.38"))
@@ -169,11 +191,11 @@ func apply_time() -> void:
 	sky_mat.ground_bottom_color = sky_mat.ground_horizon_color.darkened(0.5)
 
 func is_night() -> bool:
-	return G.settings["time"] == "night" or (G.settings["time"] == "cycle" and G.view_range < 80.0)
+	return G.settings["time"] == "night" or ((G.settings["time"] == "cycle" or G.settings["time"] == "dawn") and G.view_range < 80.0)
 
 # the cycle mixes the three looks: day (0.25), dusk (0.55), night (0.75), dawn back to day
 func _blend_time(c: float) -> void:
-	var keys = [[0.0, "night"], [0.15, "dusk"], [0.25, "day"], [0.5, "day"], [0.62, "dusk"], [0.75, "night"], [1.0, "night"]]
+	var keys = [[0.0, "night"], [0.06, "night"], [0.12, "dawn"], [0.22, "day"], [0.5, "day"], [0.62, "dusk"], [0.75, "night"], [1.0, "night"]]
 	var a = keys[0]
 	var b = keys[1]
 	for i in range(keys.size() - 1):
@@ -193,11 +215,18 @@ func _blend_time(c: float) -> void:
 	env.ambient_light_energy = lerpf(A[6], B[6], k)
 	env.fog_light_color = A[7].lerp(B[7], k)
 	G.view_range = lerpf(A[8], B[8], k)
-	sun.rotation = Vector3(deg_to_rad(lerpf(-60.0, -8.0, absf(c - 0.375) / 0.375)), deg_to_rad(-35.0 + c * 120.0), 0)
+	# the sun climbs from the east at dawn, peaks around noon and goes down in the west at dusk
+	var day_k = clampf((c - 0.1) / 0.56, 0.0, 1.0)
+	var elev = lerpf(-5.0, -62.0, sin(day_k * PI))
+	if c < 0.08 or c > 0.7:
+		elev = -40.0       # moonlight
+	sun.rotation = Vector3(deg_to_rad(elev), deg_to_rad(-100.0 + day_k * 160.0), 0)
 	sun.shadow_enabled = G.settings["shadows"]
 
 func _tod(n: String) -> Array:
 	match n:
+		"dawn":
+			return [Color(0.38, 0.45, 0.62), Color(0.95, 0.7, 0.6), Color(0.56, 0.45, 0.42), Color(1.0, 0.78, 0.6), 0.62, Color(0.6, 0.58, 0.66), 0.3, Color(0.78, 0.66, 0.62), 115.0]
 		"dusk":
 			return [Color(0.32, 0.36, 0.55), Color(0.86, 0.55, 0.35), Color(0.5, 0.36, 0.28), Color(1.0, 0.68, 0.42), 0.76, Color(0.62, 0.52, 0.5), 0.3, Color(0.72, 0.55, 0.45), 110.0]
 		"night":
@@ -256,7 +285,7 @@ func start_game(o: Dictionary) -> void:
 		G.ui.menu.visible = false
 	G.mode = o.get("mode", "sandbox")
 	G.teams = clampi(o.get("teams", G.teams), 2, 4)
-	if G.mode in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde"]:
+	if G.mode in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde", "general"]:
 		G.teams = 2
 	G.pc.set_rts(false)
 	G.apply_teams()
@@ -266,11 +295,16 @@ func start_game(o: Dictionary) -> void:
 		G.score.append(0)
 		G.cap_score.append(0.0)
 	G.team_size = o.get("size", 10)
+	G.team_caps = o.get("caps", [])
 	if G.mode == "sabotage":
 		var keep_t = G.settings["time"]
 		G.settings["time"] = "night"
 		apply_time()
 		G.settings["time"] = keep_t
+	if G.settings["time"] == "dawn":
+		clock = 0.08
+		apply_time()
+	was_night = is_night()
 	G.limit = o.get("limit", G.default_limit(G.mode))
 	G.reinforce = o.get("reinforce", true)
 	G.reinf_mode = o.get("reinf_mode", G.reinf_mode)
@@ -281,6 +315,7 @@ func start_game(o: Dictionary) -> void:
 	Obj.reset()
 	Commander.reset()
 	Support.reset()
+	Comms.reset()
 	Build.reset()
 	Modes.reset()
 	Build.setup_bases()
@@ -288,7 +323,7 @@ func start_game(o: Dictionary) -> void:
 	for t in range(G.team_count()):
 		if (G.mode == "laststand" or G.mode == "horde") and t == 1:
 			continue
-		var n_here = G.team_size if o.get("armies", true) else 0
+		var n_here = G.size_of(t) if o.get("armies", true) else 0
 		if G.mode == "sabotage" and t == 0:
 			n_here = maxi(4, G.team_size / 2)
 		for i in range(n_here):
@@ -304,6 +339,9 @@ func start_game(o: Dictionary) -> void:
 		elif not (G.mode == "escort" and t == 0) and o.get("armies", true) and not (Campaign.active and t == 0):
 			_starting_vehicles(t)
 	Modes.setup()
+	Ferry.setup()
+	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2:
+		G.ui.radio(0, "Your commander is %s" % Commander.STYLE_TEXT[Commander.style_of(0)])
 	Scripted.reset()
 	if G.map_id == "custom":
 		Scripted.setup(G.custom_map)
@@ -375,6 +413,9 @@ func _starting_vehicles(t: int) -> void:
 	spawn_vehicle("mortar", t, _free_spot(home - fwd * 6.0 + side * 6.0), yaw)
 	if G.mode != "laststand" and G.mode != "sabotage":
 		spawn_vehicle("radar", t, _free_spot(home - fwd * 16.0 - side * 8.0), yaw)
+	# an anti-tank gun covering the approach
+	if G.mode != "sabotage":
+		spawn_vehicle("atgun", t, _free_spot(home + fwd * minf(26.0, G.dist2d(home, enemy) * 0.2) - side * 4.0), yaw)
 	if G.mode != "laststand" or t == 0:
 		for k in [-1.0, 1.0]:
 			var np = _free_spot(home + fwd * minf(40.0, G.dist2d(home, enemy) * 0.3) + side * k * 14.0)
@@ -477,6 +518,8 @@ func _sim_step() -> void:
 	Commander.step(G.DT)
 	Obj.step(G.DT)
 	Modes.step(G.DT)
+	Ferry.step(G.DT)
+	Comms.step(G.DT)
 	Scripted.step(G.DT)
 	if randf() < 0.05:
 		cleanup_bodies(false)
@@ -648,7 +691,7 @@ func _report(tag: String) -> void:
 		for q in v.seats:
 			if q != null:
 				crew += 1
-		vs.append("%s%d hp%d crew%d spd%.1f%s%s" % [v.kind, v.team, int(v.hp), crew, v.speed, " WRECK" if v.dead else "", (" st%d d%.0f" % [v.mission["stage"], G.dist2d(v.pos, v.mission["drop"])]) if v.mission != null else ""])
+		vs.append("%s%d hp%d crew%d spd%.1f%s%s" % [v.kind, v.team, int(v.hp), crew, v.speed, " WRECK" if v.dead else "", (" st%d d%.0f" % [v.mission.get("stage", -1), G.dist2d(v.pos, v.mission.get("drop", v.pos))]) if v.mission != null else ""])
 	var rid = 0
 	var chu = 0
 	for o in G.soldiers:
@@ -688,7 +731,7 @@ func _autotest() -> void:
 		["valley", "frontline", 75.0, "heli"], ["front", "assault", 50.0, "para"], ["town", "laststand", 45.0, "truck"],
 		["field", "capture", 40.0, "truck", 4, "night"], ["town", "deathmatch", 30.0, "para", 3, "dusk"],
 		["field", "destroy", 45.0, "truck"], ["town", "breakthrough", 35.0, "truck"], ["field", "sabotage", 35.0, "truck"], ["town", "siege", 35.0, "truck"], ["factory", "capture", 35.0, "truck"],
-		["field", "horde", 30.0, "truck"], ["town", "koth", 25.0, "truck"], ["field", "escort", 30.0, "truck"], ["field", "rescue", 25.0, "truck"]]
+		["field", "horde", 30.0, "truck"], ["town", "koth", 25.0, "truck"], ["field", "escort", 30.0, "truck"], ["field", "rescue", 25.0, "truck"], ["town", "general", 30.0, "truck"], ["river", "frontline", 30.0, "truck"]]
 	var only = _arg("scen", "")
 	for sc in scen:
 		var m = sc[0]
@@ -813,6 +856,60 @@ func _shot_mode(dir: String) -> void:
 		G.ui.show_menu()
 		await _wait(1.0)
 		await _snap(dir, "title")
+	if _arg("vehshot", "") != "":
+		# each vehicle on its own, empty, lit from the camera's side
+		var c0v: Vector3 = G.world.capture
+		var bnd: Rect2 = G.world.bounds
+		for tries in range(300):
+			var q = Vector3(randf_range(bnd.position.x + 30, bnd.end.x - 30), 0, randf_range(bnd.position.y + 30, bnd.end.y - 30))
+			if G.world.cols_in_rect(q.x - 16, q.z - 16, q.x + 16, q.z + 16).is_empty() and not G.world.in_water(q.x, q.z):
+				c0v = q
+				break
+		var ld: Vector3 = sun.global_transform.basis.z
+		var cam_dir = G.flat(ld).normalized()
+		for kind in _arg("vehshot", "").split(","):
+			for v0 in G.vehicles.duplicate():
+				v0.remove()
+			var vv = spawn_vehicle(kind, int(_arg("vteam", "0")), c0v, 0.6, false)
+			await _wait(0.3)
+			var L = vv.spec["len"]
+			var side = Vector3(-cam_dir.z, 0, cam_dir.x)
+			await _look(vv.pos + cam_dir * L * 1.1 + side * L * 0.55 + Vector3(0, L * 0.45, 0), vv.pos + Vector3(0, 1.0, 0))
+			await _snap(dir, "veh_" + kind)
+	if _arg("unloadshot", "") != "":
+		Reinforce.truck(0, 8)
+		var tv = G.vehicles[G.vehicles.size() - 1]
+		for k in range(120):
+			await _wait(0.5)
+			if not is_instance_valid(tv) or (tv.mission != null and tv.mission["stage"] >= 1):
+				break
+		await _wait(float(_arg("unloadshot", "1.0")))
+		if is_instance_valid(tv):
+			var bk = -tv.forward()
+			await _look(tv.pos + bk * 11.0 + Vector3(-bk.z, 0, bk.x) * 5.0 + Vector3(0, 4.0, 0), tv.pos - tv.forward() * 3.0)
+			await _snap(dir, "unload")
+			print("UNLOAD truck stage %d speed %.2f" % [tv.mission["stage"] if tv.mission != null else -1, tv.speed])
+	if _arg("campshot", "") != "":
+		G.ui.visible = true
+		Campaign.new_campaign()
+		Campaign.move(Campaign.army_at(2, 0), 5)
+		Campaign.selected = Campaign.army_at(1, 0)["id"]
+		G.ui._show_campaign("3rd Company takes Mud Flats unopposed.")
+		await _wait(0.6)
+		await _snap(dir, "campaign")
+		G.ui.camp_panel.visible = false
+	if _arg("climbshot", "") != "":
+		var lads = G.world.towers.filter(func(T): return T.get("ladder", false))
+		if not lads.is_empty():
+			var T = lads[0]
+			var lo: Vector3 = T["stair_bottom"]
+			var sl = spawn_soldier(0, lo.x + T["n"].x * 3.0, lo.z + T["n"].z * 3.0, "rifle")
+			AI.take_post(sl, T["cps"][0])
+			await _wait(float(_arg("climbshot", "5")))
+			var n: Vector3 = T["n"]
+			var side = Vector3(-n.z, 0, n.x)
+			await _look(sl.pos + n * 5.0 + side * 3.0 + Vector3(0, 2.0, 0), sl.pos + Vector3(0, 1.0, 0))
+			await _snap(dir, "climb")
 	if _arg("menushot", "") != "":
 		G.ui.visible = true
 		G.ui.show_menu()
@@ -1259,6 +1356,14 @@ func _mode_test(mode: String) -> void:
 		print("MODETEST daily ", Modes.daily_text(Modes.daily))
 	else:
 		start_game({"map": _arg("map", "field"), "mode": mode, "size": int(_arg("size", "10")), "limit": 100, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	if _arg("noradio", "") != "":
+		for v in G.vehicles.duplicate():
+			if v.kind == "radar":
+				v.destroy(null)
+		for s in G.soldiers:
+			if s.cls == "radio":
+				s.set_class("rifleman")
+		Support.points = [40, 40]
 	if _arg("dbg", "") != "":
 		for j in range(int(_arg("dbgn", "10"))):
 			await _wait(float(_arg("dbgdt", "0.8")))
@@ -1297,6 +1402,13 @@ func _mode_test(mode: String) -> void:
 				up += 1
 		if up > 0:
 			pz += " upstairs %d" % up
+		var lads = G.world.towers.filter(func(T): return T.get("ladder", false)).size()
+		var climbing = 0
+		for s in G.soldiers:
+			if s.climb != null:
+				climbing += 1
+		if lads > 0:
+			pz += " ladders %d climbing %d" % [lads, climbing]
 		var bl = 0
 		var dressing = 0
 		for s in G.soldiers:
@@ -1305,12 +1417,104 @@ func _mode_test(mode: String) -> void:
 			if s.bandage_t > 0.0:
 				dressing += 1
 		pz += " bleeding %d dressing %d tables %d flipped %d" % [bl, dressing, G.world.tables.size(), G.world.tables.filter(func(t): return t["flipped"]).size()]
+		var sw = 0
+		var wade = 0
+		var faust = 0
+		for s in G.soldiers:
+			if s.state == "alive" and s.swim:
+				sw += 1
+			elif s.state == "alive" and not G.world.water.is_empty() and G.world.in_water(s.pos.x, s.pos.z):
+				wade += 1
+			if s.wid == "pfaust":
+				faust += 1
+		if sw + wade > 0:
+			pz += " swim %d wade %d" % [sw, wade]
+		if faust > 0:
+			pz += " faust_up %d" % faust
+		for b in Ferry.boats:
+			if is_instance_valid(b["v"]):
+				var ab = 0
+				for i in range(1, b["v"].seats.size()):
+					if b["v"].seats[i] != null:
+						ab += 1
+				pz += " boat[%s st%d ab%d x%.0f]" % ["dead" if b["v"].dead else "ok", b["v"].mission["stage"] if b["v"].mission != null else -1, ab, b["v"].pos.x]
+		if G.mode == "general" and Modes.generals.size() == 2:
+			for g in Modes.generals:
+				if g != null and is_instance_valid(g):
+					pz += " gen%d[%s %.0f,%.0f f%.2f hp%.0f %s %s %s %s]" % [g.team, g.state, g.pos.x, g.pos.z, Modes._frac(g.team, g.pos), g.hp, g.task, AI.order_of(g)["mode"], "BROKEN" if g.broken else "", "carried" if g.carried_by != null else ""]
+		var scouts = 0
+		var sprung = 0
+		for s in G.soldiers:
+			if s.state == "alive" and s.has_meta("scout"):
+				scouts += 1
+		for q in G.squads:
+			if G.sim_time - q.get("sprung_t", -99.0) < 8.0:
+				sprung += 1
+		pz += " styles %s/%s scouts %d sight %d,%d sprung %d ambush %d/%d" % [Commander.style_of(0), Commander.style_of(1), scouts, Commander.sightings[0].size(), Commander.sightings[1].size(), sprung, AI.ambushes, AI.ambush_waits]
+		if not Comms.queue.is_empty():
+			pz += " comms[%s %s q%d,%d run%s,%s ok%d,%d dl%d]" % [Comms.ok(0), Comms.ok(1), Comms.queue[0].size(), Comms.queue[1].size(), Comms.runner[0] != null, Comms.runner[1] != null, Comms.reinf_ok[0], Comms.reinf_ok[1], Comms.delivered]
+		for v in G.vehicles:
+			if v.kind == "atgun":
+				pz += " at[%s %.1f]" % ["dead" if v.dead else ("crew" if v.gunner() != null else "nocrew"), G.sim_time - v.get_meta("fire_t", -99.0)]
 		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz])
 		if G.over:
 			break
 	get_tree().quit()
 
 # doors get kicked open by people walking through them, grenades go in through windows
+# the turn-based campaign: move, fight, Bravo's turn, supply
+func _camp_test2() -> void:
+	await _wait(0.5)
+	Campaign.new_campaign()
+	var D = Campaign.data
+	print("CAMP2 owner ", D["owner"])
+	for a in D["armies"]:
+		print("CAMP2 army ", a["name"], " team ", a["team"], " at ", Campaign.REGIONS[a["region"]]["name"], " str ", a["str"])
+	var a2 = Campaign.army_at(2, 0)
+	print("CAMP2 move to Mud Flats: ", Campaign.move(a2, 5))
+	var a1 = Campaign.army_at(1, 0)
+	print("CAMP2 attack The River: ", Campaign.move(a1, 4))
+	await _wait(3.0)
+	print("CAMP2 battle map ", G.map_id, " mode ", G.mode, " alive ", G.alive_count(0), " v ", G.alive_count(1), " caps ", G.team_caps)
+	end_game(0)
+	print("CAMP2 after win owner ", D["owner"])
+	for a in D["armies"]:
+		print("CAMP2 army ", a["name"], " at ", Campaign.REGIONS[a["region"]]["name"], " str ", a["str"], " supplied ", Campaign.supplied(a["team"], a["region"]))
+	for k in range(4):
+		var lines = Campaign.end_turn()
+		print("CAMP2 end turn %d: %s | battle %s" % [k, " / ".join(lines), Campaign.battle_text()])
+		if Campaign.pending_battle() != null:
+			Campaign._start_battle()
+			await _wait(2.0)
+			print("CAMP2 defence battle map ", G.map_id, " mode ", G.mode, " alive ", G.alive_count(0), " v ", G.alive_count(1))
+			end_game(1 if k % 2 == 0 else 0)
+			print("CAMP2 after defence ", D["log"][0])
+	print("CAMP2 owner ", D["owner"], " turn ", D["turn"], " over ", Campaign.over())
+	get_tree().quit()
+
+# a soldier is sent up onto a flat roof by its ladder, then back down; and one goes through a window
+func _ladder_test() -> void:
+	await _wait(0.5)
+	start_game({"map": _arg("map", "town"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	var lads = G.world.towers.filter(func(T): return T.get("ladder", false))
+	print("LADDERTEST ladders %d" % lads.size())
+	if lads.is_empty():
+		get_tree().quit()
+		return
+	var T = lads[0]
+	var lo: Vector3 = T["stair_bottom"]
+	var s = spawn_soldier(0, lo.x + T["n"].x * 6.0, lo.z + T["n"].z * 6.0, "rifle")
+	print("LADDERTEST roof cps %d" % T["cps"].size())
+	AI.take_post(s, T["cps"][0])
+	for k in range(14):
+		await _wait(1.0)
+		print("LADDERTEST t%d pos %.1f,%.1f,%.1f ground %.1f climb %s route %s task %s" % [k, s.pos.x, s.pos.y, s.pos.z, G.world.ground_y(s.pos.x, s.pos.z), s.climb != null, s.route != null, s.task])
+	AI.go_downstairs(s)
+	for k in range(8):
+		await _wait(1.0)
+		print("LADDERTEST down t%d pos %.1f,%.1f,%.1f climb %s route %s" % [k, s.pos.x, s.pos.y, s.pos.z, s.climb != null, s.route != null])
+	get_tree().quit()
+
 func _door_test() -> void:
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})

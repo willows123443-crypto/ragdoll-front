@@ -34,6 +34,7 @@ const MODE_INFO = {
 	"koth": "King of the hill: one flag, and every 90 seconds it moves somewhere else. Holding it earns points; first to the points limit wins.",
 	"commander": "A capture battle you fight from above. You can't take over soldiers: select squads, box-select or click, and right-click to send them. WASD pans, the wheel zooms.",
 	"horde": "Alpha holds out against ten waves of the walking dead. They have no guns, but there are a lot of them and they don't stop.",
+	"general": "Each side's general hides in a house on its own half, with a bodyguard. Find theirs and kill him before they find yours. Once he's spotted the whole side converges, and a general who's found moves somewhere further back.",
 	"siege": "Alpha holds a fortified town while its supplies run down; holding the supply-road flags slows the drain. Bravo wins by taking the town, Alpha by holding out until the timer ends.",
 }
 
@@ -56,7 +57,7 @@ static func reset() -> void:
 		src = _capture_points()
 	elif G.mode == "koth":
 		src = [{"p": _free_near(G.world.capture), "name": "K"}]
-	elif G.mode in ["escort", "rescue", "horde"]:
+	elif G.mode in ["escort", "rescue", "horde", "general"]:
 		src = []
 	elif G.mode == "breakthrough":
 		src = _line_points(2)

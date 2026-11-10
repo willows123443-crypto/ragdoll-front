@@ -20,7 +20,7 @@ static func step(dt: float) -> void:
 	tick_t = 1.0
 	for q in G.squads:
 		q["members"] = q["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead")
-		if q["members"].is_empty():
+		if q["members"].is_empty() or q.get("guard", false):
 			continue
 		_bounding(q)
 		_flank(q)

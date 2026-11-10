@@ -345,6 +345,8 @@ static func _reveal_cols(st: Dictionary, m: MeshInstance3D) -> void:
 
 static func _complete(st: Dictionary, quiet: bool) -> void:
 	st["done"] = true
+	if G.mode == "commander" and st["team"] == 0 and G.ui != null and G.ui.has_method("_render_tools"):
+		G.ui.call_deferred("_render_tools")
 	for c in st["hidden"].duplicate():
 		st["hidden"].erase(c)
 		if c.alive:
@@ -484,20 +486,40 @@ static func add_camo(st: Dictionary) -> void:
 	var net = Node3D.new()
 	st["root"].add_child(net)
 	var h = 3.2 if st["kind"] in ["fob", "fob2", "depot", "hospital", "supply"] else 2.2
-	var nc = Color(0.27, 0.31, 0.2)
 	var w = (sz.x if st["ax"] else sz.y) + 1.0
 	var d = (sz.y if st["ax"] else sz.x) + 1.0
-	for i in range(5):
-		for j in range(4):
-			var mi = MeshInstance3D.new()
-			mi.mesh = G.world.shape_mesh("blob")
-			mi.material_override = VModel.mat(nc.darkened(randf_range(0.0, 0.2)).lerp(Color(0.38, 0.33, 0.24), randf_range(0.0, 0.3)))
-			var x = st["p"].x - w / 2.0 + (i + 0.5) * w / 5.0
-			var z = st["p"].z - d / 2.0 + (j + 0.5) * d / 4.0
-			mi.position = Vector3(x, G.world.ground_y(x, z) + h + randf_range(-0.2, 0.2), z)
-			mi.scale = Vector3(w / 4.0, 0.35, d / 3.0)
-			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-			net.add_child(mi)
+	# one net draped over poles at the corners, sagging between them
+	var stt = SurfaceTool.new()
+	stt.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var N = 10
+	var gy0 = G.world.ground_y(st["p"].x, st["p"].z)
+	for i in range(N):
+		for j in range(N):
+			var quad = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j], [i + 1, j + 1], [i, j + 1]]
+			for q in quad:
+				var u = float(q[0]) / N
+				var v2 = float(q[1]) / N
+				var x = -w / 2.0 + u * w
+				var z = -d / 2.0 + v2 * d
+				var sag = 0.55 * sin(u * PI) * sin(v2 * PI) + 0.25 * (sin(u * PI) + sin(v2 * PI)) * 0.5
+				var gx = G.world.ground_y(st["p"].x + x, st["p"].z + z)
+				var y = maxf(gx + 0.6, gy0 + h - sag + 0.08 * sin(u * 23.0 + v2 * 17.0))
+				stt.set_uv(Vector2(u * w * 0.5, v2 * d * 0.5))
+				stt.add_vertex(Vector3(st["p"].x + x, y, st["p"].z + z))
+	stt.generate_normals()
+	var nm = MeshInstance3D.new()
+	nm.mesh = stt.commit()
+	var mat = StandardMaterial3D.new()
+	mat.albedo_texture = Tex.net()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.alpha_scissor_threshold = 0.5
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.roughness = 1.0
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	nm.material_override = mat
+	nm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	net.add_child(nm)
+	net.top_level = true
 	for cx in [-1.0, 1.0]:
 		for cz in [-1.0, 1.0]:
 			var pole = MeshInstance3D.new()

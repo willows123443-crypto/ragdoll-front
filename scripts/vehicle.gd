@@ -48,6 +48,21 @@ const SPECS = {
 	"artillery": {"name": "Field gun", "len": 4.5, "wid": 2.4, "speed": 0.0, "rev": 0.0, "accel": 0.0, "turn": 0.0, "hp": 600.0,
 		"bullet": 0.15, "tracked": false, "standoff": 0.0, "static": true,
 		"seats": [{"o": Vector3(0.9, 0.95, -1.6), "role": "gunner", "pose": "stand", "face": 0.0}]},
+	"atgun": {"name": "Anti-tank gun", "len": 3.8, "wid": 2.0, "speed": 1.5, "rev": 1.0, "accel": 1.2, "turn": 0.4, "hp": 520.0,
+		"bullet": 0.25, "tracked": false, "standoff": 80.0,
+		"seats": [
+			{"o": Vector3(0.0, 0.95, -2.35), "role": "driver", "pose": "push", "face": 0.0},
+			{"o": Vector3(0.62, 0.95, -0.85), "role": "gunner", "pose": "stand", "face": 0.0}]},
+	"dinghy": {"name": "Assault boat", "len": 5.2, "wid": 1.9, "speed": 6.5, "rev": 3.0, "accel": 3.0, "turn": 1.1, "hp": 260.0,
+		"bullet": 0.7, "tracked": false, "standoff": 0.0, "boat": true,
+		"seats": [
+			{"o": Vector3(0.0, 0.95, -2.0), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.45, 0.8, 1.3), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.45, 0.8, 1.3), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.45, 0.8, 0.4), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.45, 0.8, 0.4), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.45, 0.8, -0.5), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.45, 0.8, -0.5), "role": "pass", "pose": "sit", "face": 0.0}]},
 	"heli": {"name": "Transport helicopter", "len": 11.0, "wid": 3.0, "speed": 26.0, "rev": 8.0, "accel": 8.0, "turn": 1.0, "hp": 700.0,
 		"bullet": 0.3, "tracked": false, "standoff": 0.0, "air": true,
 		"seats": [
@@ -118,6 +133,7 @@ const SPECS = {
 const L_VEH = 8
 
 var kind = "jeep"
+var heavy = false        # a heavy tank: a tank with thicker armour, a bigger gun, and slower
 var spec: Dictionary
 var team = 0
 var pos = Vector3.ZERO
@@ -181,8 +197,24 @@ static var mats = {}
 
 static func make(kind_: String, team_: int, p: Vector3, yaw_: float) -> Vehicle:
 	var v = Vehicle.new()
-	v.kind = kind_
-	v.spec = SPECS[kind_]
+	if kind_ == "heavytank":
+		v.heavy = true
+		v.kind = "tank"
+		var hs = SPECS["tank"].duplicate(true)
+		hs["name"] = "Heavy tank"
+		hs["hp"] = 3400.0
+		hs["speed"] = 5.2
+		hs["rev"] = 2.4
+		hs["accel"] = 2.4
+		hs["turn"] = 0.6
+		hs["len"] = 7.6
+		hs["wid"] = 3.8
+		for st in hs["seats"]:
+			st["o"] = st["o"] * 1.16
+		v.spec = hs
+	else:
+		v.kind = kind_
+		v.spec = SPECS[kind_]
 	v.team = team_
 	v.pos = p
 	v.yaw = yaw_
@@ -347,6 +379,12 @@ func step(dt: float) -> void:
 	if dead:
 		dead_t += dt
 		speed = move_toward(speed, 0.0, 10.0 * dt)
+		# wrecks get towed away after a while so they don't block the roads and spawns
+		if dead_t > 40.0 and not spec.get("plane", false):
+			position.y -= dt * 0.5
+			if dead_t > 46.0:
+				remove()
+				return
 		if spec.get("plane", false):
 			VehExt.plane_step(self, dt)
 		return
@@ -468,7 +506,13 @@ func _hit_people(f: Vector3) -> void:
 		var bb = rel.dot(l)
 		if absf(a) > hl or absf(bb) > hw or absf(p.y - pos.y) > 2.0:
 			continue
-		if (s.state == "alive" or s.state == "getup") and absf(speed) > 2.5:
+		if s.team == team and s.state == "alive":
+			# our own people get bundled out of the way, never run down
+			var side0 = l * (1.0 if bb >= 0.0 else -1.0)
+			s.pos += side0 * (hw - absf(bb)) * 0.8
+			s.pos = G.world.push_out_circle(s.pos, 0.33)[0]
+			continue
+		if (s.state == "alive" or s.state == "getup") and absf(speed) > 2.5 and s.team != team:
 			# run over
 			var dmg = speed * speed * 0.7
 			var drv = driver()
@@ -490,7 +534,7 @@ func _gun_dir() -> Vector3:
 func muzzle() -> Vector3:
 	if gun_pivot == null:
 		return center()
-	return gun_pivot.global_transform * Vector3(0, 0.02, {"jeep": 1.45, "nest": 1.3, "mortar": 1.15, "halftrack": 1.35, "motorbike": 0.65, "armoredcar": 1.7, "artillery": 3.4, "gunship": 0.95}.get(kind, 3.7))
+	return gun_pivot.global_transform * Vector3(0, 0.02, {"jeep": 1.45, "nest": 1.3, "mortar": 1.15, "halftrack": 1.35, "motorbike": 0.65, "armoredcar": 1.7, "artillery": 3.4, "gunship": 0.95, "atgun": 2.7}.get(kind, 3.7))
 
 func _weapons(dt: float) -> void:
 	fire_cd -= dt
@@ -519,6 +563,9 @@ func _weapons(dt: float) -> void:
 			shoot = true
 	if kind == "mortar" or kind == "artillery":
 		_mortar(controller, dt, want, shoot)
+		return
+	if kind == "atgun":
+		_atgun(controller, dt, want, shoot)
 		return
 	if want == null:
 		# no target: watch where the enemy was last seen, or sweep the front
@@ -559,8 +606,11 @@ func _weapons(dt: float) -> void:
 			G.audio.shot(muzzle(), G.WEAPONS["atrifle"])
 	elif use_cannon:
 		if cannon_cd <= 0.0:
-			cannon_cd = 4.5
-			Combat.launch_shell(self, controller, muzzle(), _gun_dir())
+			cannon_cd = 5.5 if heavy else 4.5
+			if heavy:
+				Combat.launch_shell(self, controller, muzzle(), _gun_dir(), 2.0, 1050.0, 160.0)
+			else:
+				Combat.launch_shell(self, controller, muzzle(), _gun_dir())
 			G.fx.muzzle(muzzle(), true)
 			G.audio.boom(muzzle())
 			Combat.shake = maxf(Combat.shake, 0.3 if controller.is_player else 0.0)
@@ -591,6 +641,44 @@ func _weapons(dt: float) -> void:
 			G.fx.muzzle(muzzle(), false)
 			G.audio.shot(muzzle(), W)
 
+# the anti-tank gun: only fires from a standstill, armour-piercing at tanks, high explosive at groups of infantry
+func _atgun(g, dt: float, want, shoot: bool) -> void:
+	if want == null:
+		gun_pitch = lerpf(gun_pitch, 0.0, dt)
+		_apply_turret()
+		return
+	aim_point = want
+	var local = global_transform.affine_inverse() * want
+	var ty = atan2(local.x, local.z)
+	# a small traverse on the carriage; beyond that the crew heaves the trails round
+	var lim = 0.55
+	turret_yaw = clampf(turret_yaw + clampf(wrapf(ty - turret_yaw, -PI, PI), -0.9 * dt, 0.9 * dt), -lim, lim)
+	if absf(wrapf(ty, -PI, PI)) > lim and absf(speed) < 0.2:
+		yaw += clampf(wrapf(ty, -PI, PI), -0.35 * dt, 0.35 * dt)
+		rotation.y = yaw
+	var piv = gun_pivot.global_position
+	var tp = atan2(want.y - piv.y, G.dist2d(want, piv))
+	gun_pitch = clampf(gun_pitch + clampf(tp - gun_pitch, -1.0 * dt, 1.0 * dt), -0.12, 0.3)
+	_apply_turret()
+	if not shoot or absf(speed) > 0.3 or cannon_cd > 0.0 or absf(wrapf(ty - turret_yaw, -PI, PI)) > 0.05:
+		return
+	set_meta("fire_t", G.sim_time)
+	var ap = _at_target_is_vehicle
+	cannon_cd = (3.6 if ap else 6.5) if not g.is_player else 2.5
+	if ap:
+		Combat.launch_shell(self, g, muzzle(), Combat.spread_dir(_gun_dir(), 0.004), 0.9, 820.0, 170.0)
+	else:
+		Combat.launch_shell(self, g, muzzle(), Combat.spread_dir(_gun_dir(), 0.012), 1.05, 120.0, 130.0)
+	G.fx.muzzle(muzzle(), true)
+	G.fx.dust_cloud(muzzle() - _gun_dir() * 0.4 + Vector3(0, -0.6, 0), 2.2)
+	G.audio.boom(muzzle())
+	if g.is_player:
+		Combat.shake = maxf(Combat.shake, 0.25)
+	elif randf() < 0.35:
+		G.fx.callout(g, G.pick(["On the way!", "Fire!", "Reload, AP!", "Shot!"]) if ap else G.pick(["HE out!", "Fire!"]))
+
+var _at_target_is_vehicle = false
+
 func _apply_turret() -> void:
 	turret.rotation.y = turret_yaw
 	if kind != "mortar" and kind != "artillery":
@@ -608,7 +696,7 @@ func _mortar(g, dt: float, want, shoot: bool) -> void:
 		cannon_cd = 1.0      # look for a target about once a second
 		var best = 0
 		for o in G.soldiers:
-			if o.team == team or o.state == "dead" or o.hidden_in_vehicle:
+			if o.team == team or o.state == "dead" or o.hidden_in_vehicle or G.near_spawn(o.pos):
 				continue
 			var d = G.dist2d(o.pos, pos)
 			if d < (60.0 if kind == "artillery" else 30.0) or d > (900.0 if kind == "artillery" else 240.0):
@@ -675,6 +763,26 @@ func _ai_gun_target(g):
 			return best
 	if kind == "aagun" or kind == "bomber":
 		return VehExt.aa_target(self)
+	if kind == "atgun":
+		_at_target_is_vehicle = false
+		for o in G.vehicles:
+			if o.team != team and not o.dead and not o.spec.get("air", false) and o.pos.distance_to(pos) < (85.0 if o.spec.get("static", false) or o.kind == "atgun" else 160.0) and not G.blocked(muzzle(), o.center()):
+				var d = o.pos.distance_to(pos)
+				if d < bd:
+					bd = d
+					best = [o.center(), true]
+		if best != null:
+			_at_target_is_vehicle = true
+			return best
+		var tg = g.vis_t
+		if tg != null and is_instance_valid(tg) and tg.state != "dead" and tg.pos.distance_to(pos) > 20.0:
+			var near = 0
+			for o in G.soldiers_near(tg.pos):
+				if o.team != team and o.state != "dead":
+					near += 1
+			if near >= 3 or (tg.in_cover and near >= 2):
+				return [tg.chest(), false]
+		return null
 	var tgt = g.vis_t
 	if tgt == null or not is_instance_valid(tgt) or tgt.state == "dead":
 		# nobody to shoot: tanks and armoured cars knock down enemy positions in view
@@ -704,7 +812,7 @@ func _crew_tick(dt: float) -> void:
 			seats[i] = null
 	# empty driver or gunner seats: a nearby friendly soldier with nothing better to do climbs in
 	crew_t -= dt
-	if crew_t > 0.0 or (mission != null and mission.get("type", "") != "escort"):
+	if crew_t > 0.0 or (mission != null and not mission.get("type", "") in ["escort", "ferry"]):
 		return
 	crew_t = 3.0 if mission == null else 1.5
 	for role in ["driver", "gunner"]:
@@ -914,6 +1022,8 @@ func _ai_drive(dt: float) -> Array:
 				return [0.5, 0.0]       # creep up to the edge
 			return [0.0, 0.0]
 		target = bank
+	elif kind == "atgun" and G.sim_time - get_meta("fire_t", -99.0) < 25.0:
+		return [0.0, 0.0]
 	else:
 		var obj: Vector3 = AI.objective_for(d)
 		var enemy = null
@@ -992,6 +1102,22 @@ func _ai_drive(dt: float) -> Array:
 						return [minf(r[0], 0.15), r[1]]
 					continue
 				return [0.0, r[1]]
+	# other vehicles (and wrecks) in the way: steer round them; nose to nose, one of them gives way
+	var lv = Vector3(cos(yaw), 0, -sin(yaw))
+	var dsg = signf(r[0]) if r[0] != 0.0 else 1.0
+	for o in G.vehicles:
+		if o == self or (o.spec.get("air", false) and o.alt > 3.0):
+			continue
+		var rel = G.flat(o.pos - pos)
+		var a2 = rel.dot(f) * dsg
+		var lat = rel.dot(lv)
+		var reach = (spec["len"] + o.spec["len"]) * 0.5 + 5.0
+		var half = (spec["wid"] + o.spec["wid"]) * 0.5 + 1.0
+		if a2 > 0.0 and a2 < reach and absf(lat) < half:
+			r[1] = clampf(r[1] - signf(lat if lat != 0.0 else 1.0) * 0.9 * dsg, -1.0, 1.0)
+			var close = a2 < (spec["len"] + o.spec["len"]) * 0.5 + 1.0
+			if close and not o.dead and o.team == team and get_instance_id() > o.get_instance_id() and absf(o.speed) > 0.2:
+				r[0] = minf(absf(r[0]), 0.15) * dsg       # let the other one through first
 	# unstick: if we want to move but aren't, back up for a moment
 	if reverse_t > 0.0:
 		reverse_t -= dt
@@ -1001,9 +1127,49 @@ func _ai_drive(dt: float) -> Array:
 		if stuck_t > 1.6:
 			stuck_t = 0.0
 			reverse_t = 1.4
+			stuck_n += 1
 	else:
 		stuck_t = 0.0
+	# really wedged (or off the map): slide to the nearest open ground and carry on
+	prog_t += dt
+	if prog_t > 10.0:
+		prog_t = 0.0
+		var moved = G.dist2d(pos, prog_p)
+		prog_p = pos
+		var b = G.world.bounds
+		var outside = pos.x < b.position.x or pos.x > b.end.x or pos.z < b.position.y or pos.z > b.end.y
+		if (moved < 3.0 and stuck_n >= 3) or (outside and moved < 3.0):
+			stuck_n = 0
+			_unwedge()
+		elif moved >= 3.0:
+			stuck_n = 0
 	return r
+
+var stuck_n = 0
+var prog_t = 0.0
+var prog_p = Vector3.ZERO
+
+func _unwedge() -> void:
+	var b = G.world.bounds
+	var best = null
+	var c = Vector3(clampf(pos.x, b.position.x + 6.0, b.end.x - 6.0), 0, clampf(pos.z, b.position.y + 6.0, b.end.y - 6.0))
+	for k in range(30):
+		var a = randf() * TAU
+		var q = c + Vector3(cos(a), 0, sin(a)) * (3.0 + k * 0.6)
+		var clear = not G.world.inside_any(q.x, q.z, spec["wid"] * 0.6) and not G.world.in_water(q.x, q.z)
+		for o in G.vehicles:
+			if o != self and G.dist2d(o.pos, q) < (spec["len"] + o.spec["len"]) * 0.5 + 1.0:
+				clear = false
+		if clear and q.x > b.position.x + 4.0 and q.x < b.end.x - 4.0 and q.z > b.position.y + 4.0 and q.z < b.end.y - 4.0:
+			best = q
+			break
+	if best == null:
+		return
+	pos = Vector3(best.x, _ground(best.x, best.z), best.z)
+	speed = 0.0
+	path = []
+	path_t = 0.0
+	_place(0.0)
 
 func _mission_target(dt: float):
 	var m = mission
@@ -1012,6 +1178,8 @@ func _mission_target(dt: float):
 		return Modes.escort_target(self, m)
 	if m.get("type", "") == "route":
 		return Scripted.route_target(self, m)
+	if m.get("type", "") == "ferry":
+		return Ferry.target(self, dt)
 	if spec.get("boat", false) and m["stage"] == 0 and (absf(speed) < 0.3 and G.dist2d(pos, m["drop"]) < 40.0 and m.get("go_t", 0.0) > 6.0):
 		m["drop"] = pos     # beached short of the mark: unload here
 	m["go_t"] = m.get("go_t", 0.0) + dt
@@ -1019,8 +1187,10 @@ func _mission_target(dt: float):
 		ramp.rotation.x = lerpf(ramp.rotation.x, 1.3 if m["stage"] == 1 else 0.0, dt * 3.0)
 	if m["stage"] == 0:
 		if G.dist2d(pos, m["drop"]) < 6.0:
+			if absf(speed) > 0.4 and not spec.get("air", false):
+				return null          # roll to a stop before anyone gets out
 			m["stage"] = 1
-			m["wait"] = 2.5
+			m["wait"] = 5.0
 			if m.get("type", "") == "supply":
 				var st = m["site"]
 				if st != null and not st["dead"] and st.get("ammo") != null:

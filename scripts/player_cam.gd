@@ -157,7 +157,7 @@ func player_update(s) -> void:
 			s.finish_reload()
 	s.fire_cd -= G.DT
 	var pull = mouse_down and captured and (W["auto"] or not trig_latch)
-	if pull and not sprint and s.fire_cd <= 0.0 and s.mag > 0 and s.reload_t <= 0.0 and not s.gun_blocked:
+	if pull and not sprint and not s.swim and s.fire_cd <= 0.0 and s.mag > 0 and s.reload_t <= 0.0 and not s.gun_blocked:
 		trig_latch = true
 		var dir = (aim_point - s.muzzle).normalized()
 		var spread = W["spread"] * (0.35 if s.ads else 1.0) + (W["move_spread"] * (0.5 if s.ads else 1.0) if m.length_squared() > 0.0 else 0.0) + s.supp * 0.01 + bloom
@@ -318,7 +318,7 @@ func _rts_overlay() -> void:
 			var lb: Label3D = rts_labels[used]
 			used += 1
 			lb.visible = true
-			lb.text = "%d · %d men" % [qi + 1, n] if qi < 9 else "%d men" % n
+			lb.text = ("Squad %d (%d men)" % [qi + 1, n]) if qi < 9 else ("%d men" % n)
 			lb.modulate = Color(1.0, 0.9, 0.3) if selected else Color(0.85, 0.9, 1.0)
 			lb.global_position = c + Vector3(0, 4.0, 0)
 		if not any_line:
@@ -637,6 +637,10 @@ func _key(k: int) -> void:
 			s.primary = null
 			s.set_weapon(G.WEAPON_LIST[k - KEY_1])
 			G.ui.message(s.W["name"])
+		elif k == KEY_0 and s.state == "alive":
+			s.primary = null
+			s.set_weapon("pfaust")
+			G.ui.message("Panzerfaust: one shot, short range, then it's thrown away")
 		elif k == KEY_B and s.state == "alive":
 			_class_action(s)
 		elif k == KEY_N and s.state == "alive":

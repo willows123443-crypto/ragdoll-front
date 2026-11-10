@@ -60,7 +60,7 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 			AI.add_intel(o, s, origin, 1.5 if d < 15.0 else d * 0.12, false)
 
 # how much material a bullet can punch through (metres of plain wall); wood and foliage count for much less
-const PEN = {"rifle": 0.34, "lmg": 0.42, "sniper": 0.75, "shotgun": 0.08, "rpg": 0.0, "hmg": 0.55, "smg": 0.2, "pistol": 0.12, "atrifle": 1.3, "flamer": 0.0}
+const PEN = {"rifle": 0.34, "lmg": 0.42, "sniper": 0.75, "shotgun": 0.08, "rpg": 0.0, "hmg": 0.55, "smg": 0.2, "pistol": 0.12, "atrifle": 1.3, "flamer": 0.0, "pfaust": 0.0}
 const MAT_FACTOR = [1.0, 0.3, 0.1]   # solid, wood, foliage
 
 # metres of the ray o + d*t inside an axis-aligned box, starting from entry distance t0
@@ -208,11 +208,13 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 	var kind = Soldier.PART_KIND[part]
 	var mult = 1.0
 	if kind == "head":
-		mult = 2.5 if (attacker != null and attacker.W["id"] == "sniper") else 4.0
+		mult = 2.8 if (attacker != null and attacker.W["id"] == "sniper") else 3.2
 	elif kind == "arm":
 		mult = 0.55
 	elif kind == "leg":
 		mult = 0.6
+	# battles last longer: everyone takes a bit more punishment than before
+	dmg *= 0.62
 	s.hp -= dmg * mult * (0.35 if s == Modes.pilot else 1.0)     # the pilot has a flak vest (and the game is no fun if he drops at once)
 	if kind == "torso" or kind == "leg" or kind == "arm":
 		s.wound_part = part
@@ -299,10 +301,18 @@ static func launch_rocket(s, origin: Vector3, dir: Vector3, veh = null) -> void:
 	m.material_override = mat
 	G.fx.add_child(m)
 	m.global_position = origin
-	rockets.append({"p": origin, "v": dir * 48.0, "owner": s, "veh": veh, "mesh": m, "life": 5.0, "trail": 0.0})
+	var faust = veh == null and s.wid == "pfaust"
+	if faust:
+		# a short, loopy flight and a big shaped charge
+		bm.size = Vector3(0.16, 0.16, 0.35)
+		rockets.append({"p": origin, "v": dir * 34.0, "owner": s, "veh": veh, "mesh": m, "life": 3.0, "trail": 0.0, "g": 0.35, "vdmg": 760.0, "power": 1.1})
+	else:
+		rockets.append({"p": origin, "v": dir * 48.0, "owner": s, "veh": veh, "mesh": m, "life": 5.0, "trail": 0.0})
 	G.fx.dust_cloud(origin - dir * 1.4, 1.5)
 	G.audio.rocket(origin)
-	if not s.is_player and veh == null:
+	if faust:
+		s.call_deferred("spent_faust")
+	elif not s.is_player and veh == null:
 		s.rockets -= 1
 
 static func step_rockets() -> void:
@@ -694,7 +704,7 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 		if s.state != "dead":
 			s.supp = 1.5
 			if d < R:
-				var edmg = 170.0 * (1.0 - d / R) * (1.0 if exposed else 0.3) * ((0.0 if not Modes.rescued else 0.3) if s == Modes.pilot else 1.0)
+				var edmg = 130.0 * (1.0 - d / R) * (1.0 if exposed else 0.3) * ((0.0 if not Modes.rescued else 0.3) if s == Modes.pilot else 1.0)
 				s.hp -= edmg
 				Medical.wound(s, edmg * 0.6)
 				if s == G.player:

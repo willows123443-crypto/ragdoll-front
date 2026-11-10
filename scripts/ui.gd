@@ -69,7 +69,7 @@ var opt_map: OptionButton
 var opt_mode: OptionButton
 var mode_info: Label
 const MODE_IDS = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand", "destroy", "breakthrough", "sabotage", "siege",
-	"escort", "rescue", "koth", "commander", "horde"]
+	"escort", "rescue", "koth", "commander", "horde", "general"]
 var opt_size: OptionButton
 var opt_limit: OptionButton
 var opt_reinf: OptionButton
@@ -247,7 +247,6 @@ func _build_side() -> void:
 	side.add_child(btn_reinf)
 	side.add_child(_button("Slow-mo (T)", func(): Engine.time_scale = 0.25 if Engine.time_scale > 0.5 else 1.0))
 	side.add_child(_button("Pause (P)", func(): get_tree().paused = not get_tree().paused))
-	side.add_child(_button("Clear bodies", func(): G.main.clear_bodies()))
 	side.add_child(_button("Battle report (J)", func(): show_report()))
 	side.add_child(_button("Controls (H)", func(): help.visible = true))
 
@@ -264,22 +263,22 @@ var dock_cards_list: Array = []      # [id, button] in order, for the number key
 var dock_pts_shown = -1
 
 const SB_VEH = [["jeep", "Jeep"], ["truck", "Truck"], ["motorbike", "Motorbike"], ["halftrack", "Half-track"], ["armoredcar", "Armoured car"],
-	["tank", "Tank"], ["ambulance", "Ambulance"], ["radar", "Command truck"], ["bridger", "Bridge layer"], ["gunship", "Gunship"],
-	["fighter", "Fighter"], ["bomber", "Dive bomber"], ["nest", "MG nest"], ["mortar", "Mortar"], ["artillery", "Field gun"], ["aagun", "AA gun"]]
+	["tank", "Tank"], ["heavytank", "Heavy tank"], ["ambulance", "Ambulance"], ["radar", "Command truck"], ["bridger", "Bridge layer"], ["gunship", "Gunship"],
+	["fighter", "Fighter"], ["bomber", "Dive bomber"], ["nest", "MG nest"], ["mortar", "Mortar"], ["artillery", "Field gun"], ["aagun", "AA gun"], ["atgun", "AT gun"], ["dinghy", "Assault boat"]]
 const BUILD_LIST = [["fob", "FOB"], ["sandbags", "Sandbags"], ["wire", "Barbed wire"], ["traps", "Tank traps"], ["mgnest", "MG nest"],
 	["mortarpit", "Mortar pit"], ["aa", "AA gun"], ["tower", "Watchtower"], ["bunker", "Bunker"], ["hospital", "Field hospital"],
 	["radio", "Radio mast"], ["depot", "Vehicle depot"], ["supply", "Supply dump"]]
 const RECRUIT = {
-	"inf": {"name": "Rifle squad", "cost": 12, "cls": ["rifleman", "rifleman", "rifleman", "mg", "at", "medic"]},
-	"eng": {"name": "Engineers", "cost": 9, "cls": ["engineer", "engineer", "engineer"]},
-	"atk": {"name": "Anti-tank team", "cost": 10, "cls": ["at", "at", "rifleman"]},
-	"asl": {"name": "Assault team", "cost": 11, "cls": ["assault", "assault", "assault", "assault"]},
+	"inf": {"name": "Rifle squad", "cost": 14, "cls": ["rifleman", "rifleman", "rifleman", "mg", "at", "medic"]},
+	"eng": {"name": "Engineers", "cost": 10, "cls": ["engineer", "engineer", "engineer"]},
+	"atk": {"name": "Anti-tank team", "cost": 12, "cls": ["at", "at", "rifleman"]},
+	"asl": {"name": "Assault team", "cost": 13, "cls": ["assault", "assault", "assault", "assault"]},
 	"snp": {"name": "Sniper team", "cost": 8, "cls": ["sniper", "spotter"]},
 	"med": {"name": "Medics", "cost": 6, "cls": ["medic", "medic"]},
 	"rad": {"name": "Radio operator", "cost": 5, "cls": ["radio"]},
 }
 # call-ins that happen as soon as you pay (no map click needed)
-const INSTANT = ["paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance"]
+const INSTANT = ["atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance"]
 
 func _tabs() -> Array:
 	if G.mode == "commander":
@@ -298,15 +297,18 @@ func _cards(t: String) -> Array:
 				out.append(["v:" + v[0], v[1], "with crew"])
 		"support":
 			for k in (["artillery", "airstrike", "gunship", "fighter", "bomber"] if G.mode == "commander" else Support.COSTS.keys()):
-				out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], "%d pts" % Support.COSTS[k] + ("" if k in INSTANT else " · click the map")])
+				if not Support.unlocked(0, k):
+					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], Support.need_text(k)])
+				else:
+					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], "%d pts" % Support.COSTS[k] + ("" if k in INSTANT else " · click the map")])
 		"armour":
-			for k in ["jeep", "motorbike", "halftrack", "armoredcar", "tank", "ambulance", "radar", "bridger"]:
-				out.append(["sup:" + k, Support.NAMES[k], "%d pts" % Support.COSTS[k]])
+			for k in ["jeep", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "atgun", "ambulance", "radar", "bridger"]:
+				out.append(["sup:" + k, Support.NAMES[k], ("%d pts" % Support.COSTS[k]) if Support.unlocked(0, k) else Support.need_text(k)])
 		"recruit":
 			for k in RECRUIT:
 				out.append(["r:" + k, "%s ×%d" % [RECRUIT[k]["name"], RECRUIT[k]["cls"].size()], "%d pts · by truck" % RECRUIT[k]["cost"]])
-			out.append(["sup:paradrop", "Paratroopers ×6", "%d pts" % Support.COSTS["paradrop"]])
-			out.append(["sup:heli", "Heli assault ×6", "%d pts" % Support.COSTS["heli"]])
+			out.append(["sup:paradrop", "Paratroopers ×6", ("%d pts" % Support.COSTS["paradrop"]) if Support.unlocked(0, "paradrop") else Support.need_text("paradrop")])
+			out.append(["sup:heli", "Heli assault ×6", ("%d pts" % Support.COSTS["heli"]) if Support.unlocked(0, "heli") else Support.need_text("heli")])
 		"build":
 			for b in BUILD_LIST:
 				var c = Build.cost(b[0])
@@ -335,6 +337,8 @@ func _dock_style(col: Color, border: Color = Color(0, 0, 0, 0)) -> StyleBoxFlat:
 func _build_tools() -> void:
 	dock = _panel(Color(0.07, 0.08, 0.09, 0.9))
 	dock.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	# if the cards need more room, the dock grows up the screen, never off the bottom
+	dock.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	root.add_child(dock)
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
@@ -407,11 +411,13 @@ func _render_tools() -> void:
 		var b2 = Button.new()
 		b2.focus_mode = Control.FOCUS_NONE
 		b2.custom_minimum_size = Vector2(118, 50)
+		b2.clip_text = true
+		b2.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		b2.text = ("%d  " % i if i <= 9 and not G.pc.rts else "") + cd[1] + ("\n" + cd[2] if cd[2] != "" else "")
 		b2.add_theme_font_size_override("font_size", 13)
 		var sel = tool == id
 		var cost = _cost(id)
-		var afford = cost <= 0 or pts >= cost
+		var afford = (cost <= 0 or pts >= cost) and (not id.begins_with("sup:") or Support.unlocked(0, id.substr(4)))
 		b2.add_theme_stylebox_override("normal", _dock_style(Color(0.16, 0.18, 0.2, 0.96), Color(0.95, 0.75, 0.25) if sel else Color(0.3, 0.33, 0.36)))
 		b2.add_theme_stylebox_override("hover", _dock_style(Color(0.24, 0.27, 0.3, 1.0), Color(1.0, 0.85, 0.35) if sel else Color(0.55, 0.6, 0.64)))
 		b2.add_theme_stylebox_override("pressed", _dock_style(Color(0.3, 0.27, 0.15, 1.0), Color(1.0, 0.85, 0.35)))
@@ -425,7 +431,7 @@ func _render_tools() -> void:
 	# size the dock to its cards
 	var n = dock_cards_list.size()
 	var per_row = mini(n, 7)
-	var w = maxf(per_row * 123.0 + 16.0, 640.0)
+	var w = maxf(per_row * 128.0 + 22.0, 640.0)
 	dock_cards.custom_minimum_size = Vector2(w - 16.0, 0)
 	dock.offset_left = -w / 2.0
 	dock.offset_right = w / 2.0
@@ -480,6 +486,9 @@ func _card_clicked(id: String) -> void:
 		return
 	if id.begins_with("r:"):
 		_recruit(id.substr(2))
+		return
+	if id.begins_with("sup:") and not Support.unlocked(0, id.substr(4)):
+		message("%s: %s first (Build tab)" % [Support.NAMES[id.substr(4)].split(" (")[0], Support.need_text(id.substr(4)).capitalize()])
 		return
 	if id.begins_with("sup:") and id.substr(4) in INSTANT:
 		var what = id.substr(4)
@@ -701,7 +710,7 @@ func _build_menu() -> void:
 	_row(v, "Map", opt_map)
 	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the points", "Frontline — push across the map", "Assault — Alpha attacks", "Last stand — survive the waves",
 		"Destroy base", "Breakthrough — break the line", "Sabotage — night raid", "Siege — hold the town",
-		"Escort — get the convoy through", "Rescue — bring the pilot home", "King of the hill — it moves", "Commander — top-down RTS", "Horde — the dead walk"], 0)
+		"Escort — get the convoy through", "Rescue — bring the pilot home", "King of the hill — it moves", "Commander — top-down RTS", "Horde — the dead walk", "Kill the general"], 0)
 	_row(v, "Mode", opt_mode)
 	mode_info = _label("", 13, Color(0.78, 0.8, 0.76))
 	mode_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -728,10 +737,10 @@ func _build_menu() -> void:
 	opt_teams = _option(["2 sides", "3 sides", "4 sides"], 0)
 	_row(v, "Sides (3–4 in sandbox, deathmatch, capture)", opt_teams)
 	_section(v, "World")
-	opt_time = _option(["Day", "Dusk", "Night", "Day into night (cycle)"], maxi(0, ["day", "dusk", "night", "cycle"].find(G.settings["time"])))
+	opt_time = _option(["Day", "Dusk", "Night", "Dawn till nightfall (time passes)", "Endless day and night cycle"], maxi(0, ["day", "dusk", "night", "dawn", "cycle"].find(G.settings["time"])))
 	opt_time.item_selected.connect(func(i):
-		G.settings["time"] = ["day", "dusk", "night", "cycle"][i]
-		G.main.clock = 0.25
+		G.settings["time"] = ["day", "dusk", "night", "dawn", "cycle"][i]
+		G.main.clock = 0.08 if G.settings["time"] == "dawn" else 0.25
 		G.main.apply_time())
 	_row(v, "Time of day", opt_time)
 	seed_edit = LineEdit.new()
@@ -806,66 +815,223 @@ func campaign_result(text: String) -> void:
 	win.visible = false
 	_show_campaign(text)
 
+var camp_info: Label = null
+
 func _show_campaign(result: String = "") -> void:
 	if Campaign.data.is_empty() and not Campaign.load_saved():
 		Campaign.new_campaign()
+	if Campaign.data.get("version", 1) != Campaign.VERSION:
+		Campaign.new_campaign()
 	if camp_panel == null:
 		camp_panel = _panel(Color(0.1, 0.12, 0.13, 0.98))
-		_place(camp_panel, Control.PRESET_CENTER, -380, -300, 760, 600)
+		_place(camp_panel, Control.PRESET_CENTER, -500, -340, 1000, 680)
 		camp_box = VBoxContainer.new()
+		camp_box.add_theme_constant_override("separation", 6)
 		camp_panel.add_child(camp_box)
 		root.add_child(camp_panel)
 	for c in camp_box.get_children():
+		camp_box.remove_child(c)
 		c.queue_free()
-	camp_box.add_child(_label("Campaign  ·  turn %d" % Campaign.data["turn"], 26))
+	var head = HBoxContainer.new()
+	head.add_child(_label("Campaign  ·  turn %d" % Campaign.data["turn"], 24))
+	var sp = Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(sp)
+	head.add_child(_label("■ ours   ■ theirs   ┅ cut off from supply", 13, Color(0.75, 0.78, 0.75)))
+	camp_box.add_child(head)
 	if result != "":
-		var rl = _label(result, 15, Color(1.0, 0.85, 0.45))
+		var rl = _label(result, 14, Color(1.0, 0.85, 0.45))
 		rl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		rl.custom_minimum_size = Vector2(720, 0)
+		rl.custom_minimum_size = Vector2(960, 0)
 		camp_box.add_child(rl)
-	camp_box.add_child(_label("Click a red region next to yours to attack it. Each battle is fought on that region's map.", 13, Color(0.8, 0.8, 0.8)))
-	var grid = GridContainer.new()
-	grid.columns = 3
-	for y in range(3):
-		for x in range(3):
-			for i in range(Campaign.REGIONS.size()):
-				var r = Campaign.REGIONS[i]
-				if r["x"] != x or r["y"] != y:
-					continue
-				var own = Campaign.data["owner"][i]
-				var txt = "%s\n%s · %s" % [r["name"], r["map"], r["mode"]]
-				var nr = Campaign.ruins(i).size()
-				if nr > 0:
-					txt += "\n%d pieces in ruins" % nr
-				var idx = i
-				var b = _button(txt, func():
-					if Campaign.can_attack(idx):
-						camp_panel.visible = false
-						menu.visible = false
-						Campaign.attack(idx))
-				b.custom_minimum_size = Vector2(235, 82)
-				b.modulate = G.team_color(0).lerp(Color.WHITE, 0.35) if own == 0 else (G.team_color(1).lerp(Color.WHITE, 0.2) if Campaign.can_attack(i) else G.team_color(1).darkened(0.35))
-				b.disabled = not Campaign.can_attack(i)
-				grid.add_child(b)
-	camp_box.add_child(grid)
+	camp_box.add_child(_campaign_map())
+	camp_info = _label("", 14, Color(0.9, 0.92, 0.88))
+	camp_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	camp_info.custom_minimum_size = Vector2(960, 0)
+	camp_box.add_child(camp_info)
+	_campaign_info()
 	var vets = []
 	for e in Campaign.data["roster"]:
 		vets.append("%s%s" % [e["name"], " " + "★".repeat(e["vet"]) if e["vet"] > 0 else ""])
-	var rl2 = _label("Your squad: " + ", ".join(vets), 13, Color(0.85, 0.9, 0.85))
+	var rl2 = _label("1st Company: " + ", ".join(vets), 12, Color(0.8, 0.85, 0.8))
 	rl2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	rl2.custom_minimum_size = Vector2(720, 0)
+	rl2.custom_minimum_size = Vector2(960, 0)
 	camp_box.add_child(rl2)
-	var lg = _label("\n".join(Campaign.data["log"].slice(0, 5)), 12, Color(0.7, 0.72, 0.7))
+	var lg = _label("\n".join(Campaign.data["log"].slice(0, 4)), 12, Color(0.68, 0.7, 0.68))
 	lg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lg.custom_minimum_size = Vector2(720, 0)
+	lg.custom_minimum_size = Vector2(960, 0)
 	camp_box.add_child(lg)
 	var h = HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	var pend = Campaign.pending_battle()
+	var done = Campaign.over()
+	if pend != null:
+		var fb = _button("  Fight the battle  ", func():
+			camp_panel.visible = false
+			menu.visible = false
+			_close_title()
+			Campaign._start_battle())
+		fb.add_theme_font_size_override("font_size", 18)
+		h.add_child(fb)
+	elif done < 0:
+		var eb = _button("  End turn  ", func():
+			Campaign.selected = -1
+			var lines = Campaign.end_turn()
+			_show_campaign("\n".join(lines) if not lines.is_empty() else "Bravo holds its ground."))
+		eb.add_theme_font_size_override("font_size", 18)
+		h.add_child(eb)
 	h.add_child(_button("New campaign", func():
 		Campaign.new_campaign()
 		_show_campaign()))
 	h.add_child(_button("Close", func(): camp_panel.visible = false))
 	camp_box.add_child(h)
 	camp_panel.visible = true
+
+func _campaign_info() -> void:
+	if camp_info == null:
+		return
+	var pend = Campaign.pending_battle()
+	var done = Campaign.over()
+	if done == 0:
+		camp_info.text = "The Capital is ours. The campaign is won! Start a new one whenever you like."
+	elif done == 1:
+		camp_info.text = "Westfield has fallen. The campaign is lost."
+	elif pend != null:
+		camp_info.text = Campaign.battle_text() + ". Fight it out to see who holds the region."
+	else:
+		var a = Campaign.army(Campaign.selected)
+		if a != null:
+			camp_info.text = "%s (%d men%s) selected: click a neighbouring region to move there. Into enemy ground with an army in it means a battle; empty enemy ground is taken at once." % [a["name"], a["str"], "" if Campaign.supplied(0, a["region"]) else ", cut off"]
+		else:
+			var left = Campaign.data["armies"].filter(func(x): return x["team"] == 0 and not x["moved"]).size()
+			camp_info.text = "Click one of your armies to give it orders (%d still to move this turn), then End turn. Armies in supply recover strength; cut off, they lose men and get no reinforcements in battle." % left
+
+const CAMP_W = 960.0
+const CAMP_H = 400.0
+
+func _campaign_map() -> Control:
+	var m = Panel.new()
+	m.custom_minimum_size = Vector2(CAMP_W, CAMP_H)
+	var sb = StyleBoxFlat.new()
+	sb.bg_color = Color(0.2, 0.24, 0.18)
+	sb.set_corner_radius_all(6)
+	m.add_theme_stylebox_override("panel", sb)
+	var R = Campaign.REGIONS
+	var own: Array = Campaign.data["owner"]
+	var net = [Campaign.supply_net(0), Campaign.supply_net(1)]
+	var sel = Campaign.army(Campaign.selected)
+	# roads between regions
+	for l in Campaign.LINKS:
+		var a: Vector2 = R[l[0]]["p"] * Vector2(CAMP_W, CAMP_H)
+		var b: Vector2 = R[l[1]]["p"] * Vector2(CAMP_W, CAMP_H)
+		var ln = Line2D.new()
+		ln.points = PackedVector2Array([a, b])
+		ln.width = 5.0
+		var o0 = own[l[0]]
+		var o1 = own[l[1]]
+		ln.default_color = (G.team_color(o0).darkened(0.35) if o0 == o1 else Color(0.85, 0.75, 0.4, 0.9))
+		m.add_child(ln)
+	for i in range(R.size()):
+		var r = R[i]
+		var c: Vector2 = r["p"] * Vector2(CAMP_W, CAMP_H)
+		var o: int = own[i]
+		var cut = not net[o].has(i)
+		var txt = "%s%s\n%s · %s" % [r["name"], "  ★" if r.has("hq") else "", r["map"], r["mode"]]
+		if cut:
+			txt += "\ncut off"
+		var nr = Campaign.ruins(i).size()
+		if nr > 0:
+			txt += "\n%d in ruins" % nr
+		var idx = i
+		var b = _button(txt, func(): _campaign_click(idx))
+		b.add_theme_font_size_override("font_size", 12)
+		b.size = Vector2(136, 62)
+		b.position = c - Vector2(68, 50)
+		var target = sel != null and Campaign.can_move(sel, i)
+		var bg = G.team_color(o).darkened(0.45 if not cut else 0.65)
+		var border = G.team_color(o).lightened(0.2)
+		if target:
+			border = Color(1.0, 0.88, 0.35)
+			bg = bg.lerp(Color(0.55, 0.45, 0.1), 0.35)
+		elif sel != null:
+			bg = bg.darkened(0.35)
+		for st in ["normal", "hover", "pressed", "disabled"]:
+			var sbx = StyleBoxFlat.new()
+			sbx.bg_color = bg.lightened(0.12) if st == "hover" else bg
+			sbx.set_corner_radius_all(6)
+			sbx.set_border_width_all(3 if target else 2)
+			sbx.border_color = border
+			if cut:
+				sbx.border_blend = true
+			b.add_theme_stylebox_override(st, sbx)
+		b.add_theme_color_override("font_color", Color(0.96, 0.95, 0.9))
+		b.add_theme_color_override("font_hover_color", Color(1, 1, 0.85))
+		m.add_child(b)
+		# armies standing here
+		var k = 0
+		for a in Campaign.data["armies"]:
+			if a["region"] != i:
+				continue
+			var mine = a["team"] == 0
+			var at = "%s %s  %d" % ["⚑" if mine else "✠", a["name"], a["str"]]
+			if mine and a["moved"]:
+				at += " ✓"
+			var aid = a["id"]
+			var ab = _button(at, func(): _campaign_army(aid))
+			ab.add_theme_font_size_override("font_size", 12)
+			ab.size = Vector2(150, 24)
+			ab.position = c + Vector2(-75, 14 + k * 26)
+			var ac = G.team_color(a["team"])
+			var abg = Color(0.1, 0.1, 0.1, 0.92)
+			if mine and Campaign.selected == aid:
+				abg = Color(0.55, 0.45, 0.08)
+			for st in ["normal", "hover", "pressed"]:
+				var sba = StyleBoxFlat.new()
+				sba.bg_color = abg.lightened(0.15) if st == "hover" else abg
+				sba.set_corner_radius_all(10)
+				sba.set_border_width_all(2)
+				sba.border_color = ac.darkened(0.4) if (mine and a["moved"]) else ac
+				ab.add_theme_stylebox_override(st, sba)
+			ab.add_theme_color_override("font_color", (ac.lerp(Color.WHITE, 0.55) if not (mine and a["moved"]) else Color(0.6, 0.6, 0.6)))
+			m.add_child(ab)
+			k += 1
+	return m
+
+func _campaign_army(id: int) -> void:
+	var a = Campaign.army(id)
+	if a == null or Campaign.pending_battle() != null or Campaign.over() >= 0:
+		return
+	if a["team"] != 0:
+		_campaign_click(a["region"])
+		return
+	if a["moved"]:
+		Campaign.selected = -1
+	else:
+		Campaign.selected = id if Campaign.selected != id else -1
+	_show_campaign()
+
+func _campaign_click(i: int) -> void:
+	if Campaign.pending_battle() != null or Campaign.over() >= 0:
+		return
+	var a = Campaign.army(Campaign.selected)
+	if a == null:
+		var mine = Campaign.army_at(i, 0)
+		if mine != null and not mine["moved"]:
+			Campaign.selected = mine["id"]
+			_show_campaign()
+		return
+	if not Campaign.can_move(a, i):
+		Campaign.selected = -1
+		_show_campaign()
+		return
+	Campaign.selected = -1
+	var res = Campaign.move(a, i)
+	if res == "battle":
+		camp_panel.visible = false
+		menu.visible = false
+		_close_title()
+		return
+	_show_campaign(res)
 
 var daily_panel: PanelContainer
 var daily_lbl: Label
@@ -938,6 +1104,7 @@ func _show_scenario() -> void:
 
 func _deploy() -> void:
 	Modes.daily = {}
+	Campaign.active = false
 	if seed_edit != null and seed_edit.text.strip_edges() != "":
 		var t = seed_edit.text.strip_edges()
 		G.random_seed = int(t) if t.is_valid_int() else t.hash()
@@ -990,7 +1157,7 @@ func _show_mode_info() -> void:
 	if mode_info != null:
 		var id = MODE_IDS[clampi(opt_mode.selected, 0, MODE_IDS.size() - 1)]
 		var extra = ""
-		if id in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde"]:
+		if id in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde", "general"]:
 			extra = "  (two sides only)"
 		mode_info.text = Obj.MODE_INFO.get(id, "") + extra
 
@@ -1123,12 +1290,14 @@ func _build_help() -> void:
 		"  V  top-down commander view: WASD pans, wheel zooms, Q/E turn, click a soldier to select his squad, 1–9 pick a squad (press again to look at it)\n\n" + \
 		"CONTROLLING A SOLDIER\n" + \
 		"  Mouse  aim · Left-click  fire · Right mouse  aim down sights\n" + \
-		"  Q / E  lean · Shift  sprint · C  crouch · Z  prone · run into low walls to vault\n" + \
+		"  Q / E  lean · Shift  sprint · C  crouch · Z  prone · run into low walls or window sills to vault through\n" + \
+		"  Walk into the foot of a ladder to climb onto a flat roof (walk to the gap in the parapet to climb down)\n" + \
+		"  Deep water: you swim, slowly, with your rifle slung (no shooting); shallow water slows you down\n" + \
 		"  R  reload · G  grenade · V  smoke · 1–5  rifle, machine gun, sniper, shotgun, rockets\n" + \
 		"  H  put a field dressing on your wound (or on a bleeding friend next to you) — wounds bleed until dressed\n" + \
 		"  F  take the gun (or ammo) of a fallen soldier at your feet · stand at an ammo crate to restock\n" + \
 		"  B  class action (engineer: sandbags/repair · medic: heal · radio: artillery on crosshair · sniper/spotter: mark target)\n" + \
-		"  N  place a mine (Shift+N anti-tank) · K  satchel charge · 1–9  rifle, MG, sniper, shotgun, rockets, SMG, pistol, flamethrower, AT rifle\n" + \
+		"  N  place a mine (Shift+N anti-tank) · K  satchel charge · 1–9  rifle, MG, sniper, shotgun, bazooka, SMG, pistol, flamethrower, AT rifle · 0  panzerfaust\n" + \
 		"  Y  first-person / third-person view · L  fire a flare · Esc  free the mouse · X  leave the soldier\n" + \
 		"  U (hold)  help build a friendly construction site · I  dismantle what you aim at (within 6 m)\n" + \
 		"  Shift+G  cook a grenade · middle mouse  rifle grenade · Shift+K  sticky bomb · Shift+V  red smoke (calls artillery)\n" + \
@@ -1140,6 +1309,9 @@ func _build_help() -> void:
 		"  Squad leaders carry a radio antenna. Soldiers who lose friends, their leader or come under heavy fire\n" + \
 		"  get shaken, and may break and run to the rear until a leader rallies them.\n" + \
 		"  Bullets go through thin walls, crates and hedges. Every building can be blown apart. J  battle report\n" + \
+		"  Artillery, air support and reinforcements need a radio: a radio operator, a command truck or a radio mast.\n" + \
+		"  Without one, a runner has to carry the request back to HQ on foot. Scouts creep ahead and radio what they see.\n" + \
+		"  Each commander has a personality (reckless, cautious or cunning); defenders who haven't been seen hold fire to spring an ambush.\n" + \
 		"  Engineers build FOBs, nests, bunkers and more piece by piece (Build tab to mark out sites).\n" + \
 		"  Reinforcements arrive at your HQ or FOBs: lose them all and nobody new comes until you build a FOB."
 	var l = _label(t, 14, Color(0.88, 0.88, 0.88))
@@ -1255,12 +1427,18 @@ func update_hud(dt: float) -> void:
 		var cv = m.get_shader_parameter("amount")
 		var cur: float = cv if cv != null else 0.0
 		m.set_shader_parameter("amount", lerpf(cur, want, minf(1.0, dt * 5.0)))
-	var cap = G.mode == "capture"
+	var cap = G.mode in ["capture", "commander", "koth"]
 	var tick = G.mode == "frontline"
 	lbl_sa.text = str(int(G.cap_score[0])) if cap else (str(Obj.tickets[0]) if tick and not Obj.tickets.is_empty() else str(G.score[0]))
 	lbl_sb.text = str(int(G.cap_score[1])) if cap else (str(Obj.tickets[1]) if tick and not Obj.tickets.is_empty() else str(G.score[1]))
+	# a score only shows when the mode is decided by it (kills, points or tickets)
+	var counts = cap or tick or G.mode == "deathmatch"
+	lbl_sa.get_parent().visible = counts
+	lbl_sb.get_parent().visible = counts
 	var t = int(G.game_time)
 	lbl_clock.text = "%02d:%02d" % [t / 60, t % 60]
+	if G.settings["time"] == "dawn" or G.settings["time"] == "cycle":
+		lbl_clock.text += "  ·  " + G.main.hour_text()
 	if get_tree().paused:
 		lbl_mode.text = "paused"
 	elif Engine.time_scale < 0.5:
@@ -1273,6 +1451,8 @@ func update_hud(dt: float) -> void:
 		lbl_mode.text = "first to %d" % G.limit
 	else:
 		lbl_mode.text = Obj.status_text()
+	if G.started and not G.over and G.mode != "sandbox" and not Comms.queue.is_empty() and not Comms.ok(0) and not get_tree().paused:
+		lbl_mode.text += ("  ·  " if lbl_mode.text != "" else "") + ("no radio: runner on the way" if Comms.runner[0] != null else "no radio")
 	lbl_a.text = "%d alive" % G.alive_count(0)
 	lbl_b.text = "%d alive" % G.alive_count(1)
 	lbl_na.text = G.TEAM_NAMES[0].to_upper()
@@ -1724,6 +1904,9 @@ func _select_map(i: int) -> void:
 var radio_box: VBoxContainer = null
 
 func radio(team: int, text: String) -> void:
+	# you only hear your own side's radio (the enemy's orders would be cheating)
+	if team > 0 and G.mode != "sandbox":
+		return
 	if radio_box == null:
 		radio_box = VBoxContainer.new()
 		_place(radio_box, Control.PRESET_BOTTOM_LEFT, 12, -330, 420, 180)

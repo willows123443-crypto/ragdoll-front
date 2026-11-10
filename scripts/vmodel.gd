@@ -441,6 +441,15 @@ static func _build_main(v) -> void:
 				box(v, hull, Vector3(0.08, 1.1, 0.12), Vector3(x, 2.07, 1.65), base, {"b": 0.02})
 			box(v, hull, Vector3(2.2, 0.85, 0.08), Vector3(0, 2.12, 1.62), base, {"b": 0.02})
 			box(v, hull, Vector3(2.1, 0.6, 0.02), Vector3(0, 2.25, 3.38), base, {"m": glass(), "b": 0.0, "rot": Vector3(-0.08, 0, 0)})
+			# inside the cab: dashboard, wheel and the seat back, seen through the windows
+			box(v, hull, Vector3(2.1, 0.2, 0.28), Vector3(0, 1.98, 3.18), Color(0.14, 0.14, 0.14), {"b": 0.03})
+			var twn = Node3D.new()
+			twn.position = Vector3(0.5, 2.12, 2.92)
+			twn.rotation.x = -0.9
+			hull.add_child(twn)
+			cyl(twn, 0.2, 0.035, Vector3.ZERO, Color(0.12, 0.12, 0.12), "z", {"seg": 14})
+			cyl(twn, 0.03, 0.4, Vector3(0, 0, 0.2), Color(0.12, 0.12, 0.12), "z", {"seg": 6})
+			box(v, hull, Vector3(2.0, 0.62, 0.14), Vector3(0, 2.05, 1.86), Color(0.3, 0.26, 0.2), {"b": 0.05, "rot": Vector3(-0.1, 0, 0)})
 			for x in [1.17, -1.17]:
 				var d = door(v, hull, Vector3(x, 1.2, 3.3), 1.45, 0.9, base, -signf(x) * 1.15, 0.0, true)
 				insignia(v, d, Vector3(signf(x) * 0.035, 0.45, -0.75), "x+" if x > 0 else "x-", 0.22)
@@ -670,10 +679,29 @@ static func _build_main(v) -> void:
 			col(v, Vector3(1.9, 0.9, 4.8), Vector3(0, 0.85, 0))
 			box(v, hull, Vector3(1.6, 0.18, 4.7), Vector3(0, 0.48, 0), METAL)
 			box(v, hull, Vector3(1.9, 0.5, 1.6), Vector3(0, 0.88, 1.55), paint, {"b": 0.1})
-			box(v, hull, Vector3(1.85, 0.7, 1.45), Vector3(0, 1.38, 0.35), paint, {"b": 0.12})
-			box(v, hull, Vector3(1.7, 0.42, 0.03), Vector3(0, 1.5, 1.08), Color.WHITE, {"m": glass(), "b": 0.0, "rot": Vector3(-0.35, 0, 0)})
+			# an open cab you can see into: floor, back wall, roof on pillars, doors that open, a bench seat and a wheel
+			var trim = Color(0.14, 0.14, 0.14)
+			var seatc = [Color(0.35, 0.28, 0.2), Color(0.2, 0.2, 0.22), Color(0.42, 0.38, 0.3)][v.get_instance_id() % 3]
+			box(v, hull, Vector3(1.8, 0.08, 1.4), Vector3(0, 0.66, 0.35), paint.darkened(0.5), {"b": 0.01})
+			box(v, hull, Vector3(1.86, 1.36, 0.07), Vector3(0, 1.32, -0.36), paint, {"b": 0.02})
+			box(v, hull, Vector3(1.0, 0.32, 0.02), Vector3(0, 1.6, -0.4), Color.WHITE, {"m": glass(), "b": 0.0})
+			box(v, hull, Vector3(1.92, 0.07, 1.5), Vector3(0, 2.02, 0.37), paint, {"b": 0.03})
+			box(v, hull, Vector3(1.7, 0.7, 0.03), Vector3(0, 1.64, 1.06), Color.WHITE, {"m": glass(), "b": 0.0, "rot": Vector3(-0.35, 0, 0)})
+			box(v, hull, Vector3(1.75, 0.22, 0.32), Vector3(0, 1.25, 0.92), trim, {"b": 0.04})
+			box(v, hull, Vector3(0.5, 0.1, 0.02), Vector3(0.45, 1.3, 0.755), Color(0.3, 0.32, 0.3), {"b": 0.0})
+			var wn = Node3D.new()
+			wn.position = Vector3(0.45, 1.36, 0.72)
+			wn.rotation.x = -0.5
+			hull.add_child(wn)
+			cyl(wn, 0.17, 0.03, Vector3.ZERO, trim, "z", {"seg": 14})
+			cyl(wn, 0.12, 0.035, Vector3.ZERO, paint.darkened(0.6), "z", {"seg": 12})
+			cyl(wn, 0.025, 0.25, Vector3(0, 0, 0.13), trim, "z", {"seg": 6})
+			box(v, hull, Vector3(1.62, 0.14, 0.55), Vector3(0, 0.71, 0.42), seatc, {"b": 0.05})
+			box(v, hull, Vector3(1.62, 0.66, 0.13), Vector3(0, 1.08, 0.08), seatc, {"b": 0.05, "rot": Vector3(-0.12, 0, 0)})
 			for x in [0.93, -0.93]:
-				box(v, hull, Vector3(0.03, 0.35, 0.8), Vector3(x, 1.5, 0.35), Color.WHITE, {"m": glass(), "b": 0.0})
+				box(v, hull, Vector3(0.07, 1.36, 0.08), Vector3(x, 1.32, -0.33), paint, {"b": 0.01})
+				box(v, hull, Vector3(0.07, 0.8, 0.07), Vector3(x, 1.62, 0.98), paint, {"b": 0.01, "rot": Vector3(-0.35, 0, 0)})
+				door(v, hull, Vector3(x, 0.64, 0.97), 1.26, 0.7, paint, -signf(x) * 1.1, 0.0, true)
 				box(v, hull, Vector3(0.08, 0.5, 2.0), Vector3(x, 0.98, -1.35), paint, {"b": 0.03})
 				cyl(hull, 0.1, 0.08, Vector3(x * 0.72, 1.0, 2.36), Color.WHITE, "z", {"m": lamp()})
 			box(v, hull, Vector3(1.9, 0.5, 0.08), Vector3(0, 0.98, -2.35), paint, {"b": 0.03})
@@ -686,6 +714,10 @@ static func _build_main(v) -> void:
 				for x in [0.92, -0.92]:
 					wheel(v, Vector3(x, 0.4, z), 0.4, 0.28, METAL.lightened(0.2))
 			box(v, hull, Vector3(1.7, 0.06, 0.04), Vector3(0, 1.25, -2.4), G.team_color(v.team), {"b": 0.0})
+			# a banner on a pole at the back
+			cyl(hull, 0.025, 1.9, Vector3(-0.86, 1.95, -2.25), METAL, "y", {"seg": 6})
+			box(v, hull, Vector3(0.02, 0.42, 0.7), Vector3(-0.86, 2.68, -2.62), G.TEAM_BAND[v.team].darkened(0.1) if not Faction.militia(v.team) else Color(0.08, 0.08, 0.08), {"b": 0.0})
+			box(v, hull, Vector3(0.025, 0.08, 0.6), Vector3(-0.86, 2.68, -2.62), G.team_color(v.team), {"b": 0.0})
 			v.turret = Node3D.new()
 			v.turret.position = Vector3(0, 1.75, -1.0)
 			hull.add_child(v.turret)

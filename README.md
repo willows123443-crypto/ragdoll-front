@@ -66,6 +66,16 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Recon plane:** a call-in that circles the enemy's side for thirty seconds and puts everything it sees on your map, unless their anti-aircraft guns bring it down
 - **Commander mode** is now won by destroying the enemy HQ; recruits are driven to wherever you click
 - **After-action report** (J) and first-person view (Y)
+- **Commanding vehicles:** click a vehicle to select everyone aboard (one ring round the hull); right-click to drive it there and it waits; **Dismount** (Orders tab, or the button on the vehicle panel) gets the troops out of any vehicle, and they hold where they hop down. Order lines start from where each unit or vehicle actually is
+- **Click a structure** to see what it is, how built or damaged it is, and Repair, Dismantle (half the cost back in commander mode), Upgrade or Camo it from the panel
+- **Tidier squads:** soldiers you drop in together, a truck of recruits or a paradrop stick form their own squad; vehicle crews have their own and no longer get mixed into infantry squads. Nothing spawns for you in commander mode unless you buy it (no free depot vehicles or ambulances)
+- **Each mode has its own rules:** who builds what, which call-ins you get, and whether sides start with an HQ (straight fights like capture, king of the hill, deathmatch and kill the general have no building at all; defenders dig in, attackers bring forward bases). The setup screen lists them. Free spawning and effects are for sandbox only; in a battle you command your own side
+- **Faces and kit:** every soldier has eyes, brows, a nose, ears and a mouth (some with stubble, militia mostly bearded); regulars wear belts, webbing, chin straps and chest pouches; militia wear chest rigs, tracksuits or open jackets, trainers or boots, and armbands, and their technicals fly a black banner
+- **Vehicles you can see into:** the technical has an open cab with doors that swing open, a bench seat, dashboard and steering wheel; trucks have a dash, wheel and seat; no more helmets through roofs in trucks, ambulances, command trucks and helicopters
+- **Rockets** are now a proper finned rocket with a flame, leaving a thin pale smoke trail
+- **More ammunition:** more spare magazines for every gun and more rockets
+- **Smoother animation:** pose changes ease in over a few frames; soldiers turn to face a wall before vaulting it and look where they're going while they're over
+- **Map fixes:** the beach map's sea now runs to the horizon, and the colour of high ground no longer washes out to near white on hilly maps
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

@@ -197,7 +197,7 @@ static func _ai_spend(t: int) -> void:
 		opts.append("bridger")
 	if Faction.militia(t):
 		opts = opts.map(func(o): return "technical" if o in ["jeep", "halftrack", "armoredcar", "tank", "heavytank"] else o)
-	opts = opts.filter(func(o): return COSTS[o] <= points[t] and unlocked(t, o) and Faction.support_ok(t, o))
+	opts = opts.filter(func(o): return COSTS[o] <= points[t] and unlocked(t, o) and Faction.support_ok(t, o) and Rules.callin_ok(t, o))
 	if opts.is_empty():
 		return
 	var pick = G.pick(opts)
@@ -207,13 +207,11 @@ static func can_afford(team: int, what: String) -> bool:
 	return points[team] >= COSTS[what]
 
 static func call_in(team: int, what: String, target: Vector3, relay: bool = false) -> bool:
-	if points.is_empty() or points[team] < COSTS[what] or not unlocked(team, what) or not Faction.support_ok(team, what):
+	if points.is_empty() or points[team] < COSTS[what] or not unlocked(team, what) or not Faction.support_ok(team, what) or not Rules.callin_ok(team, what):
 		return false
 	# no radio: the request goes back to HQ with a runner, and is paid for when it gets there
 	if not relay and Comms.hold(team, what, target):
 		return true
-	if G.mode == "sabotage" and team == 0 and what in ["paradrop", "heli", "jeep", "halftrack", "armoredcar", "tank", "motorbike"]:
-		return false      # the raiders are on their own
 	points[team] -= COSTS[what]
 	match what:
 		"artillery":

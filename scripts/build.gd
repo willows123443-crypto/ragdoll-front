@@ -217,6 +217,7 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 			c.hp = maxf(c.hp, 320.0)
 		# built properly: rifle fire barely scratches it, it takes explosives to bring it down
 		c.set_meta("built", true)
+		c.set_meta("hp0", c.hp)
 		st["cols"].append(c)
 	var parts = []
 	for ch in root.get_children():
@@ -540,6 +541,48 @@ static func add_camo(st: Dictionary) -> void:
 			pole.position = Vector3(px, G.world.ground_y(px, pz) + h / 2.0, pz)
 			net.add_child(pole)
 
+const DESCR = {"hq": "Headquarters: earns supply points; lose it and you lose the battle",
+	"fob": "Forward base: soldiers respawn here", "fob2": "Forward base (hut): soldiers respawn here",
+	"sandbags": "Cover for riflemen", "concrete": "Hard cover: only explosives bring it down",
+	"wire": "Slows the enemy down", "traps": "Stops vehicles", "mgnest": "Machine-gun position",
+	"pillbox": "Concrete machine-gun position", "mortarpit": "Shells enemies your side has spotted",
+	"tower": "Lookout: spots the enemy from far off", "bunker": "Shelter from artillery",
+	"hospital": "Treats the wounded and gives blood", "radio": "Keeps your radio net up for call-ins",
+	"depot": "Unlocks vehicles", "aa": "Shoots down aircraft", "supply": "Earns extra supply points and restocks ammo"}
+
+# how badly knocked about a finished structure is (0 = as new, 1 = gone)
+static func damage(st: Dictionary) -> float:
+	if st["cols"].is_empty():
+		return 0.0
+	var tot = 0.0
+	for c in st["cols"]:
+		if not c.alive:
+			tot += 1.0
+		elif c.has_meta("hp0"):
+			tot += clampf(1.0 - c.hp / maxf(1.0, c.get_meta("hp0")), 0.0, 1.0)
+	return tot / st["cols"].size()
+
+# the repair order: patch up what's standing, rebuild what was knocked down (engineers do the rebuilding)
+static func repair(st: Dictionary) -> String:
+	if st["dead"]:
+		return "The %s is destroyed: build a new one" % st["name"]
+	var lost = 0
+	for c in st["cols"]:
+		if not c.alive:
+			lost += 1
+		elif c.has_meta("hp0"):
+			c.hp = c.get_meta("hp0")
+	if lost > 0:
+		rebuild(st)
+		return "Engineers will rebuild the %s" % st["name"]
+	return "The %s is patched up" % st["name"]
+
+# taking your own finished structure down gives back half of what it cost
+static func refund(st: Dictionary) -> int:
+	if not st["done"] or st["dead"] or not G.mode == "commander":
+		return 0
+	return int(cost(st["kind"]) / 2)
+
 # take a structure apart (the player's dismantle tool)
 static func dismantle(st: Dictionary) -> void:
 	if not st["dead"]:
@@ -735,8 +778,8 @@ static func _effect(st: Dictionary, dt: float) -> void:
 	st["t"] += dt
 	match st["kind"]:
 		"hospital":
-			# each aid station keeps an ambulance running
-			if G.sim_time - st.get("amb_t", -999.0) > 45.0:
+			# each aid station keeps an ambulance running (the player commander buys his own)
+			if G.sim_time - st.get("amb_t", -999.0) > 45.0 and not (G.mode == "commander" and t == 0) and Rules.callin_ok(t, "ambulance"):
 				var have = false
 				for v in G.vehicles:
 					if v.kind == "ambulance" and v.team == t and not v.dead:
@@ -766,8 +809,11 @@ static func _effect(st: Dictionary, dt: float) -> void:
 						if o.team != t and o.state != "dead" and G.dist2d(o.pos, st["p"]) < 80.0 and not G.blocked(eye, o.chest()):
 							AI.share_intel(friend, o, o.pos)
 		"depot":
-			# vehicles cost supply points and take time to put together
-			if st.get("making", "") == "":
+			# vehicles cost supply points and take time to put together (an AI side's depot builds for it;
+			# the player commander orders his own from the Vehicles tab)
+			if G.mode == "commander" and t == 0:
+				pass
+			elif st.get("making", "") == "":
 				if st["t"] > 20.0:
 					st["t"] = 0.0
 					var n = 0
@@ -847,32 +893,7 @@ static func _check_out() -> void:
 # ---------------------------------------------------------------- AI: what to build where
 # what an AI side may build in each mode (the player can still mark out anything)
 static func allowed(t: int) -> Array:
-	match G.mode:
-		"sandbox":
-			return []
-		"deathmatch":
-			return ["sandbags"]
-		"laststand":
-			return ["sandbags", "wire", "traps", "mgnest"] if t == 0 else []
-		"assault":
-			if t == 0:
-				return ["fob", "sandbags", "hospital", "supply", "radio", "mortarpit", "tower", "aa"]
-			return ["sandbags", "wire", "traps", "mgnest", "bunker", "tower", "mortarpit", "aa"]
-		"siege":
-			if t == 0:
-				return ["sandbags", "wire", "traps", "mgnest", "bunker", "hospital", "tower"]
-			return ["fob", "sandbags", "mortarpit", "supply", "radio"]
-		"breakthrough":
-			if t == 1:
-				return ["sandbags", "wire", "traps", "mgnest", "bunker", "tower"]
-			return ["fob", "sandbags", "hospital", "supply", "mortarpit"]
-		"sabotage":
-			return []
-		"horde":
-			return ["sandbags", "wire", "traps", "mgnest", "tower", "hospital", "bunker"] if t == 0 else []
-		"rescue", "escort":
-			return ["fob", "sandbags", "hospital", "supply", "mgnest", "mortarpit"]
-	return ORDER.duplicate()
+	return Rules.ai_build(t)
 
 # defenders dig in around the points they hold instead of setting up FOBs
 const DEFENCE_PLAN = [["mgnest", 0.0, 9.0], ["sandbags", -5.0, 7.0], ["sandbags", 5.0, 7.0], ["wire", 0.0, 15.0], ["bunker", 0.0, -4.0],
@@ -1071,7 +1092,7 @@ static func clear_at(p: Vector3, kind: String, relaxed: bool = false) -> bool:
 # every team gets an HQ at its base when the battle starts
 static func setup_bases() -> void:
 	for t in range(G.team_count()):
-		if t >= G.world.spawn.size():
+		if t >= G.world.spawn.size() or not Rules.has_hq(t):
 			continue
 		var home: Vector3 = G.world.spawn[t]
 		var to = G.flat(Vector3.ZERO - home)

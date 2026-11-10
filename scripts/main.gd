@@ -54,6 +54,10 @@ func _ready() -> void:
 			_door_test()
 		if a == "--laddertest":
 			_ladder_test()
+		if a == "--ordertest":
+			_order_test()
+		if a.begins_with("--mapshots="):
+			_map_shots(a.substr(11))
 		if a == "--camptest2":
 			_camp_test2()
 		if a == "--ruintest":
@@ -249,6 +253,7 @@ func _clear() -> void:
 			s.queue_free()
 	G.soldiers.clear()
 	G.squads.clear()
+	AI.batch_stack.clear()
 	Combat.clear_all()
 	G.fx.clear_all()
 	G.score = []
@@ -392,6 +397,7 @@ func spawn_vehicle(kind: String, team: int, p: Vector3, yaw: float, crew: bool =
 	p = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
 	var v = Vehicle.make(kind, team, p, yaw)
 	if crew:
+		AI.batch_begin(AI.CREW)
 		var d = spawn_soldier(team, p.x, p.z, "rifle")
 		if d != null:
 			d.mount(v, 0)
@@ -405,6 +411,7 @@ func spawn_vehicle(kind: String, team: int, p: Vector3, yaw: float, crew: bool =
 				var c = spawn_soldier(team, p.x, p.z, "rifle")
 				if c != null:
 					c.mount(v, i)
+		AI.batch_end()
 	return v
 
 func _starting_vehicles(t: int) -> void:
@@ -841,7 +848,7 @@ func _shot_mode(dir: String) -> void:
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "capture"), "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
 		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2")),
-		"factions": (_arg("fac", "army,army") + ",army,army").split(",")})
+		"factions": (_arg("fac", "army,army") + ",army,army").split(","), "armies": _arg("armies", "1") != "0"})
 	if _arg("milshot", "") != "":
 		# a few militia fighters and a technical up close
 		await _wait(1.0)
@@ -851,6 +858,62 @@ func _shot_mode(dir: String) -> void:
 			var f0 = Vector3(sin(m0.body_yaw), 0, cos(m0.body_yaw))
 			await _look(m0.pos + f0 * 4.0 + Vector3(1.5, 1.7, 0), m0.pos + Vector3(0, 1.0, 0))
 			await _snap(dir, "militia")
+	if _arg("faceshot", "") != "":
+		# a line of soldiers seen close up: faces, then the whole kit
+		for s0 in G.soldiers.duplicate():
+			if s0.state != "dead":
+				s0.queue_free()
+				G.soldiers.erase(s0)
+		var bnd2: Rect2 = G.world.bounds
+		var cp: Vector3 = G.world.capture
+		for tries in range(300):
+			var q2 = Vector3(randf_range(bnd2.position.x + 30, bnd2.end.x - 30), 0, randf_range(bnd2.position.y + 30, bnd2.end.y - 30))
+			if G.world.cols_in_rect(q2.x - 10, q2.z - 10, q2.x + 10, q2.z + 10).is_empty() and not G.world.in_water(q2.x, q2.z):
+				cp = q2
+				break
+		var row = []
+		for i in range(5):
+			var sx = spawn_soldier(int(_arg("fteam", "0")), cp.x + (i - 2) * 0.9, cp.z, "")
+			if sx != null:
+				sx.order = {"mode": "hold", "point": sx.pos}
+				sx.face(0.0)
+				row.append(sx)
+		await _wait(1.2)
+		for sx in row:
+			sx.face(0.0)
+			sx.aim_yaw = 0.0
+		await _wait(0.4)
+		await _look(cp + Vector3(0.0, 1.62, 2.3), cp + Vector3(0, 1.5, 0))
+		await _snap(dir, "faces")
+		await _look(cp + Vector3(1.2, 1.4, 4.6), cp + Vector3(0, 0.9, 0))
+		await _snap(dir, "kit")
+		await _look(cp + Vector3(2.4, 1.7, 1.2), cp + Vector3(0.4, 1.3, 0))
+		await _snap(dir, "kit_side")
+	if _arg("rocketshot", "") != "":
+		# a bazooka round in flight, seen from the side
+		var rp0: Vector3 = _free_spot(G.world.capture + Vector3(10, 0, 10))
+		var shooter = spawn_soldier(0, rp0.x, rp0.z, "rpg")
+		shooter.order = {"mode": "hold", "point": shooter.pos}
+		await _wait(0.5)
+		var o0 = shooter.pos + Vector3(0, 1.5, 0)
+		Combat.launch_rocket(shooter, o0 + Vector3(0, 1.0, 0), Vector3(1, 0.1, 0).normalized())
+		await _wait(float(_arg("rocketshot", "0.6")))
+		var rk = Combat.rockets[0]["p"] if not Combat.rockets.is_empty() else o0 + Vector3(25, 0, 0)
+		if not Combat.rockets.is_empty():
+			var rm = Combat.rockets[0]["mesh"]
+			print("ROCKETSHOT mesh ", rm.global_position, " vis ", rm.is_visible_in_tree(), " kids ", rm.get_child_count(), " cam ", get_viewport().get_camera_3d().global_position)
+		print("ROCKETSHOT rockets ", Combat.rockets.size(), " at ", rk)
+		# the camera position takes two frames to apply: aim where the rocket will be by then
+		var still = G.fx.rocket_model(false)
+		G.fx.add_child(still)
+		still.global_position = rk + Vector3(1.6, 0.6, 0.5)
+		still.look_at(still.global_position + Vector3(1, 0.1, 0), Vector3.UP)
+		for k in range(6):
+			G.fx.rocket_trail(still.global_position - Vector3(0.6 + k * 0.5, 0.05 * k, 0))
+		await _look(rk + Vector3(1.0, 0.8, 3.2), rk + Vector3(1.6, 0.1, 0))
+		await _wait(0.3)
+		await _snap(dir, "rocket")
+		print("ROCKETSHOT cam after ", get_viewport().get_camera_3d().global_position, " rockets ", Combat.rockets.size())
 	if _arg("fxshot", "") != "":
 		# a crater, a felled tree and a furnished room
 		var tree = null
@@ -893,11 +956,26 @@ func _shot_mode(dir: String) -> void:
 		for kind in _arg("vehshot", "").split(","):
 			for v0 in G.vehicles.duplicate():
 				v0.remove()
-			var vv = spawn_vehicle(kind, int(_arg("vteam", "0")), c0v, 0.6, false)
+			var vv = spawn_vehicle(kind, int(_arg("vteam", "0")), c0v, 0.6, _arg("vcrew", "") != "")
+			if _arg("vcrew", "") != "":
+				for si in range(vv.seats.size()):
+					if vv.seats[si] == null:
+						var rr = spawn_soldier(int(_arg("vteam", "0")), c0v.x, c0v.z, "")
+						if rr != null:
+							rr.mount(vv, si)
+				for x0 in G.soldiers:
+					if x0.vehicle == null:
+						x0.order = {"mode": "hold", "point": x0.pos}
+				await _wait(float(_arg("vcrew", "1")))
 			await _wait(0.3)
 			var L = vv.spec["len"]
 			var side = Vector3(-cam_dir.z, 0, cam_dir.x)
-			await _look(vv.pos + cam_dir * L * 1.1 + side * L * 0.55 + Vector3(0, L * 0.45, 0), vv.pos + Vector3(0, 1.0, 0))
+			if _arg("vside", "") != "":
+				# close on the cab from the driver's side, a little in front
+				var vs = Vector3(cos(vv.yaw), 0, -sin(vv.yaw))
+				await _look(vv.pos + vs * 4.2 + vv.forward() * 3.2 + Vector3(0, 2.0, 0), vv.pos + vv.forward() * 0.6 + Vector3(0, 1.2, 0))
+			else:
+				await _look(vv.pos + cam_dir * L * 1.1 + side * L * 0.55 + Vector3(0, L * 0.45, 0), vv.pos + Vector3(0, 1.0, 0))
 			await _snap(dir, "veh_" + kind)
 	if _arg("unloadshot", "") != "":
 		Reinforce.truck(0, 8)
@@ -1221,7 +1299,7 @@ func _editor_test(dir: String) -> void:
 func _base_test() -> void:
 	await _wait(0.5)
 	Engine.time_scale = 4.0
-	start_game({"map": "field", "mode": "capture", "size": 8, "limit": 9999, "reinforce": true, "armor": "none", "reinf_mode": "instant", "teams": 2})
+	start_game({"map": "field", "mode": "destroy", "size": 8, "limit": 9999, "reinforce": true, "armor": "none", "reinf_mode": "instant", "teams": 2})
 	await _wait(2.0)
 	var h = Build.hq(1)
 	print("BASETEST hq1 ", h != null, " can_respawn ", Build.can_respawn(1))
@@ -1524,6 +1602,67 @@ func _camp_test2() -> void:
 	get_tree().quit()
 
 # a soldier is sent up onto a flat roof by its ladder, then back down; and one goes through a window
+# a quick look at each map from a few angles (to catch colour and texture problems)
+func _map_shots(list: String) -> void:
+	var dir = _arg("dir", "/tmp/mapshots")
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.ui.visible = false
+	G.pc.force_free = true
+	await _wait(0.3)
+	for m in list.split(","):
+		start_game({"map": m, "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+		await _wait(1.5)
+		var c: Vector3 = G.world.capture
+		await _look(c + Vector3(-40, 25, -10), c)
+		await _snap(dir, m + "_a")
+		await _look(c + Vector3(30, 70, 60), c)
+		await _snap(dir, m + "_b")
+		await _look(c + Vector3(22, 3.5, 18), c + Vector3(0, 2, 0))
+		await _snap(dir, m + "_c")
+		print("MAPSHOT ", m)
+	get_tree().quit()
+
+# commander orders: a half-track with troops is sent somewhere, then told to dismount
+func _order_test() -> void:
+	await _wait(0.5)
+	start_game({"map": _arg("map", "field"), "mode": "commander", "size": 8, "limit": 999, "reinforce": false, "armor": "normal", "teams": 2})
+	await _wait(1.0)
+	var home: Vector3 = G.world.rally_point(0)
+	var p0 = _free_spot(home + Vector3(6, 0, 6))
+	var v = spawn_vehicle("halftrack", 0, p0, 0.0)
+	AI.batch_begin()
+	var riders = []
+	for i in range(1, v.seats.size()):
+		if v.seats[i] == null:
+			var r = spawn_soldier(0, p0.x, p0.z, "")
+			r.mount(v, i)
+			riders.append(r)
+	var sq = AI.batch_end()
+	print("ORDERTEST riders %d squad %d crew squad %s (crew flag %s)" % [riders.size(), sq["members"].size() if sq != null else -1, str(v.driver().squad != sq), str(v.driver().squad.get("crew", false))])
+	var s1 = spawn_soldier(0, home.x, home.z, "")
+	print("ORDERTEST lone soldier joined crew squad: %s, joined riders: %s" % [str(s1.squad.get("crew", false)), str(s1.squad == sq)])
+	G.pc._select_vehicle(v, false)
+	var dest = _free_spot(p0 + G.flat(G.world.capture - p0).normalized() * 45.0)
+	var cam = G.pc.cam
+	# order straight through the API (the click is the same call)
+	v.command(dest)
+	for r in riders:
+		r.order = {"mode": "move", "point": dest}
+	for k in range(8):
+		await _wait(4.0)
+		print("ORDERTEST t%d dist %.1f speed %.1f aboard %d" % [k * 4, G.dist2d(v.pos, dest), v.speed, riders.filter(func(r): return r.vehicle == v).size()])
+	G.pc.selection = riders.duplicate()
+	G.pc.sel_vehicle = v
+	G.pc.dismount_selected(true)
+	await _wait(12.0)
+	var on_foot = riders.filter(func(r): return is_instance_valid(r) and r.state == "alive" and r.vehicle == null).size()
+	for r in riders:
+		print("  rider ", r.state if is_instance_valid(r) else "gone", " veh ", r.vehicle != null if is_instance_valid(r) else "-", " seat ", r.seat if is_instance_valid(r) else -9, " task ", r.task if is_instance_valid(r) else "")
+	print("  seats ", v.seats.map(func(x): return "-" if x == null else x.sname), " dead ", v.dead)
+	print("ORDERTEST after dismount: on foot %d of %d, crew still aboard %s" % [on_foot, riders.size(), str(v.driver() != null)])
+	print("ORDERTEST free spawns: vehicles %d" % G.vehicles.filter(func(x): return x.team == 0 and not x.dead).size())
+	get_tree().quit()
+
 func _ladder_test() -> void:
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})

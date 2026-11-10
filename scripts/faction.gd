@@ -72,12 +72,49 @@ static func headgear(s, head: Node3D) -> void:
 			s._hpart(head, "dome", Vector3(0.28, 0.52, 0.29), Vector3(0, 0.0, 0), dark)
 		1:  # shemagh wrapped round head and face
 			s._hpart(head, "dome", Vector3(0.3, 0.42, 0.31), Vector3(0, 0.06, 0), dark)
-			s._hpart(head, "cyl", Vector3(0.27, 0.1, 0.27), Vector3(0, -0.06, 0.02), dark)
+			s._hpart(head, "cyl", Vector3(0.27, 0.1, 0.27), Vector3(0, -0.06, -0.02), dark)
 		2:  # beanie and a face scarf
 			s._hpart(head, "dome", Vector3(0.28, 0.36, 0.29), Vector3(0, 0.09, 0), dark)
-			s._hpart(head, "cyl", Vector3(0.26, 0.09, 0.26), Vector3(0, -0.07, 0.025), band)
+			s._hpart(head, "cyl", Vector3(0.26, 0.09, 0.26), Vector3(0, -0.07, -0.025), band)
 		_:  # bare head, headband in the side's colour
 			s._hpart(head, "cyl", Vector3(0.27, 0.04, 0.27), Vector3(0, 0.07, 0), band)
+
+# chest rig, a tracksuit or a jacket, trainers or boots: no two fighters kitted out the same
+static func rig(s, vest: Material, uni: Material, uni2: Material) -> void:
+	var k = s.id
+	var box = s.unit_box
+	var pouch = s._mat("milpouch" + str(k % 3), [Color(0.27, 0.25, 0.18), Color(0.18, 0.18, 0.17), Color(0.36, 0.32, 0.22)][k % 3], false)
+	var strap = s._mat("milstrap", Color(0.12, 0.11, 0.1), false)
+	# magazine pouches across the chest rig, and a grenade pouch on the side
+	for i in range(4):
+		s._detail(s.parts[1], box, Vector3((i - 1.5) * 0.085, -0.03, -0.27), pouch, Vector3(0.07, 0.11, 0.04))
+	s._detail(s.parts[1], box, Vector3(0.19, -0.1, -0.12), pouch, Vector3(0.07, 0.08, 0.08))
+	for e in [-1.0, 1.0]:
+		s._detail(s.parts[1], box, Vector3(e * 0.11, 0.1, 0.0), strap, Vector3(0.045, 0.28, 0.31))
+	# a third wear tracksuits: stripes down the arms and legs
+	if k % 3 == 0:
+		var st = s._mat("milstripe" + str(k % 2), [Color(0.85, 0.85, 0.82), Color(0.75, 0.62, 0.2)][k % 2], false)
+		for i in [3, 5]:
+			for e2 in [-1.0, 1.0]:
+				s._detail(s.parts[i], box, Vector3(e2 * 0.066, 0.0, 0.0), st, Vector3(0.012, 0.32, 0.03))
+		for i in [7, 9, 8, 10]:
+			var hw = 0.086 if i in [7, 9] else 0.076
+			for e3 in [-1.0, 1.0]:
+				s._detail(s.parts[i], box, Vector3(e3 * hw, 0.0, 0.0), st, Vector3(0.012, 0.42, 0.03))
+	elif k % 3 == 1:
+		# an open jacket over a T-shirt: a lighter front panel
+		var tee = s._mat("miltee" + str(k % 4), [Color(0.7, 0.68, 0.62), Color(0.3, 0.35, 0.45), Color(0.48, 0.2, 0.18), Color(0.2, 0.2, 0.2)][k % 4], false)
+		s._detail(s.parts[1], box, Vector3(0, -0.17, -0.123), tee, Vector3(0.16, 0.16, 0.01))
+	# trainers with white soles for some, worn boots for the rest
+	if k % 2 == 0:
+		var shoe = s._mat("milshoe" + str(k % 3), [Color(0.85, 0.85, 0.83), Color(0.15, 0.15, 0.17), Color(0.3, 0.32, 0.4)][k % 3], false)
+		var sole = s._mat("milsole", Color(0.92, 0.92, 0.9), false)
+		for i in [8, 10]:
+			s._detail(s.parts[i], box, Vector3(0, 0.21, 0.07), shoe, Vector3(0.165, 0.13, 0.29))
+			s._detail(s.parts[i], box, Vector3(0, 0.275, 0.07), sole, Vector3(0.17, 0.03, 0.3))
+	# an armband in the group's colour
+	var band = s._mat("band" + G.TEAM_BAND[s.team].to_html(), G.TEAM_BAND[s.team], false)
+	s._detail(s.parts[5], box, Vector3(0, 0.06, 0), band, Vector3(0.14, 0.06, 0.14))
 
 # ---------------------------------------------------------------- vehicles and support
 const MIL_VEH = {"jeep": "technical", "halftrack": "technical", "armoredcar": "technical", "tank": "technical", "heavytank": "technical",

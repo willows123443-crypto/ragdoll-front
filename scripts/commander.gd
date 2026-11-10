@@ -316,6 +316,19 @@ static func target_for(s):
 	var q = s.squad
 	if q == null:
 		return null
+	if q.get("crew", false):
+		# vehicle crews go where the nearest infantry squad has been sent, to support it
+		var best = null
+		var bd = 1e9
+		for oq in _squads(s.team):
+			var oc = oq.get("cmd")
+			if oc == null or G.sim_time > oc["t"] + 10.0:
+				continue
+			var d = G.dist2d(oc["p"], s.pos)
+			if d < bd:
+				bd = d
+				best = oc["p"]
+		return best
 	var c = q.get("cmd")
 	if c == null or G.sim_time > c["t"] + 10.0:
 		return null

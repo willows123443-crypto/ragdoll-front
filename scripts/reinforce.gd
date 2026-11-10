@@ -149,16 +149,20 @@ static func truck(t: int, n: int, dest = null) -> void:
 	var yaw = atan2(drop.x - entry.x, drop.z - entry.z)
 	var v = Vehicle.make("truck", t, entry, yaw)
 	v.mission = {"type": "deliver", "drop": drop, "exit": entry, "stage": 0, "wait": 0.0}
+	AI.batch_begin(AI.CREW)
 	var drv = G.main.spawn_soldier(t, entry.x, entry.z, "rifle")
+	AI.batch_end()
 	if drv == null:
 		v.remove()
 		return
 	drv.mount(v, 0)
+	AI.batch_begin()
 	for i in range(n):
 		var s = G.main.spawn_soldier(t, entry.x, entry.z, "")
 		if s == null:
 			break
 		s.mount(v, i + 1)
+	AI.batch_end()
 	G.ui.radio(t, "%d reinforcements inbound by truck, ETA two minutes" % n)
 
 # a transport helicopter flies troops in and lands them at the rally point
@@ -167,16 +171,20 @@ static func heli(t: int, n: int) -> void:
 	var drop = G.main._free_spot(G.world.rally_point(t) + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6)))
 	var v = Vehicle.make("heli", t, entry, atan2(drop.x - entry.x, drop.z - entry.z))
 	v.mission = {"type": "deliver", "drop": drop, "exit": entry, "stage": 0, "wait": 0.0}
+	AI.batch_begin(AI.CREW)
 	var drv = G.main.spawn_soldier(t, entry.x, entry.z, "rifle")
+	AI.batch_end()
 	if drv == null:
 		v.remove()
 		return
 	drv.mount(v, 0)
+	AI.batch_begin()
 	for i in range(mini(n, v.seats.size() - 1)):
 		var s = G.main.spawn_soldier(t, entry.x, entry.z, "")
 		if s == null:
 			break
 		s.mount(v, i + 1)
+	AI.batch_end()
 	G.ui.radio(t, "Helicopter inbound with %d troops" % n)
 
 # landing craft come in from the sea and drop their ramp on the beach
@@ -187,16 +195,20 @@ static func boat(t: int, n: int) -> void:
 	var drop = Vector3(b.position.x + 68.0, 0, z)
 	var v = Vehicle.make("boat", t, entry, PI / 2.0)
 	v.mission = {"type": "deliver", "drop": drop, "exit": entry, "stage": 0, "wait": 0.0}
+	AI.batch_begin(AI.CREW)
 	var drv = G.main.spawn_soldier(t, b.position.x + 5.0, z, "rifle")
+	AI.batch_end()
 	if drv == null:
 		v.remove()
 		return
 	drv.mount(v, 0)
+	AI.batch_begin()
 	for i in range(mini(n, 8)):
 		var s = G.main.spawn_soldier(t, b.position.x + 5.0, z, "")
 		if s == null:
 			break
 		s.mount(v, i + 1)
+	AI.batch_end()
 	G.ui.radio(t, "Landing craft inbound, %d troops" % n)
 
 static func paradrop(t: int, n: int) -> void:
@@ -227,7 +239,9 @@ static func _step_planes(dt: float) -> void:
 			p["drop_t"] = 0.2
 			p["left"] -= 1
 			var x = at.x + randf_range(-3, 3)
+			AI.batch_begin({}, p.get("sq"))
 			var s = G.main.spawn_soldier(p["team"], x, at.z, "")
+			p["sq"] = AI.batch_end()
 			if s != null:
 				s.start_chute(Vector3(x, at.y - 3.0, at.z))
 		if int(p["t"] * 40.0) % 3 == 0 and randf() < 0.1:

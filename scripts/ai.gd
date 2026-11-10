@@ -60,17 +60,53 @@ static func bearing_text(from: Vector3, to: Vector3) -> String:
 static func order_of(s) -> Dictionary:
 	return s.order if s.order != null else G.orders[s.team]
 
+# men spawned together (a squad you drop in, a truck of recruits, a vehicle's crew) form their own squad
+# instead of topping up whatever squad happens to have room
+static var batch_stack: Array = []
+const CREW = {"guard": true, "follow": true, "crew": true}
+
+static func batch_begin(extra: Dictionary = {}, q = null) -> void:
+	batch_stack.push_back({"extra": extra, "q": q})
+
+static func batch_end():
+	if batch_stack.is_empty():
+		return null
+	return batch_stack.pop_back()["q"]
+
+static func new_squad(team: int, extra: Dictionary = {}) -> Dictionary:
+	var q = {"team": team, "members": [], "id": G.squads.size(), "form": "wedge", "bound": 0}
+	q.merge(extra)
+	G.squads.append(q)
+	return q
+
 static func assign_squad(s) -> void:
 	var q = null
+	if not batch_stack.is_empty():
+		var b = batch_stack.back()
+		var bq = b["q"]
+		if bq != null:
+			bq["members"] = bq["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead")
+		if bq == null or bq["team"] != s.team or bq["members"].size() >= (4 if b["extra"].get("crew", false) else 6) or not (bq in G.squads):
+			bq = new_squad(s.team, b["extra"].merged({"sealed": true}))
+			b["q"] = bq
+		_into(s, bq)
+		return
 	for sq in G.squads:
-		if sq["team"] == s.team and not sq.get("guard", false):
+		if sq["team"] == s.team and not sq.get("guard", false) and not sq.get("sealed", false):
 			sq["members"] = sq["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead")
 			if sq["members"].size() < 5:
 				q = sq
 				break
 	if q == null:
-		q = {"team": s.team, "members": [], "id": G.squads.size(), "form": "wedge", "bound": 0}
-		G.squads.append(q)
+		q = new_squad(s.team)
+	_into(s, q)
+
+static func _into(s, q: Dictionary) -> void:
+	if s.squad != null and s.squad != q:
+		s.squad["members"].erase(s)
+		if s.squad.get("leader") == s:
+			s.squad["leader"] = null
+			s.set_leader(false)
 	q["members"].append(s)
 	s.squad = q
 	var ld = q.get("leader")
@@ -959,9 +995,9 @@ static func decide(s) -> void:
 		var k4 = (s.id * 13) % 7 - 3
 		var goal2 = obj + Vector3(k4 * 1.5, 0, k3 * 1.6)
 		# a long walk: hop on a friendly vehicle heading up
-		if G.dist2d(s.pos, obj) > 110.0 and s.vehicle == null:
+		if G.dist2d(s.pos, obj) > 110.0 and s.vehicle == null and G.sim_time > s.no_board_t and s.order == null:
 			for v in G.vehicles:
-				if v.team == s.team and not v.dead and v.mission == null and not v.spec.get("static", false) and not v.spec.get("air", false) and v.driver() != null and not v.driver().is_player and G.dist2d(v.pos, s.pos) < 25.0:
+				if v.team == s.team and not v.dead and v.mission == null and v.cmd == null and not v.spec.get("static", false) and not v.spec.get("air", false) and v.driver() != null and not v.driver().is_player and G.dist2d(v.pos, s.pos) < 25.0:
 					var fsi = v.free_seat("pass")
 					if fsi >= 0 and v.spec["seats"][fsi]["role"] == "pass":
 						s.task = "board"

@@ -643,3 +643,43 @@ func flame_puff(pos: Vector3, vel: Vector3, size: float) -> void:
 	p.scale_amount_min = size * 0.6
 	p.scale_amount_max = size
 	p.restart()
+
+# ---------------------------------------------------------------- rockets: a proper projectile with fins and a flame,
+# leaving a thin pale smoke trail that drifts and fades
+var _glow_mat: StandardMaterial3D = null
+
+func rocket_model(faust: bool) -> Node3D:
+	var n = Node3D.new()
+	var body = Color(0.3, 0.33, 0.24) if not faust else Color(0.25, 0.27, 0.2)
+	var L = 0.55 if not faust else 0.3
+	var r = 0.045 if not faust else 0.075
+	# the nose points along -z (look_at faces -z at the target)
+	VModel.cyl(n, r, L, Vector3(0, 0, 0), body, "z", {"seg": 8})
+	VModel.cyl(n, r, 0.16 if not faust else 0.2, Vector3(0, 0, -L * 0.5 - (0.08 if not faust else 0.1)), body.darkened(0.25), "z", {"r2": 0.005, "seg": 8, "rot": Vector3(PI, 0, 0)})
+	for k in range(4):
+		var f = Node3D.new()
+		f.rotation.z = k * PI / 2.0
+		n.add_child(f)
+		VModel.box(null, f, Vector3(0.006, 0.09, 0.12), Vector3(0, r + 0.04, L * 0.42), body.darkened(0.15), {"b": 0.0})
+	if _glow_mat == null:
+		_glow_mat = StandardMaterial3D.new()
+		_glow_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_glow_mat.albedo_color = Color(1.0, 0.7, 0.3)
+		_glow_mat.emission_enabled = true
+		_glow_mat.emission = Color(1.0, 0.55, 0.15)
+		_glow_mat.emission_energy_multiplier = 3.0
+	var flame = MeshInstance3D.new()
+	flame.mesh = VModel.cyl_mesh(r * 0.9, 0.22, 0.01, 8)
+	flame.material_override = _glow_mat
+	flame.rotation.x = PI / 2.0
+	flame.position = Vector3(0, 0, L * 0.5 + 0.11)
+	flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(flame)
+	n.set_meta("flame", flame)
+	return n
+
+func rocket_trail(pos: Vector3) -> void:
+	var d = _one_shot_smoke(pos, Color(0.8, 0.79, 0.76, 0.6), 2, 2.2, 0.4, 2.2, false)
+	d.initial_velocity_min = 0.05
+	d.initial_velocity_max = 0.3
+	d.gravity = Vector3(0, 0.25, 0)

@@ -97,6 +97,7 @@ var leader_mark: Node3D = null
 var vehicle = null
 var seat = -1
 var board_target = null
+var no_board_t = -1.0          # told to get out: don't climb back into a vehicle before this
 var hidden_in_vehicle = false
 var chute: Node3D = null
 var partial = false
@@ -122,7 +123,7 @@ var burst = 0
 var burst_cd = 0.5
 var grenades = 2
 var smokes = 1
-var rockets = 3
+var rockets = 5
 var clip_n = 0
 var peek_hold = 0.0        # peeking (or ducking) is kept up for a moment, no flickering in and out
 var peek_on = false
@@ -354,15 +355,139 @@ func _hpart(parent: Node3D, key: String, sc: Vector3, at: Vector3, mat: Material
 	mi.layers = 2
 	parent.add_child(mi)
 
+# ---------------------------------------------------------------- faces
+# a painted face (eyes, brows, mouth, stubble or a beard) on the front of the head, a nose and ears;
+# only drawn up close, where you can see it
+static var face_texs = {}
+static var face_mats = {}
+const BROWS = [Color(0.2, 0.13, 0.08), Color(0.07, 0.06, 0.05), Color(0.52, 0.4, 0.24), Color(0.3, 0.2, 0.12)]
+
+static func _face_mat(brow: int, beard: int, eyes_only: bool) -> Material:
+	var key = "%d_%d_%s" % [brow, beard, str(eyes_only)]
+	if face_mats.has(key):
+		return face_mats[key]
+	var N = 32
+	var img = Image.create(N, N, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var bc: Color = BROWS[brow]
+	var r = RandomNumberGenerator.new()
+	r.seed = hash(key)
+	if beard > 0 and not eyes_only:
+		for y in range(15, N):
+			for x in range(3, N - 3):
+				var cx = absf(x - 15.5)
+				# the beard follows the jaw: wide at the cheeks, round at the chin
+				var inside = (y >= 20 and cx < 12.5 - maxf(0.0, y - 26) * 1.4) or (y < 20 and cx > 9.5 and cx < 12.5)
+				if not inside:
+					continue
+				if beard == 2 or r.randf() < 0.32:
+					img.set_pixel(x, y, bc.darkened(0.15 + r.randf() * 0.15))
+	# brows, slightly angled
+	for x in range(6, 14):
+		var y = 9 if x > 8 else 10
+		img.set_pixel(x, y, bc)
+		img.set_pixel(N - 1 - x, y, bc)
+		if x > 7 and x < 12:
+			img.set_pixel(x, y + 1, bc.lerp(Color(0, 0, 0, 0), 0.0))
+			img.set_pixel(N - 1 - x, y + 1, bc)
+	# eyes: whites, iris, a dark upper lid
+	for side in [0, 1]:
+		for x in range(7, 13):
+			var xx = x if side == 0 else N - 1 - x
+			img.set_pixel(xx, 13, Color(0.13, 0.1, 0.08))
+			img.set_pixel(xx, 14, Color(0.9, 0.88, 0.84))
+			img.set_pixel(xx, 15, Color(0.82, 0.8, 0.76))
+		for x in range(9, 11):
+			var xx2 = x if side == 0 else N - 1 - x
+			img.set_pixel(xx2, 14, Color(0.18, 0.13, 0.09))
+			img.set_pixel(xx2, 15, Color(0.12, 0.09, 0.07))
+	if not eyes_only:
+		# mouth
+		for x in range(12, 20):
+			img.set_pixel(x, 23, Color(0.36, 0.17, 0.15))
+		for x in range(13, 19):
+			img.set_pixel(x, 24, Color(0.55, 0.32, 0.28, 0.85))
+	var tex = ImageTexture.create_from_image(img)
+	var m = StandardMaterial3D.new()
+	m.albedo_texture = tex
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	m.alpha_scissor_threshold = 0.4
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
+	m.roughness = 0.85
+	face_mats[key] = m
+	return m
+
+func _detail(parent: Node3D, mesh: Mesh, at: Vector3, mat: Material, sc: Vector3 = Vector3.ONE) -> MeshInstance3D:
+	var mi = MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.position = at
+	mi.scale = sc
+	mi.material_override = mat
+	mi.layers = 2
+	mi.visibility_range_end = 38.0
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
+	return mi
+
+static var face_quad: QuadMesh = null
+static var unit_box: BoxMesh = null
+
+func _face(head: Node3D, sk: Material, militia: bool) -> void:
+	if face_quad == null:
+		face_quad = QuadMesh.new()
+		face_quad.size = Vector2(0.25, 0.236)
+		unit_box = BoxMesh.new()
+		unit_box.size = Vector3.ONE
+	var dark_skin = skin.get_luminance() < 0.42
+	var brow = 1 if dark_skin else [0, 0, 3, 2, 1][id % 5]
+	var beard = 0
+	if militia:
+		beard = 2 if id % 5 < 3 else 1
+	elif id % 3 == 0:
+		beard = 1
+	var balaclava = militia and id % 4 == 0
+	# the head and torso pieces have +z pointing out of the back, so the face goes on -z
+	var z = 0.144 if balaclava else 0.1265
+	# set a little low on the head so brows and eyes sit clear of any helmet rim
+	var fq = _detail(head, face_quad, Vector3(0, -0.012, -z), _face_mat(brow, beard, balaclava))
+	fq.rotation.y = PI
+	if not balaclava:
+		_detail(head, unit_box, Vector3(0, -0.04, -0.138), sk, Vector3(0.045, 0.07, 0.04))
+	for e in [-1.0, 1.0]:
+		_detail(head, unit_box, Vector3(e * 0.132, 0.0, 0.005), sk, Vector3(0.025, 0.07, 0.05))
+
+# webbing, belt and pouches for the regulars
+func _kit(vest: Material, helm: Material) -> void:
+	if unit_box == null:
+		unit_box = BoxMesh.new()
+		unit_box.size = Vector3.ONE
+	var belt = _mat("belt", Color(0.2, 0.17, 0.12), false)
+	var pouch = _mat("pouch" + G.TEAM_VEST[team].to_html(), G.TEAM_VEST[team].darkened(0.08), false)
+	_mesh(parts[0], Vector3(0.38, 0.05, 0.27), Vector3(0, 0.085, 0), belt)
+	for e in [-1.0, 1.0]:
+		_detail(parts[0], unit_box, Vector3(e * 0.11, 0.05, -0.14), pouch, Vector3(0.085, 0.075, 0.05))
+		# shoulder straps over the vest
+		_detail(parts[1], unit_box, Vector3(e * 0.12, 0.08, 0.0), belt, Vector3(0.05, 0.3, 0.31))
+		# chin strap
+		_detail(parts[2], unit_box, Vector3(e * 0.127, -0.02, -0.03), helm, Vector3(0.012, 0.16, 0.014))
+	# magazine pouches on the chest
+	for k in range(3):
+		_detail(parts[1], unit_box, Vector3((k - 1) * 0.095, -0.02, -0.27), pouch, Vector3(0.075, 0.1, 0.035))
+	# collar
+	_detail(parts[1], unit_box, Vector3(0, 0.25, -0.02), _mat("collar" + G.TEAM_UNI[team].to_html(), G.TEAM_UNI[team].darkened(0.12), false), Vector3(0.26, 0.05, 0.2))
+
 # each team wears a differently shaped helmet, with a band in the team colour
 func _helmet(head: Node3D, helm: Material, band: Material, cloth: Material) -> void:
 	match team % 4:
 		0:  # round dome with a narrow rim
 			_hpart(head, "dome", Vector3(0.33, 0.5, 0.35), Vector3(0, 0.07, 0), helm)
 			_hpart(head, "cyl", Vector3(0.37, 0.025, 0.39), Vector3(0, 0.07, 0), helm)
-		1:  # deep helmet flaring out over the neck and ears
+		1:  # deep helmet flaring out over the neck and ears (kept above the brow so it never covers the face)
 			_hpart(head, "dome", Vector3(0.32, 0.5, 0.34), Vector3(0, 0.08, 0), helm)
-			_hpart(head, "flare", Vector3(0.33, 0.1, 0.35), Vector3(0, 0.035, -0.015), helm)
+			_hpart(head, "flare", Vector3(0.33, 0.05, 0.35), Vector3(0, 0.085, 0.01), helm)
+			_mesh(head, Vector3(0.27, 0.1, 0.05), Vector3(0, 0.04, 0.14), helm)
+			for e in [-1.0, 1.0]:
+				_mesh(head, Vector3(0.03, 0.08, 0.14), Vector3(e * 0.145, 0.045, 0.06), helm)
 		2:  # shallow bowl with a wide flat brim
 			_hpart(head, "dome", Vector3(0.28, 0.38, 0.3), Vector3(0, 0.08, 0), helm)
 			_hpart(head, "cyl", Vector3(0.44, 0.022, 0.46), Vector3(0, 0.075, 0), helm)
@@ -416,15 +541,19 @@ func _build_body() -> void:
 	_mesh(parts[0], Vector3(0.36, 0.22, 0.25), Vector3.ZERO, uni2)
 	_mesh(parts[1], Vector3(0.42, 0.52, 0.24), Vector3.ZERO, uni)
 	_mesh(parts[1], Vector3(0.46, 0.32, 0.3), Vector3(0, 0.06, 0), vest)
-	_mesh(parts[1], Vector3(0.32, 0.3, 0.14), Vector3(0, 0.05, 0.19), vest)
+	_mesh(parts[1], Vector3(0.32, 0.3, 0.14), Vector3(0, 0.05, -0.19), vest)
 	_mesh(parts[2], Vector3(0.25, 0.26, 0.25), Vector3.ZERO, sk)
+	if not zombie:
+		_face(parts[2], sk, militia)
 	if militia:
 		Faction.headgear(self, parts[2])
+		Faction.rig(self, vest, uni, uni2)
 	elif not zombie:
 		_helmet(parts[2], helm, band, uni)
 		var pack = _mat("pack" + G.TEAM_VEST[team].to_html(), G.TEAM_VEST[team].darkened(0.18), true)
-		_mesh(parts[1], Vector3(0.3, 0.3, 0.14), Vector3(0, 0.04, -0.19), pack)
-		_mesh(parts[0], Vector3(0.09, 0.13, 0.08), Vector3(0.17, 0.0, -0.08), _mat("canteen", Color(0.24, 0.26, 0.2), false))
+		_mesh(parts[1], Vector3(0.3, 0.3, 0.14), Vector3(0, 0.04, 0.19), pack)
+		_mesh(parts[0], Vector3(0.09, 0.13, 0.08), Vector3(0.17, 0.0, 0.08), _mat("canteen", Color(0.24, 0.26, 0.2), false))
+		_kit(vest, helm)
 	else:
 		_zombie_look(sk, uni, uni2)
 	for i in [3, 5]:
@@ -929,8 +1058,39 @@ func lod_wake() -> void:
 		b.freeze = false
 		b.linear_velocity = vel
 
+# the pose targets are eased a little, relative to where the soldier stands: the body still goes where he goes
+# at once, but sudden pose changes (snapping aim, a foot hitting a step) blend over a few frames instead of jerking
+var sm_off: Array = []
+var sm_rot: Array = []
+
+func _smooth_targets() -> void:
+	if sm_off.size() != targets.size():
+		sm_off = []
+		sm_rot = []
+		for t in targets:
+			sm_off.append(t.origin - pos)
+			sm_rot.append(t.basis.get_rotation_quaternion())
+		return
+	var a = 1.0 - exp(-G.DT * (22.0 if state == "alive" and vault == null else 60.0))
+	for i in range(targets.size()):
+		var tg: Transform3D = targets[i]
+		var off: Vector3 = tg.origin - pos
+		if off.distance_squared_to(sm_off[i]) > 0.36:
+			sm_off[i] = off
+			sm_rot[i] = tg.basis.get_rotation_quaternion()
+			continue
+		sm_off[i] = sm_off[i].lerp(off, a)
+		var q: Quaternion = tg.basis.get_rotation_quaternion()
+		var q0: Quaternion = sm_rot[i]
+		if q0.dot(q) < 0.0:
+			q = -q
+		sm_rot[i] = q0.slerp(q, a).normalized()
+		targets[i] = Transform3D(Basis(sm_rot[i]), pos + sm_off[i])
+
 func drive() -> void:
 	_compute_targets()
+	if state == "alive" or state == "riding" or state == "getup":
+		_smooth_targets()
 	if _lod_far():
 		if not lod_frozen or not parts[0].freeze:
 			lod_frozen = true
@@ -996,8 +1156,8 @@ func set_class(c: String) -> void:
 				m.visible = false
 		var capm = _mat("cap", Color(0.42, 0.12, 0.1), false)
 		_hpart(parts[2], "cyl", Vector3(0.3, 0.09, 0.31), Vector3(0, 0.12, 0), capm)
-		_hpart(parts[2], "cyl", Vector3(0.36, 0.03, 0.37), Vector3(0, 0.17, 0.01), capm)
-		_hpart(parts[2], "cyl", Vector3(0.2, 0.015, 0.14), Vector3(0, 0.075, 0.13), _mat("boot", Color(0.16, 0.14, 0.12), false))
+		_hpart(parts[2], "cyl", Vector3(0.36, 0.03, 0.37), Vector3(0, 0.17, -0.01), capm)
+		_hpart(parts[2], "cyl", Vector3(0.2, 0.015, 0.14), Vector3(0, 0.075, -0.13), _mat("boot", Color(0.16, 0.14, 0.12), false))
 		_hpart(parts[2], "cyl", Vector3(0.31, 0.03, 0.32), Vector3(0, 0.09, 0), _mat("band" + G.TEAM_BAND[team].to_html(), G.TEAM_BAND[team], false))
 	mines = 3 if c == "engineer" else 0
 	satchels = 2 if c == "engineer" else 0
@@ -1007,7 +1167,7 @@ func set_class(c: String) -> void:
 	if c == "radio":
 		smokes = 3
 	if c == "at" and wid == "rpg":
-		rockets = 4
+		rockets = 6
 	fausts = 0
 	if c == "rifleman" and randf() < 0.35:
 		fausts = 1
@@ -1032,7 +1192,7 @@ func general_look() -> void:
 	var brown = _mat("belt", Color(0.3, 0.17, 0.08), false)
 	_mesh(parts[1], Vector3(0.44, 0.05, 0.27), Vector3(0, -0.2, 0), brown)
 	_mesh(parts[1], Vector3(0.05, 0.5, 0.26), Vector3(0.06, 0.0, 0), brown)
-	_mesh(parts[1], Vector3(0.1, 0.06, 0.02), Vector3(-0.1, 0.12, 0.125), _mat("ribbons", Color(0.7, 0.15, 0.12), false))
+	_mesh(parts[1], Vector3(0.1, 0.06, 0.02), Vector3(-0.1, 0.12, -0.125), _mat("ribbons", Color(0.7, 0.15, 0.12), false))
 
 # out of ammunition for the main gun: fall back on the pistol
 func to_sidearm() -> bool:
@@ -1193,7 +1353,7 @@ func resupply() -> void:
 	smokes = maxi(smokes, 1)
 	dressings = maxi(dressings, 6 if cls == "medic" else 2)
 	if wid == "rpg":
-		rockets = 3
+		rockets = 5
 
 # the walking dead: glowing eyes, a slack jaw, blood down the front, torn sleeves; brutes are bulked out
 func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
@@ -1201,12 +1361,12 @@ func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
 	var blood = _mat("zblood", Color(0.32, 0.05, 0.04), false)
 	var dark = _mat("zrot", Color(0.22, 0.2, 0.17), false)
 	for e in [-1.0, 1.0]:
-		_mesh(parts[2], Vector3(0.05, 0.03, 0.02), Vector3(e * 0.06, 0.03, 0.126), eye)
-	_mesh(parts[2], Vector3(0.12, 0.05, 0.05), Vector3(0, -0.11, 0.1), dark)
-	_mesh(parts[2], Vector3(0.14, 0.04, 0.03), Vector3(0.03, 0.09, 0.12), blood)
-	_mesh(parts[1], Vector3(0.22, 0.26, 0.02), Vector3(0.05, 0.02, 0.165), blood)
-	_mesh(parts[1], Vector3(0.12, 0.14, 0.02), Vector3(-0.12, -0.14, 0.13), blood)
-	_mesh(parts[1], Vector3(0.1, 0.1, 0.02), Vector3(0.1, -0.05, -0.155), dark)
+		_mesh(parts[2], Vector3(0.05, 0.03, 0.02), Vector3(e * 0.06, 0.03, -0.126), eye)
+	_mesh(parts[2], Vector3(0.12, 0.05, 0.05), Vector3(0, -0.11, -0.1), dark)
+	_mesh(parts[2], Vector3(0.14, 0.04, 0.03), Vector3(0.03, 0.09, -0.12), blood)
+	_mesh(parts[1], Vector3(0.22, 0.26, 0.02), Vector3(0.05, 0.02, -0.165), blood)
+	_mesh(parts[1], Vector3(0.12, 0.14, 0.02), Vector3(-0.12, -0.14, -0.13), blood)
+	_mesh(parts[1], Vector3(0.1, 0.1, 0.02), Vector3(0.1, -0.05, 0.155), dark)
 	# one arm torn bare
 	var bare = 3 if id % 2 == 0 else 5
 	_mesh(parts[bare], Vector3(0.135, 0.33, 0.135), Vector3.ZERO, sk)
@@ -1502,11 +1662,14 @@ func start_vault(c) -> bool:
 	var ty: float = G.world.surface_y(tx, tz, pos.y + 0.5)
 	if G.world.inside_any(tx, tz, 0.3, ty) or absf(ty - pos.y) > 0.9:
 		return false
+	# nobody goes over a wall while looking the other way: a beat to turn and face it first
+	var vyaw = atan2(tx - pos.x, tz - pos.z)
+	var turn_first = absf(G.wrap_a(body_yaw - vyaw)) > 0.9
 	var cx = (c.lo.x + c.hi.x) * 0.5
 	var cz = (c.lo.z + c.hi.z) * 0.5
 	# a window: dive through low, and the glass goes if it's still in
 	var win = G.world.inside_at(cx, c.hi.y + 1.4, cz)
-	vault = {"a": pos, "b": Vector3(tx, ty, tz), "h": maxf(0.2, c.hi.y - maxf(pos.y, ty) + (0.02 if win else 0.15)), "t": 0.0, "dive": win}
+	vault = {"a": pos, "b": Vector3(tx, ty, tz), "h": maxf(0.2, c.hi.y - maxf(pos.y, ty) + (0.02 if win else 0.15)), "t": -0.45 if turn_first else 0.0, "dive": win}
 	if win:
 		var pane = Doors.pane_near(Vector3(cx, c.hi.y + 0.6, cz), 1.4)
 		if pane != null:
@@ -1857,6 +2020,12 @@ func _tick_alive() -> void:
 		pos = a.lerp(b, k)
 		pos.y += sin(PI * vt) * vault["h"]
 		vel = G.flat(b - a) / 0.6
+		# eyes and body on where they're going while they're over the top
+		var over_yaw = atan2(b.x - a.x, b.z - a.z)
+		body_yaw = G.turn_to(body_yaw, over_yaw, 9.0 * G.DT)
+		if not is_player:
+			aim_yaw = G.turn_to(aim_yaw, over_yaw, 9.0 * G.DT)
+			aim_pitch = lerpf(aim_pitch, 0.0, 0.2)
 		crouch = 1.0 if vault.get("dive", false) else 0.55
 		if vault["t"] >= 1.0:
 			pos = b

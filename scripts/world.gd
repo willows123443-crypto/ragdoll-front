@@ -55,7 +55,7 @@ var MAPS = {
 	"river": {"name": "River crossing (large)", "ground": Color(0.42, 0.46, 0.3), "seed": 4410, "size": Vector2(560, 240)},
 	"forest": {"name": "Forest", "ground": Color(0.33, 0.38, 0.24), "seed": 2601, "size": Vector2(300, 220)},
 	"city": {"name": "City blocks", "ground": Color(0.45, 0.44, 0.41), "seed": 8080, "size": Vector2(300, 220)},
-	"pass": {"name": "Mountain pass (large)", "ground": Color(0.47, 0.45, 0.38), "seed": 3300, "size": Vector2(560, 220)},
+	"pass": {"name": "Mountain pass (large)", "ground": Color(0.4, 0.42, 0.3), "seed": 3300, "size": Vector2(560, 220)},
 	"beach": {"name": "Beach landing", "ground": Color(0.72, 0.66, 0.48), "seed": 1944, "size": Vector2(300, 240)},
 	"random": {"name": "Random", "ground": Color(0.44, 0.45, 0.33), "seed": 1, "size": Vector2(360, 220)},
 	"front": {"name": "Western front (large)", "ground": Color(0.41, 0.37, 0.3), "seed": 1916, "size": Vector2(560, 240)},
@@ -281,21 +281,23 @@ func build_terrain(base: Color) -> void:
 	for iz in range(TH_ + 1):
 		for ix in range(W):
 			var e = mini(mini(ix, iz), mini(TW - ix, TH_ - iz))
-			if e < 6:
+			# the ground eases down to the edge (but the seabed stays under the sea, or it shows as a rim)
+			if e < 6 and th[iz * W + ix] > -0.4:
 				th[iz * W + ix] *= e / 6.0
 	ter_max = 0.0
 	for h in th:
 		ter_max = maxf(ter_max, h)
 	# visible mesh (built from arrays: much faster than adding vertices one by one)
 	var mud = Color(0.31, 0.26, 0.2)
-	var hi = base.lightened(0.12)
+	# high ground: a touch drier and lighter, never bleached (big hill maps were washing out to near white)
+	var hi = base.lerp(Color(0.5, 0.5, 0.36), 0.35)
 	var r = RandomNumberGenerator.new()
 	r.seed = 77
 	# big soft patches of drier and lusher ground so fields aren't one flat colour
 	var noise = FastNoiseLite.new()
 	noise.seed = 1234
 	noise.frequency = 0.018
-	var dry = base.lerp(Color(0.62, 0.56, 0.38), 0.4)
+	var dry = base.lerp(Color(0.56, 0.5, 0.35), 0.35)
 	var lush = base.lerp(Color(0.3, 0.42, 0.22), 0.35)
 	var verts = PackedVector3Array()
 	var norms = PackedVector3Array()
@@ -318,7 +320,7 @@ func build_terrain(base: Color) -> void:
 			if h < -0.2:
 				c = c.lerp(mud, minf(1.0, -h / 0.9))
 			elif h > 0.3:
-				c = c.lerp(hi, minf(1.0, h / 4.0))
+				c = c.lerp(hi, minf(0.6, h / 8.0))
 			var v = r.randf_range(0.92, 1.06)
 			colors[i] = Color(c.r * v, c.g * v, c.b * v)
 	var idx = PackedInt32Array()
@@ -2329,10 +2331,14 @@ func build_backdrop(style: String) -> void:
 			road_z.append([(rd[2] + rd[3]) * 0.5, (rd[3] - rd[2]) * 0.5])
 		elif rd[3] - rd[2] > TH_ * 0.9:
 			road_x.append([(rd[0] + rd[1]) * 0.5, (rd[1] - rd[0]) * 0.5])
+	var sea = G.map_id == "beach"
 	var hfun = func(x: float, z: float) -> float:
 		var ex = maxf(0.0, maxf(absf(x) - hw, absf(z) - hd))
 		if ex <= 0.0:
 			return -2.0
+		# the beach map: open sea all the way to the horizon in the west, the coast bending back west beyond the map
+		if sea and x < -hw + 68.0 - maxf(0.0, absf(z) - hd) * 0.4:
+			return -6.0
 		var k = clampf(ex / 90.0, 0.0, 1.0)
 		for rz in road_z:
 			if absf(x) > hw:
@@ -2411,7 +2417,10 @@ func build_backdrop(style: String) -> void:
 		var dens = tree_noise.get_noise_2d(x, z)
 		if dens < (0.05 if style != "war" else 0.35):
 			continue
-		crowns.append(Vector3(x, hfun.call(x, z), z))
+		var cy = hfun.call(x, z)
+		if cy < -1.0:
+			continue
+		crowns.append(Vector3(x, cy, z))
 	var mm = MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
@@ -2458,7 +2467,7 @@ func build_backdrop(style: String) -> void:
 		if ex < 12.0 or ex > maxd:
 			continue
 		var y = hfun.call(x, z)
-		if y > 20.0:
+		if y > 20.0 or y < -1.0:
 			continue
 		var w = rng.randf_range(7, 13)
 		var d = rng.randf_range(6, 11)
@@ -2996,7 +3005,7 @@ func build_beach() -> void:
 		hill(rnd(0, W2), rnd(-D2, D2), rnd(10, 20), rnd(1.0, 2.5))
 	flatten_rect(W2 - 60.0, -24.0, W2 - 20.0, 24.0, 6.0)
 	build_terrain(MAPS["beach"]["ground"])
-	add_water(-W2 - 400.0, -W2 + 70.0, -D2 - 400.0, D2 + 400.0, -0.4, Color(0.2, 0.36, 0.45, 0.88))
+	add_water(-W2 - 1300.0, -W2 + 70.0, -D2 - 1300.0, D2 + 1300.0, -0.4, Color(0.2, 0.36, 0.45, 0.88))
 	for i in range(40):
 		hedgehog(rnd(-W2 + 70.0, -W2 + 120.0), rnd(-D2 + 10.0, D2 - 10.0))
 	for i in range(4):

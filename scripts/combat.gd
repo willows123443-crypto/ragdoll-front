@@ -316,23 +316,17 @@ static func knife(s, t) -> void:
 
 # ---------------------------------------------------------------- rockets
 static func launch_rocket(s, origin: Vector3, dir: Vector3, veh = null) -> void:
-	var m = MeshInstance3D.new()
-	var bm = BoxMesh.new()
-	bm.size = Vector3(0.1, 0.1, 0.5)
-	m.mesh = bm
-	var mat = StandardMaterial3D.new()
-	mat.albedo_color = G.C_GREEN
-	m.material_override = mat
+	var faust = veh == null and s.wid == "pfaust"
+	var m = G.fx.rocket_model(faust)
 	G.fx.add_child(m)
 	m.global_position = origin
-	var faust = veh == null and s.wid == "pfaust"
+	m.look_at(origin + dir, Vector3.UP if absf(dir.y) < 0.95 else Vector3.RIGHT)
 	if faust:
 		# a short, loopy flight and a big shaped charge
-		bm.size = Vector3(0.16, 0.16, 0.35)
 		rockets.append({"p": origin, "v": dir * 34.0, "owner": s, "veh": veh, "mesh": m, "life": 3.0, "trail": 0.0, "g": 0.35, "vdmg": 760.0, "power": 1.1})
 	else:
 		rockets.append({"p": origin, "v": dir * 48.0, "owner": s, "veh": veh, "mesh": m, "life": 5.0, "trail": 0.0})
-	G.fx.dust_cloud(origin - dir * 1.4, 1.5)
+	G.fx.dust_cloud(origin - dir * 1.4, 1.2)
 	G.audio.rocket(origin)
 	if faust:
 		s.call_deferred("spent_faust")
@@ -386,8 +380,11 @@ static func step_rockets() -> void:
 		r["mesh"].look_at(r["p"] + stepv, Vector3.UP if absf(stepv.normalized().y) < 0.95 else Vector3.RIGHT)
 		r["trail"] -= G.DT
 		if r["trail"] <= 0.0:
-			r["trail"] = 0.05
-			G.fx.dust_cloud(r["p"], 0.5)
+			r["trail"] = 0.035
+			G.fx.rocket_trail(r["p"] - stepv.normalized() * 0.4)
+		var fl = r["mesh"].get_meta("flame") if r["mesh"].has_meta("flame") else null
+		if fl != null:
+			fl.scale = Vector3(1.0, 0.7 + randf() * 0.6, 1.0)
 
 # tank cannon: a fast, flat shell
 static func launch_shell(veh, s, origin: Vector3, dir: Vector3, power: float = 1.5, vdmg: float = 650.0, speed: float = 140.0) -> void:

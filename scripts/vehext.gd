@@ -458,7 +458,9 @@ static func supply_run(team: int, st: Dictionary) -> void:
 	var drop = G.main._free_spot(st["p"] + Build._front(st) * -8.0)
 	var v = Vehicle.make("truck", team, start, atan2(drop.x - start.x, drop.z - start.z))
 	v.mission = {"type": "supply", "drop": drop, "exit": start, "stage": 0, "wait": 0.0, "site": st}
+	AI.batch_begin(AI.CREW)
 	var drv = G.main.spawn_soldier(team, start.x, start.z, "rifle")
+	AI.batch_end()
 	if drv == null:
 		v.remove()
 		return

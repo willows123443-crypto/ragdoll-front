@@ -61,6 +61,9 @@ func possess(s) -> void:
 	if s == null or s.state == "dead":
 		G.ui.message("Pick a living soldier")
 		return
+	if not Rules.free_tools() and s.team != 0:
+		G.ui.message("That's one of theirs: pick one of your own soldiers")
+		return
 	if G.player != null and G.player != s and is_instance_valid(G.player):
 		G.player.is_player = false
 	G.player = s
@@ -203,6 +206,8 @@ func rotate_place(step: int) -> void:
 	G.ui.message("Facing " + ["east", "south", "west", "north"][place_dir])
 
 func _build_team() -> int:
+	if not Rules.free_tools():
+		return 0 if G.player == null else G.player.team
 	var team: int = G.ui.build_team
 	return team if team < G.team_count() else 0
 
@@ -300,58 +305,62 @@ func _rts_overlay() -> void:
 	rts_lines.visible = on
 	var im: ImmediateMesh = rts_lines.mesh
 	im.clear_surfaces()
-	var qs = my_squads() if on else []
-	var used = 0
-	if on and not qs.is_empty():
-		im.surface_begin(Mesh.PRIMITIVE_LINES)
-		var any_line = false
-		for qi in range(qs.size()):
-			var q = qs[qi]
-			var c = Vector3.ZERO
-			var n = 0
-			var dest = null
-			var selected = false
-			for m in q["members"]:
-				if is_instance_valid(m) and (m.state == "alive" or m.state == "riding"):
-					c += m.pos
-					n += 1
-					if m in selection:
-						selected = true
-					if dest == null and m.order != null and m.order.get("mode", "") == "move" and m.order.get("point") != null:
-						dest = m.order["point"]
-			c /= n
-			if dest != null and G.dist2d(c, dest) > 4.0:
-				var col = Color(1.0, 0.85, 0.25, 0.95) if selected else Color(1, 1, 1, 0.35)
-				var a = c + Vector3(0, 1.0, 0)
-				var b = Vector3(dest.x, G.world.ground_y(dest.x, dest.z) + 1.0, dest.z)
-				im.surface_set_color(col); im.surface_add_vertex(a)
-				im.surface_set_color(col); im.surface_add_vertex(b)
-				# a cross where they're going
-				for e in [Vector3(1.5, 0, 1.5), Vector3(1.5, 0, -1.5)]:
-					im.surface_set_color(col); im.surface_add_vertex(b - e)
-					im.surface_set_color(col); im.surface_add_vertex(b + e)
-				any_line = true
-			if used >= rts_labels.size():
-				var l = Label3D.new()
-				l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-				l.no_depth_test = true
-				l.fixed_size = true
-				l.pixel_size = 0.0012
-				l.font_size = 30
-				l.outline_size = 10
-				add_child(l)
-				rts_labels.append(l)
-			var lb: Label3D = rts_labels[used]
-			used += 1
-			lb.visible = false        # no squad captions: the selection rings say enough
-			lb.modulate = Color(1.0, 0.9, 0.3) if selected else Color(0.85, 0.9, 1.0)
-			lb.global_position = c + Vector3(0, 4.0, 0)
-		if not any_line:
-			im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
-			im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
-		im.surface_end()
-	for k in range(used, rts_labels.size()):
-		rts_labels[k].visible = false
+	if not on:
+		return
+	# one line per squad on foot (from where its men actually are) and one per vehicle (from the vehicle)
+	var team = 0
+	var groups = {}
+	for s in G.soldiers:
+		if s.team != team or not (s.state == "alive" or s.state == "riding") or s.is_player:
+			continue
+		var key = ""
+		var at: Vector3
+		var dest = null
+		if s.state == "riding":
+			var v = s.vehicle
+			if v == null or not is_instance_valid(v) or v.dead:
+				continue
+			key = "v%d" % v.get_instance_id()
+			at = v.pos
+			dest = v.cmd
+		else:
+			if s.order == null or s.order.get("mode", "") != "move" or s.order.get("point") == null:
+				continue
+			key = "q%d" % (G.squads.find(s.squad) if s.squad != null else -1000 - s.id)
+			at = s.pos
+			dest = s.order["point"]
+		if dest == null:
+			continue
+		if not groups.has(key):
+			groups[key] = {"c": Vector3.ZERO, "d": Vector3.ZERO, "n": 0, "sel": false}
+		var g = groups[key]
+		g["c"] += at
+		g["d"] += dest
+		g["n"] += 1
+		if s in selection:
+			g["sel"] = true
+	im.surface_begin(Mesh.PRIMITIVE_LINES)
+	var any_line = false
+	for key in groups:
+		var g = groups[key]
+		var c: Vector3 = g["c"] / g["n"]
+		var dest: Vector3 = g["d"] / g["n"]
+		if G.dist2d(c, dest) < 5.0:
+			continue
+		var col = Color(1.0, 0.85, 0.25, 0.95) if g["sel"] else Color(1, 1, 1, 0.3)
+		var a2 = c + Vector3(0, 1.0, 0)
+		var b2 = Vector3(dest.x, G.world.ground_y(dest.x, dest.z) + 1.0, dest.z)
+		im.surface_set_color(col); im.surface_add_vertex(a2)
+		im.surface_set_color(col); im.surface_add_vertex(b2)
+		# a cross where they're going
+		for e in [Vector3(1.5, 0, 1.5), Vector3(1.5, 0, -1.5)]:
+			im.surface_set_color(col); im.surface_add_vertex(b2 - e)
+			im.surface_set_color(col); im.surface_add_vertex(b2 + e)
+		any_line = true
+	if not any_line:
+		im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
+		im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
+	im.surface_end()
 
 # number keys in commander view: pick that squad; press it again to look at it
 func select_squad(i: int) -> void:
@@ -786,6 +795,8 @@ func use_tool(screen: Vector2) -> void:
 	var d = cam.project_ray_normal(screen)
 	var hit = G.ray(o, o + d * 400.0, G.L_WORLD)
 	var tool = G.ui.tool
+	if not Rules.free_tools() and G.mode != "commander" and not (tool in ["sel", "ctl", "mv"] or tool.begins_with("b:") or tool.begins_with("sup:") or tool in ["up", "camo", "rep", "dis"]):
+		return
 	if G.mode == "commander" and not (tool == "sel" or tool.begins_with("b:") or tool.begins_with("sup:") or tool.begins_with("r:") or tool in ["up", "camo", "rep", "dis"]):
 		return
 	if tool == "ctl":
@@ -817,8 +828,10 @@ func use_tool(screen: Vector2) -> void:
 	elif tool == "a5" or tool == "b5" or tool == "s5":
 		var team = 0 if tool == "a5" else (1 if tool == "b5" else _build_team())
 		var fw = 1.0 if team == 0 else -1.0
+		AI.batch_begin()
 		for off in [[0, 0], [-1.6, -1.6], [1.6, -1.6], [-3.2, -3.2], [3.2, -3.2]]:
 			G.main.spawn_soldier(team, p.x + off[1] * fw, p.z + off[0], "")
+		AI.batch_end()
 	elif tool == "boom":
 		Combat.explode(p + Vector3(0, 0.1, 0), null, 1.1)
 	elif tool == "mortar":
@@ -853,6 +866,9 @@ func use_tool(screen: Vector2) -> void:
 			p = Vector3(snappedf(gh.x, 0.5), gh.y, snappedf(gh.z, 0.5))
 		if G.mode == "commander":
 			team = 0
+		if not (kind in Rules.build(team)):
+			G.ui.message("Nobody builds a %s in this mode" % Build.KINDS[kind]["name"].to_lower())
+			return
 		var to = place_front(p, team)
 		if not Build.clear_at(p, kind):
 			G.ui.message("No room for a %s there" % Build.KINDS[kind]["name"])
@@ -1009,40 +1025,106 @@ func rider_update(s) -> void:
 	s.morale = maxf(s.morale, 60.0)
 
 # ---------------------------------------------------------------- commanding soldiers
+func _sel_team_ok(c) -> bool:
+	if G.mode == "commander" or (G.mode != "sandbox" and G.player == null):
+		return c.team == 0
+	return true
+
+# the vehicle under the cursor (its hull, or near where the click lands)
+func pick_vehicle(o: Vector3, d: Vector3):
+	var hit = G.ray(o, o + d * 600.0, G.L_WORLD | G.L_VEH)
+	if not hit.is_empty() and hit.collider.has_meta("vehicle"):
+		var hv = hit.collider.get_meta("vehicle")
+		if is_instance_valid(hv) and not hv.dead:
+			return hv
+	if not hit.is_empty():
+		var best = null
+		var bd = 1e9
+		for v in G.vehicles:
+			if v.dead or v.spec.get("static", false):
+				continue
+			var dd = G.dist2d(v.pos, hit.position)
+			if dd < v.spec["len"] * 0.5 + 0.6 and dd < bd:
+				bd = dd
+				best = v
+		return best
+	return null
+
+func _select_vehicle(v, add: bool) -> void:
+	if not add:
+		selection = []
+	for x in v.seats:
+		if x != null and is_instance_valid(x) and x.state == "riding" and not x.is_player and not (x in selection):
+			selection.append(x)
+	sel_vehicle = v
+	G.ui.show_vehicle(v)
+
+var sel_vehicle = null
+
 func _finish_select(add: bool) -> void:
 	if not add:
 		selection = []
+		sel_vehicle = null
 	var a: Vector2 = drag_from
 	var b: Vector2 = drag_to
 	if a.distance_to(b) < 6.0:
 		var o = cam.project_ray_origin(b)
 		var d = cam.project_ray_normal(b)
-		var s = pick_soldier(o, d)
+		var hit = G.ray(o, o + d * 600.0, G.L_WORLD)
+		var s = null
+		var direct = G.ray(o, o + d * 400.0, G.L_WORLD | G.L_BODY | G.L_VEH)
+		if not direct.is_empty() and direct.collider.has_meta("soldier"):
+			s = direct.collider.get_meta("soldier")
+		# a vehicle: click its hull (or a man sitting in it) to take the whole crew and its troops
+		var v = null
+		if s != null and s.state == "riding" and s.vehicle != null:
+			v = s.vehicle
+		elif s == null:
+			v = pick_vehicle(o, d)
+		if v != null and v.team == (0 if G.mode == "commander" or G.mode != "sandbox" else v.team) and not v.spec.get("static", false):
+			_select_vehicle(v, add)
+			if selection.is_empty():
+				G.ui.message("The %s is empty" % v.spec["name"].to_lower())
+			else:
+				G.ui.message("%s selected (%d aboard) · right-click to drive there" % [v.spec["name"], selection.size()])
+			return
+		if s == null:
+			s = pick_soldier(o, d)
+			if s != null and s.state == "riding":
+				s = null
 		if s == null and rts:
 			# from up high, a click near a soldier counts
-			var hit = G.ray(o, o + d * 600.0, G.L_WORLD)
 			if not hit.is_empty():
 				var bd = 4.0
 				for c in G.soldiers:
-					if c.state != "dead" and c.team == (0 if G.mode == "commander" else c.team):
+					if c.state != "dead" and c.state != "riding" and _sel_team_ok(c):
 						var dd = G.dist2d(c.pos, hit.position)
 						if dd < bd:
 							bd = dd
 							s = c
-		if s != null and s.state != "dead":
+		if s != null and s.state != "dead" and _sel_team_ok(s):
+			G.ui.hide_info()
 			if rts and s.squad != null:
-				# commander view: a click takes the whole squad
+				# commander view: a click takes the men of that squad who are on foot nearby
 				for m in s.squad["members"]:
-					if is_instance_valid(m) and m.state != "dead" and not (m in selection):
+					if is_instance_valid(m) and m.state != "dead" and m.state != "riding" and G.dist2d(m.pos, s.pos) < 40.0 and not (m in selection):
 						selection.append(m)
 			elif s in selection:
 				selection.erase(s)
 			else:
 				selection.append(s)
+		elif s == null and not hit.is_empty():
+			# a structure: say what it is and what can be done with it
+			var st = Build.site_at(hit.position, 0.3)
+			if st != null:
+				G.ui.show_site(st)
+				return
+			G.ui.hide_info()
 	else:
+		G.ui.hide_info()
 		var r = Rect2(Vector2(minf(a.x, b.x), minf(a.y, b.y)), (a - b).abs())
 		for s in G.soldiers:
-			if s.state == "dead" or cam.is_position_behind(s.chest()) or (G.mode == "commander" and s.team != 0):
+			if s.state == "dead" or s.is_player or cam.is_position_behind(s.chest()) or not _sel_team_ok(s):
 				continue
 			if r.has_point(cam.unproject_position(s.chest())) and not (s in selection):
 				selection.append(s)
@@ -1057,8 +1139,16 @@ func _order_move(screen: Vector2) -> void:
 		return
 	var p: Vector3 = hit.position
 	var n = 0
+	var vs = []
 	for s in selection:
 		if not is_instance_valid(s) or s.state == "dead":
+			continue
+		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
+			# riders: their vehicle drives there and they stay aboard until told to get out
+			var v = s.vehicle
+			if not (v in vs):
+				vs.append(v)
+			s.order = {"mode": "move", "point": p}
 			continue
 		# spread them out a little around the point
 		var off = Vector3((n % 4) - 1.5, 0, int(n / 4) - 1.0) * 2.0
@@ -1067,18 +1157,78 @@ func _order_move(screen: Vector2) -> void:
 		if s.cover != null:
 			AI.release_cover(s)
 		n += 1
+	var k = 0
+	for v in vs:
+		# several vehicles: park side by side rather than on the same spot
+		var off2 = Vector3((k % 3) - 1.0, 0, int(k / 3)) * 9.0 if vs.size() > 1 else Vector3.ZERO
+		v.command(p + off2)
+		k += 1
 	G.fx.order_marker(p)
-	G.ui.message("Moving %d soldier%s" % [n, "" if n == 1 else "s"])
+	var parts = []
+	if n > 0:
+		parts.append("%d soldier%s" % [n, "" if n == 1 else "s"])
+	if not vs.is_empty():
+		parts.append("%d vehicle%s" % [vs.size(), "" if vs.size() == 1 else "s"])
+	G.ui.message("Moving " + " and ".join(parts))
 
 func order_selected(mode: String) -> void:
+	if mode == "dismount":
+		dismount_selected(true)
+		return
 	for s in selection:
 		if is_instance_valid(s) and s.state != "dead":
 			s.order = null if mode == "free" else {"mode": mode, "point": s.pos}
 			s.decide_t = 0.0
+			if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle) and s.vehicle.driver() == s:
+				s.vehicle.cmd = null if mode == "free" else s.vehicle.pos
 	G.ui.message({"free": "Selected soldiers act on their own", "hold": "Selected soldiers hold their ground", "charge": "Selected soldiers charge!"}[mode])
+
+# get out of whatever they're riding in: troops only, or (troops=false) the crew as well
+func dismount_selected(troops: bool) -> void:
+	var vs = []
+	for s in selection:
+		if is_instance_valid(s) and s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle) and not (s.vehicle in vs):
+			vs.append(s.vehicle)
+	if sel_vehicle != null and is_instance_valid(sel_vehicle) and not (sel_vehicle in vs):
+		vs.append(sel_vehicle)
+	var n = 0
+	var got = []
+	for v in vs:
+		var any_pass = false
+		for i in range(v.seats.size()):
+			if v.seats[i] != null and v.spec["seats"][i]["role"] == "pass":
+				any_pass = true
+		for i in range(v.seats.size()):
+			var r = v.seats[i]
+			if r == null or not is_instance_valid(r) or r.is_player:
+				continue
+			var pas = v.spec["seats"][i]["role"] == "pass"
+			if (troops and any_pass and not pas) or (troops and not any_pass and not (r in selection)):
+				continue
+			r.dismount(false)
+			r.no_board_t = G.sim_time + 45.0
+			# off the truck and into a ring around it, then they wait for orders
+			r.order = {"mode": "hold", "point": r.vault["b"] if r.vault != null else r.pos}
+			r.decide_t = 0.0
+			got.append(r)
+			n += 1
+		if n > 0 and v.driver() != null:
+			G.fx.callout(v.driver(), G.pick(["Everybody out!", "Go, go, go!", "Out you get!"]))
+		if v.mission != null and v.mission.get("type", "") in ["deliver", "supply"] and v.mission.get("stage", 0) == 0:
+			v.mission["drop"] = v.pos
+	if n == 0:
+		G.ui.message("Nobody to get out (select a vehicle with troops aboard)")
+		return
+	selection = got
+	G.ui.message("%d soldier%s dismounting" % [n, "" if n == 1 else "s"])
+
+func dismantle_site(st: Dictionary) -> void:
+	Build.dismantle(st)
 
 func clear_selection() -> void:
 	selection = []
+	sel_vehicle = null
+	G.ui.hide_info()
 
 # when you're a squad leader (or anyone, really): your squad follows you around
 func _toggle_follow(s) -> void:
@@ -1111,14 +1261,24 @@ func _update_rings() -> void:
 		r.scale = Vector3(1, 0.3, 1)
 		add_child(r)
 		sel_rings.append(r)
+	# men on foot get a ring each; a vehicle gets one ring round the whole hull
+	var marks = []
+	var seen = []
+	for s in selection:
+		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
+			if not (s.vehicle in seen):
+				seen.append(s.vehicle)
+				marks.append([s.vehicle.pos, s.vehicle.spec["len"] * 0.55 + 0.4])
+		else:
+			var p: Vector3 = s.pos if s.state == "alive" else s.parts[0].global_position
+			marks.append([p, 1.0])
 	for i in range(sel_rings.size()):
 		var r = sel_rings[i]
-		if i < selection.size():
+		if i < marks.size():
 			r.visible = true
-			var s = selection[i]
-			var p: Vector3 = s.pos if s.state == "alive" or s.state == "riding" else s.parts[0].global_position
-			r.global_position = Vector3(p.x, p.y + 0.06, p.z)
-			var sc = 1.0 + (rts_dist / 30.0 if rts else 0.0)
+			var p: Vector3 = marks[i][0]
+			r.global_position = Vector3(p.x, G.world.ground_y(p.x, p.z) + 0.08 if marks[i][1] > 1.0 else p.y + 0.06, p.z)
+			var sc = marks[i][1] * (1.0 + (rts_dist / 30.0 if rts and marks[i][1] <= 1.0 else 0.0))
 			r.scale = Vector3(sc, 0.3, sc)
 		else:
 			r.visible = false

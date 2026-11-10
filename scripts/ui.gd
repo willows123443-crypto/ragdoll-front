@@ -10,7 +10,7 @@ const TIPS = {"s1": "Click the ground to drop in a soldier", "s5": "Click the gr
 	"camo": "Click a structure to throw a camouflage net over it (aircraft and artillery won't see it until the enemy gets close)",
 	"rep": "Click a damaged structure to have engineers repair it (anything destroyed is gone and has to be built again)",
 	"dis": "Click a structure, wall, building piece or emplacement to take it apart",
-	"bteam": "Click to change which team the next construction site is for","sel": "Click or drag a box to select soldiers (Shift adds), then right-click the ground to send them there",
+	"bteam": "Click to change which team the next construction site is for","sel": "Click soldiers, a vehicle or a structure (drag a box for several, Shift adds) · right-click the ground to send them",
 	"mvA": "Click to send the whole Alpha team to a point", "mvB": "Click to send the whole Bravo team to a point",
 	"a1": "Click the ground to drop in an Alpha soldier", "b1": "Click the ground to drop in a Bravo soldier",
 	"a5": "Click to drop in five Alpha soldiers", "b5": "Click to drop in five Bravo soldiers",
@@ -99,6 +99,7 @@ func _ready() -> void:
 	_build_help()
 	_build_win()
 	_build_command()
+	_build_info()
 	menu.visible = false
 	title.visible = true
 
@@ -285,7 +286,15 @@ const INSTANT = ["technical", "recon", "atgun", "heavytank", "paradrop", "heli",
 func _tabs() -> Array:
 	if G.mode == "commander":
 		return [["orders", "Orders"], ["recruit", "Recruit"], ["armour", "Vehicles"], ["support", "Fire support"], ["build", "Build"]]
-	return [["units", "Units"], ["vehicles", "Vehicles"], ["support", "Call-ins"], ["build", "Build"], ["command", "Command"], ["fun", "Effects"]]
+	if Rules.free_tools():
+		return [["units", "Units"], ["vehicles", "Vehicles"], ["support", "Call-ins"], ["build", "Build"], ["command", "Command"], ["fun", "Effects"]]
+	# a real battle: you command your own side, with what this mode gives it
+	var out = [["command", "Command"], ["units", "Soldiers"]]
+	if not Rules.callins(0).is_empty():
+		out.append(["support", "Call-ins"])
+	if not Rules.build(0).is_empty():
+		out.append(["build", "Build"])
+	return out
 
 # the cards on a tab: [id, title, cost line]
 func _cards(t: String) -> Array:
@@ -294,12 +303,14 @@ func _cards(t: String) -> Array:
 		"units":
 			out = [["s1", "Soldier", "click the ground"], ["s5", "Squad of five", "click the ground"], ["ctl", "Take control", "click a soldier · F"],
 				["sp", "Move spawn point", "where reinforcements arrive"]]
+			if not Rules.free_tools():
+				out = [["ctl", "Take control", "click one of your soldiers · F"]]
 		"vehicles":
 			for v in SB_VEH:
 				out.append(["v:" + v[0], v[1], "with crew"])
 		"support":
 			for k in (["recon", "artillery", "airstrike", "gunship", "fighter", "bomber"] if G.mode == "commander" else Support.COSTS.keys()):
-				if not Faction.support_ok(0, k):
+				if not Faction.support_ok(0, k) or not Rules.callin_ok(0, k):
 					continue
 				if not Support.unlocked(0, k):
 					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], Support.need_text(k)])
@@ -307,7 +318,7 @@ func _cards(t: String) -> Array:
 					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], "%d pts" % Support.COSTS[k] + ("" if k in INSTANT else " · click the map")])
 		"armour":
 			for k in ["jeep", "technical", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "atgun", "ambulance", "radar", "bridger"]:
-				if not Faction.support_ok(0, k):
+				if not Faction.support_ok(0, k) or not Rules.callin_ok(0, k):
 					continue
 				out.append(["sup:" + k, Support.NAMES[k], ("%d pts" % Support.COSTS[k]) if Support.unlocked(0, k) else Support.need_text(k)])
 		"recruit":
@@ -318,13 +329,16 @@ func _cards(t: String) -> Array:
 			out.append(["sup:paradrop", "Paratroopers ×6", ("%d pts" % Support.COSTS["paradrop"]) if Support.unlocked(0, "paradrop") else Support.need_text("paradrop")])
 			out.append(["sup:heli", "Heli assault ×6", ("%d pts" % Support.COSTS["heli"]) if Support.unlocked(0, "heli") else Support.need_text("heli")])
 		"build":
+			var can = Rules.build(G.pc._build_team())
 			for b in BUILD_LIST:
+				if not (b[0] in can):
+					continue
 				var c = Build.cost(b[0])
 				out.append(["b:" + b[0], b[1], ("%d pts" % c) if c > 0 else "%d s to build" % int(Build.KINDS[b[0]]["work"])])
 			out += [["up", "Upgrade", "click a structure"], ["camo", "Camo net", "click a structure"], ["rep", "Repair", "click a damaged structure"], ["dis", "Dismantle", "click anything built"]]
 		"command", "orders":
 			out = [["sel", "Select", "click or drag a box"], ["o:hold", "Hold", "selected soldiers"], ["o:charge", "Charge", "selected soldiers"],
-				["o:free", "Act freely", "selected soldiers"], ["o:clear", "Deselect", ""]]
+				["o:dismount", "Dismount", "troops out of vehicles"], ["o:free", "Act freely", "selected soldiers"], ["o:clear", "Deselect", ""]]
 			if t == "command":
 				out.append(["mv", "Send the side", "click a point"])
 			out += [["f:wedge", "Wedge", "formation"], ["f:line", "Line", "formation"], ["f:column", "Column", "formation"]]
@@ -402,7 +416,7 @@ func _render_tools() -> void:
 		b.add_theme_color_override("font_color", Color(0.08, 0.08, 0.08) if tab == key else Color(0.88, 0.9, 0.9))
 		b.add_theme_color_override("font_hover_color", Color(0.05, 0.05, 0.05) if tab == key else Color(1, 1, 1))
 		dock_tabs.add_child(b)
-	var sided = tab in ["units", "vehicles", "build", "command"] and G.mode != "commander"
+	var sided = tab in ["units", "vehicles", "build", "command"] and Rules.free_tools()
 	dock_side.visible = sided
 	if sided:
 		var bt = mini(build_team, G.team_count() - 1)
@@ -1175,6 +1189,8 @@ func _show_mode_info() -> void:
 		if id in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde", "general"]:
 			extra = "  (two sides only)"
 		mode_info.text = Obj.MODE_INFO.get(id, "") + extra
+		if id != "sandbox":
+			mode_info.text += "\n" + Rules.mode_text(id)
 
 # the title screen (and, during a battle, the pause menu)
 var title: Control
@@ -1435,6 +1451,7 @@ func _perf(dt: float) -> void:
 
 func update_hud(dt: float) -> void:
 	_perf(dt)
+	_info_tick(dt)
 	if vignette != null:
 		var want = 0.0
 		if G.player != null and is_instance_valid(G.player) and G.player.state != "dead":
@@ -1866,6 +1883,7 @@ func _build_command() -> void:
 	for m in [["free", "Free"], ["hold", "Hold"], ["charge", "Charge"]]:
 		var mode = m[0]
 		h2.add_child(_button(m[1], func(): G.pc.order_selected(mode)))
+	h2.add_child(_button("Dismount", func(): G.pc.dismount_selected(true)))
 	h2.add_child(_button("Clear", func(): G.pc.clear_selection()))
 	v.add_child(h2)
 	var h3 = HBoxContainer.new()
@@ -1942,3 +1960,175 @@ func radio(team: int, text: String) -> void:
 		var n = wr.get_ref()
 		if n != null:
 			n.queue_free())
+
+# ---------------------------------------------------------------- what you clicked: a structure or a vehicle
+var info: PanelContainer = null
+var info_title: Label
+var info_body: Label
+var info_btns: HBoxContainer
+var info_obj: Dictionary = {}
+var info_t = 0.0
+var info_key = ""
+
+func _build_info() -> void:
+	info = _panel(Color(0.07, 0.08, 0.09, 0.92))
+	_place(info, Control.PRESET_TOP_LEFT, 12, 70, 300, 10)
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 5)
+	var head = HBoxContainer.new()
+	info_title = _label("", 18, Color(1.0, 0.88, 0.45))
+	info_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(info_title)
+	head.add_child(_button("✕", func(): hide_info()))
+	v.add_child(head)
+	info_body = _label("", 13, Color(0.85, 0.88, 0.9))
+	info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info_body.custom_minimum_size = Vector2(276, 0)
+	v.add_child(info_body)
+	info_btns = HBoxContainer.new()
+	info_btns.add_theme_constant_override("separation", 4)
+	v.add_child(info_btns)
+	info.add_child(v)
+	info.visible = false
+	root.add_child(info)
+
+func show_site(st: Dictionary) -> void:
+	info_obj = {"site": st}
+	info_key = ""
+	info_t = 0.0
+	_info_tick(0.0)
+
+func show_vehicle(v) -> void:
+	info_obj = {"veh": v}
+	info_key = ""
+	info_t = 0.0
+	_info_tick(0.0)
+
+func hide_info() -> void:
+	info_obj = {}
+	if info != null:
+		info.visible = false
+
+func _info_button(t: String, cb: Callable) -> void:
+	var b = _button(t, cb)
+	b.add_theme_font_size_override("font_size", 13)
+	info_btns.add_child(b)
+
+func _info_tick(dt: float) -> void:
+	if info == null:
+		return
+	if info_obj.is_empty() or not G.started:
+		info.visible = false
+		return
+	info_t -= dt
+	if info_t > 0.0:
+		return
+	info_t = 0.25
+	var title = ""
+	var body = ""
+	var key = ""
+	var btns = []
+	if info_obj.has("site"):
+		var st: Dictionary = info_obj["site"]
+		if not (st in Build.sites):
+			hide_info()
+			return
+		var mine = st["team"] == 0 or (G.mode != "commander" and G.mode == "sandbox")
+		title = st["name"]
+		var lost = 0
+		for c in st["cols"]:
+			if not c.alive:
+				lost += 1
+		var dmg = Build.damage(st)
+		if st["dead"]:
+			body = "Destroyed"
+		elif not st["done"]:
+			body = "Being built: %d%%  (%d engineer%s working)" % [int(100.0 * st["work"] / maxf(1.0, st["need"])), Build.helpers(st), "" if Build.helpers(st) == 1 else "s"]
+		else:
+			body = "Condition: %d%%" % int(100.0 * (1.0 - dmg))
+		body += "\n" + G.TEAM_NAMES[st["team"]] + ("" if st["team"] == 0 or G.mode == "sandbox" else " · enemy structure")
+		body += "\n" + Build.DESCR.get(st["kind"], "")
+		if st.get("camo", false):
+			body += "\nUnder a camouflage net"
+		key = "s%d%d%d%d" % [int(st["done"]), int(st["dead"]), int(dmg > 0.01), lost]
+		if mine:
+			if st["done"] and dmg > 0.01:
+				btns.append(["Repair", func(): _site_act("rep")])
+			if st["kind"] != "hq":
+				btns.append(["Dismantle", func(): _site_act("dis")])
+			if st["done"] and Build.UPGRADES.has(st["kind"]):
+				btns.append(["Upgrade", func(): _site_act("up")])
+			if st["done"] and not st.get("camo", false):
+				btns.append(["Camo net", func(): _site_act("camo")])
+		elif st["kind"] == "wire":
+			body += "\n(cut it with a soldier: walk up and press I)"
+	elif info_obj.has("veh"):
+		var v = info_obj["veh"]
+		if not is_instance_valid(v) or v.dead or not (v in G.vehicles):
+			hide_info()
+			return
+		title = v.spec["name"]
+		var crew = 0
+		var pas = 0
+		for i in range(v.seats.size()):
+			if v.seats[i] != null:
+				if v.spec["seats"][i]["role"] == "pass":
+					pas += 1
+				else:
+					crew += 1
+		body = "Condition: %d%%\nCrew %d · troops aboard %d" % [int(100.0 * v.hp / maxf(1.0, v.spec["hp"])), crew, pas]
+		if v.cmd != null:
+			body += "\nDriving to the marked point"
+		body += "\nRight-click the ground to drive there"
+		key = "v%d%d" % [pas, crew]
+		if pas > 0:
+			btns.append(["Dismount troops", func(): G.pc.dismount_selected(true)])
+		if crew > 0:
+			btns.append(["Crew out", func(): G.pc.dismount_selected(false)])
+		if v.cmd != null:
+			btns.append(["Stop", func():
+				if is_instance_valid(v):
+					v.cmd = v.pos
+				message("%s stopping" % v.spec["name"])
+				info_key = ""])
+	info.visible = true
+	info_title.text = title
+	info_body.text = body
+	if key != info_key:
+		info_key = key
+		for c in info_btns.get_children():
+			c.queue_free()
+		for b in btns:
+			_info_button(b[0], b[1])
+	info.reset_size()
+
+func _site_act(what: String) -> void:
+	if not info_obj.has("site"):
+		return
+	var st: Dictionary = info_obj["site"]
+	if not (st in Build.sites):
+		hide_info()
+		return
+	match what:
+		"rep":
+			var r = Build.repair(st)
+			message(r)
+		"dis":
+			var nm = st["name"]
+			var back = Build.refund(st)
+			G.pc.dismantle_site(st)
+			if back > 0:
+				Support.points[st["team"]] += back
+			message("Dismantled the %s%s" % [nm, (" (+%d pts back)" % back) if back > 0 else ""])
+			hide_info()
+		"up":
+			var ns = Build.upgrade(st)
+			if ns == null:
+				message("Nothing to upgrade")
+			else:
+				show_site(ns)
+		"camo":
+			Build.add_camo(st)
+			message("Camouflage net over the %s" % st["name"])
+	info_key = ""
+	info_t = 0.0

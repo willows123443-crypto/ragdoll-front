@@ -15,7 +15,7 @@ const SPECS = {
 	"truck": {"name": "Truck", "len": 7.2, "wid": 2.5, "speed": 11.0, "rev": 4.0, "accel": 4.5, "turn": 1.0, "hp": 650.0,
 		"bullet": 0.3, "tracked": false, "standoff": 0.0,
 		"seats": [
-			{"o": Vector3(0.5, 1.75, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.5, 1.6, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
 			{"o": Vector3(0.8, 1.62, -0.1), "role": "pass", "pose": "sit", "face": -PI / 2.0},
 			{"o": Vector3(-0.8, 1.62, -0.1), "role": "pass", "pose": "sit", "face": PI / 2.0},
 			{"o": Vector3(0.8, 1.62, -1.0), "role": "pass", "pose": "sit", "face": -PI / 2.0},
@@ -51,9 +51,9 @@ const SPECS = {
 	"technical": {"name": "Technical", "len": 4.9, "wid": 2.0, "speed": 15.0, "rev": 5.0, "accel": 7.0, "turn": 1.4, "hp": 460.0,
 		"bullet": 0.4, "tracked": false, "standoff": 34.0,
 		"seats": [
-			{"o": Vector3(0.45, 1.15, 0.6), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.45, 0.9, 0.45), "role": "driver", "pose": "sit", "face": 0.0},
 			{"o": Vector3(0.0, 1.75, -1.25), "role": "gunner", "pose": "stand", "face": 0.0, "turret": true},
-			{"o": Vector3(-0.45, 1.15, 0.6), "role": "pass", "pose": "sit", "face": 0.0},
+			{"o": Vector3(-0.45, 0.9, 0.45), "role": "pass", "pose": "sit", "face": 0.0},
 			{"o": Vector3(0.6, 1.25, -1.9), "role": "pass", "pose": "sit", "face": -PI / 2.0},
 			{"o": Vector3(-0.6, 1.25, -1.9), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
 	"atgun": {"name": "Anti-tank gun", "len": 3.8, "wid": 2.0, "speed": 1.5, "rev": 1.0, "accel": 1.2, "turn": 0.4, "hp": 520.0,
@@ -74,13 +74,13 @@ const SPECS = {
 	"heli": {"name": "Transport helicopter", "len": 11.0, "wid": 3.0, "speed": 26.0, "rev": 8.0, "accel": 8.0, "turn": 1.0, "hp": 700.0,
 		"bullet": 0.3, "tracked": false, "standoff": 0.0, "air": true,
 		"seats": [
-			{"o": Vector3(0.5, 1.55, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
-			{"o": Vector3(0.7, 1.4, 0.6), "role": "pass", "pose": "sit", "face": -PI / 2.0},
-			{"o": Vector3(-0.7, 1.4, 0.6), "role": "pass", "pose": "sit", "face": PI / 2.0},
-			{"o": Vector3(0.7, 1.4, -0.3), "role": "pass", "pose": "sit", "face": -PI / 2.0},
-			{"o": Vector3(-0.7, 1.4, -0.3), "role": "pass", "pose": "sit", "face": PI / 2.0},
-			{"o": Vector3(0.7, 1.4, -1.2), "role": "pass", "pose": "sit", "face": -PI / 2.0},
-			{"o": Vector3(-0.7, 1.4, -1.2), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
+			{"o": Vector3(0.3, 1.15, 2.7), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.5, 1.0, 1.2), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.5, 1.0, 1.2), "role": "pass", "pose": "sit", "face": PI / 2.0},
+			{"o": Vector3(0.5, 1.0, 0.4), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.5, 1.0, 0.4), "role": "pass", "pose": "sit", "face": PI / 2.0},
+			{"o": Vector3(0.5, 1.0, -0.4), "role": "pass", "pose": "sit", "face": -PI / 2.0},
+			{"o": Vector3(-0.5, 1.0, -0.4), "role": "pass", "pose": "sit", "face": PI / 2.0}]},
 	"gunship": {"name": "Gunship", "len": 10.0, "wid": 2.4, "speed": 30.0, "rev": 8.0, "accel": 9.0, "turn": 1.2, "hp": 900.0,
 		"bullet": 0.2, "tracked": false, "standoff": 0.0, "air": true, "gun": "mg",
 		"seats": [
@@ -120,7 +120,7 @@ const SPECS = {
 	"ambulance": {"name": "Ambulance", "len": 7.2, "wid": 2.5, "speed": 12.0, "rev": 4.0, "accel": 5.0, "turn": 1.0, "hp": 550.0,
 		"bullet": 0.35, "tracked": false, "standoff": 0.0,
 		"seats": [
-			{"o": Vector3(0.5, 1.75, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.5, 1.6, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
 			{"o": Vector3(0.6, 1.6, -0.5), "role": "pass", "pose": "hidden", "face": 0.0},
 			{"o": Vector3(-0.6, 1.6, -0.5), "role": "pass", "pose": "hidden", "face": 0.0},
 			{"o": Vector3(0.6, 1.6, -2.0), "role": "pass", "pose": "hidden", "face": 0.0},
@@ -128,7 +128,7 @@ const SPECS = {
 	"radar": {"name": "Command truck", "len": 7.2, "wid": 2.5, "speed": 10.0, "rev": 4.0, "accel": 4.5, "turn": 1.0, "hp": 750.0,
 		"bullet": 0.3, "tracked": false, "standoff": 0.0,
 		"seats": [
-			{"o": Vector3(0.5, 1.75, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
+			{"o": Vector3(0.5, 1.6, 2.3), "role": "driver", "pose": "sit", "face": 0.0},
 			{"o": Vector3(0.0, 1.6, -1.0), "role": "pass", "pose": "hidden", "face": 0.0}]},
 	"tank": {"name": "Tank", "len": 6.6, "wid": 3.3, "speed": 7.5, "rev": 3.5, "accel": 3.5, "turn": 0.85, "hp": 1800.0,
 		"bullet": 0.0, "tracked": true, "standoff": 50.0,
@@ -200,6 +200,7 @@ var smoke_cd = 0.0
 var radar_t = 0.0
 var gun_heat = 0.0             # mounted machine guns overheat
 var supply_t = 0.0
+var cmd = null                 # the commander's move order: drive here and wait
 
 static var mats = {}
 
@@ -859,7 +860,7 @@ func _crew_tick(dt: float) -> void:
 		var best = null
 		var bd = 30.0
 		for s in G.soldiers:
-			if s.team == team and s.state == "alive" and not s.is_player and s.vehicle == null and s.task != "board" and not s.broken and s.vis_t == null:
+			if s.team == team and s.state == "alive" and not s.is_player and s.vehicle == null and s.task != "board" and not s.broken and s.vis_t == null and G.sim_time > s.no_board_t and s.order == null:
 				var dd = G.dist2d(s.pos, pos)
 				if dd < bd:
 					bd = dd
@@ -1012,6 +1013,18 @@ func remove() -> void:
 	queue_free()
 
 # ---------------------------------------------------------------- AI driving
+# the commander sends this vehicle somewhere: it drops whatever it was doing, drives there and waits
+func command(p: Vector3) -> void:
+	if spec.get("static", false) or spec.get("air", false) or dead:
+		return
+	if mission != null and mission.get("type", "") != "escort":
+		mission = null
+	cmd = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
+	path_t = 0.0
+	stuck_t = 0.0
+	if driver() != null and not driver().is_player:
+		G.fx.callout(driver(), G.pick(["Moving!", "On our way.", "Roger, driving."]))
+
 func _set_goal(p: Vector3) -> void:
 	if p.distance_to(goal) < 4.0 and path_t > 0.0 and not path.is_empty():
 		return
@@ -1047,6 +1060,10 @@ func _ai_drive(dt: float) -> Array:
 			return [0.0, 0.0]
 		if spec.get("boat", false):
 			return _steer_to(target, dt)
+	elif cmd != null:
+		target = cmd
+		if G.dist2d(cmd, pos) < 4.0 + spec["len"] * 0.25:
+			return [0.0, 0.0]
 	elif kind == "ambulance":
 		target = VehExt.medevac(self, dt)
 		if target == null:

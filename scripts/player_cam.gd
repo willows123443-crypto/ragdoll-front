@@ -306,6 +306,8 @@ func _rts_overlay() -> void:
 	var im: ImmediateMesh = rts_lines.mesh
 	im.clear_surfaces()
 	if not on:
+		for mk in dest_marks:
+			mk.visible = false
 		return
 	# one line per squad on foot (from where its men actually are) and one per vehicle (from the vehicle)
 	var team = 0
@@ -341,26 +343,97 @@ func _rts_overlay() -> void:
 			g["sel"] = true
 	im.surface_begin(Mesh.PRIMITIVE_LINES)
 	var any_line = false
+	var used = 0
+	var tnow = Time.get_ticks_msec() * 0.001
 	for key in glines:
 		var g = glines[key]
+		# only the units you have selected show where they're headed
+		if not g["sel"]:
+			continue
 		var c: Vector3 = g["c"] / g["n"]
 		var dest: Vector3 = g["d"] / g["n"]
-		if G.dist2d(c, dest) < 5.0:
+		if G.dist2d(c, dest) < 4.0:
 			continue
-		var col = Color(1.0, 0.85, 0.25, 0.95) if g["sel"] else Color(1, 1, 1, 0.3)
-		var a2 = c + Vector3(0, 1.0, 0)
-		var b2 = Vector3(dest.x, G.world.ground_y(dest.x, dest.z) + 1.0, dest.z)
-		im.surface_set_color(col); im.surface_add_vertex(a2)
-		im.surface_set_color(col); im.surface_add_vertex(b2)
-		# a cross where they're going
-		for e in [Vector3(1.5, 0, 1.5), Vector3(1.5, 0, -1.5)]:
-			im.surface_set_color(col); im.surface_add_vertex(b2 - e)
-			im.surface_set_color(col); im.surface_add_vertex(b2 + e)
+		var col = Color(1.0, 0.86, 0.3, 0.9)
+		var a2 = c + Vector3(0, 0.6, 0)
+		var b2 = Vector3(dest.x, G.world.ground_y(dest.x, dest.z) + 0.25, dest.z)
+		# a dashed line whose dashes run toward the destination
+		var L = a2.distance_to(b2)
+		var dir = (b2 - a2) / maxf(L, 0.01)
+		var ph = fmod(tnow * 4.0, 3.0)
+		var x = ph - 3.0
+		while x < L - 2.4:
+			var x0 = maxf(x, 0.0)
+			var x1 = minf(x + 1.6, L - 2.4)
+			if x1 > x0:
+				var fade = clampf(x0 / 3.0, 0.25, 1.0)
+				var cc = Color(col.r, col.g, col.b, col.a * fade)
+				im.surface_set_color(cc); im.surface_add_vertex(a2 + dir * x0)
+				im.surface_set_color(cc); im.surface_add_vertex(a2 + dir * x1)
+			x += 3.0
 		any_line = true
+		_dest_marker(used, b2, tnow)
+		used += 1
+	for i in range(used, dest_marks.size()):
+		dest_marks[i].visible = false
 	if not any_line:
 		im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
 		im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
 	im.surface_end()
+
+# where a selected group is going: a glowing ring on the ground with four arrowheads pointing in, gently pulsing
+var dest_marks: Array = []
+
+func _dest_marker(i: int, p: Vector3, t: float) -> void:
+	while dest_marks.size() <= i:
+		var n = Node3D.new()
+		var m = StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.albedo_color = Color(1.0, 0.86, 0.3, 0.85)
+		m.no_depth_test = true
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		var ring = MeshInstance3D.new()
+		var tm = TorusMesh.new()
+		tm.inner_radius = 1.25
+		tm.outer_radius = 1.45
+		tm.rings = 32
+		tm.ring_segments = 6
+		ring.mesh = tm
+		ring.scale = Vector3(1, 0.15, 1)
+		ring.material_override = m
+		n.add_child(ring)
+		var dot = MeshInstance3D.new()
+		var cm = CylinderMesh.new()
+		cm.top_radius = 0.22
+		cm.bottom_radius = 0.22
+		cm.height = 0.04
+		dot.mesh = cm
+		dot.material_override = m
+		n.add_child(dot)
+		for k in range(4):
+			var arw = MeshInstance3D.new()
+			var pm = PrismMesh.new()
+			pm.size = Vector3(0.55, 0.5, 0.04)
+			arw.mesh = pm
+			arw.material_override = m
+			var a = k * PI / 2.0
+			arw.position = Vector3(sin(a), 0, cos(a)) * 2.0
+			# lying flat, pointing at the centre
+			arw.rotation = Vector3(-PI / 2.0, a + PI, 0)
+			arw.set_meta("a", a)
+			n.add_child(arw)
+		add_child(n)
+		dest_marks.append(n)
+	var mk: Node3D = dest_marks[i]
+	mk.visible = true
+	mk.global_position = p
+	var pulse = 0.5 + 0.5 * sin(t * 4.0)
+	for ch in mk.get_children():
+		if ch.has_meta("a"):
+			var a: float = ch.get_meta("a")
+			ch.position = Vector3(sin(a), 0, cos(a)) * (1.9 + 0.35 * pulse)
+	mk.rotation.y = t * 0.6
 
 # control groups: Ctrl+number saves the selection, the number brings it back (twice to look at it)
 var groups = {}
@@ -1073,10 +1146,10 @@ func pick_vehicle(o: Vector3, d: Vector3):
 		var best = null
 		var bd = 1e9
 		for v in G.vehicles:
-			if v.dead or v.spec.get("static", false):
+			if v.dead:
 				continue
 			var dd = G.dist2d(v.pos, hit.position)
-			if dd < v.spec["len"] * 0.5 + 0.6 and dd < bd:
+			if dd < (2.2 if v.spec.get("static", false) else v.spec["len"] * 0.5 + 0.6) and dd < bd:
 				bd = dd
 				best = v
 		return best
@@ -1170,6 +1243,14 @@ func _order_move(screen: Vector2) -> void:
 	if hit.is_empty():
 		return
 	var p: Vector3 = hit.position
+	# right-click on one of our vehicles or guns: climb in / man it
+	var tv = pick_vehicle(o, d)
+	if tv != null and tv.team == 0 and not tv.dead and not tv.spec.get("air", false) and _order_board(tv):
+		return
+	# right-click on one of our unfinished or damaged structures: go and build / fix it
+	var st = Build.site_at(p, 1.5)
+	if st != null and st["team"] == 0 and not st["dead"] and (not st["done"] or Build.needs_repair(st)) and _order_build(st):
+		return
 	var n = 0
 	var vs = []
 	for s in selection:
@@ -1182,12 +1263,10 @@ func _order_move(screen: Vector2) -> void:
 				vs.append(v)
 			s.order = {"mode": "move", "point": p}
 			continue
-		# spread them out a little around the point
+		# spread them out a little around the point, and get going at once
 		var off = Vector3((n % 4) - 1.5, 0, int(n / 4) - 1.0) * 2.0
 		s.order = {"mode": "move", "point": p + off}
-		s.decide_t = 0.0
-		if s.cover != null:
-			AI.release_cover(s)
+		_obey(s, p + off)
 		n += 1
 	var k = 0
 	for v in vs:
@@ -1196,12 +1275,81 @@ func _order_move(screen: Vector2) -> void:
 		v.command(p + off2)
 		k += 1
 	G.fx.order_marker(p)
+	G.audio.radio_click()
 	var parts = []
 	if n > 0:
 		parts.append("%d soldier%s" % [n, "" if n == 1 else "s"])
 	if not vs.is_empty():
 		parts.append("%d vehicle%s" % [vs.size(), "" if vs.size() == 1 else "s"])
 	G.ui.message("Moving " + " and ".join(parts))
+
+# drop whatever they were doing and start moving now, instead of at the next decision
+func _obey(s, to: Vector3) -> void:
+	if s.state != "alive" or s.is_player:
+		return
+	if s.cover != null:
+		AI.release_cover(s)
+	if s.task in ["medic", "stretcher", "construct", "repair", "board", "fetch", "flee", "rout", "flank_move", "clear", "support"]:
+		if s.task == "stretcher":
+			return
+		if s.dragging != null:
+			s.dragging.dragger = null
+			s.dragging = null
+		s.task = null
+	s.route = null
+	s.flee = null
+	s.build_site = null if s.task != "construct" else s.build_site
+	s.prone_t = false
+	AI.go_to(s, G.main._free_spot(to) if G.world.inside_any(to.x, to.z, 0.4) else to, 5.0)
+	s.decide_t = 1.2
+	s.think = 0.0
+	s.set_meta("obey_t", G.sim_time)
+
+# selected men climb into a vehicle or man a gun, as many as there are free seats
+func _order_board(v) -> bool:
+	var free = 0
+	for i in range(v.seats.size()):
+		if v.seats[i] == null:
+			free += 1
+	if free == 0:
+		G.ui.message("%s is full" % v.spec["name"])
+		return true
+	var n = 0
+	for s in selection:
+		if n >= free:
+			break
+		if not is_instance_valid(s) or s.state != "alive" or s.vehicle != null or s.is_player:
+			continue
+		_obey(s, v.pos)
+		s.task = "board"
+		s.board_target = v
+		s.no_board_t = 0.0
+		s.order = {"mode": "hold", "point": v.pos}
+		n += 1
+	if n == 0:
+		return false
+	G.fx.order_marker(v.pos)
+	G.audio.radio_click()
+	G.ui.message("%d soldier%s heading for the %s" % [n, "" if n == 1 else "s", v.spec["name"].to_lower()])
+	return true
+
+# selected men go and work on a structure (anyone can build; engineers are quicker)
+func _order_build(st) -> bool:
+	var n = 0
+	for s in selection:
+		if not is_instance_valid(s) or s.state != "alive" or s.vehicle != null or s.is_player:
+			continue
+		_obey(s, st["p"])
+		s.order = {"mode": "hold", "point": Build.work_spot(st, s)}
+		ClassAI._start_construct(s, st)
+		s.set_meta("ordered_build", st)
+		n += 1
+	if n == 0:
+		return false
+	G.fx.order_marker(st["p"])
+	G.audio.radio_click()
+	G.ui.message("%d soldier%s sent to %s the %s" % [n, "" if n == 1 else "s", "build" if not st["done"] else "repair", st["name"].to_lower()])
+	return true
 
 func order_selected(mode: String) -> void:
 	if mode == "dismount":
@@ -1213,6 +1361,7 @@ func order_selected(mode: String) -> void:
 			s.decide_t = 0.0
 			if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle) and s.vehicle.driver() == s:
 				s.vehicle.cmd = null if mode == "free" else s.vehicle.pos
+	G.audio.radio_click()
 	G.ui.message({"free": "Selected soldiers act on their own", "hold": "Selected soldiers hold their ground", "charge": "Selected soldiers charge!"}[mode])
 
 # get out of whatever they're riding in: troops only, or (troops=false) the crew as well
@@ -1300,10 +1449,18 @@ func _update_rings() -> void:
 		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
 			if not (s.vehicle in seen):
 				seen.append(s.vehicle)
-				marks.append([s.vehicle.pos, s.vehicle.spec["len"] * 0.55 + 0.4])
+				marks.append([s.vehicle.pos, s.vehicle.spec["len"] * 0.55 + 0.4, s.vehicle.spec["name"].to_upper(), Color(0.85, 0.9, 1.0)])
 		else:
 			var p: Vector3 = s.pos if s.state == "alive" else s.parts[0].global_position
-			marks.append([p, 1.0])
+			var ct = CLASS_TAG.get(s.cls, ["", Color.WHITE])
+			marks.append([p, 1.0, ct[0], ct[1]])
+	_class_tags(marks)
+	# say what's in the selection when it changes
+	var sig = str(selection.size()) + str(seen.size())
+	if sig != sel_sig:
+		sel_sig = sig
+		if not selection.is_empty():
+			G.ui.message("Selected: " + _sel_summary())
 	for i in range(sel_rings.size()):
 		var r = sel_rings[i]
 		if i < marks.size():
@@ -1314,6 +1471,58 @@ func _update_rings() -> void:
 			r.scale = Vector3(sc, 0.3, sc)
 		else:
 			r.visible = false
+
+# what each kind of soldier is, shown over him while he's selected
+const CLASS_TAG = {"rifleman": ["RIFLE", Color(0.9, 0.92, 0.88)], "mg": ["MG", Color(1.0, 0.75, 0.35)], "medic": ["MEDIC", Color(1.0, 0.45, 0.45)],
+	"at": ["AT", Color(1.0, 0.55, 0.2)], "engineer": ["ENGINEER", Color(0.55, 0.85, 1.0)], "assault": ["ASSAULT", Color(0.95, 0.85, 0.4)],
+	"radio": ["RADIO", Color(0.6, 1.0, 0.6)], "sniper": ["SNIPER", Color(0.8, 0.7, 1.0)], "spotter": ["SPOTTER", Color(0.8, 0.7, 1.0)],
+	"officer": ["OFFICER", Color(1.0, 0.95, 0.6)]}
+const PLURAL = {"rifleman": ["rifleman", "riflemen"], "mg": ["machine gunner", "machine gunners"], "medic": ["medic", "medics"],
+	"at": ["anti-tank soldier", "anti-tank soldiers"], "engineer": ["engineer", "engineers"], "assault": ["assault trooper", "assault troopers"],
+	"radio": ["radio operator", "radio operators"], "sniper": ["sniper", "snipers"], "spotter": ["spotter", "spotters"], "officer": ["officer", "officers"]}
+var sel_tags: Array = []
+var sel_sig = ""
+
+func _class_tags(marks: Array) -> void:
+	var show = rts and G.player == null
+	while sel_tags.size() < marks.size():
+		var l = Label3D.new()
+		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		l.no_depth_test = true
+		l.fixed_size = true
+		l.pixel_size = 0.0011
+		l.font_size = 22
+		l.outline_size = 7
+		l.outline_modulate = Color(0, 0, 0, 0.85)
+		add_child(l)
+		sel_tags.append(l)
+	for i in range(sel_tags.size()):
+		var l: Label3D = sel_tags[i]
+		if show and i < marks.size() and marks[i][2] != "":
+			l.visible = true
+			l.text = marks[i][2]
+			l.modulate = marks[i][3]
+			var p: Vector3 = marks[i][0]
+			l.global_position = p + Vector3(0, 2.4 if marks[i][1] <= 1.0 else 3.6, 0)
+		else:
+			l.visible = false
+
+func _sel_summary() -> String:
+	var n = {}
+	var veh = []
+	for s in selection:
+		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
+			if not (s.vehicle in veh):
+				veh.append(s.vehicle)
+			continue
+		n[s.cls] = n.get(s.cls, 0) + 1
+	var parts = []
+	for k in n:
+		var nm = PLURAL.get(k, [k, k + "s"])
+		parts.append("%d %s" % [n[k], nm[0] if n[k] == 1 else nm[1]])
+	for v in veh:
+		parts.append(v.spec["name"].to_lower())
+	return ", ".join(parts)
 
 # B: whatever your class is good at
 func _class_action(s) -> void:

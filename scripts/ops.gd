@@ -14,7 +14,9 @@ static var seen_armour: Array = [0, 0, 0, 0]
 static var shelled: Array = [0, 0, 0, 0]
 static var their_lane: Array = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
 static var tick = 0.0
-static var events = {"weak": 0, "barrage": 0, "smoke": 0, "escort": 0, "tank_wait": 0}
+static var raids: Array = [null, null, null, null]
+static var raid_cd: Array = [0.0, 0.0, 0.0, 0.0]
+static var events = {"weak": 0, "barrage": 0, "smoke": 0, "escort": 0, "tank_wait": 0, "raid": 0}
 
 static func reset() -> void:
 	lane_off = [Vector3.ZERO, Vector3.ZERO, Vector3.ZERO, Vector3.ZERO]
@@ -23,6 +25,8 @@ static func reset() -> void:
 	shelled = [0, 0, 0, 0]
 	their_lane = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
 	tick = 0.0
+	raids = [null, null, null, null]
+	raid_cd = [90.0, 90.0, 90.0, 90.0]
 	for k in events:
 		events[k] = 0
 
@@ -131,6 +135,7 @@ static func step(dt: float) -> void:
 								m.decide_t = 0.0
 		if ai_side(t):
 			_escorts(t)
+			_raids(t)
 		_learn(t)
 
 # one infantry squad walks with each tank or armoured car
@@ -147,7 +152,7 @@ static func _escorts(team: int) -> void:
 			q = null
 			var bd = 90.0
 			for o in G.squads:
-				if o["team"] != team or o.get("guard", false) or o.get("escorting") != null:
+				if o["team"] != team or o.get("guard", false) or o.get("escorting") != null or o.get("raiding", false):
 					continue
 				var L = Squad.leader_of(o)
 				if L == null or not is_instance_valid(L) or L.is_player:
@@ -163,6 +168,20 @@ static func _escorts(team: int) -> void:
 			events["escort"] += 1
 		# walk a little behind and to the side of it, and go after anyone with a rocket near it
 		q["cmd"] = {"job": "escort", "p": v.pos - v.forward() * 7.0 + Vector3(cos(v.yaw), 0, -sin(v.yaw)) * 4.0, "t": G.sim_time + 2.0}
+		# quiet and the tank is rolling slowly: climb up on the engine deck and ride (they jump off at the first shot)
+		if absf(v.speed) > 0.3 and absf(v.speed) < 3.0 and G.sim_time - v.hit_t > 20.0 and v.kind == "tank" and randf() < 0.1:
+			var free = []
+			for i in range(v.seats.size()):
+				if v.seats[i] == null and v.spec["seats"][i].get("rider", false):
+					free.append(i)
+			for m in q["members"]:
+				if free.is_empty():
+					break
+				if is_instance_valid(m) and m.state == "alive" and m.vehicle == null and m.vis_t == null and m.task == null \
+						and G.sim_time > m.no_board_t and G.dist2d(m.pos, v.pos) < 10.0 and not m.is_player:
+					m.task = "board"
+					m.board_target = v
+					free.pop_front()
 		for e in G.soldiers:
 			if e.team != team and e.state == "alive" and (e.W["rocket"] or e.fausts > 0) and G.dist2d(e.pos, v.pos) < 50.0:
 				var crew = v.driver()
@@ -238,3 +257,50 @@ static func favourite_lane(team: int):
 			var to = G.flat(G.world.capture - home).normalized()
 			return home + to * 40.0 + Vector3(to.z, 0, -to.x) * (-1.0 if i == 0 else 1.0) * 26.0
 	return null
+
+# commander mode: a squad slips out to lie in wait along the road the enemy's supply convoys use
+static func _raids(team: int) -> void:
+	if G.mode != "commander":
+		return
+	var r = raids[team]
+	if r != null:
+		var q = r["q"]
+		if not (q in G.squads) or Squad.leader_of(q) == null or G.sim_time > r["until"]:
+			if q in G.squads:
+				q.erase("raiding")
+			raids[team] = null
+			return
+		q["cmd"] = {"job": "defend", "p": r["p"], "t": G.sim_time + 2.0}
+		return
+	if G.sim_time < raid_cd[team]:
+		return
+	var foe = 1 - team if team < 2 else 0
+	var dumps = Build.sites.filter(func(st): return st["team"] == foe and st["kind"] == "supply" and Build.alive(st))
+	if dumps.is_empty():
+		return
+	raid_cd[team] = G.sim_time + randf_range(150.0, 220.0)
+	var dump = G.pick(dumps)
+	var start = Reinforce.entry_point(foe)
+	var to = G.flat(dump["p"] - start)
+	var perp = Vector3(to.z, 0, -to.x).normalized() * (1.0 if randf() < 0.5 else -1.0)
+	var ambush = G.main._free_spot(start + to * randf_range(0.3, 0.55) + perp * randf_range(9.0, 15.0))
+	var best = null
+	var bd = 1e9
+	for q in G.squads:
+		if q["team"] != team or q.get("guard", false) or q.get("crew", false) or q.get("escorting") != null or q.get("follow", false):
+			continue
+		var L = Squad.leader_of(q)
+		if L == null or not is_instance_valid(L) or q["members"].size() < 3:
+			continue
+		var d = G.dist2d(L.pos, ambush)
+		if d < bd:
+			bd = d
+			best = q
+	if best == null:
+		return
+	best["raiding"] = true
+	raids[team] = {"q": best, "p": ambush, "until": G.sim_time + 160.0}
+	events["raid"] += 1
+	var L2 = Squad.leader_of(best)
+	if L2 != null:
+		G.fx.callout(L2, G.pick(["We hit their supply trucks. Move out.", "Ambush on the supply road, let's go.", "Their convoys come this way. We wait for them."]))

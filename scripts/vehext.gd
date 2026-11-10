@@ -6,9 +6,13 @@ extends RefCounted
 # ---------------------------------------------------------------- planes
 static func plane_step(v, dt: float) -> void:
 	var gy = G.world.ground_y(v.pos.x, v.pos.z)
-	if v.rotor != null:
+	if v.rotor != null and not v.has_meta("crashed"):
 		v.rotor.rotation.z += dt * (45.0 if not v.dead else 6.0)
 	var cur: Vector3 = v.get_meta("dir", v.forward())
+	if v.dead and v.has_meta("crashed"):
+		burn_fx(v, dt)
+		v.alt = 0.0
+		return
 	if v.dead:
 		# going down in a spiral, trailing smoke
 		v.air_vel.y -= 14.0 * dt
@@ -17,17 +21,19 @@ static func plane_step(v, dt: float) -> void:
 		if v.air_vel.length() > 0.5:
 			cur = v.air_vel.normalized()
 		_orient(v, cur, v.roll)
-		if v.pos.y <= gy + 0.6 and not v.has_meta("crashed"):
+		damage_trail(v)
+		burn_fx(v, dt)
+		if v.pos.y <= gy + 0.6:
 			v.set_meta("crashed", true)
-			v.pos.y = gy + 0.3
 			v.air_vel = Vector3.ZERO
 			Combat.explode(v.pos + Vector3(0, 1, 0), null, 1.4)
-		if v.has_meta("crashed"):
-			v.pos.y = gy + 0.3
-			v.air_vel = Vector3.ZERO
+			crash_wreck(v)
+			v.alt = 0.0
+			return
 		v.alt = maxf(0.0, v.pos.y - gy)
 		return
 	damage_trail(v)
+	burn_fx(v, dt)
 	var want: Vector3 = cur
 	var thr = 0.75
 	var fire = false
@@ -274,28 +280,99 @@ static func damage_trail(v) -> void:
 		_trail(v, Color(0.1, 0.09, 0.08, 0.8), 1.2, 5.0)
 		var fl = OmniLight3D.new()
 		fl.light_color = Color(1.0, 0.55, 0.2)
-		fl.light_energy = 2.0
-		fl.omni_range = 6.0
+		fl.light_energy = 3.0
+		fl.omni_range = 10.0
 		v.add_child(fl)
-		fl.position = Vector3(0, 0.3, 1.5)
-		var fire = CPUParticles3D.new()
-		fire.amount = 24
-		fire.lifetime = 0.35
-		fire.direction = Vector3(0, 0.3, -1)
-		fire.spread = 15.0
-		fire.initial_velocity_min = 2.0
-		fire.initial_velocity_max = 4.0
-		fire.gravity = Vector3.ZERO
-		fire.mesh = QuadMesh.new()
-		fire.material_override = G.fx.billboard_mat(Color(1, 1, 1, 1), true)
-		fire.color = Color(1.0, 0.6, 0.15, 0.9)
-		fire.scale_amount_min = 0.5
-		fire.scale_amount_max = 1.0
-		fire.local_coords = true
-		fire.preprocess = fire.lifetime
-		v.add_child(fire)
-		fire.position = Vector3(0, 0.3, 1.2)
-		fire.emitting = true
+		fl.position = Vector3(0, 1.6, 2.5)
+		v.set_meta("fire_l", fl)
+
+# flames streaming back from the engine of a burning plane, flickering; and on the wreck once it's down
+static func burn_fx(v, dt: float) -> void:
+	if v.get_meta("trail", 0) < 2:
+		return
+	var fl = v.get_meta("fire_l") if v.has_meta("fire_l") else null
+	var down = v.has_meta("crashed")
+	if down:
+		var wt: float = v.get_meta("wreck_t", 0.0) - dt
+		v.set_meta("wreck_t", wt)
+		if wt <= 0.0:
+			if fl != null and is_instance_valid(fl):
+				fl.queue_free()
+				v.remove_meta("fire_l")
+			return
+	if fl != null and is_instance_valid(fl):
+		fl.light_energy = randf_range(1.8, 5.0) * (0.6 if down else 1.0)
+	var cd: float = v.get_meta("flame_cd", 0.0) - dt
+	if cd > 0.0:
+		v.set_meta("flame_cd", cd)
+		return
+	v.set_meta("flame_cd", 0.16 if down else 0.05)
+	var f: Vector3 = v.global_transform.basis.z
+	if down:
+		var p = v.global_transform * Vector3(randf_range(-3.0, 3.0), 1.2, randf_range(-3.0, 3.5))
+		G.fx.flame_puff(p, Vector3(randf_range(-0.4, 0.4), randf_range(2.5, 4.0), randf_range(-0.4, 0.4)), randf_range(1.2, 2.2))
+	else:
+		var p = v.global_transform * Vector3(randf_range(-0.3, 0.3), 1.5, 3.2)
+		G.fx.flame_puff(p, -f * randf_range(3.0, 6.0) + Vector3(0, 1.0, 0), randf_range(1.6, 2.8))
+
+# a plane hitting the ground: it digs in nose down, a wing tears off, pieces scatter and the wreck burns
+static func crash_wreck(v) -> void:
+	var gy = G.world.ground_y(v.pos.x, v.pos.z)
+	var f = G.flat(v.get_meta("dir", v.forward()))
+	if f.length_squared() < 0.01:
+		f = Vector3(1, 0, 0)
+	f = f.normalized()
+	v.pos.y = gy - 0.25
+	var bs = Basis.looking_at(-f, Vector3.UP)
+	bs = bs.rotated(bs.x, 0.18).rotated(f, randf_range(-0.35, 0.35))
+	v.global_transform = Transform3D(bs, v.pos)
+	v.body.global_transform = v.global_transform
+	v.roll = 0.0
+	G.fx.decal(v.pos, 11.0, true)
+	G.fx.decal(v.pos - f * 6.0, 7.0, true)
+	var pc = Color(0.3, 0.3, 0.28)
+	for k in range(9):
+		G.fx.debris(v.pos + Vector3(randf_range(-2, 2), 1.5, randf_range(-2, 2)), f * randf_range(4.0, 14.0) + Vector3(randf_range(-6, 6), randf_range(4, 10), randf_range(-6, 6)), randf_range(0.3, 0.9), pc)
+	_wing_off(v, 1.0 if randf() < 0.5 else -1.0, f)
+	if v.get_meta("trail", 0) < 2:
+		v.set_meta("trail", 1)
+		damage_trail(v)
+	v.set_meta("trail", 2)
+	if not v.has_meta("fire_l"):
+		var fl = OmniLight3D.new()
+		fl.light_color = Color(1.0, 0.55, 0.2)
+		fl.omni_range = 12.0
+		v.add_child(fl)
+		fl.position = Vector3(0, 2.0, 0)
+		v.set_meta("fire_l", fl)
+	v.set_meta("wreck_t", 45.0)
+
+# the outer half of one wing comes away as its own piece of wreckage
+static func _wing_off(v, side: float, f: Vector3) -> void:
+	var parts = []
+	for m in v.get_children():
+		if m is MeshInstance3D and m.position.x * side > 1.7 and m.position.y < 2.0:
+			parts.append(m)
+	if parts.is_empty():
+		return
+	var rb = RigidBody3D.new()
+	rb.collision_layer = G.L_DEBRIS
+	rb.collision_mask = G.L_WORLD | G.L_DEBRIS
+	rb.mass = 60.0
+	G.fx.add_child(rb)
+	rb.global_transform = v.global_transform
+	var cs = CollisionShape3D.new()
+	var bx = BoxShape3D.new()
+	bx.size = Vector3(4.0, 0.3, 1.9)
+	cs.shape = bx
+	cs.position = Vector3(side * 3.0, 1.1, 0.5)
+	rb.add_child(cs)
+	for m in parts:
+		m.reparent(rb, true)
+	var right = v.global_transform.basis.x
+	rb.linear_velocity = right * side * randf_range(4.0, 8.0) + f * randf_range(3.0, 8.0) + Vector3(0, randf_range(4.0, 7.0), 0)
+	rb.angular_velocity = Vector3(randf_range(-3, 3), randf_range(-3, 3), randf_range(-3, 3))
+	G.fx.debris_list.append({"b": rb, "t": 200.0})
 
 static func _trail(v, c: Color, size: float, life: float) -> void:
 	var p = CPUParticles3D.new()
@@ -700,3 +777,70 @@ static func has_radar(team: int) -> bool:
 		if v.kind == "radar" and v.team == team and not v.dead:
 			return true
 	return false
+
+# ---------------------------------------------------------------- headlights and the mine plough
+# two lamps on the front, glowing, with a pale beam each; the nearest few get a real light (see Fx._torches)
+static func headlamps(v) -> Node3D:
+	var n = Node3D.new()
+	v.add_child(n)
+	var tracked: bool = v.spec["tracked"]
+	var y = 1.25 if tracked else (1.0 if v.kind in ["jeep", "technical", "motorbike"] else 1.1)
+	var z = v.spec["len"] * 0.5 + 0.02
+	var lamp_m = StandardMaterial3D.new()
+	lamp_m.albedo_color = Color(1.0, 0.95, 0.8)
+	lamp_m.emission_enabled = true
+	lamp_m.emission = Color(1.0, 0.93, 0.75)
+	lamp_m.emission_energy_multiplier = 3.0
+	var xs = [0.0] if v.kind == "motorbike" else [-v.spec["wid"] * 0.32, v.spec["wid"] * 0.32]
+	for x in xs:
+		var l = MeshInstance3D.new()
+		var cm = CylinderMesh.new()
+		cm.top_radius = 0.11
+		cm.bottom_radius = 0.11
+		cm.height = 0.06
+		l.mesh = cm
+		l.rotation.x = PI / 2.0
+		l.position = Vector3(x, y, z)
+		l.material_override = lamp_m
+		n.add_child(l)
+		if Soldier.beam_mat != null:
+			var beam = MeshInstance3D.new()
+			var bm = CylinderMesh.new()
+			bm.top_radius = 2.6
+			bm.bottom_radius = 0.1
+			bm.height = 10.0
+			bm.radial_segments = 14
+			bm.rings = 6
+			bm.cap_top = false
+			bm.cap_bottom = false
+			beam.mesh = bm
+			beam.rotation.x = PI / 2.0 + 0.12
+			beam.position = Vector3(x, y - 0.6, z + 5.0)
+			beam.material_override = Soldier.beam_mat
+			beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			n.add_child(beam)
+	var aim = Node3D.new()
+	aim.name = "aim"
+	aim.position = Vector3(0, y, z)
+	aim.rotation.x = -0.1
+	n.add_child(aim)
+	n.visible = false
+	return n
+
+# a rake of steel tines on arms out in front of the hull: it digs up mines and sets them off ahead of the tracks
+static func plough_blade(v) -> void:
+	var n = Node3D.new()
+	v.add_child(n)
+	var steel = VModel.mat(Color(0.22, 0.22, 0.2))
+	var z = v.spec["len"] * 0.5 + 0.9
+	var w = v.spec["wid"] + 0.2
+	VModel.box(null, n, Vector3(w, 0.22, 0.25), Vector3(0, 0.45, z), Color(0.22, 0.22, 0.2), {"b": 0.03, "m": steel})
+	for x in [-1.0, 1.0]:
+		VModel.box(null, n, Vector3(0.18, 0.18, 1.3), Vector3(x * v.spec["wid"] * 0.34, 0.75, z - 0.6), Color(0.22, 0.22, 0.2), {"b": 0.03, "m": steel, "rot": Vector3(-0.35, 0, 0)})
+	var k = 0
+	var tx = -w * 0.5 + 0.12
+	while tx < w * 0.5:
+		VModel.box(null, n, Vector3(0.08, 0.4, 0.1), Vector3(tx, 0.22, z + 0.1), Color(0.18, 0.18, 0.17), {"b": 0.01, "m": steel, "rot": Vector3(0.35, 0, 0)})
+		tx += 0.26
+		k += 1
+	v.set_meta("blade", n)

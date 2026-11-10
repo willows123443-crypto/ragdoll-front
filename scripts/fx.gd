@@ -328,6 +328,37 @@ func splash(pos: Vector3, size: float) -> void:
 	d.gravity = Vector3(0, -9.0, 0)
 	ripple(pos, size)
 
+# a column of white water thrown straight up by a shell, falling back as spray
+func water_column(pos: Vector3, power: float) -> void:
+	var d = _one_shot_smoke(pos, Color(0.9, 0.94, 0.96, 0.85), int(18 * power) + 6, 1.6, 0.9 * power, 2.6 * power, false)
+	d.direction = Vector3(0, 1, 0)
+	d.spread = 10.0
+	d.initial_velocity_min = 8.0 * power
+	d.initial_velocity_max = 14.0 * power
+	d.gravity = Vector3(0, -9.8, 0)
+
+# the white wake churned up behind a moving boat, left on the water where it was made
+func wake(pos: Vector3, back: Vector3, size: float) -> void:
+	var m = MeshInstance3D.new()
+	var qm = QuadMesh.new()
+	qm.size = Vector2(1.0, 1.0)
+	m.mesh = qm
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.95, 0.97, 1.0, 0.55)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.material_override = mat
+	m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(m)
+	m.global_position = pos + Vector3(0, 0.04, 0)
+	m.rotation = Vector3(-PI / 2.0, atan2(back.x, back.z), 0)
+	m.scale = Vector3(size, size * 1.4, 1)
+	var tw = m.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(m, "scale", Vector3(size * 3.2, size * 2.4, 1), 2.4)
+	tw.tween_property(mat, "albedo_color:a", 0.0, 2.4)
+	tw.chain().tween_callback(m.queue_free)
+
 func ripple(pos: Vector3, size: float) -> void:
 	var m = MeshInstance3D.new()
 	var tm = TorusMesh.new()
@@ -440,10 +471,13 @@ func _torches() -> void:
 	if torch_lights.is_empty():
 		for i in range(5):
 			var l = SpotLight3D.new()
-			l.light_color = Color(1.0, 0.95, 0.8)
+			l.light_color = Color(0.88, 0.93, 1.0)
 			l.light_energy = 0.0
-			l.spot_range = 22.0
-			l.spot_angle = 24.0
+			l.spot_range = 30.0
+			l.spot_angle = 28.0
+			# a bright centre that falls off softly to the edge, dimming with distance
+			l.spot_angle_attenuation = 2.4
+			l.spot_attenuation = 1.3
 			l.shadow_enabled = false
 			add_child(l)
 			torch_lights.append(l)
@@ -453,18 +487,62 @@ func _torches() -> void:
 	var lit = []
 	for s in G.soldiers:
 		if s.light_on and s.flashlight != null and s.flashlight.visible:
-			lit.append([s.pos.distance_squared_to(cam.global_position), s])
+			lit.append([s.pos.distance_squared_to(cam.global_position), s.flashlight, false])
+	for v in G.vehicles:
+		if v.lights_on and v.lamps != null and v.lamps.visible:
+			# headlights count as nearer: they light far more of the scene
+			lit.append([v.pos.distance_squared_to(cam.global_position) * 0.5, v.lamps.get_node("aim"), true])
 	lit.sort_custom(func(a, b): return a[0] < b[0])
 	for i in range(torch_lights.size()):
 		var l: SpotLight3D = torch_lights[i]
-		if i < lit.size() and lit[i][0] < 90.0 * 90.0:
-			var f: Node3D = lit[i][1].flashlight
+		if i < lit.size() and lit[i][0] < 110.0 * 110.0:
+			var f: Node3D = lit[i][1]
 			l.global_transform = f.global_transform * Transform3D(Basis(Vector3.UP, PI), Vector3.ZERO)
-			l.light_energy = 3.0
+			l.light_energy = 9.0 if lit[i][2] else 5.0
+			l.spot_range = 45.0 if lit[i][2] else 30.0
+			l.spot_angle = 34.0 if lit[i][2] else 28.0
 		else:
 			l.light_energy = 0.0
 
+# now and then a plane goes over, high up, belonging to someone else's war
+var amb_plane_t = 60.0
+var amb_planes: Array = []
+
+func _ambient_planes(dt: float) -> void:
+	if not G.started or G.over or G.world == null:
+		return
+	amb_plane_t -= dt
+	if amb_plane_t <= 0.0:
+		amb_plane_t = randf_range(70.0, 160.0)
+		var b: Rect2 = G.world.bounds
+		var c = Vector3(b.get_center().x, 0, b.get_center().y)
+		var a = randf() * TAU
+		var dir = Vector3(cos(a), 0, sin(a))
+		var R = maxf(b.size.x, b.size.y) * 0.5 + 350.0
+		var start = c - dir * R + Vector3(-dir.z, 0, dir.x) * randf_range(-80.0, 80.0) + Vector3(0, randf_range(150.0, 230.0), 0)
+		var n = randi_range(1, 3)
+		for k in range(n):
+			var pm = Reinforce._plane_mesh(randi() % 2)
+			var off = Vector3(-dir.z, 0, dir.x) * (k - (n - 1) * 0.5) * 22.0 - dir * k * 14.0
+			pm.global_position = start + off
+			pm.look_at(pm.global_position + dir, Vector3.UP)
+			amb_planes.append({"n": pm, "v": dir * randf_range(62.0, 75.0), "t": 0.0, "end": 2.0 * R / 62.0})
+	for i in range(amb_planes.size() - 1, -1, -1):
+		var p = amb_planes[i]
+		p["t"] += dt
+		if not is_instance_valid(p["n"]) or p["t"] > p["end"]:
+			if is_instance_valid(p["n"]):
+				p["n"].queue_free()
+			amb_planes.remove_at(i)
+			continue
+		p["n"].global_position += p["v"] * dt
+		p["e"] = p.get("e", 0.0) - dt
+		if p["e"] <= 0.0:
+			p["e"] = 0.3
+			G.audio.engine(p["n"].global_position, 0.8, true)
+
 func step(dt: float) -> void:
+	_ambient_planes(dt)
 	if G.main.is_night() or not torch_lights.is_empty():
 		_torches()
 	_step_casings(dt)
@@ -552,11 +630,39 @@ func clear_all() -> void:
 		if is_instance_valid(c["l"]):
 			c["l"].queue_free()
 	callouts.clear()
+	for p in amb_planes:
+		if is_instance_valid(p["n"]):
+			p["n"].queue_free()
+	amb_planes.clear()
+	amb_plane_t = randf_range(40.0, 90.0)
 
 # ---------------------------------------------------------------- speech bubbles
 func callout(s, text: String) -> void:
 	if not G.settings["callouts"] or s.callout_cd > 0.0 or s.zombie or Fog.hidden(s):
 		return
+	# supply and logistics crews just get on with it: no chatter over trucks and ambulances
+	var sv = s.vehicle
+	if sv != null and is_instance_valid(sv) and (sv.kind in ["truck", "ambulance", "radar", "bridger"] or (sv.mission != null and sv.mission.get("type", "") in ["supply", "escort"])):
+		return
+	# in a big fight only the nearest few get a speech bubble at once (your own squad always does)
+	var cam = get_viewport().get_camera_3d()
+	var mine = G.player != null and is_instance_valid(G.player) and s.squad != null and s.squad == G.player.squad
+	if cam != null and not mine and not s.is_player:
+		var d = cam.global_position.distance_to(s.pos)
+		var live = 0
+		var farther = null
+		for c in callouts:
+			if c["t"] > 0.4 and is_instance_valid(c["s"]):
+				live += 1
+				var dc = cam.global_position.distance_to(c["s"].pos)
+				if dc > d and (farther == null or dc > farther[1]):
+					farther = [c, dc]
+		if d > 75.0:
+			return
+		if live >= 4:
+			if farther == null:
+				return
+			farther[0]["t"] = 0.0      # make room: the farthest one goes
 	s.callout_cd = randf_range(4.0, 7.0)
 	text = Voice.flavour(s, text)
 	if callouts.size() >= 8:
@@ -590,22 +696,36 @@ func update_callouts(dt: float) -> void:
 
 # a short-lived marker where an order was given
 func order_marker(p: Vector3) -> void:
-	var r = MeshInstance3D.new()
-	var tm = TorusMesh.new()
-	tm.inner_radius = 1.6
-	tm.outer_radius = 1.9
-	r.mesh = tm
-	var m = StandardMaterial3D.new()
-	m.albedo_color = Color(1.0, 0.85, 0.25, 0.8)
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	r.material_override = m
-	r.scale = Vector3(1, 0.2, 1)
-	add_child(r)
-	r.global_position = p + Vector3(0, 0.1, 0)
-	var tw = r.create_tween()
-	tw.tween_property(r, "scale", Vector3(0.3, 0.2, 0.3), 1.2)
-	tw.tween_callback(r.queue_free)
+	# the click itself: a ring that snaps in to the spot and a ripple that spreads out and fades
+	var gy = G.world.ground_y(p.x, p.z)
+	var at = Vector3(p.x, maxf(p.y, gy) + 0.12, p.z)
+	for k in range(2):
+		var r = MeshInstance3D.new()
+		var tm = TorusMesh.new()
+		tm.inner_radius = 1.0
+		tm.outer_radius = 1.18
+		tm.rings = 32
+		tm.ring_segments = 6
+		r.mesh = tm
+		var m = StandardMaterial3D.new()
+		m.albedo_color = Color(1.0, 0.86, 0.3, 0.9)
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.no_depth_test = true
+		r.material_override = m
+		add_child(r)
+		r.global_position = at
+		var tw = r.create_tween()
+		tw.set_parallel(true)
+		if k == 0:
+			r.scale = Vector3(2.4, 0.15, 2.4)
+			tw.tween_property(r, "scale", Vector3(0.9, 0.15, 0.9), 0.25).set_ease(Tween.EASE_OUT)
+			tw.chain().tween_property(m, "albedo_color:a", 0.0, 0.5).set_delay(0.3)
+		else:
+			r.scale = Vector3(0.6, 0.15, 0.6)
+			tw.tween_property(r, "scale", Vector3(3.2, 0.15, 3.2), 0.6).set_ease(Tween.EASE_OUT)
+			tw.tween_property(m, "albedo_color:a", 0.0, 0.6)
+		tw.chain().tween_callback(r.queue_free)
 
 # a tongue of flame (flamethrowers, burning soldiers, burning hedges)
 var flame_mat: StandardMaterial3D = null

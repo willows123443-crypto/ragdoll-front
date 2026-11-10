@@ -142,17 +142,54 @@ static func _tick(t, dt: float) -> void:
 		t["done"] = true
 		G.fx.callout(a, G.pick(["Doc! Got one for you!", "Put him down here, gently.", "Made it!"]))
 
-# the wounded man lying on his back along the stretcher, head toward the front
+# the wounded man lying on his back along the stretcher, head toward the front: one hand pressed on his
+# wound, the other arm hanging over the side, head rolling, a knee drawn up
 static func _lay(w, c: Vector3, axis: Vector3) -> void:
 	var side = axis.cross(Vector3.UP).normalized()
-	# trunk and head: +y toward the head, +z (their back) down; limbs: +y toward the hand or foot, +z (front) up
+	var up = Vector3.UP
+	var tt = G.sim_time + w.seed_
+	# trunk and head: +y toward the head, +z (their back) down
 	var BT = Basis(-side, axis, Vector3.DOWN)
-	var BL = Basis(-side, -axis, Vector3.UP)
-	var offs = {0: [0.0, -0.1], 1: [0.0, 0.25], 2: [0.0, 0.62], 3: [-0.22, 0.36], 4: [-0.24, 0.06], 5: [0.22, 0.36], 6: [0.24, 0.06],
-		7: [-0.1, -0.35], 8: [-0.1, -0.8], 9: [0.1, -0.35], 10: [0.1, -0.8]}
-	for i in range(w.parts.size()):
-		var o = offs.get(i, [0.0, 0.0])
-		w.parts[i].global_transform = Transform3D(BT if i < 3 else BL, c - side * o[0] + axis * o[1])
+	w.parts[0].global_transform = Transform3D(BT, c - axis * 0.1)
+	w.parts[1].global_transform = Transform3D(BT, c + axis * 0.25 + up * 0.02)
+	var roll = 0.5 * (1.0 if w.id % 2 == 0 else -1.0) + sin(tt * 0.9) * 0.12
+	w.parts[2].global_transform = Transform3D(BT.rotated(axis, roll), c + axis * 0.63 + up * 0.03)
+	var lside = side            # the side his left arm is on
+	var shL = c + axis * 0.45 + lside * 0.22
+	var shR = c + axis * 0.45 - lside * 0.22
+	# left arm: along his side and over the edge, hanging down, swinging a little with the walk
+	var elL = shL - axis * 0.26 + lside * 0.12 - up * 0.02
+	var swing = sin(tt * 4.4) * 0.07
+	var hdL = elL + lside * 0.1 - up * 0.27 + axis * swing
+	_limb(w.parts[3], shL, elL)
+	_limb(w.parts[4], elL, hdL)
+	# right arm: hand pressed on the wound on his belly
+	var elR = shR - axis * 0.2 - lside * 0.06 + up * 0.14
+	var hdR = c + axis * 0.08 + up * 0.17 + lside * 0.04
+	_limb(w.parts[5], shR, elR)
+	_limb(w.parts[6], elR, hdR)
+	# legs: one straight, one knee drawn up
+	var hipL = c - axis * 0.18 + lside * 0.1
+	var hipR = c - axis * 0.18 - lside * 0.1
+	var knL = hipL - axis * 0.38 + up * 0.2
+	_limb(w.parts[7], hipL, knL)
+	_limb(w.parts[8], knL, knL - axis * 0.4 - up * 0.17)
+	var knR = hipR - axis * 0.45
+	_limb(w.parts[9], hipR, knR)
+	_limb(w.parts[10], knR, knR - axis * 0.44 + up * 0.02)
+
+# a limb part laid from one joint to the next (+y runs toward the hand or foot, +z faces up as best it can)
+static func _limb(b: RigidBody3D, p0: Vector3, p1: Vector3) -> void:
+	var y = p1 - p0
+	if y.length_squared() < 1e-6:
+		return
+	y = y.normalized()
+	var z = Vector3.UP - y * y.dot(Vector3.UP)
+	if z.length_squared() < 1e-4:
+		z = Vector3.FORWARD - y * y.dot(Vector3.FORWARD)
+	z = z.normalized()
+	var x = y.cross(z)
+	b.global_transform = Transform3D(Basis(x, y, z), (p0 + p1) * 0.5)
 
 static func _make_mesh(t) -> void:
 	var n = Node3D.new()

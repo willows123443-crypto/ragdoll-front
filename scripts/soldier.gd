@@ -491,6 +491,41 @@ func _kit(vest: Material, helm: Material) -> void:
 
 # each team wears a differently shaped helmet, with a band in the team colour
 func _helmet(head: Node3D, helm: Material, band: Material, cloth: Material) -> void:
+	var n0 = head.get_child_count()
+	_helmet_parts(head, helm, band, cloth)
+	for i in range(n0, head.get_child_count()):
+		head.get_child(i).set_meta("helmet", true)
+
+# knocked off when he goes down: the helmet comes away and rolls on the ground beside him
+func drop_helmet() -> void:
+	if parts.size() < 3:
+		return
+	var head: Node3D = parts[2]
+	var bits = []
+	for ch in head.get_children():
+		if ch.has_meta("helmet"):
+			bits.append(ch)
+	if bits.is_empty():
+		return
+	var rb = RigidBody3D.new()
+	rb.collision_layer = G.L_DEBRIS
+	rb.collision_mask = G.L_WORLD | G.L_DEBRIS
+	rb.mass = 1.2
+	var cs = CollisionShape3D.new()
+	var sp = SphereShape3D.new()
+	sp.radius = 0.15
+	cs.shape = sp
+	cs.position = Vector3(0, 0.1, 0)
+	rb.add_child(cs)
+	G.fx.add_child(rb)
+	rb.global_transform = head.global_transform
+	for b in bits:
+		b.reparent(rb, true)
+	rb.linear_velocity = head.linear_velocity + Vector3(randf_range(-1.5, 1.5), randf_range(1.0, 2.5), randf_range(-1.5, 1.5))
+	rb.angular_velocity = Vector3(randf_range(-6, 6), randf_range(-6, 6), randf_range(-6, 6))
+	G.fx.debris_list.append({"b": rb, "t": 150.0})
+
+func _helmet_parts(head: Node3D, helm: Material, band: Material, cloth: Material) -> void:
 	match team % 4:
 		0:  # round dome with a narrow rim
 			_hpart(head, "dome", Vector3(0.33, 0.5, 0.35), Vector3(0, 0.07, 0), helm)
@@ -647,8 +682,151 @@ func _fill_gun() -> void:
 			mi.rotation.x = p[7]
 		mi.layers = 2
 		mi.name = "p%d" % i
+		# machine gun bipod legs: hinged at the top so they can fold up under the barrel
+		if new_bipod(p):
+			mi.set_meta("leg", Vector3(p[0], p[1] + p[4] * 0.5, p[2]))
+			mi.set_meta("len", p[4])
 		gun_node.add_child(mi)
 		i += 1
+	bipod_k = 0.0
+	_pose_bipod()
+
+func new_bipod(p: Array) -> bool:
+	return wid in ["lmg", "atrifle"] and absf(p[3] - 0.015) < 0.001 and p[4] > 0.15 and absf(p[5] - 0.015) < 0.001
+
+var detector: Node3D = null
+
+# a sandbag or plank carried in both arms while building
+var carried: MeshInstance3D = null
+
+func carry_item(on: bool, kind: String, at: Vector3) -> void:
+	if not on:
+		if carried != null:
+			carried.queue_free()
+			carried = null
+		return
+	if carried == null or carried.get_meta("k", "") != kind:
+		if carried != null:
+			carried.queue_free()
+		carried = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.5, 0.2, 0.32) if kind == "bag" else Vector3(0.16, 0.07, 2.0)
+		carried.mesh = bm
+		carried.material_override = _mat("carry" + kind, Color(0.55, 0.5, 0.36) if kind == "bag" else Color(0.55, 0.42, 0.27), false)
+		carried.set_meta("k", kind)
+		G.fx.add_child(carried)
+	carried.global_position = at
+	carried.rotation = Vector3(0, body_yaw + (PI / 2.0 if kind == "plank" else 0.0), 0)
+	carried.set_meta("seen", G.sim_time)
+
+# hand tools: a shovel, a hammer, or a mine detector, from the grip to the working end
+var tool_node: Node3D = null
+
+func tool_at(kind: String, grip: Vector3, head: Vector3) -> void:
+	if kind == "detector":
+		detector_at(grip, head)
+		return
+	if tool_node == null or tool_node.get_meta("k", "") != kind:
+		if tool_node != null:
+			tool_node.queue_free()
+		tool_node = Node3D.new()
+		tool_node.set_meta("k", kind)
+		var pole = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.035, 1.0, 0.035)
+		pole.mesh = bm
+		pole.material_override = _mat("toolwood", Color(0.45, 0.33, 0.2), false)
+		pole.name = "pole"
+		tool_node.add_child(pole)
+		var hd = MeshInstance3D.new()
+		var hm = BoxMesh.new()
+		hm.size = Vector3(0.22, 0.03, 0.26) if kind == "shovel" else Vector3(0.06, 0.06, 0.16)
+		hd.mesh = hm
+		hd.material_override = _mat("toolsteel", Color(0.3, 0.3, 0.3), false)
+		hd.name = "head"
+		tool_node.add_child(hd)
+		G.fx.add_child(tool_node)
+	tool_node.visible = true
+	tool_node.set_meta("seen", G.sim_time)
+	var d = head - grip
+	var L = maxf(d.length(), 0.05)
+	var y = d / L
+	var x = y.cross(Vector3.UP).normalized() if absf(y.y) < 0.99 else Vector3.RIGHT
+	var z = x.cross(y)
+	(tool_node.get_node("pole") as MeshInstance3D).global_transform = Transform3D(Basis(x, y * L, z), (grip + head) * 0.5)
+	(tool_node.get_node("head") as MeshInstance3D).global_transform = Transform3D(Basis(x, y, z), head)
+
+# a mine detector: a pole from the hands down to a flat search head just above the ground
+func detector_at(grip: Vector3, head: Vector3) -> void:
+	if detector == null:
+		detector = Node3D.new()
+		var pole = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.03, 1.0, 0.03)
+		pole.mesh = bm
+		pole.material_override = _mat("det", Color(0.15, 0.15, 0.14), false)
+		pole.name = "pole"
+		detector.add_child(pole)
+		var disc = MeshInstance3D.new()
+		var cm = CylinderMesh.new()
+		cm.top_radius = 0.17
+		cm.bottom_radius = 0.17
+		cm.height = 0.035
+		disc.mesh = cm
+		disc.material_override = _mat("detd", Color(0.3, 0.32, 0.26), false)
+		disc.name = "disc"
+		detector.add_child(disc)
+		G.fx.add_child(detector)
+	detector.visible = true
+	detector.set_meta("seen", G.sim_time)
+	var pole: MeshInstance3D = detector.get_node("pole")
+	var d = head - grip
+	var L = d.length()
+	var y = d / maxf(L, 0.01)
+	var x = y.cross(Vector3.UP).normalized() if absf(y.y) < 0.99 else Vector3.RIGHT
+	var z = x.cross(y)
+	pole.global_transform = Transform3D(Basis(x, y * L, z), (grip + head) * 0.5)
+	var disc: MeshInstance3D = detector.get_node("disc")
+	disc.global_position = head
+
+var bipod_k = 0.0          # 0 folded, 1 legs down on the ground or a wall
+var still_t = 0.0
+
+# set up to fire: machine gunners drop the bipod once they've stopped (or gone prone, or are behind low cover),
+# and anyone firing over a wall or sill rests the gun on it; both steady the aim a lot
+func _bipod_tick() -> void:
+	if state != "alive":
+		return
+	still_t = still_t + G.DT if vel.length() < 0.5 else 0.0
+	var rest = in_cover and cover != null and cover.type == "low"
+	var want = (wid == "lmg" or wid == "atrifle") and ready_ and (prone or (rest and still_t > 0.4))
+	var nk = move_toward(bipod_k, 1.0 if want else 0.0, G.DT * 2.5)
+	if nk != bipod_k:
+		bipod_k = nk
+		_pose_bipod()
+
+func _pose_bipod() -> void:
+	if gun_node == null:
+		return
+	for c in gun_node.get_children():
+		if not c.has_meta("leg"):
+			continue
+		var hinge: Vector3 = c.get_meta("leg")
+		var L: float = c.get_meta("len")
+		var sx = signf(hinge.x) if hinge.x != 0.0 else 1.0
+		var b = Basis(Vector3.RIGHT, lerpf(-PI / 2.0, 0.0, bipod_k)) * Basis(Vector3.BACK, sx * 0.3 * bipod_k)
+		c.basis = b
+		c.position = hinge + b * Vector3(0, -L * 0.5, 0)
+
+func steady() -> float:
+	var k = 1.0
+	if bipod_k > 0.9:
+		k = 0.45
+	elif in_cover and cover != null and cover.type == "low" and vel.length() < 0.5:
+		k = 0.6            # rested on the wall or the sill
+	if prone:
+		k = minf(k, 0.7)
+	return k
 
 func set_weapon(new_id: String) -> void:
 	wid = new_id
@@ -1681,6 +1859,8 @@ func go_dead() -> void:
 	if state != "dead":
 		compute_muzzle()
 		drop_gun()
+		if not zombie and not Faction.militia(team) and randf() < 0.45:
+			drop_helmet()
 	AI.release_cover(self)
 	path = []
 	move_target = null
@@ -1801,7 +1981,7 @@ func start_vault(c) -> bool:
 	return true
 
 # ---------------------------------------------------------------- per-tick update
-static var beam_mat: StandardMaterial3D = null
+static var beam_mat: ShaderMaterial = null
 
 # a torch clipped under the barrel: a faint beam you can see, and a real light for the nearest few
 func _flashlight_tick() -> void:
@@ -1821,23 +2001,34 @@ func _flashlight_tick() -> void:
 		body.material_override = _mat("torch", Color(0.12, 0.12, 0.12), false)
 		flashlight.add_child(body)
 		if beam_mat == null:
-			beam_mat = StandardMaterial3D.new()
-			beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			beam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			beam_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-			beam_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-			beam_mat.albedo_color = Color(1.0, 0.95, 0.75, 0.07)
+			# a cool white beam, brightest at the lens and fading out along its length and toward its edges,
+			# so it reads as light in the air rather than a solid cone
+			var sh = Shader.new()
+			sh.code = """shader_type spatial;
+render_mode unshaded, blend_add, cull_disabled, depth_draw_never, shadows_disabled;
+uniform vec3 col = vec3(0.86, 0.92, 1.0);
+uniform float strength = 0.16;
+varying float along;
+void vertex() { along = clamp((VERTEX.y + 5.0) / 10.0, 0.0, 1.0); }
+void fragment() {
+	float edge = pow(abs(dot(NORMAL, VIEW)), 1.6);
+	float fade = pow(1.0 - along, 1.8) * smoothstep(0.0, 0.04, along);
+	ALBEDO = col * strength * fade * edge;
+}"""
+			beam_mat = ShaderMaterial.new()
+			beam_mat.shader = sh
 		var beam = MeshInstance3D.new()
 		var bm = CylinderMesh.new()
-		bm.top_radius = 1.4
-		bm.bottom_radius = 0.04
-		bm.height = 9.0
-		bm.radial_segments = 10
+		bm.top_radius = 1.6
+		bm.bottom_radius = 0.035
+		bm.height = 10.0
+		bm.radial_segments = 14
+		bm.rings = 6
 		bm.cap_top = false
 		bm.cap_bottom = false
 		beam.mesh = bm
 		beam.rotation.x = PI / 2.0
-		beam.position = Vector3(0, 0, 4.6)
+		beam.position = Vector3(0, 0, 5.1)
 		beam.material_override = beam_mat
 		beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		flashlight.add_child(beam)
@@ -1887,6 +2078,18 @@ func tick() -> void:
 		glint.visible = false
 	if light_on or flashlight != null:
 		_flashlight_tick()
+	if wid == "lmg" or wid == "atrifle":
+		_bipod_tick()
+	if detector != null and (task != "sweep" or state != "alive"):
+		detector.queue_free()
+		detector = null
+	# tools and loads put down as soon as they're not being used this moment
+	if tool_node != null and (state != "alive" or G.sim_time - tool_node.get_meta("seen", 0.0) > 0.1):
+		tool_node.queue_free()
+		tool_node = null
+	if carried != null and (state != "alive" or G.sim_time - carried.get_meta("seen", 0.0) > 0.25):
+		carried.queue_free()
+		carried = null
 	callout_cd -= G.DT
 	hurt_t -= G.DT
 	if bleed > 0.0 and state != "dead":
@@ -2605,14 +2808,16 @@ func start_chute(at: Vector3) -> void:
 	vel = Vector3(randf_range(-1, 1), 0, randf_range(-1, 1))
 	chute = Node3D.new()
 	var canopy = MeshInstance3D.new()
-	var sm = SphereMesh.new()
-	sm.radius = 2.4
-	sm.height = 2.0
-	sm.is_hemisphere = true
-	canopy.mesh = sm
-	canopy.material_override = _mat("canopy" + G.TEAM_UNI[team].to_html(), G.TEAM_UNI[team].lerp(Color(0.8, 0.8, 0.75), 0.4), false)
+	canopy.mesh = canopy_mesh()
+	var cm = StandardMaterial3D.new()
+	cm.vertex_color_use_as_albedo = true
+	cm.albedo_color = G.TEAM_UNI[team].lerp(Color(0.8, 0.8, 0.75), 0.4)
+	cm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	cm.roughness = 0.9
+	canopy.material_override = cm
 	canopy.position = Vector3(0, 4.2, 0)
 	chute.add_child(canopy)
+	chute.set_meta("canopy", canopy)
 	for k in range(4):
 		var line = MeshInstance3D.new()
 		var lm = BoxMesh.new()
@@ -2635,8 +2840,13 @@ func _tick_chute() -> void:
 	pos += (vel + wind) * G.DT + Vector3(0, -4.5 * G.DT, 0)
 	vel *= 0.995
 	if chute != null:
+		# the canopy swings over him like a pendulum and breathes as the air spills out of it
 		chute.global_position = pos + Vector3(0, 0.9, 0)
-		chute.rotation.z = sin(G.sim_time * 1.3 + seed_) * 0.08
+		chute.rotation.z = sin(G.sim_time * 1.3 + seed_) * 0.11
+		chute.rotation.x = sin(G.sim_time * 0.9 + seed_ * 1.7) * 0.08
+		var cn = chute.get_meta("canopy")
+		var br = 1.0 + sin(G.sim_time * 2.6 + seed_) * 0.035
+		cn.scale = Vector3(br, 2.0 - br, br)
 	ready_ = false
 	stand_pose()
 	strength = 0.35
@@ -2651,13 +2861,15 @@ func _tick_chute() -> void:
 		hand_t = null
 		hands_t = null
 		pos.y = gy
-		_drop_chute()
+		_drop_chute(true)
 		state = "alive"
 		strength = 0.42
 		think = 0.0
 		decide_t = 0.0
-		if randf() < 0.25:
-			fall(1.0)
+		# a parachute landing fall: feet, then roll; then out of the harness and a look round before moving off
+		set_meta("landed", 2.6)
+		if randf() < 0.6 and not is_player:
+			fall(0.75)
 
 # the rigging: the two lines on each side of the canopy run down to the harness at that shoulder
 func _chute_lines(lsh: Vector3, rsh: Vector3) -> void:
@@ -2669,7 +2881,7 @@ func _chute_lines(lsh: Vector3, rsh: Vector3) -> void:
 	var lside = 1.0 if (lsh - rsh).dot(right) > 0.0 else -1.0
 	var rim = [right * lside + fwd, right * lside - fwd, -right * lside + fwd, -right * lside - fwd]
 	for k in range(4):
-		var top: Vector3 = xf * Vector3(0, 4.2, 0) + rim[k].normalized() * 2.15
+		var top: Vector3 = xf * Vector3(0, 4.2, 0) + (xf.basis * rim[k]).normalized() * 2.35
 		var bot: Vector3 = (lsh if k < 2 else rsh) + Vector3(0, 0.06, 0)
 		var d = top - bot
 		var L = d.length()
@@ -2680,11 +2892,72 @@ func _chute_lines(lsh: Vector3, rsh: Vector3) -> void:
 		var z = x.cross(y)
 		chute_lines[k].global_transform = Transform3D(Basis(x, y * L, z), (top + bot) * 0.5)
 
-func _drop_chute() -> void:
+func _drop_chute(landed: bool = false) -> void:
 	chute_lines = []
-	if chute != null:
+	if chute == null:
+		return
+	if not landed or not is_instance_valid(chute):
 		chute.queue_free()
 		chute = null
+		return
+	# on the ground the canopy keeps going a little way downwind and collapses flat, and stays there a while
+	var c = chute
+	chute = null
+	for k in c.get_children():
+		if k != c.get_meta("canopy"):
+			k.queue_free()
+	var wind = Vector3(sin(G.sim_time * 0.1) * 1.5, 0, 0.6).normalized()
+	var gy: float = G.world.ground_y(pos.x, pos.z)
+	var end_p = pos + wind * 4.0
+	end_p.y = G.world.ground_y(end_p.x, end_p.z) - 4.05
+	var tw = c.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(c, "global_position", end_p, 1.6).set_ease(Tween.EASE_IN)
+	tw.tween_property(c, "rotation", Vector3(wind.z * 1.2, 0, -wind.x * 1.2), 1.6)
+	tw.tween_property(c.get_meta("canopy"), "scale", Vector3(1.15, 0.06, 1.15), 1.6).set_ease(Tween.EASE_IN)
+	tw.chain().tween_property(c, "rotation", Vector3.ZERO, 0.4)
+	tw.chain().tween_interval(30.0)
+	tw.chain().tween_callback(c.queue_free)
+
+# a dome of eight gores in two shades, with a vent hole at the top and a scalloped skirt
+static var _canopy_mesh: ArrayMesh = null
+
+static func canopy_mesh() -> ArrayMesh:
+	if _canopy_mesh != null:
+		return _canopy_mesh
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var seg = 32
+	var rings = 7
+	var R = 2.4
+	var H = 1.6
+	var pts = []
+	for r in range(rings + 1):
+		var row = []
+		var ph = lerpf(0.16, PI * 0.5, float(r) / rings)      # 0.16 rad leaves the vent open at the crown
+		for k in range(seg + 1):
+			var a = TAU * k / seg
+			# between the lines the cloth bellies out, so the skirt is scalloped
+			var bulge = 1.0 + 0.05 * absf(sin(a * 4.0)) * (float(r) / rings)
+			var rr = sin(ph) * R * bulge
+			var y = cos(ph) * H - (0.12 * (1.0 - absf(sin(a * 4.0))) if r == rings else 0.0)
+			row.append(Vector3(cos(a) * rr, y, sin(a) * rr))
+		pts.append(row)
+	for r in range(rings):
+		for k in range(seg):
+			var gore = int(k / 4) % 2
+			var c = Color(1, 1, 1) if gore == 0 else Color(0.78, 0.78, 0.74)
+			var a = pts[r][k]
+			var b = pts[r][k + 1]
+			var cc = pts[r + 1][k + 1]
+			var d = pts[r + 1][k]
+			for q in [a, cc, b, a, d, cc]:
+				st.set_color(c)
+				st.add_vertex(q)
+	# the vent's rim, a little darker
+	st.generate_normals()
+	_canopy_mesh = st.commit()
+	return _canopy_mesh
 
 # ---------------------------------------------------------------- on fire
 func ignite(by) -> void:

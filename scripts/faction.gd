@@ -129,7 +129,7 @@ static func vehicle_kind(t: int, kind: String) -> String:
 static func support_ok(t: int, what: String) -> bool:
 	if not militia(t):
 		return what != "technical"
-	return not (what in ["airstrike", "paradrop", "heli", "gunship", "fighter", "bomber", "recon", "tank", "heavytank", "armoredcar", "halftrack", "radar", "atgun", "bridger", "ambulance", "jeep"])
+	return not (what in ["airstrike", "paradrop", "heli", "gunship", "fighter", "bomber", "recon", "tank", "heavytank", "armoredcar", "halftrack", "radar", "atgun", "bridger", "ambulance", "jeep", "plough"])
 
 # ---------------------------------------------------------------- the militia's ground
 static func setup() -> void:

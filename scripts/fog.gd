@@ -54,9 +54,10 @@ static func step(dt: float) -> void:
 		if v.team == 0:
 			continue
 		var vv = v.dead
+		var vs = 140.0 if v.lights_on else sight      # headlights give it away from far off
 		if not vv:
 			for p in mine:
-				if G.dist2d(p, v.pos) < sight:
+				if G.dist2d(p, v.pos) < vs:
 					vv = true
 					break
 		v.visible = vv

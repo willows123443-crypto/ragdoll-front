@@ -7,7 +7,7 @@ const FIRE = ["artillery", "airstrike", "recon"]
 const TROOPS = ["paradrop", "heli"]
 const AIR = ["gunship", "fighter", "bomber"]
 const LIGHT = ["jeep", "motorbike", "technical", "ambulance"]
-const ARMOUR = ["halftrack", "armoredcar", "tank", "heavytank", "atgun", "bridger", "radar"]
+const ARMOUR = ["halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "bridger", "radar"]
 const BASE = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "tower", "bunker", "hospital", "radio", "depot", "supply"]
 const DIG_IN = ["sandbags", "wire", "traps", "mgnest", "bunker", "tower"]
 
@@ -58,6 +58,9 @@ static func ai_build(t: int) -> Array:
 static func callins(t: int, mode: String = "") -> Array:
 	var m = mode if mode != "" else G.mode
 	var veh = [] if G.armor == "none" else LIGHT + (ARMOUR if G.armor == "heavy" or m in ["commander", "destroy", "sandbox"] else ["halftrack", "armoredcar", "atgun"])
+	# in commander mode the vehicles setting is only what each side starts with: the depot can always build
+	if m == "commander":
+		veh = LIGHT + ARMOUR
 	# extra troops are only bought in sandbox and commander mode: everywhere else reinforcements come free
 	match m:
 		"sandbox", "commander":

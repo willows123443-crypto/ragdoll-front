@@ -81,11 +81,13 @@ func _outskirts(core: Vector2) -> void:
 		if not outside.call(x, z) or inside_any(x, z, 9.0):
 			continue
 		var r = rng.randf()
+		if r >= 0.7 and near_road(x, z, 9.0):
+			continue
 		if r < 0.45:
 			for k in range(rng.randi_range(4, 9)):
 				var tx = x + rnd(-9.0, 9.0)
 				var tz = z + rnd(-9.0, 9.0)
-				if outside.call(tx, tz) and not inside_any(tx, tz, 1.5):
+				if outside.call(tx, tz) and not inside_any(tx, tz, 1.5) and not near_road(tx, tz, 2.5):
 					live_tree(tx, tz)
 		elif r < 0.7:
 			hedge_row(x, z, rnd(10.0, 22.0), rng.randf() < 0.5)
@@ -138,17 +140,43 @@ func drive_y(x: float, z: float) -> float:
 			return b[4]
 	return ground_y(x, z)
 
+# water: rippling, reflecting the sky more the flatter you look across it, with the sun glinting off it
+static var water_shader: Shader = null
+var water_mats: Array = []
+
 func add_water(x0: float, x1: float, z0: float, z1: float, level: float, col: Color) -> void:
 	water.append([x0, x1, z0, z1, level])
 	var m = MeshInstance3D.new()
 	var pm = PlaneMesh.new()
 	pm.size = Vector2(x1 - x0, z1 - z0)
 	m.mesh = pm
-	var mat = StandardMaterial3D.new()
-	mat.albedo_color = col
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.roughness = 0.15
-	mat.metallic_specular = 0.8
+	if water_shader == null:
+		water_shader = Shader.new()
+		water_shader.code = """shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, cull_back;
+uniform vec4 deep : source_color = vec4(0.2, 0.3, 0.32, 0.8);
+uniform vec4 sky : source_color = vec4(0.62, 0.7, 0.78, 1.0);
+varying vec3 wpos;
+void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void fragment() {
+	vec2 p = wpos.xz;
+	float t = TIME;
+	vec3 n = normalize(vec3(
+		0.10 * cos(p.x * 0.9 + t * 1.3) + 0.06 * cos(p.x * 2.3 + p.y * 1.7 + t * 2.1) + 0.035 * cos((p.x - p.y) * 4.3 + t * 3.1),
+		1.0,
+		0.10 * cos(p.y * 0.8 - t * 1.1) + 0.06 * cos(p.y * 2.1 - p.x * 1.3 + t * 1.9) + 0.035 * cos((p.x + p.y) * 3.9 - t * 2.7)));
+	NORMAL = normalize((VIEW_MATRIX * vec4(n, 0.0)).xyz);
+	float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
+	ALBEDO = mix(deep.rgb, sky.rgb, clamp(fres * 0.85 + 0.08, 0.0, 1.0));
+	ROUGHNESS = 0.06;
+	SPECULAR = 0.95;
+	METALLIC = 0.0;
+	ALPHA = mix(deep.a, 1.0, fres);
+}"""
+	var mat = ShaderMaterial.new()
+	mat.shader = water_shader
+	mat.set_shader_parameter("deep", col)
+	water_mats.append(mat)
 	m.material_override = mat
 	m.position = Vector3((x0 + x1) / 2.0, level, (z0 + z1) / 2.0)
 	_geo().add_child(m)
@@ -182,6 +210,10 @@ func bridge_z(z0: float, z1: float, xc: float, wide: float) -> void:
 	for k in [-1.0, 1.0]:
 		c.vis.append(add_box(xc + k * (wide / 2.0 - 0.15), deck_y, (z0 + z1) / 2.0, 0.25, 1.0, z1 - z0, Color(0.36, 0.33, 0.29), {"abs": true, "collide": false}))
 	bridges.append([xc - wide / 2.0, xc + wide / 2.0, z0, z1, deck_y, c])
+
+func set_water_sky(c: Color) -> void:
+	for m in water_mats:
+		m.set_shader_parameter("sky", c)
 
 func is_large() -> bool:
 	return TW > 300
@@ -802,9 +834,18 @@ func _build_vnav() -> void:
 	vastar.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	vastar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	vastar.update()
+	# drivers keep to the roads where they can: open ground costs a little more
+	for iz in range(VH):
+		for ix in range(VW):
+			vastar.set_point_weight_scale(Vector2i(ix, iz), _vbase_w(ix, iz))
 	for c in cols:
 		_vnav_mark(c)
 	_vnav_water(0, 0, VW - 1, VH - 1)
+
+func _vbase_w(ix: int, iz: int) -> float:
+	var x = TX0 + (ix + 0.5) * VCS
+	var z = TZ0 + (iz + 0.5) * VCS
+	return 1.0 if on_road(x, z) else 1.5
 
 func vnav_cell(x: float, z: float) -> Vector2i:
 	return Vector2i(clampi(int(floor((x - TX0) / VCS)), 0, VW - 1), clampi(int(floor((z - TZ0) / VCS)), 0, VH - 1))
@@ -812,13 +853,23 @@ func vnav_cell(x: float, z: float) -> Vector2i:
 func _vnav_mark(c) -> void:
 	if not blocks_move(c) or c.hi.y - c.gy < 0.35:
 		return
+	# hedges and loose crates don't stop a vehicle, it just goes through them: costlier, not closed
+	var soft = c.dest and not c.has_meta("tree") and (c.prop == 2 or c.prop == 1)
 	var ix0 = maxi(0, int(floor((c.lo.x - VCLEAR - TX0) / VCS)))
 	var ix1 = mini(VW - 1, int(floor((c.hi.x + VCLEAR - TX0) / VCS)))
 	var iz0 = maxi(0, int(floor((c.lo.z - VCLEAR - TZ0) / VCS)))
 	var iz1 = mini(VH - 1, int(floor((c.hi.z + VCLEAR - TZ0) / VCS)))
+	if soft:
+		ix0 = maxi(0, int(floor((c.lo.x - TX0) / VCS)))
+		ix1 = mini(VW - 1, int(floor((c.hi.x - TX0) / VCS)))
+		iz0 = maxi(0, int(floor((c.lo.z - TZ0) / VCS)))
+		iz1 = mini(VH - 1, int(floor((c.hi.z - TZ0) / VCS)))
 	for iz in range(iz0, iz1 + 1):
 		for ix in range(ix0, ix1 + 1):
-			vastar.set_point_solid(Vector2i(ix, iz), true)
+			if soft:
+				vastar.set_point_weight_scale(Vector2i(ix, iz), 4.0)
+			else:
+				vastar.set_point_solid(Vector2i(ix, iz), true)
 
 func _vnav_water(ix0: int, iz0: int, ix1: int, iz1: int) -> void:
 	if water.is_empty():
@@ -838,6 +889,7 @@ func _vnav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 	for iz in range(a.y, b.y + 1):
 		for ix in range(a.x, b.x + 1):
 			vastar.set_point_solid(Vector2i(ix, iz), false)
+			vastar.set_point_weight_scale(Vector2i(ix, iz), _vbase_w(ix, iz))
 	var m = VCLEAR + VCS * 2.0
 	for c in cols_in_rect(TX0 + a.x * VCS - m, TZ0 + a.y * VCS - m, TX0 + (b.x + 1) * VCS + m, TZ0 + (b.y + 1) * VCS + m):
 		_vnav_mark(c)
@@ -1146,8 +1198,12 @@ func destroy_col(c, depth: int = 0) -> void:
 	update_nav_area(c.lo.x, c.lo.z, c.hi.x, c.hi.z)
 
 func damage_area(pos: Vector3, R: float, power: float) -> void:
+	# in commander mode the HQ is dug in too deep for shells: it has to be taken on the ground
+	var hq_safe = Combat.arty and G.mode == "commander"
 	for c in cols_in_rect(pos.x - R, pos.z - R, pos.x + R, pos.z + R):
 		if not c.dest or not c.alive:
+			continue
+		if hq_safe and c.has_meta("hq"):
 			continue
 		var cp = Vector3(clampf(pos.x, c.lo.x, c.hi.x), clampf(pos.y, c.lo.y, c.hi.y), clampf(pos.z, c.lo.z, c.hi.z))
 		var d = pos.distance_to(cp)
@@ -2029,6 +2085,8 @@ func live_tree(x: float, z: float) -> void:
 
 # a rounded bush clump (visual only)
 func bush(x: float, z: float, sc: float = 1.0) -> void:
+	if on_road(x, z) or on_road(x + 1.2, z) or on_road(x - 1.2, z) or on_road(x, z + 1.2) or on_road(x, z - 1.2):
+		return
 	var cl = [Color(0.26, 0.33, 0.17), Color(0.3, 0.37, 0.2), Color(0.23, 0.3, 0.15)]
 	for i in range(rng.randi_range(2, 4)):
 		var s = rnd(0.8, 1.4) * sc
@@ -2116,6 +2174,38 @@ func crater_at(x: float, z: float, r: float, d: float) -> void:
 		terrain_cover.append([x + cos(a) * r * 0.55, z + sin(a) * r * 0.55, -cos(a), -sin(a)])
 
 func hedge_row(x: float, z: float, ln: float, along_x: bool) -> void:
+	# never across or along a road: keep only the stretches that are off it, cut into separate hedges
+	var n0 = maxi(2, int(ln / 0.6))
+	var runs = []
+	var cur = null
+	for i in range(n0 + 1):
+		var o = -ln / 2.0 + ln * i / n0
+		var px = x + o if along_x else x
+		var pz = z if along_x else z + o
+		var bad = false
+		for q in [Vector2(0, 0), Vector2(0.9, 0), Vector2(-0.9, 0), Vector2(0, 0.9), Vector2(0, -0.9)]:
+			if on_road(px + q.x, pz + q.y):
+				bad = true
+		if not bad:
+			if cur == null:
+				cur = [o, o]
+			else:
+				cur[1] = o
+		elif cur != null:
+			runs.append(cur)
+			cur = null
+	if cur != null:
+		runs.append(cur)
+	if runs.size() == 1 and runs[0][0] <= -ln / 2.0 + 0.01 and runs[0][1] >= ln / 2.0 - 0.01:
+		_hedge_piece(x, z, ln, along_x)
+		return
+	for r in runs:
+		var L = r[1] - r[0]
+		if L >= 2.0:
+			var m = (r[0] + r[1]) * 0.5
+			_hedge_piece(x + m if along_x else x, z if along_x else z + m, L, along_x)
+
+func _hedge_piece(x: float, z: float, ln: float, along_x: bool) -> void:
 	var hc = Color(0.31, 0.35, 0.2)
 	# collider only; the visible hedge is a row of leafy clumps
 	var c = add_col(x, ground_y(x, z), z, ln if along_x else 0.9, 1.3, 0.9 if along_x else ln)
@@ -2833,7 +2923,7 @@ func begin_edit(m: Dictionary) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
+	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]
 	paint = m.get("paint", PackedByteArray())
@@ -3403,6 +3493,12 @@ func _flatten_roads() -> void:
 	for rd in roads:
 		flatten_rect(rd[0], rd[2], rd[1], rd[3], 2.5)
 
+func near_road(x: float, z: float, r: float) -> bool:
+	for rd in roads:
+		if x > rd[0] - r and x < rd[1] + r and z > rd[2] - r and z < rd[3] + r:
+			return true
+	return false
+
 func on_road(x: float, z: float) -> bool:
 	for r in roads:
 		if x > r[0] and x < r[1] and z > r[2] and z < r[3]:
@@ -3562,7 +3658,7 @@ func load_map(id: String) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; bridges = []
+	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	paint = PackedByteArray()
 	if id == "random":
 		var rs = RandomNumberGenerator.new()

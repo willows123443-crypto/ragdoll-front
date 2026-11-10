@@ -135,7 +135,12 @@ const SPECS = {
 		"seats": [
 			{"o": Vector3(0.6, 1.0, 1.6), "role": "driver", "pose": "hidden", "face": 0.0},
 			{"o": Vector3(0.0, 2.25, -0.2), "role": "gunner", "pose": "hidden", "face": 0.0},
-			{"o": Vector3(0.5, 2.35, -0.4), "role": "pass", "pose": "hatch", "face": 0.0, "turret": true}]},
+			{"o": Vector3(0.5, 2.35, -0.4), "role": "pass", "pose": "hatch", "face": 0.0, "turret": true},
+			# infantry riding on the engine deck, legs over the side
+			{"o": Vector3(1.05, 1.95, -1.6), "role": "pass", "pose": "sit", "face": -PI / 2.0, "rider": true},
+			{"o": Vector3(-1.05, 1.95, -1.6), "role": "pass", "pose": "sit", "face": PI / 2.0, "rider": true},
+			{"o": Vector3(1.05, 1.95, -2.5), "role": "pass", "pose": "sit", "face": -PI / 2.0, "rider": true},
+			{"o": Vector3(-1.05, 1.95, -2.5), "role": "pass", "pose": "sit", "face": PI / 2.0, "rider": true}]},
 }
 
 const L_VEH = 8
@@ -178,6 +183,14 @@ var smoke_node = null
 var engine_t = 0.0
 # damage zones
 var tracks_broken = false
+var tyres = 0               # tyres shot out (wheeled vehicles)
+var fix_by = null           # the crewman out fixing a track or a wheel
+var hit_t = -99.0           # when it was last hit
+var lights_on = false
+var stop_t = 0.0
+var wake_t = 0.0
+var burn_t = 0.0
+var lamps: Node3D = null
 var burning = false
 var burn_fx = 0.0
 var bailed = false
@@ -221,6 +234,14 @@ static func make(kind_: String, team_: int, p: Vector3, yaw_: float) -> Vehicle:
 		for st in hs["seats"]:
 			st["o"] = st["o"] * 1.16
 		v.spec = hs
+	elif kind_ == "plough":
+		v.kind = "tank"
+		var ps = SPECS["tank"].duplicate(true)
+		ps["name"] = "Mine plough tank"
+		ps["hp"] = 2100.0
+		ps["speed"] = 6.0
+		v.spec = ps
+		v.set_meta("plough", true)
 	else:
 		v.kind = kind_
 		v.spec = SPECS[kind_]
@@ -245,6 +266,8 @@ static func make(kind_: String, team_: int, p: Vector3, yaw_: float) -> Vehicle:
 		v.body.global_transform = v.global_transform
 	else:
 		v._place(0.0)
+	if v.has_meta("plough"):
+		VehExt.plough_blade(v)
 	return v
 
 static func _m(key: String, c: Color) -> StandardMaterial3D:
@@ -426,6 +449,8 @@ func step(dt: float) -> void:
 	if tracks_broken:
 		thr = 0.0
 		steer *= 0.3 if spec["tracked"] else 1.0
+	elif tyres > 0:
+		thr *= maxf(0.25, 1.0 - 0.25 * tyres)
 	var top = spec["speed"] if thr >= 0.0 else spec["rev"]
 	var target = thr * top
 	if thr == 0.0:
@@ -450,10 +475,14 @@ func step(dt: float) -> void:
 		if res[1] != null:
 			var col = res[1]
 			# tanks flatten crates and flimsy walls; anything fast smashes crates
-			if col.dest and (spec["tracked"] or (col.prop == 1 and absf(speed) > 6.0 and not col.has_meta("tree"))):
+			# hedges and bushes: anything with wheels or tracks pushes straight through and flattens them
+			var hedge = col.prop == 2 and not col.has_meta("tree") and not spec.get("boat", false)
+			if col.dest and (spec["tracked"] or hedge or (col.prop == 1 and absf(speed) > 3.0 and not col.has_meta("tree"))):
 				if col.has_meta("tree"):
 					col.set_meta("fall", f * signf(speed if speed != 0.0 else 1.0))
 				G.world.destroy_col(col)
+				if hedge:
+					G.fx.dust_cloud(c, 1.0)
 				speed *= 0.85
 				continue
 			np += res[0] - c
@@ -503,6 +532,17 @@ func step(dt: float) -> void:
 		np.x = clampf(np.x, b.position.x + 3.0, b.end.x - 3.0)
 		np.z = clampf(np.z, b.position.y + 3.0, b.end.y - 3.0)
 	pos = np
+	# boats leave a white wake behind them
+	if spec.get("boat", false) and absf(speed) > 1.2:
+		wake_t -= dt
+		if wake_t <= 0.0:
+			wake_t = 0.12
+			var stern = pos - forward() * spec["len"] * 0.45 * signf(speed)
+			var wl = G.world.water_level(stern.x, stern.z)
+			G.fx.wake(Vector3(stern.x, wl, stern.z), -forward() * signf(speed), spec["wid"] * 0.45 * clampf(absf(speed) / 5.0, 0.5, 1.2))
+			if randf() < 0.3:
+				var bow = pos + forward() * spec["len"] * 0.45
+				G.fx.splash(Vector3(bow.x, wl, bow.z), 0.3)
 	_place(dt)
 	if towing != null:
 		VehExt.tow_tick(self, dt)
@@ -830,13 +870,16 @@ func _ai_gun_target(g):
 
 # ---------------------------------------------------------------- crew
 func _crew_tick(dt: float) -> void:
+	_self_repair()
+	_riders_tick()
+	_lights_tick()
 	for i in range(seats.size()):
 		var s = seats[i]
 		if s != null and (not is_instance_valid(s) or s.vehicle != self):
 			seats[i] = null
 	# empty driver or gunner seats: a nearby friendly soldier with nothing better to do climbs in
 	crew_t -= dt
-	if crew_t > 0.0 or (mission != null and not mission.get("type", "") in ["escort", "ferry"]):
+	if crew_t > 0.0 or burning or bailed or (mission != null and not mission.get("type", "") in ["escort", "ferry"]):
 		return
 	crew_t = 3.0 if mission == null else 1.5
 	for role in ["driver", "gunner"]:
@@ -861,7 +904,7 @@ func _crew_tick(dt: float) -> void:
 		var best = null
 		var bd = 30.0
 		for s in G.soldiers:
-			if s.team == team and s.state == "alive" and not s.is_player and s.vehicle == null and s.task != "board" and not s.broken and s.vis_t == null and G.sim_time > s.no_board_t and s.order == null:
+			if s.team == team and s.state == "alive" and not s.is_player and s.vehicle == null and s.task != "board" and s.task != "fixwheel" and not s.broken and s.vis_t == null and G.sim_time > s.no_board_t and s.order == null:
 				var dd = G.dist2d(s.pos, pos)
 				if dd < bd:
 					bd = dd
@@ -878,6 +921,17 @@ func take_damage(amount: float, attacker, at: Vector3) -> void:
 		return
 	if Prod.has(team, "armour"):
 		amount *= 0.67
+	if has_meta("plough") and G.sim_time - get_meta("plough_t", -9.0) < 0.15:
+		amount *= 0.08          # the plough takes the blast
+	hit_t = G.sim_time
+	# a round into a tyre: it goes flat and the vehicle limps
+	if not spec["tracked"] and not spec.get("air", false) and not spec.get("static", false) and not spec.get("boat", false) and tyres < 4 and amount < 200.0:
+		var lp = global_transform.affine_inverse() * at
+		if lp.y < 1.0 and absf(lp.x) > spec["wid"] * 0.3 and randf() < 0.22:
+			tyres += 1
+			_flat_tyre(lp)
+			if tyres == 1:
+				G.ui.radio(team, "%s has a tyre shot out" % spec["name"])
 	hp -= amount
 	# where it was hit matters: tracks and running gear along the sides, the engine up front
 	if amount >= 120.0 and not spec.get("air", false) and not spec.get("static", false):
@@ -936,8 +990,10 @@ func destroy(attacker) -> void:
 			G.fx.callout(s, G.pick(["Bailing out!", "I'm hit, I'm getting out!", "Eject! Eject!", "Going over the side!"]))
 			continue
 		if s != null and is_instance_valid(s):
+			var rider = spec["seats"][i].get("rider", false)
 			s.dismount(true)
-			if bail or randf() < (0.8 if kind == "tank" else 0.5):
+			# tank crews often get out of a brew-up alive, hurt and maybe on fire, and fight on as infantry
+			if bail or randf() < (0.3 if rider else (0.55 if kind == "tank" else 0.5)):
 				Combat.kill(s, attacker, false)
 			else:
 				s.hp = minf(s.hp, 30.0)
@@ -1148,7 +1204,7 @@ func _ai_drive(dt: float) -> Array:
 			if G.dist2d(target, pos) < 35.0 or (enemy != null and G.dist2d(enemy, pos) < 45.0):
 				for i in range(1, seats.size()):
 					var ps2 = seats[i]
-					if ps2 != null and spec["seats"][i]["role"] == "pass" and not ps2.is_player:
+					if ps2 != null and spec["seats"][i]["role"] == "pass" and not ps2.is_player and not spec["seats"][i].get("turret", false) and not spec["seats"][i].get("rider", false):
 						ps2.dismount(false)
 				return [0.0, 0.0]
 		if G.dist2d(target, pos) < 8.0:
@@ -1384,19 +1440,121 @@ func _burn_tick(dt: float) -> void:
 	if burn_fx <= 0.0:
 		burn_fx = 0.15
 		G.fx.flame_puff(center() + Vector3(randf_range(-0.6, 0.6), 0.9, spec["len"] * 0.25), Vector3(0, 3.0, 0), 1.2)
-	if not bailed and hp < spec["hp"] * 0.25:
+	burn_t += dt
+	if not bailed and (hp < spec["hp"] * 0.4 or (spec["tracked"] and burn_t > 3.0)):
 		bailed = true
 		for i in range(seats.size()):
 			var s = seats[i]
 			if s != null and is_instance_valid(s):
 				s.dismount(false)
 				s.hp = minf(s.hp, 70.0)
+				s.no_board_t = G.sim_time + 90.0
 				if not s.is_player:
 					if randf() < 0.3:
 						s.ignite(null)
+					# get clear of her before she goes up, then carry on as infantry
+					var away = G.flat(s.pos - pos)
+					if away.length_squared() < 0.01:
+						away = Vector3(1, 0, 0)
+					var dest = s.pos + away.normalized() * 14.0 - forward() * 4.0
+					(func(): if is_instance_valid(s) and s.state == "alive": AI.go_to(s, dest, 5.6)).call_deferred()
+					s.decide_t = 4.0
 					G.fx.callout(s, G.pick(["Bail out! Bail out!", "She's gonna blow!", "Get out, get out!"]))
 	if hp <= 0.0:
 		destroy(null)
+
+func _flat_tyre(lp: Vector3) -> void:
+	var best = null
+	var bd = 1e9
+	for w in wheels:
+		if not is_instance_valid(w) or w.has_meta("flat"):
+			continue
+		var d = (w.position - lp).length()
+		if d < bd:
+			bd = d
+			best = w
+	if best != null:
+		best.set_meta("flat", true)
+		best.position.y -= 0.13       # sitting on the rim
+
+func _fix_tyres() -> void:
+	tyres = 0
+	for w in wheels:
+		if is_instance_valid(w) and w.has_meta("flat"):
+			w.remove_meta("flat")
+			w.position.y += 0.13
+
+# a thrown track or a flat: a crewman climbs out (under fire if need be) and fixes it, then gets back in
+func _self_repair() -> void:
+	if dead or not (tracks_broken or tyres > 0) or spec.get("air", false) or spec.get("static", false):
+		return
+	if fix_by != null and is_instance_valid(fix_by) and fix_by.state == "alive" and fix_by.task == "fixwheel":
+		return
+	fix_by = null
+	if G.sim_time - get_meta("broke_t", G.sim_time) < 0.0:
+		return
+	if not has_meta("broke_t"):
+		set_meta("broke_t", G.sim_time + 3.0)
+		return
+	var pick = null
+	for i in range(seats.size() - 1, -1, -1):
+		var c = seats[i]
+		if c != null and is_instance_valid(c) and not c.is_player and c.state == "riding" and not spec["seats"][i].get("rider", false):
+			pick = c
+			break
+	if pick == null:
+		return
+	remove_meta("broke_t")
+	pick.dismount(false)
+	pick.task = "fixwheel"
+	pick.board_target = self
+	pick.build_t = 0.0
+	fix_by = pick
+	G.fx.callout(pick, G.pick(["I'll fix the track, cover me!", "Getting out to fix it!", "Cover me, I'm on the wheel!"]) if spec["tracked"] else G.pick(["Changing the tyre, cover me!", "Flat! I'll fix it!"]))
+
+# infantry riding on the deck jump off as soon as there's shooting
+func _riders_tick() -> void:
+	var any = false
+	for i in range(seats.size()):
+		if seats[i] != null and spec["seats"][i].get("rider", false):
+			any = true
+	if not any:
+		return
+	# stopped for a while: they've arrived, everybody off
+	stop_t = stop_t + G.DT if absf(speed) < 0.4 else 0.0
+	var contact = G.sim_time - hit_t < 3.0 or stop_t > 7.0
+	if not contact:
+		for c in seats:
+			if c != null and is_instance_valid(c) and c.vis_t != null:
+				contact = true
+				break
+	if not contact:
+		return
+	for i in range(seats.size()):
+		var r = seats[i]
+		if r != null and is_instance_valid(r) and spec["seats"][i].get("rider", false) and not r.is_player:
+			r.dismount(false)
+			r.no_board_t = G.sim_time + 30.0
+			r.decide_t = 0.0
+	if randf() < 0.7 and driver() != null:
+		G.fx.callout(driver(), G.pick(["Riders off! Contact!", "Everybody off the deck!", "Dismount, dismount!"]))
+
+# headlights at night while driving out of contact; dark again as soon as there's shooting about
+func _lights_tick() -> void:
+	var want = G.main.is_night() and not dead and driver() != null and not spec.get("air", false) and not spec.get("static", false) \
+		and not spec.get("boat", false) and G.sim_time - hit_t > 25.0
+	if want:
+		for c in seats:
+			if c != null and is_instance_valid(c) and c.vis_t != null:
+				want = false
+				break
+	if want == lights_on:
+		return
+	lights_on = want
+	if want and lamps == null:
+		lamps = VehExt.headlamps(self)
+	if lamps != null:
+		lamps.visible = want
 
 func repair(amount: float) -> void:
 	hp = minf(spec["hp"], hp + amount)

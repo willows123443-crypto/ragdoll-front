@@ -218,6 +218,8 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 		# built properly: rifle fire barely scratches it, it takes explosives to bring it down
 		c.set_meta("built", true)
 		c.set_meta("hp0", c.hp)
+		if st["kind"] == "hq":
+			c.set_meta("hq", true)
 		st["cols"].append(c)
 	var parts = []
 	for ch in root.get_children():
@@ -853,9 +855,8 @@ static func _effect(st: Dictionary, dt: float) -> void:
 					st["t"] = 0.0
 					if is_instance_valid(st.get("make_lbl")):
 						st["make_lbl"].queue_free()
-					var p = G.main._free_spot(st["p"] + _front(st) * 7.0)
-					G.main.spawn_vehicle(k2, t, p, atan2(_front(st).x, _front(st).z), false)
-					G.ui.radio(t, "Depot: a %s is ready for crew" % Vehicle.SPECS[k2]["name"].to_lower())
+					Reinforce.drive_in(t, k2, st["p"] + _front(st) * 7.0)
+					G.ui.radio(t, "Depot: a %s is on its way in" % Vehicle.SPECS[k2]["name"].to_lower())
 		"fob", "fob2", "hq", "supply":
 			# FOBs and dumps running low call up a supply truck from HQ
 			if st["kind"] != "hq" and st.get("ammo") != null and st["ammo"]["stock"] < 55.0:

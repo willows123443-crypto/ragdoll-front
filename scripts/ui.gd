@@ -68,6 +68,9 @@ var report_chart: Control
 var opt_map: OptionButton
 var opt_mode: OptionButton
 var mode_info: Label
+var mode_title: Label
+var mode_rules: Label
+var size_lbl: Label
 const MODE_IDS = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand", "destroy", "breakthrough", "sabotage", "siege",
 	"escort", "rescue", "koth", "commander", "horde", "general"]
 var opt_size: OptionButton
@@ -269,7 +272,7 @@ var dock_cards_list: Array = []      # [id, button] in order, for the number key
 var dock_pts_shown = -1
 
 const SB_VEH = [["jeep", "Jeep"], ["truck", "Truck"], ["motorbike", "Motorbike"], ["halftrack", "Half-track"], ["armoredcar", "Armoured car"],
-	["tank", "Tank"], ["heavytank", "Heavy tank"], ["technical", "Technical"], ["ambulance", "Ambulance"], ["radar", "Command truck"], ["bridger", "Bridge layer"], ["gunship", "Gunship"],
+	["tank", "Tank"], ["heavytank", "Heavy tank"], ["plough", "Mine plough tank"], ["technical", "Technical"], ["ambulance", "Ambulance"], ["radar", "Command truck"], ["bridger", "Bridge layer"], ["gunship", "Gunship"],
 	["fighter", "Fighter"], ["bomber", "Dive bomber"], ["nest", "MG nest"], ["mortar", "Mortar"], ["artillery", "Field gun"], ["aagun", "AA gun"], ["atgun", "AT gun"], ["dinghy", "Assault boat"]]
 const BUILD_LIST = [["fob", "FOB"], ["sandbags", "Sandbags"], ["wire", "Barbed wire"], ["traps", "Tank traps"], ["mgnest", "MG nest"],
 	["mortarpit", "Mortar pit"], ["aa", "AA gun"], ["tower", "Watchtower"], ["bunker", "Bunker"], ["hospital", "Field hospital"],
@@ -284,7 +287,7 @@ const RECRUIT = {
 	"rad": {"name": "Radio operator", "cost": 5, "cls": ["radio"]},
 }
 # call-ins that happen as soon as you pay (no map click needed)
-const INSTANT = ["technical", "recon", "atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance"]
+const INSTANT = ["plough", "technical", "recon", "atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance"]
 
 func _tabs() -> Array:
 	if G.mode == "commander":
@@ -322,7 +325,7 @@ func _cards(t: String) -> Array:
 				else:
 					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], "%d pts" % Support.COSTS[k] + ("" if k in INSTANT else " · click the map")])
 		"armour":
-			for k in ["jeep", "technical", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "atgun", "ambulance", "radar", "bridger"]:
+			for k in ["jeep", "technical", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "ambulance", "radar", "bridger"]:
 				if not Faction.support_ok(0, k) or not Rules.callin_ok(0, k):
 					continue
 				out.append(["sup:" + k, Support.NAMES[k], ("%d pts" % Support.COSTS[k]) if Support.unlocked(0, k) else Support.need_text(k)])
@@ -544,7 +547,15 @@ func _card_clicked(id: String) -> void:
 		_recruit(id.substr(2))
 		return
 	if id.begins_with("sup:") and not Support.unlocked(0, id.substr(4)):
-		message("%s: %s first (Build tab)" % [Support.NAMES[id.substr(4)].split(" (")[0], Support.need_text(id.substr(4)).capitalize()])
+		var wk = id.substr(4)
+		var pend = Support.pending_site(0, wk)
+		if pend != null:
+			var pct = int(100.0 * pend["work"] / maxf(1.0, pend["need"]))
+			var engs = G.soldiers.filter(func(x): return x.team == 0 and x.state == "alive" and x.cls == "engineer").size()
+			message("%s: the %s is still being built (%d%%)%s" % [Support.NAMES[wk].split(" (")[0], pend["name"].to_lower(), pct,
+				"" if engs > 0 else " and you have no engineers to finish it: recruit an engineer squad"])
+		else:
+			message("%s: %s first (Build tab)" % [Support.NAMES[wk].split(" (")[0], Support.need_text(wk).capitalize()])
 		return
 	if id.begins_with("sup:") and id.substr(4) in INSTANT:
 		var what = id.substr(4)
@@ -599,10 +610,50 @@ void fragment() {
 	root.add_child(vignette)
 	root.move_child(vignette, 0)
 
+var nv: ColorRect
+var nv_on = false
+var nv_hinted = false
+
+# night vision (F2): the scene brightened and turned green, grainy, with a dark ring round the edge
+func _build_nv() -> void:
+	nv = ColorRect.new()
+	nv.set_anchors_preset(Control.PRESET_FULL_RECT)
+	nv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sh = Shader.new()
+	sh.code = """shader_type canvas_item;
+uniform sampler2D scr : hint_screen_texture, filter_linear;
+uniform float t = 0.0;
+void fragment() {
+	vec3 c = texture(scr, SCREEN_UV).rgb;
+	float l = dot(c, vec3(0.3, 0.59, 0.11));
+	l = pow(clamp(l * 4.2, 0.0, 1.0), 0.6);
+	float n = fract(sin(dot(floor(SCREEN_UV * 600.0) + vec2(t * 61.0, t * 37.0), vec2(12.9898, 78.233))) * 43758.5453);
+	l = l * 0.88 + n * 0.1;
+	float scan = 0.96 + 0.04 * sin(SCREEN_UV.y * 900.0);
+	vec2 d = UV - vec2(0.5);
+	float vg = 1.0 - smoothstep(0.38, 0.72, length(d * vec2(1.25, 1.0)));
+	COLOR = vec4(vec3(0.32, 1.0, 0.42) * l * scan * vg, 1.0);
+}"""
+	var mat = ShaderMaterial.new()
+	mat.shader = sh
+	nv.material = mat
+	nv.visible = false
+	# its own layer, under the HUD, so it stays on when the HUD is hidden
+	var cl = CanvasLayer.new()
+	cl.layer = layer - 1
+	cl.add_child(nv)
+	add_child(cl)
+
+func toggle_nv() -> void:
+	nv_on = not nv_on
+	nv.visible = nv_on
+	message("Night vision " + ("on" if nv_on else "off") + " (F2)")
+
 var hudx: Control
 
 func _build_center() -> void:
 	_build_vignette()
+	_build_nv()
 	hudx = preload("res://scripts/hudx.gd").new()
 	root.add_child(hudx)
 	cross = Control.new()
@@ -736,8 +787,15 @@ func _section(parent: Control, title: String) -> void:
 	parent.add_child(line)
 
 func _build_menu() -> void:
-	menu = _panel(Color(0.08, 0.09, 0.11, 0.97))
-	_place(menu, Control.PRESET_CENTER, -450, -320, 900, 640)
+	menu = _panel(Color(0.07, 0.08, 0.095, 0.97))
+	var msb: StyleBoxFlat = menu.get_theme_stylebox("panel")
+	msb.set_corner_radius_all(8)
+	msb.set_border_width_all(1)
+	msb.border_color = Color(0.96, 0.74, 0.27, 0.35)
+	msb.set_content_margin_all(16)
+	msb.shadow_color = Color(0, 0, 0, 0.5)
+	msb.shadow_size = 18
+	_place(menu, Control.PRESET_CENTER, -460, -330, 920, 660)
 	var outer = VBoxContainer.new()
 	outer.add_theme_constant_override("separation", 8)
 	var top = HBoxContainer.new()
@@ -770,12 +828,13 @@ func _build_menu() -> void:
 		"Destroy base", "Breakthrough — break the line", "Sabotage — night raid", "Siege — hold the town",
 		"Escort — get the convoy through", "Rescue — bring the pilot home", "King of the hill — it moves", "Commander — top-down RTS", "Horde — the dead walk", "Kill the general"], 0)
 	_row(v, "Mode", opt_mode)
-	mode_info = _label("", 13, Color(0.78, 0.8, 0.76))
+	mode_info = _label("", 13, Color(0.8, 0.82, 0.78))
 	mode_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	mode_info.custom_minimum_size = Vector2(500, 56)
-	v.add_child(mode_info)
-	opt_mode.item_selected.connect(func(_i): _show_mode_info())
-	_show_mode_info()
+	mode_info.custom_minimum_size = Vector2(300, 0)
+	mode_title = _label("", 18, Color(0.97, 0.95, 0.9))
+	mode_rules = _label("", 12, Color(0.96, 0.74, 0.27))
+	mode_rules.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	mode_rules.custom_minimum_size = Vector2(300, 0)
 	opt_limit = _option(["50"], 0)
 	limit_row = HBoxContainer.new()
 	limit_lbl = _label("Win at", 15)
@@ -788,6 +847,7 @@ func _build_menu() -> void:
 	_section(v, "Forces")
 	opt_size = _option(["5", "8", "10", "15", "20", "30", "50", "100"], 2)
 	_row(v, "Soldiers per side", opt_size)
+	size_lbl = v.get_child(v.get_child_count() - 1).get_child(0)
 	opt_reinf = _option(["By truck", "Paratroopers", "By helicopter", "Appear at base", "None"], 0)
 	_row(v, "Reinforcements", opt_reinf)
 	opt_armor = _option(["None", "Jeeps", "Jeeps and tanks"], 1)
@@ -835,14 +895,29 @@ func _build_menu() -> void:
 	go.add_theme_color_override("font_color", Color(0.06, 0.06, 0.05))
 	go.add_theme_color_override("font_hover_color", Color(0, 0, 0))
 	r.add_child(go)
-	for e in [["Daily challenge", "the same battle for everyone today", func(): _show_daily()],
-			["Campaign", "nine regions, one battle at a time", func(): _show_campaign()],
-			["Map editor", "build, paint and script your own maps", func(): G.editor.new_map(Vector2(260, 190))],
-			["Scenario code", "save or load a battle as a code", func(): _show_scenario()]]:
-		var b = _button("%s\n%s" % [e[0], e[1]], e[2])
-		b.custom_minimum_size = Vector2(0, 50)
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		r.add_child(b)
+	# what the chosen mode is about, how it's won and what each side gets
+	_section(r, "About this mode")
+	var card = PanelContainer.new()
+	var csb = StyleBoxFlat.new()
+	csb.bg_color = Color(1, 1, 1, 0.045)
+	csb.border_width_left = 3
+	csb.border_color = Color(0.96, 0.74, 0.27, 0.85)
+	csb.set_corner_radius_all(4)
+	csb.content_margin_left = 12
+	csb.content_margin_right = 10
+	csb.content_margin_top = 8
+	csb.content_margin_bottom = 10
+	card.add_theme_stylebox_override("panel", csb)
+	var cv = VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 6)
+	cv.add_child(mode_title)
+	cv.add_child(mode_info)
+	cv.add_child(mode_rules)
+	card.add_child(cv)
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	r.add_child(card)
+	opt_mode.item_selected.connect(func(_i): _show_mode_info())
+	_show_mode_info()
 	_section(r, "Options")
 	var g = GridContainer.new()
 	g.columns = 3
@@ -1222,9 +1297,10 @@ func _show_mode_info() -> void:
 		var extra = ""
 		if id in ["frontline", "assault", "laststand", "breakthrough", "sabotage", "siege", "escort", "rescue", "koth", "commander", "horde", "general"]:
 			extra = "  (two sides only)"
-		mode_info.text = Obj.MODE_INFO.get(id, "") + extra
-		if id != "sandbox":
-			mode_info.text += "\n" + Rules.mode_text(id)
+		mode_info.text = Obj.MODE_INFO.get(id, "")
+		if mode_title != null:
+			mode_title.text = opt_mode.get_item_text(opt_mode.selected)
+			mode_rules.text = ("" if id == "sandbox" else Rules.mode_text(id)) + (" · two sides only" if extra != "" else "")
 		_mode_settings(id)
 
 # settings that mean nothing in a mode are greyed out (and the mode's own value shown)
@@ -1250,86 +1326,180 @@ func _mode_settings(id: String) -> void:
 		opt_time.select(2)
 	# the other side is the walking dead
 	opt_fac1.disabled = id == "horde"
+	# where more men come in later, the number set here is what each side starts with
+	if size_lbl != null:
+		size_lbl.text = {"laststand": "Defenders", "horde": "Survivors at the start", "sabotage": "Raiders", "commander": "Starting troops per side",
+			"general": "Soldiers per side"}.get(id, "Soldiers per side at the start" if id != "sandbox" or opt_reinf.selected != 4 else "Soldiers per side")
 
 # the title screen (and, during a battle, the pause menu)
 var title: Control
 var title_box: VBoxContainer
 var title_sub: Label
 
+var title_tip: Label
+var tip_i = 0
+var tip_t = 0.0
+const TITLE_TIPS = ["Right-click one of your vehicles or a mortar with soldiers selected and they'll climb in or man it.",
+	"Select soldiers and right-click a structure that's going up: they'll go and build it.",
+	"F2 switches night vision on and off.",
+	"Ctrl+number saves a selection as a group; the number brings it back, twice to look at it.",
+	"Medics drag the wounded to cover or carry them back to a field hospital on a stretcher.",
+	"Machine gunners are far more accurate once the bipod is down.",
+	"In commander mode the HQ can't be shelled: it has to be taken on the ground.",
+	"Mine plough tanks clear mines and roadside bombs in front of them.",
+	"Supply dumps only pay when a convoy gets through, and the enemy knows it.",
+	"At night, headlights give a vehicle away from far off."]
+
 func _build_title() -> void:
 	title = Control.new()
 	title.set_anchors_preset(Control.PRESET_FULL_RECT)
 	title.mouse_filter = Control.MOUSE_FILTER_STOP
-	# a dark band down the left over the slowly turning battlefield
-	var shade = ColorRect.new()
-	shade.color = Color(0.03, 0.035, 0.04, 0.82)
-	_place(shade, Control.PRESET_LEFT_WIDE, 0, 0, 440, 0)
+	# a dark wash down the left, fading out over the slowly turning battlefield
+	var g = Gradient.new()
+	g.set_color(0, Color(0.02, 0.025, 0.03, 0.94))
+	g.set_color(1, Color(0.02, 0.025, 0.03, 0.0))
+	g.add_point(0.62, Color(0.02, 0.025, 0.03, 0.86))
+	var gt = GradientTexture2D.new()
+	gt.gradient = g
+	gt.width = 256
+	gt.height = 4
+	var shade = TextureRect.new()
+	shade.texture = gt
+	shade.stretch_mode = TextureRect.STRETCH_SCALE
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(shade, Control.PRESET_LEFT_WIDE, 0, 0, 640, 0)
 	title.add_child(shade)
-	var edge = ColorRect.new()
-	edge.color = Color(0.95, 0.75, 0.3, 0.6)
-	_place(edge, Control.PRESET_LEFT_WIDE, 440, 0, 3, 0)
-	title.add_child(edge)
 	var v = VBoxContainer.new()
-	v.add_theme_constant_override("separation", 8)
-	_place(v, Control.PRESET_LEFT_WIDE, 48, 30, 344, 0)
+	v.add_theme_constant_override("separation", 6)
+	_place(v, Control.PRESET_LEFT_WIDE, 56, 30, 380, -20)
 	title.add_child(v)
-	var logo = _label("RAGDOLL", 44, Color(0.96, 0.93, 0.85))
-	v.add_child(logo)
-	var logo2 = _label("FRONT", 44, Color(0.95, 0.75, 0.3))
-	logo2.position.y = -14
-	v.add_child(logo2)
-	title_sub = _label("Battles that play themselves, until you step in.", 14, Color(0.72, 0.74, 0.72))
+	# the name on one line: RAGDOLL in white, FRONT in amber
+	var lh = HBoxContainer.new()
+	lh.add_theme_constant_override("separation", 14)
+	var logo = _label("RAGDOLL", 50, Color(0.97, 0.95, 0.9))
+	logo.add_theme_constant_override("outline_size", 10)
+	lh.add_child(logo)
+	var logo2 = _label("FRONT", 50, Color(0.96, 0.74, 0.27))
+	logo2.add_theme_constant_override("outline_size", 10)
+	lh.add_child(logo2)
+	v.add_child(lh)
+	var rule = ColorRect.new()
+	rule.color = Color(0.96, 0.74, 0.27, 0.8)
+	rule.custom_minimum_size = Vector2(120, 3)
+	rule.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	v.add_child(rule)
+	title_sub = _label("Battles that play themselves, until you step in.", 14, Color(0.78, 0.8, 0.77))
 	title_sub.autowrap_mode = TextServer.AUTOWRAP_WORD
-	title_sub.custom_minimum_size = Vector2(340, 0)
+	title_sub.custom_minimum_size = Vector2(370, 0)
 	v.add_child(title_sub)
 	var gap = Control.new()
-	gap.custom_minimum_size = Vector2(0, 4)
+	gap.custom_minimum_size = Vector2(0, 6)
 	v.add_child(gap)
 	title_box = VBoxContainer.new()
-	title_box.add_theme_constant_override("separation", 5)
+	title_box.add_theme_constant_override("separation", 4)
 	v.add_child(title_box)
+	# a tip along the bottom of the screen
+	title_tip = _label("", 13, Color(0.86, 0.86, 0.8))
+	title_tip.autowrap_mode = TextServer.AUTOWRAP_WORD
+	title_tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_place(title_tip, Control.PRESET_BOTTOM_RIGHT, -560, -46, 530, 36)
+	title.add_child(title_tip)
+	tip_i = randi() % TITLE_TIPS.size()
+	title_tip.text = "TIP  ·  " + TITLE_TIPS[tip_i]
 	root.add_child(title)
 	_fill_title()
 
+func _tip_tick(dt: float) -> void:
+	if title_tip == null or not title.visible:
+		return
+	tip_t += dt
+	if tip_t > 9.0:
+		tip_t = 0.0
+		tip_i = (tip_i + 1) % TITLE_TIPS.size()
+		title_tip.text = "TIP  ·  " + TITLE_TIPS[tip_i]
+
+# a menu entry: a title and a line under it, with a coloured bar down the left edge that lights up on hover
 func _title_button(text: String, sub: String, cb: Callable, big: bool = false) -> void:
-	var b = _button(text if sub == "" else "%s\n%s" % [text, sub], cb)
-	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	b.custom_minimum_size = Vector2(340, 52 if big else (40 if sub != "" else 34))
-	b.add_theme_font_size_override("font_size", 20 if big else 14)
+	var b = Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.pressed.connect(cb)
+	b.custom_minimum_size = Vector2(370, 56 if big else (42 if sub != "" else 34))
+	var accent = Color(0.96, 0.74, 0.27)
+	var n = StyleBoxFlat.new()
+	n.bg_color = Color(0.8, 0.6, 0.18, 0.95) if big else Color(1, 1, 1, 0.04)
+	n.set_corner_radius_all(4)
+	n.border_width_left = 4
+	n.border_color = accent if big else Color(1, 1, 1, 0.12)
+	n.set_content_margin_all(0)
+	var h = n.duplicate()
+	h.bg_color = Color(0.92, 0.7, 0.25, 1.0) if big else Color(1, 1, 1, 0.1)
+	h.border_color = accent
+	var pr = h.duplicate()
+	pr.bg_color = Color(0.7, 0.5, 0.15, 1.0) if big else Color(0.96, 0.74, 0.27, 0.18)
+	b.add_theme_stylebox_override("normal", n)
+	b.add_theme_stylebox_override("hover", h)
+	b.add_theme_stylebox_override("pressed", pr)
+	var lv = VBoxContainer.new()
+	lv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lv.add_theme_constant_override("separation", -2)
+	lv.alignment = BoxContainer.ALIGNMENT_CENTER
+	_place(lv, Control.PRESET_FULL_RECT, 16, 0, -16, 0)
+	lv.anchor_right = 1.0
+	lv.anchor_bottom = 1.0
+	lv.offset_right = -10
+	lv.offset_bottom = 0
+	var tl = _label(text, 22 if big else 16, Color(0.08, 0.07, 0.05) if big else Color(0.95, 0.94, 0.9))
 	if big:
-		b.add_theme_stylebox_override("normal", _dock_style(Color(0.78, 0.58, 0.16)))
-		b.add_theme_stylebox_override("hover", _dock_style(Color(0.9, 0.7, 0.25)))
-		b.add_theme_color_override("font_color", Color(0.06, 0.06, 0.05))
-		b.add_theme_color_override("font_hover_color", Color(0, 0, 0))
+		tl.add_theme_constant_override("outline_size", 0)
+	lv.add_child(tl)
+	if sub != "":
+		var sl = _label(sub, 13 if big else 12, Color(0.22, 0.18, 0.1) if big else Color(0.66, 0.68, 0.65))
+		if big:
+			sl.add_theme_constant_override("outline_size", 0)
+		lv.add_child(sl)
+	b.add_child(lv)
 	title_box.add_child(b)
+
+func _title_header(text: String) -> void:
+	var l = _label(text, 11, Color(0.96, 0.74, 0.27, 0.9))
+	var m = MarginContainer.new()
+	m.add_theme_constant_override("margin_top", 8)
+	m.add_child(l)
+	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_box.add_child(m)
 
 func _fill_title() -> void:
 	for c in title_box.get_children():
 		c.queue_free()
 	if G.started:
 		title_sub.text = "Paused · %s on %s" % [G.mode.capitalize(), G.world.MAPS.get(G.map_id, {}).get("name", G.map_id) if G.world != null else ""]
-		_title_button("▶  Resume", "", func(): _close_title(), true)
+		_title_button("▶  Resume", "back to the battle", func(): _close_title(), true)
 		_title_button("Restart this battle", "same map, mode and forces", func():
 			_close_title()
 			_deploy())
 		_title_button("New battle…", "pick a map, a mode and your forces", func(): _open_setup())
 		_title_button("Battle report", "who killed whom, and how", func(): show_report())
 	else:
-		title_sub.text = "Battles that play themselves, until you step in. Drop in soldiers, take over anyone on the field or command from above."
+		title_sub.text = "Battles that play themselves, until you step in: drop in soldiers, take over anyone, or command from above."
 		_title_button("▶  Quick battle", "pick a map, a mode and your forces", func(): _open_setup(), true)
-		_title_button("Campaign", "nine regions, one battle at a time", func(): _show_campaign())
-		_title_button("Daily challenge", "the same battle for everyone today", func(): _show_daily())
+		_title_header("PLAY")
 		_title_button("Commander", "fight a battle from above, RTS style", func(): _quick("commander"))
-		_title_button("Zombie horde", "hold out against ten waves", func(): _quick("horde"))
+		_title_button("Campaign", "twelve regions, one battle at a time", func(): _show_campaign())
+		_title_button("Daily challenge", "the same battle for everyone today", func(): _show_daily())
+		_title_button("Zombie horde", "hold out against the waves", func(): _quick("horde"))
+		_title_header("CREATE")
 		_title_button("Map editor", "build, paint and script your own maps", func():
 			title.visible = false
 			G.editor.new_map(Vector2(260, 190)))
 		_title_button("Scenario code", "save or load a battle as a code", func(): _show_scenario())
+	var gap = Control.new()
+	gap.custom_minimum_size = Vector2(0, 6)
+	title_box.add_child(gap)
 	var h = HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
 	for e in [["Teams", func(): _show_teams()], ["Settings", func(): _show_settings()], ["Controls", func(): help.visible = true]]:
 		var b = _button(e[0], e[1])
-		b.custom_minimum_size = Vector2(109, 36)
+		b.custom_minimum_size = Vector2(119, 34)
 		h.add_child(b)
 	title_box.add_child(h)
 	if G.started:
@@ -1465,6 +1635,8 @@ func _unhandled_key_input(ev: InputEvent) -> void:
 			Medical.player_dress(G.player)
 		elif ev.keycode == KEY_H:
 			help.visible = not help.visible
+		elif ev.keycode == KEY_F2 and G.started:
+			toggle_nv()
 		elif ev.keycode == KEY_J and G.started:
 			if report != null and report.visible:
 				report.visible = false
@@ -1510,16 +1682,29 @@ func _perf(dt: float) -> void:
 
 func update_hud(dt: float) -> void:
 	_perf(dt)
+	_tip_tick(dt)
 	dock_status_t -= dt
 	if dock_status != null and dock_status_t <= 0.0:
 		dock_status_t = 0.5
 		dock_status.text = Prod.status(0) if Prod.active() and G.started else ""
+		var sig2 = ""
 		if tab == "upgrades" and Prod.active():
-			var sig = str(Prod.done[0].keys()) + str(Prod.research[0].size())
-			if sig != up_sig:
-				up_sig = sig
-				_render_tools()
+			sig2 = str(Prod.done[0].keys()) + str(Prod.research[0].size())
+		elif tab in ["armour", "support", "recruit"] and G.mode == "commander":
+			# a depot, radio mast or hospital just finished (or was lost): the cards change
+			for k in ["jeep", "artillery", "airstrike", "ambulance"]:
+				sig2 += "1" if Support.unlocked(0, k) else "0"
+			sig2 += Support.need_text("jeep")
+		if sig2 != "" and sig2 != up_sig:
+			up_sig = sig2
+			_render_tools()
 	_info_tick(dt)
+	if nv != null and nv.visible:
+		(nv.material as ShaderMaterial).set_shader_parameter("t", fmod(Time.get_ticks_msec() * 0.001, 100.0))
+	# once it gets dark, say how to see
+	if G.started and G.main.is_night() and not nv_hinted:
+		nv_hinted = true
+		message("It's dark: F2 for night vision")
 	if vignette != null:
 		var want = 0.0
 		if G.player != null and is_instance_valid(G.player) and G.player.state != "dead":

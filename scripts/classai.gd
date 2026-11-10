@@ -28,7 +28,7 @@ static func jobs(s, known: bool, threat: Vector3) -> bool:
 	return false
 
 static func busy(s) -> bool:
-	return s.task in ["repair", "build", "mine", "patch", "construct", "defuse"]
+	return s.task in ["repair", "build", "mine", "patch", "construct", "defuse", "fixwheel", "sweep"]
 
 static func _start_construct(s, st) -> void:
 	AI.release_cover(s)
@@ -99,6 +99,25 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 			AI.go_to(s, v.pos + G.flat(s.pos - v.pos).normalized() * (v.spec["len"] * 0.5 + 0.8), 4.8)
 			G.fx.callout(s, G.pick(["I'll fix her up!", "Repairing!"]))
 			return true
+	# the other side lays mines or bombs: sweep the road ahead with a detector
+	if s.task != "sweep" and randf() < 0.25 and _mine_threat(s.team) and s.get_meta("swept_t", -999.0) < G.sim_time - 40.0:
+		s.set_meta("swept_t", G.sim_time)
+		var goal = AI.objective_for(s)
+		var dir = G.flat(goal - s.pos)
+		if dir.length() > 12.0:
+			var to = s.pos + dir.normalized() * minf(35.0, dir.length() - 6.0)
+			# keep to the road if there's one close
+			for rd in G.world.roads:
+				if s.pos.z > rd[2] - 12.0 and s.pos.z < rd[3] + 12.0 and rd[1] - rd[0] > rd[3] - rd[2]:
+					to.z = (rd[2] + rd[3]) * 0.5
+					break
+			AI.release_cover(s)
+			s.task = "sweep"
+			s.build_t = 0.0
+			s.set_meta("sweep_to", to)
+			AI.go_to(s, to, 1.5)
+			G.fx.callout(s, G.pick(["Sweeping for mines, stay behind me.", "Detector out. Nobody passes me.", "Checking the road for mines."]))
+			return true
 	# build: our own sites first
 	var ws = Build.work_site(s.team, s.pos, 160.0)
 	if ws != null and Build.helpers(ws) < 4:
@@ -158,17 +177,7 @@ static func work(s) -> void:
 				s.decide_t = 0.0
 				s.job_cd = 4.0
 				return
-			if G.dist2d(s.pos, st["p"]) < Build.build_radius(st) + 0.7:
-				AI.stop_move(s)
-				s.want = Vector3.ZERO
-				s.crouch_t = 0.75
-				var to = G.flat(st["p"] - s.pos)
-				s.aim_yaw = G.turn_to(s.aim_yaw, atan2(to.x, to.z), 4.0 * G.DT)
-				s.hand_t = s.pos + to.normalized() * 0.55 + Vector3(0, 0.45, 0)
-				s.tool_mode = "hammer"
-				Build.add_work(st, (1.0 if s.cls == "engineer" else 0.55) * G.DT)
-			elif s.move_target == null:
-				AI.go_to(s, Build.work_spot(st, s), 4.6)
+			_build_work(s, st)
 		"defuse":
 			var mn = s.board_target
 			if mn == null or not (mn is Dictionary) or not Combat.mines.has(mn) or (s.vis_t != null and G.dist2d(s.vis_t.pos, s.pos) < 40.0):
@@ -225,6 +234,37 @@ static func work(s) -> void:
 					G.fx.impact(v.center() + Vector3(randf_range(-1, 1), 0, randf_range(-1, 1)), Vector3.UP)
 			elif s.move_target == null:
 				AI.go_to(s, v.pos, 4.8)
+		"fixwheel":
+			# a crewman out at the side of his vehicle with a hammer and a wrench
+			var fv = s.board_target
+			if fv == null or not (fv is Vehicle) or not is_instance_valid(fv) or fv.dead or not (fv.tracks_broken or fv.tyres > 0):
+				s.task = "board" if fv != null and fv is Vehicle and is_instance_valid(fv) and not fv.dead else null
+				s.decide_t = 0.0
+				return
+			var right = Vector3(cos(fv.yaw), 0, -sin(fv.yaw))
+			var sd = 1.0 if right.dot(s.pos - fv.pos) >= 0.0 else -1.0
+			var spot = fv.pos + right * sd * (fv.spec["wid"] * 0.5 + 0.7) - fv.forward() * fv.spec["len"] * 0.2
+			if G.dist2d(spot, s.pos) < 1.0:
+				AI.stop_move(s)
+				s.want = Vector3.ZERO
+				s.crouch_t = 0.9
+				s.ready_ = false
+				var wheel = fv.pos + right * sd * fv.spec["wid"] * 0.45 - fv.forward() * fv.spec["len"] * 0.2 + Vector3(0, 0.5, 0)
+				s.aim_yaw = G.turn_to(s.aim_yaw, atan2(wheel.x - s.pos.x, wheel.z - s.pos.z), 5.0 * G.DT)
+				s.hand_t = wheel
+				s.tool_mode = "hammer"
+				s.build_t += G.DT
+				if s.build_t > (10.0 if fv.tracks_broken else 6.0):
+					fv.tracks_broken = false
+					fv._fix_tyres()
+					fv.fix_by = null
+					s.task = "board"
+					s.board_target = fv
+					G.fx.callout(s, G.pick(["Fixed! Mount up!", "She's good, let's go!", "Track's back on!"]))
+			elif s.move_target == null or G.dist2d(s.move_target, spot) > 1.0:
+				AI.go_to(s, spot, 4.0)
+		"sweep":
+			_sweep(s)
 		"patch":
 			var w = s.patient
 			if w == null or not is_instance_valid(w) or w.state != "alive" or (w.hp >= 95.0 and w.bleed <= 0.0):
@@ -310,6 +350,8 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 				continue
 			if G.dist2d(st["p"], from) < min_d or not Build.spotted(st, team) or (st["kind"] != "hq" and G.near_spawn(st["p"])):
 				continue
+			if st["kind"] == "hq" and G.mode == "commander":
+				continue        # shells can't touch it there
 			var spotted = false
 			var friends2 = false
 			for f in G.soldiers:
@@ -453,3 +495,159 @@ static func _anti_tank(s) -> bool:
 	if randf() < 0.3:
 		G.fx.callout(s, G.pick(["Tank! I'm on it!", "Moving on the armour!"]))
 	return true
+
+static func _mine_threat(team: int) -> bool:
+	for m in Combat.mines:
+		if m["team"] != team:
+			return true
+	return false
+
+# walking slowly with a mine detector swept from side to side in front; anything it finds gets cleared
+static func _sweep(s) -> void:
+	var to = s.get_meta("sweep_to", s.pos)
+	s.build_t += G.DT
+	if s.vis_t != null or G.dist2d(to, s.pos) < 2.0 or s.build_t > 45.0:
+		s.task = null
+		s.decide_t = 0.0
+		s.job_cd = 6.0
+		return
+	if s.move_target == null:
+		AI.go_to(s, to, 1.5)
+	s.ready_ = false
+	s.crouch_t = 0.3
+	var f = Vector3(sin(s.body_yaw), 0, cos(s.body_yaw))
+	var r = Vector3(-f.z, 0, f.x)
+	var sw = sin(G.sim_time * 2.4 + s.seed_) * 0.55
+	var head = s.pos + f * 1.5 + r * sw
+	head.y = G.world.surface_y(head.x, head.z, s.pos.y + 0.5) + 0.08
+	s.hand_t = s.pos + f * 0.45 + Vector3(0, 0.85, 0)
+	s.detector_at(s.hand_t, head)
+	for m in Combat.mines:
+		if m["team"] == s.team:
+			continue
+		var dm = m["p"] - s.pos
+		if G.flat(dm).length() < 6.0 and G.flat(dm).normalized().dot(f) > 0.3:
+			AI.stop_move(s)
+			s.task = "defuse"
+			s.board_target = m
+			s.build_t = 0.0
+			AI.go_to(s, m["p"], 1.5)
+			G.fx.callout(s, G.pick(["Mine! Everybody stop!", "Got one. Hold here while I clear it.", "Contact mine, ahead. Clearing it."]))
+			return
+
+# ---------------------------------------------------------------- building, by hand
+# Workers take turns at three jobs: hammering at the frame, digging with a shovel, and carrying
+# sandbags or planks over from the pile of materials beside the site. Earthworks (sandbags, nests, pits,
+# bunkers) are mostly digging and sandbags; huts and bases are mostly carpentry and planks.
+const EARTH = ["sandbags", "mgnest", "mortarpit", "bunker", "traps", "wire", "aa"]
+
+static func _build_work(s, st) -> void:
+	var rate = 1.0 if s.cls == "engineer" else 0.55
+	var job: Dictionary = s.get_meta("bjob", {})
+	if job.get("st") != st:
+		job = {"st": st, "m": "", "t": 0.0, "stage": 0}
+	if job["m"] == "":
+		var r = randf()
+		var earth = st["kind"] in EARTH
+		job["m"] = ("dig" if r < 0.45 else ("carry" if r < 0.8 else "hammer")) if earth else ("hammer" if r < 0.5 else ("carry" if r < 0.85 else "dig"))
+		job["t"] = randf_range(5.0, 8.0)
+		job["stage"] = 0
+	s.set_meta("bjob", job)
+	var near_site = G.dist2d(s.pos, st["p"]) < Build.build_radius(st) + 0.7
+	var to = G.flat(st["p"] - s.pos)
+	match job["m"]:
+		"carry":
+			var pile = _pile(st)
+			if job["stage"] == 0:
+				# over to the pile
+				if G.dist2d(pile, s.pos) < 1.2:
+					AI.stop_move(s)
+					s.crouch_t = 0.9
+					s.hand_t = pile + Vector3(0, 0.3, 0)
+					job["t2"] = job.get("t2", 0.0) + G.DT
+					if job["t2"] > 0.7:
+						job["stage"] = 1
+						job["t2"] = 0.0
+						AI.go_to(s, Build.work_spot(st, s), 2.6)
+				elif s.move_target == null or G.dist2d(s.move_target, pile) > 1.0:
+					AI.go_to(s, pile, 3.6)
+			elif job["stage"] == 1:
+				# walking back with it held in both arms
+				var f = Vector3(sin(s.body_yaw), 0, cos(s.body_yaw))
+				var r = Vector3(-f.z, 0, f.x)
+				var mid = s.pos + f * 0.38 + Vector3(0, 0.95, 0)
+				s.hand_t = mid
+				s.hands_t = [mid + r * 0.2, mid - r * 0.2]
+				s.ready_ = false
+				s.carry_item(true, "bag" if st["kind"] in EARTH else "plank", mid)
+				if near_site:
+					AI.stop_move(s)
+					s.crouch_t = 0.8
+					job["t2"] = job.get("t2", 0.0) + G.DT
+					if job["t2"] > 0.5:
+						s.carry_item(false, "", mid)
+						Build.add_work(st, rate * 2.2)
+						job["m"] = ""
+						job["t2"] = 0.0
+				elif s.move_target == null:
+					AI.go_to(s, Build.work_spot(st, s), 2.6)
+			return
+		"dig":
+			if not near_site:
+				if s.move_target == null:
+					AI.go_to(s, Build.work_spot(st, s), 4.6)
+				return
+			AI.stop_move(s)
+			s.want = Vector3.ZERO
+			s.crouch_t = 0.35
+			s.ready_ = false
+			s.aim_yaw = G.turn_to(s.aim_yaw, atan2(to.x, to.z), 4.0 * G.DT)
+			var f2 = to.normalized()
+			var ph = sin(G.sim_time * 2.6 + s.seed_)
+			var dig = maxf(0.0, ph)
+			# push the blade in low and forward, then lever the spoil up and over
+			var grip = s.pos + f2 * (0.35 + 0.15 * dig) + Vector3(0, 0.95 - 0.3 * dig, 0)
+			var blade = s.pos + f2 * (1.15 + 0.1 * dig) + Vector3(0, 0.05 + 0.45 * maxf(0.0, -ph), 0)
+			var sh = (blade - grip).normalized()
+			s.hand_t = grip
+			s.hands_t = [grip + sh * 0.42, grip]
+			s.tool_at("shovel", grip - sh * 0.15, blade)
+			if ph > 0.97 and randf() < 0.3:
+				G.fx.dust_cloud(blade, 0.4)
+			Build.add_work(st, rate * G.DT)
+		_:
+			if not near_site:
+				if s.move_target == null:
+					AI.go_to(s, Build.work_spot(st, s), 4.6)
+				return
+			AI.stop_move(s)
+			s.want = Vector3.ZERO
+			s.crouch_t = 0.75
+			s.aim_yaw = G.turn_to(s.aim_yaw, atan2(to.x, to.z), 4.0 * G.DT)
+			s.hand_t = s.pos + to.normalized() * 0.55 + Vector3(0, 0.45, 0)
+			s.tool_mode = "hammer"
+			Build.add_work(st, rate * G.DT)
+	job["t"] -= G.DT
+	if job["t"] <= 0.0:
+		job["m"] = ""
+
+# the stack of materials dumped beside a site: sandbags for earthworks, timber for anything with walls
+static func _pile(st) -> Vector3:
+	if st.has("pile"):
+		return st["pile"]
+	var f = Build._front(st)
+	var p = G.main._free_spot(st["p"] - f * (Build.build_radius(st) + 1.6) + Vector3(f.z, 0, -f.x) * 2.0)
+	p.y = G.world.ground_y(p.x, p.z)
+	st["pile"] = p
+	var n = Node3D.new()
+	st["root"].add_child(n)
+	if st["kind"] in EARTH:
+		for k in range(6):
+			VModel.box(null, n, Vector3(0.55, 0.22, 0.32), Vector3((k % 3) * 0.5 - 0.5, 0.11 + int(k / 3) * 0.22, randf_range(-0.05, 0.05)), Color(0.55, 0.5, 0.36), {"b": 0.08, "rot": Vector3(0, randf_range(-0.2, 0.2), 0)})
+	else:
+		for k in range(5):
+			VModel.box(null, n, Vector3(2.2, 0.08, 0.22), Vector3(0, 0.04 + k * 0.08, (k % 2) * 0.05), Color(0.55, 0.42, 0.27), {"b": 0.01})
+	n.global_position = p
+	n.rotation.y = atan2(f.x, f.z)
+	st["pile_node"] = n
+	return p

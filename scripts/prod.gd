@@ -7,7 +7,7 @@ extends RefCounted
 # and the points only count when it gets there. Lose the truck on the way and they're lost with it.
 
 const TIME = {"jeep": 18.0, "technical": 16.0, "motorbike": 12.0, "halftrack": 30.0, "armoredcar": 38.0, "tank": 55.0,
-	"heavytank": 75.0, "atgun": 22.0, "ambulance": 18.0, "radar": 32.0, "bridger": 32.0}
+	"heavytank": 75.0, "plough": 60.0, "atgun": 22.0, "ambulance": 18.0, "radar": 32.0, "bridger": 32.0}
 const UPGRADES = {
 	"armour": {"name": "Heavier armour", "cost": 30, "time": 60.0, "desc": "vehicles take a third less damage"},
 	"engineers": {"name": "Field engineering", "cost": 20, "time": 45.0, "desc": "engineers build twice as fast"},
@@ -99,9 +99,9 @@ static func _roll_out(team: int, what: String) -> void:
 			dep = st
 			break
 	if dep != null:
-		var p = G.main._free_spot(dep["p"] + Build._front(dep) * 8.0)
-		G.main.spawn_vehicle(what, team, p, atan2(Build._front(dep).x, Build._front(dep).z))
-		G.ui.radio(team, "Depot: %s ready" % Support.NAMES[what].split(" (")[0].to_lower())
+		var p = dep["p"] + Build._front(dep) * 8.0
+		Reinforce.drive_in(team, what, p)
+		G.ui.radio(team, "Depot: %s on its way in" % Support.NAMES[what].split(" (")[0].to_lower())
 	else:
 		Support.deliver(team, what)
 

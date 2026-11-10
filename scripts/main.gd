@@ -64,6 +64,16 @@ func _ready() -> void:
 			_horde_test()
 		if a == "--dogtest":
 			_dog_test()
+		if a == "--depottest":
+			_depot_test()
+		if a == "--econtest":
+			_econ_test()
+		if a == "--rtstest":
+			_rts_test()
+		if a == "--vfeattest":
+			_vfeat_test()
+		if a.begins_with("--uishot="):
+			_ui_shot(a.substr(9))
 		if a == "--stretchtest":
 			_stretch_test()
 		if a.begins_with("--mapshots="):
@@ -183,10 +193,10 @@ func apply_time() -> void:
 			sky_mat.sky_horizon_color = Color(0.06, 0.08, 0.14)
 			sky_mat.ground_horizon_color = Color(0.04, 0.05, 0.08)
 			sun.light_color = Color(0.55, 0.65, 0.9)
-			sun.light_energy = 0.22
+			sun.light_energy = 0.3
 			sun.rotation = Vector3(deg_to_rad(-40), deg_to_rad(30), 0)
 			env.ambient_light_color = Color(0.3, 0.38, 0.6)
-			env.ambient_light_energy = 0.2
+			env.ambient_light_energy = 0.3
 			env.fog_light_color = Color(0.04, 0.05, 0.09)
 			env.tonemap_exposure = ex * 1.4
 			G.view_range = 45.0
@@ -203,6 +213,8 @@ func apply_time() -> void:
 			env.tonemap_exposure = ex
 			G.view_range = 150.0
 	sky_mat.ground_bottom_color = sky_mat.ground_horizon_color.darkened(0.5)
+	if G.world != null:
+		G.world.set_water_sky(sky_mat.sky_horizon_color.lerp(sky_mat.sky_top_color, 0.35))
 
 func is_night() -> bool:
 	return G.settings["time"] == "night" or ((G.settings["time"] == "cycle" or G.settings["time"] == "dawn") and G.view_range < 80.0)
@@ -221,6 +233,8 @@ func _blend_time(c: float) -> void:
 	var B = _tod(b[1])
 	sky_mat.sky_top_color = A[0].lerp(B[0], k)
 	sky_mat.sky_horizon_color = A[1].lerp(B[1], k)
+	if G.world != null:
+		G.world.set_water_sky(sky_mat.sky_horizon_color)
 	sky_mat.ground_horizon_color = A[2].lerp(B[2], k)
 	sky_mat.ground_bottom_color = sky_mat.ground_horizon_color.darkened(0.5)
 	sun.light_color = A[3].lerp(B[3], k)
@@ -1002,6 +1016,67 @@ func _shot_mode(dir: String) -> void:
 		pp = para.pos
 		await _look(pp + Vector3(6.5, 1.0, 0.5), pp + Vector3(0, 2.4, 0))
 		await _snap(dir, "chute_side")
+	if _arg("nightshot", "") != "":
+		# two men with weapon lights sweeping a street, then the same with night vision on
+		var c1: Vector3 = _free_spot(G.world.capture)
+		var lights = []
+		for k in range(2):
+			var m = spawn_soldier(0, c1.x + k * 2.5, c1.z, "rifle")
+			m.order = {"mode": "hold", "point": m.pos}
+			m.light_on = true
+			m.set_meta("force_light", true)
+			m.aim_yaw = 0.4 - k * 0.6
+			lights.append(m)
+		await _wait(1.5)
+		await _look(c1 + Vector3(-4.5, 2.4, -5.0), c1 + Vector3(1.0, 0.6, 6.0))
+		await _wait(0.3)
+		await _snap(dir, "torches")
+		G.ui.toggle_nv()
+		await _wait(0.3)
+		await _look(G.world.capture + Vector3(-30, 25, -30), G.world.capture)
+		await _snap(dir, "nightvision")
+		G.ui.toggle_nv()
+		await _snap(dir, "night_plain")
+	if _arg("polishshot", "") != "":
+		# a tank with riders, a mine plough, a jeep, builders at work, and a machine gunner with the bipod down
+		var c2: Vector3 = _free_spot(G.world.capture + Vector3(-95, 0, 25))
+		var tk = spawn_vehicle("tank", 0, c2, 0.0)
+		for k in range(3):
+			var rr = spawn_soldier(0, c2.x + 3.0, c2.z, "rifle")
+			rr.mount(tk, tk.free_seat("pass"))
+		var pl = spawn_vehicle("plough", 0, _free_spot(c2 + Vector3(11, 0, 0)), 0.0)
+		var jp = spawn_vehicle("jeep", 0, _free_spot(c2 + Vector3(-10, 0, 2)), 0.0)
+		jp.tyres = 0
+		var bs = _free_spot(c2 + Vector3(0, 0, -22))
+		var st = Build.place("mgnest", 0, bs, Vector3(0, 0, 1), false, true)
+		var workers = []
+		force_cls = ["engineer", "engineer", "rifleman"]
+		for k in range(3):
+			workers.append(spawn_soldier(0, bs.x - 3.0 + k * 3.0, bs.z - 4.0, ""))
+		force_cls = []
+		for w in workers:
+			ClassAI._start_construct(w, st)
+			w.order = {"mode": "hold", "point": w.pos}
+		var mgp = _free_spot(c2 + Vector3(-12, 0, -14))
+		var mg = spawn_soldier(0, mgp.x, mgp.z, "lmg")
+		mg.order = {"mode": "hold", "point": mg.pos}
+		await _wait(float(_arg("polishshot", "6")))
+		mg.prone_t = true
+		mg.ready_ = true
+		mg.bipod_k = 1.0
+		mg._pose_bipod()
+		await _look(tk.pos + Vector3(-6.5, 3.8, -7.5), tk.pos + Vector3(0, 1.4, -1.5))
+		await _snap(dir, "riders")
+		await _look(pl.pos + Vector3(5.0, 3.0, 8.5), pl.pos + Vector3(0, 0.8, 3.0))
+		await _snap(dir, "plough")
+		await _look(bs + Vector3(5.5, 3.5, -7.5), bs + Vector3(0, 0.6, -2))
+		await _snap(dir, "builders")
+		await _wait(1.5)
+		await _snap(dir, "builders2")
+		var mgf = Vector3(sin(mg.body_yaw), 0, cos(mg.body_yaw))
+		var mgr = Vector3(-mgf.z, 0, mgf.x)
+		await _look(mg.pos + mgf * 1.6 + mgr * 1.8 + Vector3(0, 0.9, 0), mg.pos + mgf * 0.6 + Vector3(0, 0.3, 0))
+		await _snap(dir, "bipod")
 	if _arg("dogshot", "") != "":
 		# fighters over the field: one smoking and on fire, and a pilot coming down under his canopy
 		var c0: Vector3 = G.world.capture + Vector3(0, 70, 0)
@@ -1013,12 +1088,13 @@ func _shot_mode(dir: String) -> void:
 			v.life_t = 999.0
 		await _wait(0.2)
 		b.take_damage(b.spec["hp"] * 0.7, null, b.pos)
+		e.destroy(null)
 		await _wait(float(_arg("dogshot", "2.5")))
 		var bd: Vector3 = b.get_meta("dir", b.forward())
 		var bp: Vector3 = b.pos + bd * b.get_meta("spd", 40.0) / 30.0
 		await _look(bp - bd * 24.0 + Vector3(0, 5, 0) + bd.cross(Vector3.UP) * 9.0, bp - bd * 7.0)
 		await _snap(dir, "dogfight")
-		e.destroy(null)
+		var ewatch = e
 		await _wait(2.5)
 		var ch = G.soldiers.filter(func(x): return x.state == "chute")
 		print("DOGSHOT chutes ", ch.size())
@@ -1026,6 +1102,16 @@ func _shot_mode(dir: String) -> void:
 			var cp: Vector3 = ch[0].pos
 			await _look(cp + Vector3(7, 1.5, 7), cp + Vector3(0, 2.5, 0))
 			await _snap(dir, "bailout")
+		for q in range(30):
+			if ewatch.has_meta("crashed"):
+				break
+			await _wait(0.5)
+		await _wait(1.5)
+		print("DOGSHOT wreck crashed ", ewatch.has_meta("crashed"), " at ", ewatch.pos)
+		var wc = ewatch.pos + Vector3(14, 0, 12)
+		wc.y = G.world.ground_y(wc.x, wc.z) + 7.0
+		await _look(wc, ewatch.pos + Vector3(0, 1, 0))
+		await _snap(dir, "wreck")
 	if _arg("fxshot", "") != "":
 		# a crater, a felled tree and a furnished room
 		var tree = null
@@ -1757,6 +1843,157 @@ func _horde_test() -> void:
 	for k in range(6):
 		await _wait(10.0)
 		print("HORDETEST t%d wave %d left %d alive %d points %d boards %d" % [k * 10, Modes.horde_wave, Modes.horde_left, G.alive_count(0), Support.points[0], G.world.cols.filter(func(c): return c.alive and c.has_meta("board")).size()])
+	get_tree().quit()
+
+# commander mode with no starting vehicles: mark a depot, let engineers build it, then buy a jeep through the dock
+func _depot_test() -> void:
+	await _wait(0.5)
+	Engine.time_scale = 3.0
+	start_game({"map": "field", "mode": "commander", "size": 6, "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	await _wait(1.0)
+	Support.points[0] = 200
+	var home: Vector3 = G.world.rally_point(0)
+	var fw = G.flat(G.world.capture - home).normalized()
+	var spot = _free_spot(home - fw * 15.0 + Vector3(fw.z, 0, -fw.x) * 18.0)
+	var dep = Build.place("depot", 0, spot, fw, false)
+	G.ui._recruit("eng") if false else null
+	force_cls = ["engineer", "engineer", "engineer"]
+	for k in range(3):
+		spawn_soldier(0, spot.x + k * 2.0, spot.z + 6.0, "")
+	force_cls = []
+	print("DEPOTTEST callins has jeep: ", Rules.callin_ok(0, "jeep"), " site ", dep != null, " card text: ", Support.need_text("jeep"))
+	for k in range(30):
+		await _wait(4.0)
+		if dep != null and dep["done"]:
+			break
+		if k % 5 == 0:
+			print("DEPOTTEST t%d depot %.0f/%.0f" % [k * 4, dep["work"], dep["need"]])
+	print("DEPOTTEST depot done ", dep["done"], " unlocked ", Support.unlocked(0, "jeep"))
+	var v0 = G.vehicles.filter(func(x): return x.team == 0).size()
+	G.ui._card_clicked("sup:jeep")
+	print("DEPOTTEST after click points ", Support.points[0], " | ", Prod.status(0))
+	for k in range(12):
+		await _wait(5.0)
+	var mine = G.vehicles.filter(func(x): return x.team == 0)
+	print("DEPOTTEST vehicles %d -> %d" % [v0, mine.size()])
+	for v in mine:
+		print("   ", v.kind, " at ", v.pos, " d_depot %.0f" % G.dist2d(v.pos, dep["p"]))
+	get_tree().quit()
+
+# the AI commander's economy: it recruits, answers our planes with AA guns and sends a squad to ambush our convoys
+func _econ_test() -> void:
+	await _wait(0.5)
+	Engine.time_scale = 3.0
+	start_game({"map": "field", "mode": "commander", "size": 8, "limit": 999, "reinforce": true, "armor": "light", "teams": 2})
+	await _wait(1.0)
+	var home: Vector3 = G.world.rally_point(0)
+	var fw = G.flat(G.world.capture - home).normalized()
+	Build.place("supply", 0, _free_spot(home + Vector3(fw.z, 0, -fw.x) * -18.0), fw, true)
+	Support.points[1] = 150
+	var fp = spawn_vehicle("fighter", 0, Reinforce.entry_point(0), 0.0)
+	fp.life_t = 999.0
+	var n0 = G.soldiers.filter(func(x): return x.team == 1 and x.state != "dead").size()
+	Ops.raid_cd[1] = G.sim_time + 5.0
+	for k in range(18):
+		await _wait(10.0)
+		var aa = Build.sites.filter(func(st): return st["team"] == 1 and st["kind"] == "aa").map(func(st): return "%d%%" % int(100.0 * st["work"] / st["need"]))
+		var r = Ops.raids[1]
+		print("ECONTEST t%d | eng %d | AI men %d (start %d) pts %d | AA %s | raid %s %s" % [k * 10, G.soldiers.filter(func(x): return x.team == 1 and x.state == "alive" and x.cls == "engineer").size(), G.soldiers.filter(func(x): return x.team == 1 and x.state != "dead").size(), n0, Support.points[1], str(aa), str(Ops.events["raid"]), ("leader d %.0f" % G.dist2d(Squad.leader_of(r["q"]).pos, r["p"])) if r != null and Squad.leader_of(r["q"]) != null else "-"])
+	get_tree().quit()
+
+# RTS orders: select riflemen, send them to build a marked-out site, two to man a mortar, then a move that should start at once
+func _rts_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "commander", "size": 6, "limit": 999, "reinforce": false, "armor": "light", "teams": 2})
+	await _wait(1.0)
+	var home: Vector3 = G.world.rally_point(0)
+	var fw = G.flat(G.world.capture - home).normalized()
+	var c = _free_spot(home + fw * 10.0)
+	var men = []
+	force_cls = ["rifleman", "rifleman", "rifleman", "mg", "medic", "rifleman"]
+	for k in range(6):
+		men.append(spawn_soldier(0, c.x + k * 1.5, c.z, ""))
+	force_cls = []
+	var st = Build.place("sandbags", 0, _free_spot(c + fw * 12.0), fw, false, true)
+	var mortar = spawn_vehicle("mortar", 0, _free_spot(c - fw * 10.0), atan2(fw.x, fw.z), false)
+	await _wait(0.5)
+	G.pc.selection = men.slice(0, 3)
+	G.pc._update_rings()
+	print("RTSTEST summary: ", G.pc._sel_summary())
+	print("RTSTEST build order ", G.pc._order_build(st))
+	G.pc.selection = men.slice(3, 5)
+	print("RTSTEST board order ", G.pc._order_board(mortar))
+	G.pc.selection = [men[5]]
+	var p0: Vector3 = men[5].pos
+	men[5].order = {"mode": "move", "point": c + fw * 30.0}
+	G.pc._obey(men[5], c + fw * 30.0)
+	for q in range(5):
+		await _wait(0.2)
+		var mm = men[5]
+		print("RTSTEST mover %.1fs went %.1f m | state %s task %s mt %s path %d want %s vel %s order %s" % [0.2 * (q + 1), G.dist2d(mm.pos, p0), mm.state, str(mm.task), str(mm.move_target), mm.path.size(), str(mm.want), str(mm.vel), str(mm.order)])
+	for k in range(8):
+		await _wait(3.0)
+		print("RTSTEST t%d site %.0f/%.0f done %s | mortar crew %s | builders %s" % [k * 3, st["work"], st["need"], str(st["done"]), str(mortar.seats.map(func(x): return x != null)), str(men.slice(0, 3).map(func(x): return x.task))])
+	get_tree().quit()
+
+# vehicle features: a flat tyre and a thrown track fixed by the crew, riders jumping off, a burning tank's crew
+# bailing out, a mine plough clearing a mine, headlights at night and an engineer sweeping for mines
+func _vfeat_test() -> void:
+	await _wait(0.5)
+	G.settings["time"] = "night"
+	apply_time()
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	var c: Vector3 = _free_spot(G.world.capture)
+	var jeep = spawn_vehicle("jeep", 0, c, 0.0)
+	var tank = spawn_vehicle("tank", 0, _free_spot(c + Vector3(20, 0, 0)), 0.0)
+	var tank2 = spawn_vehicle("tank", 1, _free_spot(c + Vector3(-160, 0, 60)), PI)
+	var pl = spawn_vehicle("plough", 0, _free_spot(c + Vector3(0, 0, 40)), 0.0)
+	await _wait(0.5)
+	for k in range(6):
+		jeep.take_damage(10.0, null, jeep.global_transform * Vector3(1.0, 0.4, 1.0))
+	tank.tracks_broken = true
+	print("VFEAT jeep tyres %d, tank tracks %s, lights jeep %s tank %s" % [jeep.tyres, str(tank.tracks_broken), str(jeep.lights_on), str(tank.lights_on)])
+	# riders
+	var riders = []
+	for k in range(2):
+		var r = spawn_soldier(0, tank.pos.x + 3.0, tank.pos.z, "rifle")
+		r.mount(tank, tank.free_seat("pass"))
+		riders.append(r)
+	# a mine in front of the plough, and one in the road for the engineer
+	Combat.mines.append({"p": pl.pos + pl.forward() * 9.0, "team": 1, "kind": "at", "arm": 0.0, "owner": null, "node": Node3D.new()})
+	G.main.add_child(Combat.mines[-1]["node"])
+	pl.command(pl.pos + pl.forward() * 30.0)
+	force_cls = ["engineer"]
+	var eng = spawn_soldier(0, c.x - 30.0, c.z - 10.0, "")
+	force_cls = []
+	Combat.mines.append({"p": eng.pos + Vector3(4.0, 0, 0), "team": 1, "kind": "ap", "arm": 0.0, "owner": null, "node": Node3D.new()})
+	G.main.add_child(Combat.mines[-1]["node"])
+	await _wait(1.0)
+	tank.take_damage(30.0, null, tank.center())
+	await _wait(0.5)
+	print("VFEAT riders aboard after a hit: %s" % str(riders.map(func(x): return x.vehicle != null)))
+	tank2.burning = true
+	for k in range(10):
+		await _wait(2.0)
+		print("VFEAT t%d | jeep tyres %d fix %s | tank tracks %s fix %s | burning tank crew out %d | plough mines left %d plough hp %.0f | eng task %s mines %d | lights jeep %s" % [k * 2,
+			jeep.tyres, str(jeep.fix_by.task) if jeep.fix_by != null and is_instance_valid(jeep.fix_by) else "-", str(tank.tracks_broken), str(tank.fix_by.task) if tank.fix_by != null and is_instance_valid(tank.fix_by) else "-",
+			G.soldiers.filter(func(x): return x.team == 1 and x.state == "alive" and x.vehicle == null).size(), Combat.mines.size(), pl.hp, str(eng.task), Combat.mines.size(), str(jeep.lights_on)])
+	get_tree().quit()
+
+# the menus, for checking how they look
+func _ui_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	await _wait(3.0)
+	await _snap(dir, "title")
+	G.ui._open_setup()
+	await _wait(0.6)
+	await _snap(dir, "setup")
+	var mi = G.ui.MODE_IDS.find("commander")
+	G.ui.opt_mode.select(mi)
+	G.ui._show_mode_info()
+	await _wait(0.4)
+	await _snap(dir, "setup_commander")
 	get_tree().quit()
 
 # dogfight: two fighters a side meet over the field; count hits, smoke trails, kills and parachutes

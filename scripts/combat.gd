@@ -7,6 +7,7 @@ static var strikes: Array = []
 static var shake = 0.0
 static var flares: Array = []
 static var mines: Array = []
+static var arty = false            # the blast going off is an artillery or mortar shell
 static var fires: Array = []       # burning hedges, crates and huts
 
 static func spread_dir(base: Vector3, spread: float) -> Vector3:
@@ -23,6 +24,8 @@ static func spread_dir(base: Vector3, spread: float) -> Vector3:
 # one trigger pull
 static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void:
 	var W = s.W
+	if not s.zombie:
+		spread *= s.steady()
 	s.fired_t = G.sim_time
 	if s.cls == "sniper":
 		s.shots_here += 1
@@ -177,6 +180,12 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 				if is_instance_valid(hs):
 					hit_soldier(hs, ev["part"], ev["p"], d, ev["dmg"], shooter, force)
 			else:
+				var ip: Vector3 = ev["p"]
+				# into the water: a little spout where it went in, not a puff of dirt off the bottom
+				if not G.world.water.is_empty() and G.world.in_water(ip.x, ip.z) and ip.y < G.world.water_level(ip.x, ip.z) + 0.05:
+					if randf() < 0.6:
+						G.fx.splash(Vector3(ip.x, G.world.water_level(ip.x, ip.z), ip.z), 0.35)
+					continue
 				G.fx.impact(ev["p"], ev["n"])
 				if ev.has("exit"):
 					continue
@@ -514,7 +523,9 @@ static func step_strikes() -> void:
 			G.audio.whistle(s["p"])
 		if s["t"] <= 0.0:
 			var ow = s.get("owner")
+			arty = true
 			explode(s["p"], ow if (ow != null and is_instance_valid(ow)) else null, s.get("power", 1.35))
+			arty = false
 			strikes.remove_at(i)
 
 # ---------------------------------------------------------------- grenades and smoke
@@ -731,6 +742,11 @@ static func launch_rifle_grenade(s, origin: Vector3, target: Vector3) -> void:
 
 # ---------------------------------------------------------------- explosions
 static func explode(pos: Vector3, owner_s, power: float) -> void:
+	# a shell into the river throws up a tall column of spray
+	if not G.world.water.is_empty() and G.world.in_water(pos.x, pos.z) and pos.y < G.world.water_level(pos.x, pos.z) + 0.6:
+		var wl = G.world.water_level(pos.x, pos.z)
+		G.fx.splash(Vector3(pos.x, wl, pos.z), 2.2 * power)
+		G.fx.water_column(Vector3(pos.x, wl, pos.z), power)
 	Doors.blast(pos, power)
 	Faction.blast(pos, power)
 	var R = 7.0 * power
@@ -898,6 +914,19 @@ static func step_mines() -> void:
 			m["arm"] -= G.DT
 			continue
 		var boom = false
+		# a mine plough digs it up ahead of the tracks and sets it off harmlessly against the blade
+		for pv in G.vehicles:
+			if pv.has_meta("plough") and not pv.dead and G.dist2d(pv.pos + pv.forward() * (pv.spec["len"] * 0.5 + 1.0), m["p"]) < pv.spec["wid"] * 0.5 + 0.5:
+				pv.set_meta("plough_t", G.sim_time)
+				explode(m["p"] + Vector3(0, 0.2, 0), null, 0.6)
+				if randf() < 0.5 and pv.driver() != null:
+					G.fx.callout(pv.driver(), G.pick(["Mine cleared!", "Another one gone.", "Plough got one!"]))
+				m["node"].queue_free()
+				mines.remove_at(i)
+				boom = true
+				break
+		if boom:
+			continue
 		if m["kind"] == "ap":
 			for o in G.soldiers:
 				if o.team != m["team"] and (o.state == "alive" or o.state == "getup") and G.dist2d(o.pos, m["p"]) < 0.9:

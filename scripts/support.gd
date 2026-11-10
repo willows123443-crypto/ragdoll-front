@@ -7,16 +7,16 @@ extends RefCounted
 const COSTS = {
 	"artillery": 14, "airstrike": 20, "paradrop": 16, "heli": 20,
 	"jeep": 9, "motorbike": 7, "halftrack": 16, "armoredcar": 24, "tank": 36, "heavytank": 55, "gunship": 40,
-	"fighter": 26, "bomber": 34, "bridger": 16, "radar": 20, "ambulance": 9, "atgun": 14, "recon": 10, "technical": 8,
+	"fighter": 26, "bomber": 34, "bridger": 16, "radar": 20, "ambulance": 9, "atgun": 14, "recon": 10, "technical": 8, "plough": 30,
 }
 const NAMES = {
 	"artillery": "Artillery barrage", "airstrike": "Air strike", "paradrop": "Paratroopers", "heli": "Helicopter insertion",
 	"jeep": "Jeep", "motorbike": "Motorbike", "halftrack": "Half-track", "armoredcar": "Armoured car", "tank": "Tank", "gunship": "Gunship (70 s)",
-	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance", "atgun": "Anti-tank gun", "heavytank": "Heavy tank", "recon": "Recon plane (30 s)", "technical": "Technical",
+	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance", "atgun": "Anti-tank gun", "heavytank": "Heavy tank", "recon": "Recon plane (30 s)", "technical": "Technical", "plough": "Mine plough tank",
 }
 
 # in commander mode, what has to be built before you can call each one in
-const NEEDS = {"technical": "depot", "heavytank": "depot", "jeep": "depot", "motorbike": "depot", "halftrack": "depot", "armoredcar": "depot", "tank": "depot", "ambulance": "hospital",
+const NEEDS = {"plough": "depot", "technical": "depot", "heavytank": "depot", "jeep": "depot", "motorbike": "depot", "halftrack": "depot", "armoredcar": "depot", "tank": "depot", "ambulance": "hospital",
 	"radar": "depot", "bridger": "depot", "atgun": "depot", "gunship": "radio", "fighter": "radio", "bomber": "radio", "airstrike": "radio",
 	"paradrop": "radio", "heli": "radio", "recon": "radio"}
 const NEED_NAMES = {"depot": "a vehicle depot", "radio": "a radio mast", "hospital": "a field hospital"}
@@ -30,15 +30,29 @@ static func unlocked(team: int, what: String) -> bool:
 	return false
 
 static func need_text(what: String) -> String:
+	var st = pending_site(0, what)
+	if st != null:
+		return "%s %d%% built" % [st["name"].to_lower(), int(100.0 * st["work"] / maxf(1.0, st["need"]))]
 	return "needs " + NEED_NAMES.get(NEEDS.get(what, ""), "a building")
+
+# a building that would unlock this, marked out but not finished yet
+static func pending_site(team: int, what: String):
+	if not NEEDS.has(what):
+		return null
+	for st in Build.sites:
+		if st["team"] == team and st["kind"] == NEEDS[what] and not st["dead"] and not st["done"]:
+			return st
+	return null
 
 static var points: Array = []
 static var hq_t: Array = [0, 0, 0, 0]
 static var trickle = 0.0
 static var ai_t: Array = []
 static var planes: Array = []
+static var air_seen: Array = [-999.0, -999.0, -999.0, -999.0]
 
 static func reset() -> void:
+	air_seen = [-999.0, -999.0, -999.0, -999.0]
 	for r in recons:
 		if is_instance_valid(r["node"]):
 			r["node"].queue_free()
@@ -146,10 +160,18 @@ static func step(dt: float) -> void:
 		ai_t[t] -= dt
 		if ai_t[t] > 0.0:
 			continue
-		ai_t[t] = randf_range(25.0, 45.0)
+		ai_t[t] = randf_range(14.0, 24.0) if G.mode == "commander" else randf_range(25.0, 45.0)
 		_ai_spend(t)
 
 static func _ai_spend(t: int) -> void:
+	# commander mode: the AI buys its troops just like the player does, so its army grows over the battle
+	if G.mode == "commander":
+		if G.vehicles.any(func(v): return v.team != t and not v.dead and v.spec.get("air", false)):
+			air_seen[t] = G.sim_time
+		if G.sim_time - air_seen[t] < 240.0 and _ai_aa(t):
+			return
+		if _ai_recruit(t):
+			return
 	# an AI commander puts spare points into upgrades now and then
 	if Prod.active() and points[t] >= 40 and randf() < 0.35:
 		for up in Prod.UPGRADES.keys():
@@ -183,6 +205,7 @@ static func _ai_spend(t: int) -> void:
 				enemy_armour = true
 	if enemy_air and G.armor != "none":
 		opts.append_array(["fighter", "fighter"])
+
 	if (enemy_armour or G.mode == "destroy") and G.armor == "heavy":
 		opts.append("bomber")
 	if enemy_armour:
@@ -192,6 +215,9 @@ static func _ai_spend(t: int) -> void:
 				guns += 1
 		if guns < 2:
 			opts.append_array(["atgun", "atgun"])
+	# the enemy mines the roads: get a mine plough out in front
+	if G.armor != "none" and ClassAI._mine_threat(t) and not G.vehicles.any(func(v): return v.team == t and not v.dead and v.has_meta("plough")):
+		opts.append("plough")
 	var broken_bridge = false
 	for b in G.world.bridges:
 		if not b[5].alive:
@@ -257,9 +283,8 @@ static func deliver(team: int, what: String) -> void:
 		G.main.spawn_vehicle("atgun", team, G.main._free_spot(r0 + fw * 12.0), atan2(fw.x, fw.z))
 		G.ui.radio(team, "Anti-tank gun set up at the rally point")
 		return
-	var e2 = Reinforce.clear_entry(team)
 	var r: Vector3 = G.world.rally_point(team)
-	G.main.spawn_vehicle(what, team, e2, atan2(r.x - e2.x, r.z - e2.z))
+	Reinforce.drive_in(team, what, r)
 	G.ui.radio(team, "%s inbound from the rear" % NAMES[what])
 
 # a spotter plane circles over the enemy's side for thirty seconds: everything it sees goes on our map,
@@ -342,3 +367,54 @@ static func _step_planes(dt: float) -> void:
 		if p["t"] >= 1.0:
 			p["node"].queue_free()
 			planes.remove_at(i)
+
+# what the AI commander buys: riflemen first, engineers if it has none, AT men against armour,
+# more when it's losing men; capped so it can't flood the map
+static func _ai_recruit(t: int) -> bool:
+	var R = G.ui.RECRUIT
+	var mine = G.soldiers.filter(func(x): return x.team == t and x.state != "dead")
+	if mine.size() >= int(G.team_size * 2.5) + 6:
+		return false
+	var engs = mine.filter(func(x): return x.cls == "engineer").size()
+	var enemy_armour = G.vehicles.any(func(v): return v.team != t and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar"))
+	var k = "inf"
+	var pending = Build.sites.any(func(st): return st["team"] == t and not st["done"] and not st["dead"])
+	if engs == 0 or (engs < 2 and pending):
+		k = "eng"
+	elif enemy_armour and randf() < 0.4:
+		k = "atk"
+	elif randf() < 0.2:
+		k = G.pick(["asl", "snp", "med"])
+	# short-handed: spend on men before anything else; otherwise only now and then
+	var short = mine.size() < G.team_size
+	if not short and randf() < 0.45:
+		return false
+	if points[t] < R[k]["cost"]:
+		return false
+	points[t] -= R[k]["cost"]
+	G.main.force_cls = R[k]["cls"].duplicate()
+	Reinforce.truck(t, R[k]["cls"].size())
+	G.main.force_cls = []
+	return true
+
+static func _ai_aa(t: int) -> bool:
+	var hq = Build.hq(t)
+	if hq == null:
+		return false
+	var n = 0
+	for st in Build.sites:
+		if st["team"] == t and st["kind"] == "aa" and not st["dead"]:
+			n += 1
+			if not st["done"]:
+				return false      # one at a time
+	if n >= 2 or points[t] < Build.cost("aa"):
+		return false
+	var f = Build._front(hq)
+	var side = Vector3(f.z, 0, -f.x) * (1.0 if n == 0 else -1.0)
+	var spot = G.main._free_spot(hq["p"] + side * 16.0 - f * 6.0)
+	if Build.site_at(spot, 3.0) != null:
+		return false
+	points[t] -= Build.cost("aa")
+	Build.place("aa", t, spot, f)
+	G.ui.radio(t, "Anti-aircraft gun going up by the HQ")
+	return true

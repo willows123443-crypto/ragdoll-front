@@ -512,7 +512,7 @@ static func perceive(s) -> void:
 		var contact = s.vis_t != null or G.sim_time - s.seen_t < 10.0 or s.supp > 0.3
 		var point_man = s.squad == null or s.squad["members"].find(s) % 3 == 0
 		var near_enemy = s.has_seen and G.dist2d(s.threat, s.pos) < 70.0 and G.sim_time - s.seen_t < 40.0
-		s.light_on = not contact and not near_enemy and point_man and s.state == "alive" and s.cls != "sniper"
+		s.light_on = (not contact and not near_enemy and point_man and s.state == "alive" and s.cls != "sniper") or s.has_meta("force_light")
 	elif s.light_on:
 		s.light_on = false
 	var eye = s.head_pos()
@@ -535,7 +535,7 @@ static func perceive(s) -> void:
 		var rng = G.view_range
 		if rng < 100.0:
 			# in the dark you see what's lit by flares, or the flash of someone firing
-			if Combat.lit(o.pos) or G.sim_time - o.fired_t < 1.2 or o.light_on:
+			if Combat.lit(o.pos) or G.sim_time - o.fired_t < 1.2 or o.light_on or (o.vehicle != null and is_instance_valid(o.vehicle) and o.vehicle.lights_on):
 				rng = 150.0
 		if d > rng:
 			continue
@@ -849,10 +849,26 @@ static func decide(s) -> void:
 		return
 	# low on ammunition: go and get some
 	if s.task == "resupply":
-		if s.supply_target == null or (s.supply_target is Object and (not is_instance_valid(s.supply_target) or s.supply_target.reserve <= 0)):
+		if s.supply_target == null or (s.supply_target is Object and (not is_instance_valid(s.supply_target) or s.supply_target.reserve + s.supply_target.mag <= 0)):
 			s.task = null
 		else:
 			return
+	# completely dry, or there's armour about and a dead man's rocket launcher lying close: go and take his weapon
+	var dry = s.reserve <= 0 and s.mag < s.W["mag"] * 0.3
+	if (dry or (not s.W["rocket"] and s.cls in ["rifleman", "assault", "engineer"])) and not s.zombie:
+		var armour = dry or G.vehicles.any(func(v): return v.team != s.team and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar") and G.dist2d(v.pos, s.pos) < 120.0)
+		if armour:
+			for o in G.soldiers:
+				if o.state != "dead" or o.gun_body == null or not is_instance_valid(o.gun_body) or o.reserve + o.mag <= 0 or o.wid == s.wid:
+					continue
+				if not dry and not o.W["rocket"]:
+					continue
+				if G.dist2d(o.pos, s.pos) < (22.0 if dry else 15.0):
+					release_cover(s)
+					s.supply_target = o
+					s.task = "resupply"
+					go_to(s, o.pos, 5.0)
+					return
 	if s.ammo_frac() < 0.7 and s.vis_t == null and s.task != "resupply":
 		for o in G.soldiers:
 			if o.state == "dead" and o.reserve > 0 and G.dist2d(o.pos, s.pos) < 9.0:
@@ -1184,6 +1200,24 @@ static func update(s) -> void:
 	if s.task == "stretcher" and Stretcher.busy(s):
 		Stretcher.drive(s)
 		return
+	# just landed by parachute: out of the harness, then a look round before moving off
+	if s.has_meta("landed"):
+		var lt: float = s.get_meta("landed") - G.DT
+		if lt <= 0.0 or s.vis_t != null or s.is_player:
+			s.remove_meta("landed")
+		else:
+			s.set_meta("landed", lt)
+			stop_move(s)
+			s.want = Vector3.ZERO
+			s.ready_ = false
+			s.crouch_t = 0.6
+			if lt > 1.5:
+				# hands at the chest working the harness release
+				var f = Vector3(sin(s.body_yaw), 0, cos(s.body_yaw))
+				s.hand_t = s.chest() + f * 0.28 + Vector3(0, -0.05 + sin(lt * 18.0) * 0.04, 0)
+			else:
+				s.aim_yaw += sin(lt * 2.8) * 2.2 * G.DT
+			return
 	if s.task == "fetch":
 		fetch_tick(s)
 	if ClassAI.busy(s):
@@ -1232,8 +1266,16 @@ static func update(s) -> void:
 			else:
 				s.hands_t = [p5, p3]
 		elif G.dist2d(w.pos, s.pos) > 1.1:
-			if s.move_target == null or s.move_target.distance_to(w.pos) > 1.0:
-				go_to(s, w.pos, 5.0)
+			var dw = G.dist2d(w.pos, s.pos)
+			var hot = s.has_seen and G.sim_time - s.seen_t < 6.0
+			# under fire: screen him with smoke first, then go in low and crawl the last few metres
+			if hot and dw < 22.0 and s.smokes > 0 and s.get_meta("smoked_for", null) != w:
+				s.set_meta("smoked_for", w)
+				Combat.throw_grenade(s, w.pos + G.flat(s.threat - w.pos).normalized() * 5.0, "smoke")
+				G.fx.callout(s, G.pick(["Smoke out, I'm going for him!", "Covering smoke! Going in!"]))
+			var spd = 5.0 if not hot else (4.2 if dw > 9.0 else 1.4)
+			if s.move_target == null or s.move_target.distance_to(w.pos) > 1.0 or absf(s.speed_t - spd) > 0.5:
+				go_to(s, w.pos, spd)
 		else:
 			stop_move(s)
 			var exposed = s.has_seen and G.sim_time - s.seen_t < 8.0 and not G.blocked(Vector3(s.threat.x, s.threat.y + 1.5, s.threat.z), w.pos + Vector3(0, 0.4, 0))
@@ -1585,6 +1627,14 @@ static func stance(s) -> void:
 		return
 	if s.want.length_squared() > 0.1 and not s.in_cover:
 		s.prone_t = false
+	# a medic going in under fire crawls the last stretch to the man he's after
+	if s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and s.dragging == null and s.has_seen and G.sim_time - s.seen_t < 6.0:
+		var dp = G.dist2d(s.patient.pos, s.pos)
+		if dp > 1.3 and dp < 9.0:
+			s.prone_t = true
+	# a machine gunner out in the open with a target goes down behind the gun and gets the bipod on the ground
+	if (s.wid == "lmg" or s.wid == "atrifle") and s.vis_t != null and not s.in_cover and s.want.length_squared() < 0.1 and s.vault == null and s.dragging == null:
+		s.prone_t = true
 	# pinned down in the open: flat on the ground, crawling for cover
 	if s.supp > 1.1 and not s.in_cover and s.task != "flank_move" and s.task != "medic" and s.dragging == null and s.vault == null and not s.zombie:
 		s.prone_t = true
@@ -1757,6 +1807,26 @@ static func supply_tick(s, dt: float) -> void:
 		s.decide_t = 0.0
 
 static func scavenge(s, body) -> void:
+	# out of rounds for my own gun: pick up his instead (a rocket launcher first, if there's armour about)
+	var his_left = body.reserve + body.mag
+	var armour_near = G.vehicles.any(func(v): return v.team != s.team and not v.dead and (v.spec["tracked"] or v.kind in ["armoredcar", "halftrack", "technical"]) and G.dist2d(v.pos, s.pos) < 120.0)
+	var dry = s.reserve <= 0 and s.mag < s.W["mag"] * 0.3
+	var want_rocket = body.W["rocket"] and not s.W["rocket"] and armour_near and s.cls in ["rifleman", "assault", "engineer", "officer"]
+	if body.wid != s.wid and his_left > 0 and body.gun_body != null and is_instance_valid(body.gun_body) and (dry or want_rocket) and not s.zombie:
+		var keep_r = body.reserve
+		var keep_m = body.mag
+		s.set_weapon(body.wid)
+		s.reserve = mini(keep_r, s.W["mag"] * s.W["mags"])
+		s.mag = mini(keep_m, s.W["mag"])
+		body.reserve = 0
+		body.mag = 0
+		body.gun_body.queue_free()
+		body.gun_body = null
+		if s.is_player:
+			G.ui.message("Picked up %s's %s" % [body.sname, s.W["name"].to_lower()])
+		else:
+			G.fx.callout(s, G.pick(["Taking his rocket!", "Got a launcher!"]) if s.W["rocket"] else G.pick(["I'm out, taking his gun!", "Picked up his weapon!"]))
+		return
 	# a fallen soldier's rounds only fit if it's the same kind of gun; otherwise take a couple of generic mags
 	var got = body.reserve if body.wid == s.wid else mini(body.reserve, s.W["mag"] * 2)
 	s.reserve = mini(s.reserve + got, s.W["mag"] * s.W["mags"])

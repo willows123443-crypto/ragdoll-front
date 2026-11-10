@@ -91,14 +91,30 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Dragging and stretchers:** medics drag the wounded with both hands under the arms, to cover or into a nearby field hospital; when the hospital is too far to drag, the medic calls a second man over and they carry him back on a stretcher (if either bearer is hit, the stretcher goes down)
 - **Each side sounds different:** the regular army calls out by the book, Bravo uses clipped radio-speak, and the militia shout rough and informal, each with its own spoken voices, pitch and pace
 - **Dogfights:** fighters pick out enemy planes first and stay on the one they're chasing, break hard and jink when someone sits on their tail, and turn away rather than collide head-on; damaged planes trail grey smoke, then black smoke and flames, and go down in a spiral; shot down with height to spare, the crew bail out by parachute and fight on when they land
+- **Planes come down properly:** badly hit planes burn with flickering flames streaming back; a downed plane digs in nose first, tears a wing off, scatters pieces, leaves a scorch mark and burns for a while
+- **Parachutes:** panelled canopies with a vent at the top that sway and breathe, lines to each shoulder, and they collapse on the ground after landing; the man rolls as he lands, gets out of the harness and has a look round before moving off
+- **Wounded on stretchers** hold their wound, roll their head and hang an arm over the side; **medics under fire** throw smoke and crawl the last stretch
+- **Kit:** helmets come off when soldiers fall; men out of ammunition pick up a dead man's gun, and riflemen grab a dropped rocket launcher when armour is about
+- **Steadier shooting:** machine gunners go prone and put the bipod down (much more accurate), and anyone firing over a wall or a sill rests the gun on it
+- **Vehicles:** tyres can be shot flat and tracks knocked off, and a crewman climbs out and fixes them under fire; tank crews bail out of a burning tank and fight on foot; infantry ride on the back of tanks and jump off at the first shot; headlights at night that give a vehicle away from far off; vehicles push straight through hedges, prefer roads, and the ones you buy drive in from the edge of the map behind your HQ
+- **Mines:** engineers sweep roads with a detector and clear what they find, and the **mine plough tank** sets off mines ahead of its blade
+- **Commander mode:** the AI buys troops just as you do (engineers, riflemen, anti-tank teams), digs in anti-aircraft guns when you use planes, and sends squads to ambush your supply convoys; the HQ can't be shelled; bought vehicles roll in from the map edge; a depot under construction shows how far along it is; the vehicles setting is only what each side starts with
+- **Orders (RTS):** only selected units show their order line, with a pulsing ring where they're going; selected units show what they are (RIFLE, MG, MEDIC…); right-click a vehicle or a mortar to climb in or man it, or a structure going up to build it; units start moving the moment you order them, and orders crackle over the radio
+- **Building by hand:** workers take turns hammering, digging with a shovel and carrying sandbags or planks from a pile beside the site
+- **Night:** F2 for night vision; moonlight is a little brighter; weapon lights are a cool white beam that fades along its length with a soft spot of light
+- **Sound and sky:** machine guns and rifle fire off past the edge of the map, and now and then planes going over high up
+- **Water:** rippling water that reflects the sky and catches the sun; bullets kick up spouts, shells throw up columns of spray, and boats leave a wake
+- **Fewer speech bubbles:** in big fights only the nearest few soldiers talk at once; trucks and supply crews don't chatter
+- **Maps:** no more hedges or bushes lying along roads
+- **Menus:** a new title screen and battle setup, with what each mode is about shown beside the Deploy button, and "starting soldiers" where more come in later
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
-**Command tab:** click or drag a box to select soldiers, right-click the ground to send them there.
+**Command tab:** click or drag a box to select soldiers, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it.
 **Controlling a soldier:** mouse aim, left-click fire, right mouse aim down sights, Q/E lean, Shift sprint, C crouch, Z prone, R reload, G grenade, V smoke, L flare, 1–5 weapons, Y first person, O squad follows you, F pick up a fallen soldier's gun or get into a vehicle, hold U to help build a friendly site, I to dismantle what you aim at, X leave the soldier.
 **In a vehicle:** WASD drive, mouse aims the turret, left-click fire, 1–4 change seat, F get out.
 **Controlling a soldier (more):** walk into a ladder to climb it, 0 for a panzerfaust.
-**Anywhere:** M or Esc menu, H help (dresses your wound while controlling a bleeding soldier), J battle report, P pause, T slow motion.
+**Anywhere:** M or Esc menu, H help (dresses your wound while controlling a bleeding soldier), J battle report, P pause, T slow motion, F2 night vision.
 
 ## I couldn't run this, so please report problems
 I couldn't run Godot where I wrote this. I checked the scripts with a static checker, but the first run will probably surface a few errors. When something breaks, send me:

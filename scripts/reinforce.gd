@@ -121,6 +121,56 @@ static func entry_point(t: int) -> Vector3:
 		z = b.position.y + 5.0 if dir.z < 0.0 else b.end.y - 5.0
 	return Vector3(x, G.world.ground_y(x, z), z)
 
+# the nearest bit of map edge behind our HQ (or our rally point): where vehicles we buy drive in from
+static func edge_near_hq(t: int) -> Vector3:
+	var home: Vector3 = G.world.rally_point(t)
+	for st in Build.sites:
+		if st["team"] == t and st["kind"] == "hq" and not st["dead"]:
+			home = st["p"]
+			break
+	var b: Rect2 = G.world.bounds
+	var dl = home.x - b.position.x
+	var dr = b.end.x - home.x
+	var dt_ = home.z - b.position.y
+	var db = b.end.y - home.z
+	var m = minf(minf(dl, dr), minf(dt_, db))
+	var e = home
+	if m == dl:
+		e.x = b.position.x + 5.0
+	elif m == dr:
+		e.x = b.end.x - 5.0
+	elif m == dt_:
+		e.z = b.position.y + 5.0
+	else:
+		e.z = b.end.y - 5.0
+	var inward = G.flat(home - e).normalized()
+	if inward.length_squared() < 0.01:
+		inward = G.flat(G.world.capture - e).normalized()
+	var perp = Vector3(-inward.z, 0, inward.x)
+	for k in range(20):
+		var q = e + inward * (4.0 + (k / 5) * 6.0) + perp * [0.0, 9.0, -9.0, 18.0, -18.0][k % 5]
+		q.x = clampf(q.x, b.position.x + 5.0, b.end.x - 5.0)
+		q.z = clampf(q.z, b.position.y + 5.0, b.end.y - 5.0)
+		var ok = not G.world.inside_any(q.x, q.z, 2.5) and not G.world.in_water(q.x, q.z)
+		for v in G.vehicles:
+			if G.dist2d(v.pos, q) < 10.0:
+				ok = false
+		if ok:
+			return Vector3(q.x, G.world.ground_y(q.x, q.z), q.z)
+	return Vector3(e.x, G.world.ground_y(e.x, e.z), e.z)
+
+# a vehicle we bought drives in from the edge behind our HQ and on to where it's wanted
+static func drive_in(t: int, kind: String, dest: Vector3, crew: bool = true):
+	if Vehicle.SPECS.get(kind, {}).get("static", false):
+		var fw = G.flat(G.world.capture - dest).normalized()
+		return G.main.spawn_vehicle(kind, t, G.main._free_spot(dest), atan2(fw.x, fw.z), crew)
+	var e = edge_near_hq(t)
+	var v = G.main.spawn_vehicle(kind, t, e, atan2(dest.x - e.x, dest.z - e.z), true)
+	# ours report to the depot or rally point and wait for orders; the AI's just drive on into the fight
+	if v != null and t == 0 and G.mode != "sandbox":
+		v.command(G.main._free_spot(dest))
+	return v
+
 # somewhere just in from the edge with nothing parked on it (wrecks and other arrivals block the road)
 static func clear_entry(t: int) -> Vector3:
 	var e = entry_point(t)

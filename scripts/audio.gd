@@ -196,10 +196,23 @@ func _process(dt: float) -> void:
 		rumble_t -= dt
 		if rumble_t <= 0.0:
 			rumble_t = randf_range(2.5, 8.0) / (0.5 + G.soldiers.size() / 40.0)
-			ui_player2.stream = s_far
-			ui_player2.pitch_scale = randf_range(0.45, 0.8)
-			ui_player2.volume_db = randf_range(-26.0, -16.0)
-			ui_player2.play()
+			var r = randf()
+			if r < 0.45:
+				ui_player2.stream = s_far
+				ui_player2.pitch_scale = randf_range(0.45, 0.8)
+				ui_player2.volume_db = randf_range(-26.0, -16.0)
+				ui_player2.play()
+			elif r < 0.75:
+				# a machine gun somewhere off past the edge of the map: a short burst, dulled by distance
+				var n = randi_range(4, 10)
+				var vol = randf_range(-30.0, -21.0)
+				var pit = randf_range(0.5, 0.65)
+				for k in range(n):
+					_far_shot(k * randf_range(0.075, 0.095), vol, pit)
+			else:
+				# scattered rifle fire
+				for k in range(randi_range(2, 5)):
+					_far_shot(randf_range(0.0, 1.6), randf_range(-32.0, -24.0), randf_range(0.6, 0.8))
 	# echo inside buildings
 	var cam = get_viewport().get_camera_3d()
 	if cam != null and G.started and G.world != null:
@@ -210,6 +223,53 @@ func _process(dt: float) -> void:
 			reverb.room_size = 0.55 + indoor * 0.35
 			reverb.wet = 0.18 + indoor * 0.35
 			reverb.damping = 0.6 - indoor * 0.3
+
+var far_players: Array = []
+var far_i = 0
+
+func _far_shot(delay: float, vol: float, pit: float) -> void:
+	if far_players.is_empty():
+		for k in range(6):
+			var pl = AudioStreamPlayer.new()
+			add_child(pl)
+			far_players.append(pl)
+	get_tree().create_timer(delay, false).timeout.connect(func():
+		var pl: AudioStreamPlayer = far_players[far_i]
+		far_i = (far_i + 1) % far_players.size()
+		pl.stream = s_distant
+		pl.pitch_scale = pit * randf_range(0.95, 1.05)
+		pl.volume_db = vol
+		pl.play())
+
+# a crackle and a squelch, for orders going out over the radio
+var s_radio: AudioStreamWAV = null
+
+func radio_click() -> void:
+	if s_radio == null:
+		var n = int(0.3 * RATE)
+		var out = PackedFloat32Array()
+		out.resize(n)
+		var lp = 0.0
+		var hp = 0.0
+		for i in range(n):
+			var t = float(i) / RATE
+			var v = 0.0
+			# a short squelch tone, then band-limited hiss that crackles in and out
+			if t < 0.06:
+				v += sin(TAU * 1250.0 * t) * 0.35 * minf(1.0, t * 300.0)
+			var nz = randf() * 2.0 - 1.0
+			lp += (nz - lp) * 0.45
+			hp = lp - hp * 0.6
+			var gate = 1.0 if fmod(t * 37.0 + sin(t * 90.0), 1.0) > 0.25 else 0.35
+			v += hp * 0.32 * gate * (1.0 if t > 0.04 else 0.0) * exp(-maxf(0.0, t - 0.2) / 0.03)
+			out[i] = v
+		s_radio = _wav(out)
+	if not G.settings.get("voices", true) and G.settings["volume"] <= 0.0:
+		return
+	ui_player.stream = s_radio
+	ui_player.pitch_scale = randf_range(0.95, 1.05)
+	ui_player.volume_db = -10.0
+	ui_player.play()
 
 func set_volume(v: float) -> void:
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(v, 0.001)))

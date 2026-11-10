@@ -509,6 +509,7 @@ func callout(s, text: String) -> void:
 	l.modulate = Color(0.75, 0.85, 1.0) if s.team == 0 else Color(1.0, 0.75, 0.75)
 	add_child(l)
 	callouts.append({"l": l, "s": s, "t": 1.8})
+	G.audio.bark(s, text)
 
 func update_callouts(dt: float) -> void:
 	for i in range(callouts.size() - 1, -1, -1):

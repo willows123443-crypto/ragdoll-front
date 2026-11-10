@@ -16,6 +16,8 @@ static var pilot = null
 static var rescued = false
 static var rescue_t = 0.0
 static var rescue_squad = null
+static var crash_p = Vector3.ZERO
+static var pilot_known_t = -1.0      # Bravo knows exactly where he is until then
 static var koth_t = 0.0
 static var koth_moves = 0
 static var horde_wave = 0
@@ -35,6 +37,7 @@ static func reset() -> void:
 	pilot = null
 	rescued = false
 	rescue_squad = null
+	pilot_known_t = -1.0
 	rescue_t = RESCUE_TIME
 	koth_t = KOTH_EVERY
 	koth_moves = 0
@@ -71,6 +74,10 @@ static func _setup_escort() -> void:
 		var p = _clear_spot(start - dir * (i * 11.0) + side * (2.0 if i % 2 == 0 else -2.0), 4.0)
 		var v = G.main.spawn_vehicle(kinds[i], 0, p, yaw)
 		if kinds[i] == "truck":
+			# a co-driver rides along to take over if the driver is hit
+			var cd = G.main.spawn_soldier(0, p.x, p.z, "")
+			if cd != null:
+				cd.mount(v, v.free_seat("pass"))
 			v.mission = {"type": "escort", "drop": convoy_goal, "exit": convoy_goal, "stage": 0, "wait": 0.0, "delay": 4.0 + i * 3.0}
 			v.hp *= 2.0
 			convoy.append(v)
@@ -104,18 +111,43 @@ static func escort_target(v, m: Dictionary):
 	if m["stage"] >= 5:
 		return null
 	var dg = G.dist2d(v.pos, convoy_goal)
-	# progress check: a truck jammed close to the goal counts as through
-	if m.get("chk_t", 0.0) <= m["go_t"]:
-		if dg < 50.0 and m.has("chk_p") and G.dist2d(v.pos, m["chk_p"]) < 2.0:
-			dg = 0.0
-		m["chk_t"] = m["go_t"] + 10.0
-		m["chk_p"] = v.pos
+	var lead = _lead_truck()
+	# the armoured car scouts ahead of the leading truck, then waits past the goal
 	if m.get("lead", false):
 		var beyond = convoy_goal + G.flat(convoy_goal - G.world.spawn[0]).normalized() * 18.0
 		if G.dist2d(v.pos, beyond) < 8.0:
 			m["stage"] = 5
 			return null
+		if lead != null:
+			var ld = G.flat(convoy_goal - lead.pos)
+			if ld.length() > 45.0:
+				var scout = lead.pos + ld.normalized() * 40.0
+				if G.dist2d(v.pos, scout) < 8.0:
+					return null
+				return scout
 		return beyond
+	# a detour round whatever blocked the road
+	if m.get("detour_t", 0.0) > m["go_t"]:
+		if G.dist2d(v.pos, m["detour"]) > 6.0:
+			m["why"] = "detour"
+			return m["detour"]
+		m["detour_t"] = 0.0
+	# progress check every few seconds: jammed near the goal counts as through; jammed elsewhere, go round
+	if m.get("chk_t", 0.0) <= m["go_t"]:
+		var stuck = m.has("chk_p") and G.dist2d(v.pos, m["chk_p"]) < 2.0 and not m.get("held", false)
+		if stuck and dg < 50.0:
+			dg = 0.0
+		elif stuck:
+			var f = G.flat(convoy_goal - v.pos).normalized()
+			var side = Vector3(f.z, 0, -f.x) * (1.0 if m.get("dside", 1.0) > 0.0 else -1.0)
+			m["dside"] = -m.get("dside", 1.0)
+			m["detour"] = _clear_spot(v.pos + side * 12.0 + f * 10.0, 3.5)
+			m["detour_t"] = m["go_t"] + 8.0
+			if v.driver() != null:
+				G.fx.callout(v.driver(), G.pick(["Road's blocked, going round!", "Find another way!", "Back up, back up!"]))
+		m["chk_t"] = m["go_t"] + 6.0
+		m["chk_p"] = v.pos
+	m["held"] = false
 	if dg < 14.0:
 		m["stage"] = 5
 		if v in convoy:
@@ -123,12 +155,30 @@ static func escort_target(v, m: Dictionary):
 			G.ui.radio(0, "Truck made it through! (%d of %d)" % [arrived, convoy_need])
 		return null
 	# trucks keep a little behind the vehicle ahead of them
-	if true:
-		var i = convoy.find(v)
-		if i > 0:
-			var ahead = convoy[i - 1]
-			if is_instance_valid(ahead) and not ahead.dead and ahead.mission != null and ahead.mission["stage"] < 5 and G.dist2d(ahead.pos, v.pos) < 12.0 and G.dist2d(ahead.pos, convoy_goal) < G.dist2d(v.pos, convoy_goal):
-				return null
+	var i = convoy.find(v)
+	if i > 0:
+		var ahead = convoy[i - 1]
+		if is_instance_valid(ahead) and not ahead.dead and ahead.mission != null and ahead.mission["stage"] < 5 and G.dist2d(ahead.pos, v.pos) < 12.0 and G.dist2d(ahead.pos, convoy_goal) < G.dist2d(v.pos, convoy_goal):
+			m["held"] = true
+			m["why"] = "behind"
+			return null
+	# the leading truck doesn't race off without its escort (but won't wait forever)
+	if v == lead and m.get("wait_esc", 0.0) < 20.0:
+		var near = 0
+		var walkers = 0
+		var f2 = G.flat(convoy_goal - v.pos).normalized()
+		for s in G.soldiers:
+			if s.team == 0 and s.state == "alive" and s.vehicle == null:
+				walkers += 1
+				var rel = G.flat(s.pos - v.pos)
+				if rel.length() < 45.0 and rel.dot(f2) > -12.0:
+					near += 1
+		if walkers >= 3 and near < 2:
+			m["wait_esc"] = m.get("wait_esc", 0.0) + G.DT
+			m["held"] = true
+			m["why"] = "escort"
+			return null
+	m["why"] = "go"
 	return convoy_goal
 
 static func _setup_rescue() -> void:
@@ -147,6 +197,7 @@ static func _setup_rescue() -> void:
 		W.add_box(p.x + 5.5, 0.4, p.z + 5.0, 0.6, 1.4, 3.6, Color(0.18, 0.2, 0.18), {"ry": yaw + 0.6, "collide": false})
 		W.add_box(p.x + 2.0, 0.0, p.z - 3.0, 5.0, 0.15, 0.4, Color(0.15, 0.15, 0.15), {"ry": yaw + 1.2, "collide": false}))
 	G.fx.wreck_smoke(Vector3(p.x + 4.0, W.ground_y(p.x, p.z) + 1.5, p.z + 1.0), W.geo_root)
+	crash_p = p
 	pilot = G.main.spawn_soldier(0, p.x, p.z, "pistol")
 	if pilot != null:
 		pilot.sname = "Lt. " + pilot.sname
@@ -170,8 +221,12 @@ static func target_for(s):
 			var a = float(s.id) * 2.39
 			var off = Vector3(cos(a), 0, sin(a)) * (4.0 + float(s.id % 5) * 2.0)
 			if s.team == 0:
-				# walk alongside the trucks, out to the sides of the road (never in front of them)
 				var side = Vector3(dir.z, 0, -dir.x) * (1.0 if s.id % 2 == 0 else -1.0)
+				var qid = s.squad["id"] if s.squad != null else s.id
+				if qid % 2 == 0:
+					# screening squads push ahead and clear the road of ambushes
+					return lead.pos + dir * minf(L, 30.0 + float(qid % 3) * 8.0) + side * (6.0 + float(s.id % 4) * 3.0)
+				# the rest walk alongside the trucks, out to the sides of the road (never in front of them)
 				return lead.pos + dir * minf(L, 6.0 + float(s.id % 3) * 4.0) + side * (8.0 + float(s.id % 4) * 3.0)
 			return lead.pos + dir * minf(L, 45.0) + off
 		"rescue":
@@ -185,6 +240,11 @@ static func target_for(s):
 				return _home(0) + off2
 			if s.team == 1 and s.squad != null and s.squad["id"] % 2 == 1:
 				return null      # half of Bravo holds the middle
+			if s.team == 1 and G.sim_time > pilot_known_t:
+				# Bravo only knows roughly where he came down: squads sweep the area round the wreck
+				var q = s.squad["id"] if s.squad != null else s.id
+				var sweep = float(q) * 1.7 + floor(G.sim_time / 20.0) * 2.1
+				return crash_p + Vector3(cos(sweep), 0, sin(sweep)) * (18.0 + float(q % 3) * 9.0) + off2
 			return pilot.pos + off2
 	return null
 
@@ -246,6 +306,17 @@ static func _rescue_check() -> void:
 		G.main.end_game(1)
 		return
 	_send_rescue_squad()
+	# does Bravo see him?
+	if G.sim_time > pilot_known_t - 5.0:
+		var head = pilot.chest()
+		for s in G.soldiers:
+			if s.team == 1 and s.state == "alive" and G.dist2d(s.pos, pilot.pos) < (28.0 if not rescued else 60.0):
+				if not G.blocked(s.head_pos(), head, true):
+					if G.sim_time > pilot_known_t:
+						G.fx.callout(s, G.pick(["There's the pilot!", "Found him!", "Pilot spotted!"]))
+						G.ui.radio(1, "Pilot spotted, converge on him!")
+					pilot_known_t = G.sim_time + 20.0
+					break
 	if not rescued:
 		if randf() < 0.08:
 			G.fx.callout(pilot, G.pick(["Over here!", "I'm hurt, over here!", "Anyone out there?"]))
@@ -255,18 +326,17 @@ static func _rescue_check() -> void:
 				G.ui.radio(0, "They've taken the pilot prisoner...")
 				G.main.end_game(1)
 				return
+		# a medic who patched him up counts as finding him
+		if pilot.state == "alive" or pilot.state == "getup":
+			var by = null
+			for s in G.soldiers_near(pilot.pos):
+				if s.team == 0 and s != pilot and s.state == "alive":
+					by = s
+			_rescue_done(by)
+			return
 		for s in G.soldiers_near(pilot.pos):
-			if s.team == 0 and s != pilot and s.state == "alive" and G.dist2d(s.pos, pilot.pos) < 2.6:
-				rescued = true
-				pilot.hp = 60.0
-				if pilot.carried_by != null and is_instance_valid(pilot.carried_by):
-					pilot.carried_by.carrying = null
-				pilot.carried_by = null
-				pilot.start_getup()
-				pilot.order = {"mode": "follow", "who": s, "point": null}
-				G.fx.callout(s, "Got him! Head for home!")
-				G.ui.radio(0, "We have the pilot! Get him back to base")
-				G.ui.radio(1, "They've got the pilot. Cut them off!")
+			if s.team == 0 and s != pilot and s.state == "alive" and G.dist2d(s.pos, pilot.pos) < (2.6 if s.is_player else 5.5):
+				_rescue_done(s)
 				break
 	else:
 		# keep him with somebody friendly
@@ -285,6 +355,20 @@ static func _rescue_check() -> void:
 	if G.dist2d(pilot.pos, _home(0)) < 26.0 and (rescued or pilot.carried_by != null):
 		G.ui.radio(0, "The pilot is safe!")
 		G.main.end_game(0)
+
+static func _rescue_done(s) -> void:
+	rescued = true
+	pilot.hp = 150.0
+	if pilot.carried_by != null and is_instance_valid(pilot.carried_by):
+		pilot.carried_by.carrying = null
+	pilot.carried_by = null
+	if pilot.state == "wounded":
+		pilot.start_getup()
+	pilot.order = {"mode": "follow", "who": s, "point": null} if s != null else {"mode": "move", "point": _home(0)}
+	if s != null:
+		G.fx.callout(s, "Got him! Head for home!")
+	G.ui.radio(0, "We have the pilot! Get him back to base")
+	G.ui.radio(1, "They've got the pilot. Cut them off!")
 
 # one squad is sent to fetch the pilot, then to see him home
 static func _send_rescue_squad() -> void:
@@ -468,9 +552,25 @@ static func zombie_tick(s) -> void:
 		if s.melee_t <= 0.0:
 			s.melee_t = 0.95
 			_claw(s, t)
-	elif d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0))):
+	elif s.bad_t < G.sim_time and (d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
 		AI.stop_move(s)
-		s.want = to / d * (spd / s.W["speed"])
+		var dir = to / d
+		# slide round posts and corners rather than pushing into them
+		if G.world.solid_at(s.pos.x + dir.x * 0.6, s.pos.z + dir.z * 0.6, 0.22, s.pos.y) and not _vaultable_ahead(s, dir):
+			for ang in [0.6, -0.6, 1.1, -1.1]:
+				var nd = dir.rotated(Vector3.UP, ang)
+				if not G.world.solid_at(s.pos.x + nd.x * 0.6, s.pos.z + nd.z * 0.6, 0.22, s.pos.y):
+					dir = nd
+					break
+		s.want = dir * (spd / s.W["speed"])
+		# not getting anywhere (a wall, a fence, a crowd)? find a way round for a while
+		s.prog_t += G.DT
+		if s.prog_t > 1.5:
+			if G.dist2d(s.pos, s.prog_p) < 0.6 and s.vault == null:
+				s.bad_t = G.sim_time + 6.0
+				AI.go_to(s, t.pos, spd)
+			s.prog_t = 0.0
+			s.prog_p = s.pos
 	else:
 		if s.move_target == null or G.dist2d(s.move_target, t.pos) > 4.0:
 			AI.go_to(s, t.pos, spd)
@@ -482,6 +582,12 @@ static func zombie_tick(s) -> void:
 				AI.stop_move(s)
 	if randf() < 0.002:
 		G.fx.callout(s, G.pick(["Uhhhh...", "Grrraaah", "Hnnnngh"]))
+
+static func _vaultable_ahead(s, dir: Vector3) -> bool:
+	for c in G.world.cell_at(s.pos.x + dir.x * 0.7, s.pos.z + dir.z * 0.7):
+		if G.world.vaultable(c):
+			return true
+	return false
 
 static func _claw(z, t) -> void:
 	var dmg = randf_range(16.0, 26.0)

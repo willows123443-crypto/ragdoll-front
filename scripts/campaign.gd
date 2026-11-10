@@ -25,7 +25,8 @@ static var data = {}
 static var current = -1          # region being fought over
 
 static func new_campaign() -> void:
-	data = {"owner": [], "roster": [], "turn": 1, "log": ["The campaign begins. Take the regions next to yours, one battle at a time."]}
+	data = {"owner": [], "roster": [], "turn": 1, "log": ["The campaign begins. Take the regions next to yours, one battle at a time."],
+		"pool": ["jeep", "jeep", "truck", "halftrack"], "sites": {}, "ruins": {}}
 	for r in REGIONS:
 		data["owner"].append(0 if r["x"] == 0 else 1)
 	_fill_roster()
@@ -77,6 +78,23 @@ static func attack(i: int) -> void:
 	var r = REGIONS[i]
 	G.main.start_game({"map": r["map"], "mode": r["mode"], "size": SQUAD, "limit": 100, "reinforce": true,
 		"reinf_mode": "truck", "armor": "heavy" if data["turn"] > 2 else "light", "teams": 2})
+	# our motor pool: whatever survived the last battles
+	if not data.has("pool"):
+		data["pool"] = ["jeep", "jeep", "truck", "halftrack"]
+	var home: Vector3 = G.world.rally_point(0)
+	var face = atan2(G.world.capture.x - home.x, G.world.capture.z - home.z)
+	var side = Vector3(cos(face), 0, -sin(face))
+	var k0 = 0
+	for kind in data["pool"]:
+		var vp = G.main._free_spot(home + side * ((k0 % 4) - 1.5) * 7.0 - Vector3(sin(face), 0, cos(face)) * (8.0 + int(k0 / 4) * 9.0))
+		G.main.spawn_vehicle(kind, 0, vp, face)
+		k0 += 1
+	# defences and bases either side built here in earlier battles are still standing
+	var kept = 0
+	for sd in data.get("sites", {}).get(i, []):
+		var front = Vector3(0, 0, sd["fs"]) if sd["ax"] else Vector3(sd["fs"], 0, 0)
+		if Build.place(sd["kind"], sd["team"], sd["p"], front, true) != null:
+			kept += 1
 	# our soldiers are the campaign roster, veterans and all
 	var k = 0
 	for s in G.soldiers:
@@ -86,10 +104,12 @@ static func attack(i: int) -> void:
 			s.set_vet(e["vet"])
 			s.set_meta("roster", k)
 			k += 1
+	var note = ""
 	if G.world.ruined_at_start > 0:
-		G.ui.message("Battle for %s · the scars of earlier fighting remain (%d pieces in ruins)" % [r["name"], G.world.ruined_at_start])
-	else:
-		G.ui.message("Battle for %s" % r["name"])
+		note += " · %d pieces still in ruins" % G.world.ruined_at_start
+	if kept > 0:
+		note += " · %d structures still standing" % kept
+	G.ui.message("Battle for %s · %d vehicles in our motor pool%s" % [r["name"], data["pool"].size(), note])
 
 # which of a region's map pieces were destroyed in earlier battles there
 static func ruins(i: int) -> Array:
@@ -124,6 +144,28 @@ static func battle_over(winner: int) -> String:
 	var wrecked = _record_ruins(current)
 	if wrecked > 0:
 		lines.append("%d more pieces of %s lie in ruins (they stay that way)." % [wrecked, r["name"]])
+	# vehicles that made it come along to the next battle; HQ sends one more
+	var pool = []
+	for v in G.vehicles:
+		if is_instance_valid(v) and not v.dead and v.team == 0 and not v.spec.get("air", false) and not v.spec.get("static", false) and v.kind in ["jeep", "truck", "halftrack", "armoredcar", "tank", "motorbike", "ambulance", "radar", "bridger"]:
+			pool.append(v.kind)
+	var lost_v = maxi(0, data.get("pool", []).size() - pool.size())
+	var fresh = "tank" if winner == 0 and data["turn"] % 2 == 0 else ("armoredcar" if winner == 0 else "jeep")
+	pool.append(fresh)
+	if pool.size() > 8:
+		pool = pool.slice(0, 8)
+	data["pool"] = pool
+	lines.append("Motor pool: %d vehicles (%s joins)%s." % [pool.size(), fresh, (", %d lost" % lost_v) if lost_v > 0 else ""])
+	# what's built here stays built
+	var keep_sites = []
+	for st in Build.sites:
+		if st["done"] and not st["dead"] and st["kind"] != "hq":
+			keep_sites.append({"kind": st["kind"], "team": st["team"], "p": st["p"], "ax": st["ax"], "fs": st["fs"]})
+	if not data.has("sites"):
+		data["sites"] = {}
+	data["sites"][current] = keep_sites.slice(0, 40)
+	if not keep_sites.is_empty():
+		lines.append("%d structures left standing at %s." % [mini(keep_sites.size(), 40), r["name"]])
 	# survivors carry on; the fallen are struck from the roster
 	var alive_names = {}
 	var kills = {}

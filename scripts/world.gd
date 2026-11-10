@@ -2656,7 +2656,7 @@ func build_factory() -> void:
 			_wall_piece(false, x, bz, 8.0, 4.6, H - 4.6, wc, t, "lintel")
 			add_box(x + e * 0.4, 4.4, bz, 0.25, 0.25, 8.4, Color(0.75, 0.6, 0.15), {"collide": false})
 	# concrete floor and painted walkways
-	flat_plane(0, 0, HX * 2.0 - 0.6, HZ * 2.0 - 0.6, Color(0.42, 0.42, 0.41), 0.02)
+	flat_plane(0, 0, HX * 2.0 - 0.6, HZ * 2.0 - 0.6, Color(0.5, 0.5, 0.48), 0.02)
 	for zz in [-20.0, 20.0]:
 		flat_plane(0, zz, HX * 2.0 - 1.0, 0.25, Color(0.78, 0.66, 0.2), 0.03)
 		flat_plane(0, zz - 4.0, HX * 2.0 - 1.0, 0.25, Color(0.78, 0.66, 0.2), 0.03)
@@ -2665,8 +2665,8 @@ func build_factory() -> void:
 		for pz in [-30.0, -10.0, 10.0, 30.0]:
 			add_box(px * 20.0, 0.0, pz, 0.8, H, 0.8, Color(0.4, 0.4, 0.42), {"dest": true, "hp": 700.0})
 	var holes = {}
-	for i in range(5):
-		holes[Vector2i(rng.randi_range(0, 7), rng.randi_range(0, 4))] = true
+	for i in range(8):
+		holes[Vector2i(rng.randi_range(0, 7), rng.randi_range(1, 3))] = true
 	for ix in range(8):
 		for iz in range(5):
 			if holes.has(Vector2i(ix, iz)):
@@ -2727,6 +2727,9 @@ func build_factory() -> void:
 		var z = rnd(-HZ + 4.0, HZ - 4.0)
 		if not inside_any(x, z, 1.4):
 			crate(x, z, rnd(0.8, 1.3))
+	# catwalks along the long walls: a second level to shoot from, with stairs at one end
+	_catwalk(1.0, -60.0, 40.0, HZ, true)
+	_catwalk(-1.0, -40.0, 60.0, HZ, false)
 	_claim(bld, c0)
 	# hanging lamps (the sun barely gets in)
 	lamps = []
@@ -2734,8 +2737,8 @@ func build_factory() -> void:
 		for lz in [-22.0, 22.0]:
 			var l = OmniLight3D.new()
 			l.omni_range = 34.0
-			l.omni_attenuation = 0.55
-			l.light_energy = 3.2
+			l.omni_attenuation = 0.45
+			l.light_energy = 4.6
 			l.light_color = Color(1.0, 0.86, 0.62)
 			l.shadow_enabled = false
 			_geo().add_child(l)
@@ -2758,6 +2761,62 @@ func build_factory() -> void:
 	for o in objs:
 		ammo_crate(o.x + 2.0, o.z + 4.0, -1)
 	_std_end("urban", objs, W2 - 25.0)
+
+# a raised steel walkway inside the factory's long wall (side e = +1 north, -1 south), x0..x1,
+# reached by stairs beyond one end; it works like a tower's upper floor for the AI
+func _catwalk(e: float, x0: float, x1: float, HZ: float, stairs_west: bool) -> void:
+	var FY = 4.2
+	var zin = e * (HZ - 0.3)
+	var zout = e * (HZ - 3.0)
+	var zc = (zin + zout) / 2.0
+	var wd = absf(zin - zout)
+	var steel = Color(0.33, 0.35, 0.37)
+	var L = x1 - x0
+	add_box((x0 + x1) / 2.0, FY - 0.25, zc, L, 0.25, wd, steel, {"dest": true, "hp": 320.0})
+	# railing on the open side, posts underneath
+	add_box((x0 + x1) / 2.0, FY, zout + e * 0.06, L, 1.0, 0.12, Color(0.75, 0.6, 0.15), {"dest": true, "hp": 160.0})
+	var k = 0.0
+	while k <= L + 0.01:
+		add_box(x0 + k, 0.0, zout + e * 0.35, 0.3, FY - 0.25, 0.3, steel.darkened(0.2), {"dest": true, "hp": 260.0})
+		k += 8.0
+	# stairs
+	var sb: float
+	var st: float
+	if stairs_west:
+		sb = x0 - 8.0
+		st = x0
+	else:
+		sb = x1 + 8.0
+		st = x1
+	var steps = 14
+	for i in range(steps):
+		var sh = (i + 1) * FY / steps
+		var sx = sb + (st - sb) * (i + 0.5) / steps
+		add_box(sx, sh - 0.2, zc, absf(st - sb) / steps, 0.2, wd, steel, {"collide": false})
+	var ramp = StaticBody3D.new()
+	ramp.collision_layer = G.L_WORLD
+	ramp.collision_mask = 0
+	var rcs = CollisionShape3D.new()
+	var rb = BoxShape3D.new()
+	rb.size = Vector3(Vector2(absf(st - sb), FY).length(), 0.2, wd)
+	rcs.shape = rb
+	ramp.add_child(rcs)
+	var ang = atan2(FY, absf(st - sb)) * signf(st - sb)
+	var gy = ground_y((sb + st) / 2.0, zc)
+	ramp.transform = Transform3D(Basis(Vector3(0, 0, 1), ang), Vector3((sb + st) / 2.0, gy + FY / 2.0 - 0.1, zc))
+	_geo().add_child(ramp)
+	var xa = minf(sb, x0) - 0.5
+	var xb = maxf(sb, x1) + 0.5
+	var T = {"x": (xa + xb) / 2.0, "z": zc, "w": xb - xa, "d": wd + 1.0, "floor_y": FY, "posts": [], "cps": [],
+		"rect": [xa, xb, minf(zin, zout) - 0.5, maxf(zin, zout) + 0.5],
+		"floor_rects": [[x0, x1, minf(zin, zout), maxf(zin, zout)]],
+		"stair_bottom": Vector3(sb - signf(st - sb) * 0.5, 0.0, zc), "stair_top": Vector3(st + signf(st - sb) * 0.8, FY, zc),
+		"inside": Vector3(sb - signf(st - sb) * 0.5, 0.0, zc - e * 4.0)}
+	var px = x0 + 3.0
+	while px < x1 - 2.0:
+		T["posts"].append([px, zout + e * 0.45, 0.0, e])
+		px += 6.0
+	towers.append(T)
 
 # roads are flat painted strips, so the ground under them must be flat too (no hills or holes hidden under the paint)
 func _flatten_roads() -> void:

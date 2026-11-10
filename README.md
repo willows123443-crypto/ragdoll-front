@@ -27,10 +27,12 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Modes:** sandbox, deathmatch, capture the points, frontline, assault, last stand, destroy base, breakthrough, sabotage (night raid), siege, convoy escort, pilot rescue, a king-of-the-hill flag that moves, a top-down commander (RTS) mode and a zombie horde — the menu explains each
 - **Daily challenge:** one battle a day picked from the date (map, mode, time of day, twists), with your best result kept
 - **Doors and windows:** soldiers kick doors open, glass shatters when shot, and grenades get lobbed in through windows
-- **Huge battles:** 100 a side or more; far-off soldiers are simplified so the battle keeps running
+- **Huge battles:** 100 a side or more; far-off soldiers are simplified so the battle keeps running (Settings: how close full detail starts, the most soldiers at once, and an on-screen frame rate and soldier count)
+- **Spoken callouts:** soldiers near you shout "Contact!", "Reloading!", "Man down!" using your browser's speech voices (can be turned off in Settings)
+- **Night fighting:** only the point man shows a light, soldiers creep forward crouched, leaders fire flares and everyone shoots at muzzle flashes
 - **Air war:** fighters and dive bombers you can fly, AA guns, helicopter transports and gunships
 - **Logistics:** fuel, towing, bridge layers, supply trucks that restock FOBs, ammo boxes you can carry, upgrades (concrete walls, pillboxes, huts), camo nets and rebuilding
-- **Campaign:** nine regions to take one battle at a time; survivors become veterans with stripes, and whatever gets wrecked in a region stays wrecked
+- **Campaign:** nine regions to take one battle at a time; survivors become veterans with stripes, and whatever gets wrecked in a region stays wrecked, structures left standing are still there next time, and your surviving vehicles carry on as a motor pool
 - **Scenario codes:** save a battle as a code and share it
 - **Commander's map** (Tab): see the whole battle and send squads around
 - **Maps:** Town ruins, Farmland, Trenches, Forest, City blocks, a tank factory fought indoors, Beach landing, large maps (Valley offensive, Western front, River crossing, Mountain pass), the huge battlefield, random maps, and your own from the **map editor** (sculpt and paint the ground, place buildings, squads and vehicles with orders and waypoints, and triggers that set off reinforcements, barrages, messages or a win)

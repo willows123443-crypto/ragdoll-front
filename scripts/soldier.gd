@@ -835,7 +835,8 @@ func _lod_far() -> bool:
 	if G.soldiers.size() < 50 or is_player or state != "alive" or vault != null or dragging != null:
 		return false
 	var cam = get_viewport().get_camera_3d()
-	return cam != null and cam.global_position.distance_squared_to(pos) > 55.0 * 55.0
+	var ld: float = G.settings["lod_dist"]
+	return cam != null and cam.global_position.distance_squared_to(pos) > ld * ld
 
 # back to a real simulated body (falling, dying, climbing aboard)
 func lod_wake() -> void:

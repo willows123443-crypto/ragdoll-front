@@ -208,7 +208,7 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 		mult = 0.55
 	elif kind == "leg":
 		mult = 0.6
-	s.hp -= dmg * mult
+	s.hp -= dmg * mult * (0.35 if s == Modes.pilot else 1.0)     # the pilot has a flak vest (and the game is no fun if he drops at once)
 	if kind == "torso" or kind == "leg" or kind == "arm":
 		s.wound_part = part
 	Stats.hit(attacker, s, dmg * mult)

@@ -10,6 +10,7 @@ var point_flags: Array = []
 var spawn_flags: Array = []
 var tick_us = 0
 var prof = [0, 0]
+var sim_ms = 0.0        # smoothed cost of one simulation tick, for the performance readout
 var tick_n = 0
 
 func _ready() -> void:
@@ -280,7 +281,7 @@ func start_game(o: Dictionary) -> void:
 			for sd in G.soldiers:
 				if sd.team == 0:
 					sd.satchels = 2
-		elif not (G.mode == "escort" and t == 0) and o.get("armies", true):
+		elif not (G.mode == "escort" and t == 0) and o.get("armies", true) and not (Campaign.active and t == 0):
 			_starting_vehicles(t)
 	Modes.setup()
 	Scripted.reset()
@@ -296,7 +297,7 @@ func start_game(o: Dictionary) -> void:
 	G.started = true
 
 func spawn_soldier(team: int, x: float, z: float, wid: String):
-	var cap = maxi(160, G.team_size * G.teams + 60)
+	var cap = mini(int(G.settings["max_soldiers"]), maxi(160, G.team_size * G.teams + 60))
 	if G.soldiers.size() >= cap:
 		cleanup_bodies(true)
 	if G.soldiers.size() >= cap:
@@ -407,8 +408,10 @@ func _physics_process(_delta: float) -> void:
 		return
 	var t0 = Time.get_ticks_usec()
 	_sim_step()
-	tick_us += Time.get_ticks_usec() - t0
+	var used = Time.get_ticks_usec() - t0
+	tick_us += used
 	tick_n += 1
+	sim_ms = lerpf(sim_ms, used / 1000.0, 0.05)
 
 func _sim_step() -> void:
 	G.sim_time += G.DT
@@ -762,6 +765,16 @@ func _shot_mode(dir: String) -> void:
 	await _wait(0.5)
 	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "capture"), "size": int(_arg("size", "6")), "limit": 9999, "reinforce": true,
 		"armor": _arg("armor", "light"), "reinf_mode": _arg("reinf", "truck"), "teams": int(_arg("teams", "2"))})
+	if _arg("rtsshot", "") != "":
+		await _wait(float(_arg("rtsshot", "5")))
+		G.pc.force_free = false
+		G.pc.set_rts(true)
+		G.pc.select_squad(0)
+		G.pc._order_move(get_viewport().get_visible_rect().size * Vector2(0.62, 0.4))
+		G.pc.select_squad(1)
+		G.pc.select_squad(0)
+		await _wait(1.0)
+		await _snap(dir, "rts_orders")
 	if _arg("zshot", "") != "":
 		await _wait(float(_arg("zshot", "20")))
 		var zs = G.soldiers.filter(func(x): return x.zombie and x.state == "alive")
@@ -1152,6 +1165,9 @@ func _ruin_test() -> void:
 	for col in G.world.static_cols:
 		if not col.alive:
 			dead += 1
+	var sp = Build.find_spot(G.world.spawn[0] * 0.6, "sandbags", 20.0, 30, true)
+	if sp != null:
+		Build.place("sandbags", 0, sp, Vector3(1, 0, 0), true)
 	Campaign.active = true
 	end_game(1)
 	print("RUINTEST first battle: %d pieces, %d wrecked, recorded %d" % [n0, dead, Campaign.ruins(1).size()])
@@ -1159,7 +1175,8 @@ func _ruin_test() -> void:
 	Campaign.data["owner"][1] = 1
 	Campaign.attack(1)
 	await _wait(1.0)
-	print("RUINTEST second battle: %d pieces, ruined at start %d, doors %d" % [G.world.static_cols.size(), G.world.ruined_at_start, Doors.doors.size()])
+	var t0v = G.vehicles.filter(func(v): return v.team == 0).size()
+	print("RUINTEST second battle: %d pieces, ruined at start %d, doors %d, pool %s, alpha vehicles %d, saved sites %d, sites now %d" % [G.world.static_cols.size(), G.world.ruined_at_start, Doors.doors.size(), Campaign.data["pool"], t0v, Campaign.data["sites"].get(1, []).size(), Build.sites.size()])
 	get_tree().quit()
 
 # the newer modes: run one for a while and print how it is going
@@ -1172,7 +1189,7 @@ func _mode_test(mode: String) -> void:
 		start_game({"map": _arg("map", "field"), "mode": mode, "size": int(_arg("size", "10")), "limit": 100, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
 	if _arg("dbg", "") != "":
 		for j in range(int(_arg("dbgn", "10"))):
-			await _wait(0.8)
+			await _wait(float(_arg("dbgdt", "0.8")))
 			if Modes.pilot != null and is_instance_valid(Modes.pilot):
 				var la = Modes.pilot.last_attacker
 				print("DBG pilot hp %.1f state %s attacker %s" % [Modes.pilot.hp, Modes.pilot.state, (la.sname + " t" + str(la.team)) if la != null and is_instance_valid(la) else "none"])
@@ -1188,7 +1205,7 @@ func _mode_test(mode: String) -> void:
 							var aa = rel.dot(f)
 							if aa > 0.0 and aa < v.spec["len"] * 0.5 + 5.0 and absf(rel.dot(Vector3(f.z, 0, -f.x))) < v.spec["wid"] * 0.5 + 0.8:
 								print("   blocker %s task %s order %s mt %s" % [so.sname, so.task, so.order, so.move_target])
-					print("DBG truck drv %s spd %.1f stage %d go %.0f pos %s path %d/%d rev %.1f yaw %.2f fuel %.2f" % [v.driver() != null, v.speed, v.mission["stage"], v.mission["go_t"], v.pos, v.path_i, v.path.size(), v.reverse_t, v.yaw, v.fuel])
+					print("DBG truck drv %s spd %.1f stage %d go %.0f pos %s path %d/%d rev %.1f why %s wait %.1f hp %.0f" % [v.driver() != null, v.speed, v.mission["stage"], v.mission["go_t"], v.pos, v.path_i, v.path.size(), v.reverse_t, v.mission.get("why", "?"), v.mission.get("wait_esc", 0.0), v.hp])
 					break
 	for k in range(int(_arg("secs", "48")) / 8):
 		await _wait(8.0)
@@ -1202,6 +1219,12 @@ func _mode_test(mode: String) -> void:
 		var lead = Modes._lead_truck()
 		if lead != null:
 			pz += " lead %.0f m to go" % G.dist2d(lead.pos, Modes.convoy_goal)
+		var up = 0
+		for s in G.soldiers:
+			if s.state == "alive" and s.pos.y - G.world.ground_y(s.pos.x, s.pos.z) > 2.5:
+				up += 1
+		if up > 0:
+			pz += " upstairs %d" % up
 		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz])
 		if G.over:
 			break

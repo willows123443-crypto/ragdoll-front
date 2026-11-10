@@ -702,15 +702,27 @@ func _crew_tick(dt: float) -> void:
 			seats[i] = null
 	# empty driver or gunner seats: a nearby friendly soldier with nothing better to do climbs in
 	crew_t -= dt
-	if crew_t > 0.0 or mission != null:
+	if crew_t > 0.0 or (mission != null and mission.get("type", "") != "escort"):
 		return
-	crew_t = 3.0
+	crew_t = 3.0 if mission == null else 1.5
 	for role in ["driver", "gunner"]:
 		var si = -1
 		for i in range(seats.size()):
 			if seats[i] == null and spec["seats"][i]["role"] == role:
 				si = i
 		if si < 0:
+			continue
+		# someone already aboard slides over into the empty seat
+		var moved = false
+		for i in range(seats.size()):
+			var ps = seats[i]
+			if ps != null and is_instance_valid(ps) and not ps.is_player and spec["seats"][i]["role"] == "pass":
+				ps.dismount(false)
+				if ps.mount(self, si):
+					G.fx.callout(ps, "I've got the wheel!" if role == "driver" else "On the gun!")
+					moved = true
+				break
+		if moved:
 			continue
 		var best = null
 		var bd = 30.0

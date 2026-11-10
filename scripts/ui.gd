@@ -720,7 +720,7 @@ func _build_help() -> void:
 		"  Right-drag  look around · Left-click  use the selected tool · 1–9  pick a tool\n" + \
 		"  F  take control of the soldier at the centre of the screen\n" + \
 		"  T  slow-mo · P  pause · M  menu · Tab  commander's map (select squads, right-click to send them)\n" + \
-		"  V  top-down commander view: WASD pans, wheel zooms, Q/E turn, click a soldier to select his squad\n\n" + \
+		"  V  top-down commander view: WASD pans, wheel zooms, Q/E turn, click a soldier to select his squad, 1–9 pick a squad (press again to look at it)\n\n" + \
 		"CONTROLLING A SOLDIER\n" + \
 		"  Mouse  aim · Left-click  fire · Right mouse  aim down sights\n" + \
 		"  Q / E  lean · Shift  sprint · C  crouch · Z  prone · run into low walls to vault\n" + \
@@ -808,7 +808,36 @@ func _unhandled_key_input(ev: InputEvent) -> void:
 			menu.visible = false
 			help.visible = false
 
+var perf_lbl: Label = null
+var perf_t = 0.0
+
+# frame rate, soldiers (and how many are simplified far away), cost of a simulation tick
+func _perf(dt: float) -> void:
+	if perf_lbl == null:
+		perf_lbl = _label("", 13, Color(0.85, 0.95, 0.8))
+		_place(perf_lbl, Control.PRESET_TOP_RIGHT, -330, 6, 320, 20)
+		perf_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		root.add_child(perf_lbl)
+	perf_lbl.visible = G.settings["fps"] and G.started
+	if not perf_lbl.visible:
+		return
+	perf_t -= dt
+	if perf_t > 0.0:
+		return
+	perf_t = 0.5
+	var n = 0
+	var far = 0
+	for s in G.soldiers:
+		if s.state != "dead":
+			n += 1
+			if s.lod_frozen:
+				far += 1
+	var fps = Engine.get_frames_per_second()
+	perf_lbl.text = "%d fps · %d soldiers (%d simplified) · %d vehicles · sim %.1f ms" % [fps, n, far, G.vehicles.size(), G.main.sim_ms]
+	perf_lbl.add_theme_color_override("font_color", Color(0.85, 0.95, 0.8) if fps >= 45 else (Color(1.0, 0.85, 0.4) if fps >= 25 else Color(1.0, 0.45, 0.4)))
+
 func update_hud(dt: float) -> void:
+	_perf(dt)
 	if vignette != null:
 		var want = 0.0
 		if G.player != null and is_instance_valid(G.player) and G.player.state != "dead":
@@ -1139,7 +1168,7 @@ func _show_settings() -> void:
 	if settings_panel != null:
 		settings_panel.queue_free()
 	settings_panel = _panel(Color(0.1, 0.12, 0.14, 0.98))
-	_place(settings_panel, Control.PRESET_CENTER, -240, -200, 480, 400)
+	_place(settings_panel, Control.PRESET_CENTER, -250, -290, 500, 580)
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	v.add_child(_label("Settings", 26))
@@ -1169,7 +1198,7 @@ func _show_settings() -> void:
 	sens.custom_minimum_size = Vector2(220, 0)
 	sens.value_changed.connect(func(x): G.settings["sens"] = x)
 	_row(v, "Mouse sensitivity", sens)
-	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Soldier callouts"], ["shadows", "Shadows"], ["grass", "Grass (next battle)"]]:
+	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Soldier callouts"], ["shadows", "Shadows"], ["grass", "Grass (next battle)"], ["fps", "Show frame rate and soldier count"], ["voices", "Spoken callouts"]]:
 		var key = item[0]
 		var cb = CheckBox.new()
 		cb.button_pressed = G.settings[key]
@@ -1179,6 +1208,14 @@ func _show_settings() -> void:
 			if key == "shadows":
 				G.main.apply_time())
 		_row(v, item[1], cb)
+	var ms_vals = [120, 200, 300, 450, 600]
+	var ms = _option(["120", "200", "300", "450", "600"], maxi(0, ms_vals.find(int(G.settings["max_soldiers"]))))
+	ms.item_selected.connect(func(i): G.settings["max_soldiers"] = ms_vals[i])
+	_row(v, "Most soldiers at once", ms)
+	var ld_vals = [30.0, 55.0, 80.0, 120.0]
+	var ld = _option(["30 m (fastest)", "55 m", "80 m", "120 m (best looking)"], maxi(0, ld_vals.find(float(G.settings["lod_dist"]))))
+	ld.item_selected.connect(func(i): G.settings["lod_dist"] = ld_vals[i])
+	_row(v, "Full detail within (big battles)", ld)
 	v.add_child(_button("Done", func():
 		G.save_prefs()
 		settings_panel.visible = false))

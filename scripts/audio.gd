@@ -153,6 +153,8 @@ func _wav_rate(samples: PackedFloat32Array, rate: int) -> AudioStreamWAV:
 	return w
 
 func _process(dt: float) -> void:
+	bark_t -= dt
+	tts_try_t -= dt
 	if not music_ready:
 		return
 	var on = G.started and not G.over
@@ -298,6 +300,45 @@ func _glass_sound() -> AudioStreamWAV:
 				v += sin(TAU * pg[1] * dt) * exp(-dt / 0.03) * pg[2]
 		out[i] = v * minf(1.0, t * 2000.0)
 	return _wav(out)
+
+# ---------------------------------------------------------------- spoken callouts (the browser's or system's speech voices)
+var tts_voices: Array = []
+var tts_try_t = 0.0
+var bark_t = 0.0
+
+func _tts_ready() -> bool:
+	if not tts_voices.is_empty():
+		return true
+	if tts_try_t > 0.0:
+		return false
+	tts_try_t = 3.0       # browsers load their voices a moment after the page; keep asking now and then
+	if not DisplayServer.has_feature(DisplayServer.FEATURE_TEXT_TO_SPEECH):
+		tts_try_t = 1e9
+		return false
+	tts_voices = Array(DisplayServer.tts_get_voices_for_language("en"))
+	return not tts_voices.is_empty()
+
+func bark(s, text: String) -> void:
+	if not G.settings.get("voices", true) or bark_t > 0.0 or not G.started:
+		return
+	var p: Vector3 = s.pos if s.state != "dead" else s.parts[0].global_position
+	var d = cam_dist(p)
+	var mine = G.player != null and is_instance_valid(G.player) and s != G.player and s.team == G.player.team and s.squad != null and s.squad == G.player.squad
+	if d > 38.0 and not mine:
+		return
+	if not _tts_ready():
+		return
+	if DisplayServer.tts_is_speaking():
+		return
+	bark_t = randf_range(1.4, 2.2)
+	var voice = tts_voices[(s.id * 7) % tts_voices.size()]
+	var vol = int(clampf(100.0 * G.settings["volume"] * (1.0 - minf(d, 40.0) / 55.0), 10.0, 100.0))
+	var pitch = 0.82 + fmod(s.seed_, 1.0) * 0.36
+	var rate = 1.2 if text.ends_with("!") else 1.05
+	if s.zombie:
+		pitch = 0.35
+		rate = 0.6
+	DisplayServer.tts_speak(text, voice, vol, pitch, rate)
 
 func step(pos: Vector3) -> void:
 	if cam_dist(pos) < 12.0:

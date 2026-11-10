@@ -322,6 +322,9 @@ static func go_to(s, point: Vector3, speed: float) -> void:
 		var alt = point + Vector3(cos(a), 0, sin(a)) * randf_range(3.0, 5.0)
 		if not G.world.inside_any(alt.x, alt.z, 0.45):
 			point = alt
+	# at night, out of contact, men pick their way forward slower
+	if speed > 3.0 and s.vis_t == null and G.sim_time - s.seen_t > 8.0 and s.task != "charge" and s.task != "flee" and G.main.is_night():
+		speed *= 0.72
 	s.move_target = point
 	s.path = []
 	s.need_path = true
@@ -428,8 +431,11 @@ static func follow_route(s) -> void:
 static func perceive(s) -> void:
 	s.think = randf_range(0.25, 0.4) if G.soldiers.size() < 90 else randf_range(0.45, 0.75)
 	if G.main.is_night():
-		var contact = s.vis_t != null or G.sim_time - s.seen_t < 6.0 or s.supp > 0.4
-		s.light_on = not contact and s.state == "alive" and s.cls != "sniper"
+		# light discipline: only the man on point shows a light, and nobody does once the enemy is near
+		var contact = s.vis_t != null or G.sim_time - s.seen_t < 10.0 or s.supp > 0.3
+		var point_man = s.squad == null or s.squad["members"].find(s) % 3 == 0
+		var near_enemy = s.has_seen and G.dist2d(s.threat, s.pos) < 70.0 and G.sim_time - s.seen_t < 40.0
+		s.light_on = not contact and not near_enemy and point_man and s.state == "alive" and s.cls != "sniper"
 	elif s.light_on:
 		s.light_on = false
 	var eye = s.head_pos()
@@ -444,7 +450,7 @@ static func perceive(s) -> void:
 		if o.team != s.team and o.state != "dead" and (o != Modes.pilot or o.state != "wounded"):
 			var d2 = o.pos.distance_squared_to(s.pos)
 			if d2 < 160.0 * 160.0:
-				cand.append([d2 * (0.5 if o == s.target else 1.0), o])
+				cand.append([d2 * (0.5 if o == s.target else 1.0) * (6.0 if o == Modes.pilot else 1.0), o])
 	cand.sort_custom(func(a, b): return a[0] < b[0])
 	for k in range(mini(6, cand.size())):
 		var o = cand[k][1]
@@ -1179,11 +1185,12 @@ static func stance(s) -> void:
 		else:
 			s.crouch_t = 1.0
 		return
+	var dark_creep = G.main.is_night() and s.vis_t == null and s.task != "charge" and s.task != "flee"
 	if s.want.length_squared() > 0.1:
 		s.kneel = false
-		s.crouch_t = 0.3 if s.supp > 0.8 else 0.0
+		s.crouch_t = 0.3 if s.supp > 0.8 else (0.35 if dark_creep else 0.0)
 	else:
-		s.crouch_t = 0.85 if s.kneel else 0.0
+		s.crouch_t = 0.85 if (s.kneel or dark_creep) else 0.0
 
 # ---------------------------------------------------------------- ammunition
 # nearest place to restock: a friendly ammo crate, or a fallen soldier's pouches close by

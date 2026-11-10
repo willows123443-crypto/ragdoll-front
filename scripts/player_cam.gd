@@ -49,6 +49,9 @@ func set_rts(on: bool) -> void:
 	rts_focus = home.lerp(W.capture, 0.45)
 	rts_yaw = atan2(W.capture.x - home.x, W.capture.z - home.z)
 	rts_dist = 75.0
+	G.ui.tab = "command"
+	G.ui.tool = "sel"
+	G.ui._render_tools()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 func possess(s) -> void:
@@ -172,8 +175,116 @@ func player_update(s) -> void:
 		trig_latch = false
 
 # ---------------------------------------------------------------- camera
+var rts_lines: MeshInstance3D = null
+var rts_labels: Array = []
+var last_squad_key = -1
+
+# commander view: numbered squads, lines to where each squad was sent (bright for the selected ones)
+func my_squads() -> Array:
+	var team = 0 if G.player == null else G.player.team
+	var out = []
+	for q in G.squads:
+		if q["team"] != team:
+			continue
+		for m in q["members"]:
+			if is_instance_valid(m) and (m.state == "alive" or m.state == "riding"):
+				out.append(q)
+				break
+	return out
+
+func _rts_overlay() -> void:
+	if rts_lines == null:
+		rts_lines = MeshInstance3D.new()
+		rts_lines.mesh = ImmediateMesh.new()
+		var lm = StandardMaterial3D.new()
+		lm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		lm.vertex_color_use_as_albedo = true
+		lm.no_depth_test = true
+		lm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		rts_lines.material_override = lm
+		add_child(rts_lines)
+	var on = rts and G.started and G.player == null
+	rts_lines.visible = on
+	var im: ImmediateMesh = rts_lines.mesh
+	im.clear_surfaces()
+	var qs = my_squads() if on else []
+	var used = 0
+	if on and not qs.is_empty():
+		im.surface_begin(Mesh.PRIMITIVE_LINES)
+		var any_line = false
+		for qi in range(qs.size()):
+			var q = qs[qi]
+			var c = Vector3.ZERO
+			var n = 0
+			var dest = null
+			var selected = false
+			for m in q["members"]:
+				if is_instance_valid(m) and (m.state == "alive" or m.state == "riding"):
+					c += m.pos
+					n += 1
+					if m in selection:
+						selected = true
+					if dest == null and m.order != null and m.order.get("mode", "") == "move" and m.order.get("point") != null:
+						dest = m.order["point"]
+			c /= n
+			if dest != null and G.dist2d(c, dest) > 4.0:
+				var col = Color(1.0, 0.85, 0.25, 0.95) if selected else Color(1, 1, 1, 0.35)
+				var a = c + Vector3(0, 1.0, 0)
+				var b = Vector3(dest.x, G.world.ground_y(dest.x, dest.z) + 1.0, dest.z)
+				im.surface_set_color(col); im.surface_add_vertex(a)
+				im.surface_set_color(col); im.surface_add_vertex(b)
+				# a cross where they're going
+				for e in [Vector3(1.5, 0, 1.5), Vector3(1.5, 0, -1.5)]:
+					im.surface_set_color(col); im.surface_add_vertex(b - e)
+					im.surface_set_color(col); im.surface_add_vertex(b + e)
+				any_line = true
+			if used >= rts_labels.size():
+				var l = Label3D.new()
+				l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+				l.no_depth_test = true
+				l.fixed_size = true
+				l.pixel_size = 0.0012
+				l.font_size = 30
+				l.outline_size = 10
+				add_child(l)
+				rts_labels.append(l)
+			var lb: Label3D = rts_labels[used]
+			used += 1
+			lb.visible = true
+			lb.text = "%d · %d men" % [qi + 1, n] if qi < 9 else "%d men" % n
+			lb.modulate = Color(1.0, 0.9, 0.3) if selected else Color(0.85, 0.9, 1.0)
+			lb.global_position = c + Vector3(0, 4.0, 0)
+		if not any_line:
+			im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
+			im.surface_set_color(Color(0, 0, 0, 0)); im.surface_add_vertex(Vector3.ZERO)
+		im.surface_end()
+	for k in range(used, rts_labels.size()):
+		rts_labels[k].visible = false
+
+# number keys in commander view: pick that squad; press it again to look at it
+func select_squad(i: int) -> void:
+	var qs = my_squads()
+	if i >= qs.size():
+		G.ui.message("No squad %d" % (i + 1))
+		return
+	var q = qs[i]
+	selection = []
+	var c = Vector3.ZERO
+	for m in q["members"]:
+		if is_instance_valid(m) and (m.state == "alive" or m.state == "riding"):
+			selection.append(m)
+			c += m.pos
+	if selection.is_empty():
+		return
+	c /= selection.size()
+	if last_squad_key == i:
+		rts_focus = c
+	last_squad_key = i
+	G.ui.message("Squad %d selected (%d men) · right-click to send them · press %d again to look at them" % [i + 1, selection.size(), i + 1])
+
 func _process(dt: float) -> void:
 	_update_rings()
+	_rts_overlay()
 	bloom = maxf(0.0, bloom - dt * 0.08)
 	kick = maxf(0.0, kick - dt * 1.6)
 	var fov_t = 65.0
@@ -478,7 +589,9 @@ func _key(k: int) -> void:
 				rts_yaw = free_yaw
 			G.ui.message("Commander view: WASD pans, wheel zooms, Q/E turn, click selects a squad, right-click sends it · V to leave" if rts else "Free camera")
 			return
-		if k >= KEY_1 and k <= KEY_9:
+		if k >= KEY_1 and k <= KEY_9 and rts:
+			select_squad(k - KEY_1)
+		elif k >= KEY_1 and k <= KEY_9:
 			G.ui.pick_tool(k - KEY_1)
 		elif k == KEY_F:
 			var cp = cos(free_pitch)
@@ -835,6 +948,7 @@ func _update_rings() -> void:
 		var m = StandardMaterial3D.new()
 		m.albedo_color = Color(1.0, 0.85, 0.25)
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.no_depth_test = true
 		r.material_override = m
 		r.scale = Vector3(1, 0.3, 1)
 		add_child(r)
@@ -846,6 +960,8 @@ func _update_rings() -> void:
 			var s = selection[i]
 			var p: Vector3 = s.pos if s.state == "alive" or s.state == "riding" else s.parts[0].global_position
 			r.global_position = Vector3(p.x, p.y + 0.06, p.z)
+			var sc = 1.0 + (rts_dist / 30.0 if rts else 0.0)
+			r.scale = Vector3(sc, 0.3, sc)
 		else:
 			r.visible = false
 

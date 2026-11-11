@@ -779,12 +779,13 @@ static func medevac(v, dt: float):
 					bd = d
 					best = s
 	if best != null and (load == 0 or bd < 50.0):
-		if bd < 9.0 and absf(v.speed) < 1.0:
-			# out with the stretcher
-			for m in meds:
-				m.dismount(false)
-				m.no_board_t = -1.0
-			(func(): Stretcher.start_to_vehicle(best, meds[0], meds[1], v)).call_deferred()
+		# pull up a little way short of him (no driving over the wounded) and carry him the rest
+		if bd < 24.0:
+			if absf(v.speed) < 1.0:
+				for m in meds:
+					m.dismount(false)
+					m.no_board_t = -1.0
+				(func(): Stretcher.start_to_vehicle(best, meds[0], meds[1], v)).call_deferred()
 			return null
 		return best.pos
 	if load == 0:
@@ -848,6 +849,11 @@ static func headlamps(v) -> Node3D:
 	var tracked: bool = v.spec["tracked"]
 	var y = 1.25 if tracked else (1.0 if v.kind in ["jeep", "technical", "motorbike"] else 1.1)
 	var z = v.spec["len"] * 0.5 + 0.02
+	# set into the real front of the body, not out in the air where the spec's length says it ends:
+	# the furthest-forward part of the hull at about lamp height
+	var front = _front_at(v, y)
+	if front > 0.0:
+		z = front + 0.01
 	var lamp_m = StandardMaterial3D.new()
 	lamp_m.albedo_color = Color(1.0, 0.95, 0.8)
 	lamp_m.emission_enabled = true
@@ -855,19 +861,23 @@ static func headlamps(v) -> Node3D:
 	lamp_m.emission_energy_multiplier = 3.0
 	var xs = [0.0] if v.kind == "motorbike" else [-v.spec["wid"] * 0.32, v.spec["wid"] * 0.32]
 	var lamps = []
+	var rim_m = StandardMaterial3D.new()
+	rim_m.albedo_color = Color(0.12, 0.12, 0.11)
+	rim_m.metallic = 0.6
 	for x in xs:
+		# a dark lamp housing on the front, with the glowing lens set in it
 		var l = MeshInstance3D.new()
 		var cm = CylinderMesh.new()
-		cm.top_radius = 0.11
-		cm.bottom_radius = 0.11
-		cm.height = 0.06
+		cm.top_radius = 0.12
+		cm.bottom_radius = 0.13
+		cm.height = 0.1
 		l.mesh = cm
 		l.rotation.x = PI / 2.0
-		l.position = Vector3(x, y, z)
-		l.material_override = lamp_m
+		l.position = Vector3(x, y, z - 0.03)
+		l.material_override = rim_m
 		n.add_child(l)
 		# the beam, its flare and the pool of light it throws on the road, dipped a little
-		var lp = Lamp.make(n, 40.0, 0.2, 0.1, true)
+		var lp = Lamp.make(n, 34.0, 0.13, 0.085, true)
 		lp.position = Vector3(x, y, z + 0.04)
 		lp.rotation.x = 0.09
 		lp.set_meta("mask", G.L_WORLD)
@@ -880,6 +890,54 @@ static func headlamps(v) -> Node3D:
 	n.set_meta("lamps", lamps)
 	n.visible = false
 	return n
+
+# the box the vehicle's body really fills (local space, from its meshes), worked out once: men are kept
+# out of this, not just out of the length and width on its spec sheet
+static func extents(v) -> Array:
+	if v.has_meta("ext"):
+		return v.get_meta("ext")
+	var inv = v.global_transform.affine_inverse()
+	var lo = Vector3(-v.spec["wid"] * 0.5, 0, -v.spec["len"] * 0.5)
+	var hi = Vector3(v.spec["wid"] * 0.5, 2.0, v.spec["len"] * 0.5)
+	var stack = v.get_children()
+	while not stack.is_empty():
+		var c = stack.pop_back()
+		if c is MeshInstance3D and c.visible and c.mesh != null and c.is_visible_in_tree():
+			var ab: AABB = c.get_aabb()
+			var xf: Transform3D = inv * c.global_transform
+			for i in range(8):
+				var q = xf * ab.get_endpoint(i)
+				# skip aerials, gun barrels and the like reaching far out: only the body proper
+				if absf(q.x) < v.spec["wid"] * 0.75 and absf(q.z) < v.spec["len"] * 0.75:
+					lo = Vector3(minf(lo.x, q.x), lo.y, minf(lo.z, q.z))
+					hi = Vector3(maxf(hi.x, q.x), hi.y, maxf(hi.z, q.z))
+		if c is Node3D and not (c is Light3D) and not (c is CPUParticles3D):
+			stack.append_array(c.get_children())
+	var e = [lo, hi]
+	v.set_meta("ext", e)
+	return e
+
+# how far forward the vehicle's own body reaches at a given height (local space), from its meshes
+static func _front_at(v, y: float) -> float:
+	var best = -1.0
+	var inv = v.global_transform.affine_inverse()
+	var stack = v.get_children()
+	while not stack.is_empty():
+		var c = stack.pop_back()
+		if c is MeshInstance3D and c.visible and c.mesh != null and not (c.get_parent() is CPUParticles3D):
+			var ab: AABB = c.get_aabb()
+			var xf: Transform3D = inv * c.global_transform
+			var lo = Vector3(1e9, 1e9, 1e9)
+			var hi = -lo
+			for i in range(8):
+				var q = xf * ab.get_endpoint(i)
+				lo = lo.min(q)
+				hi = hi.max(q)
+			if lo.y < y + 0.15 and hi.y > y - 0.15 and hi.z > best and hi.z < v.spec["len"] * 0.75:
+				best = hi.z
+		if c is Node3D and not (c is Light3D):
+			stack.append_array(c.get_children())
+	return best
 
 # a rake of steel tines on arms out in front of the hull: it digs up mines and sets them off ahead of the tracks
 static func plough_blade(v) -> void:

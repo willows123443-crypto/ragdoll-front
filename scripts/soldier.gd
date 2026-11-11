@@ -123,7 +123,7 @@ var reload_t = 0.0
 var fire_cd = 0.0
 var burst = 0
 var burst_cd = 0.5
-var grenades = 2
+var grenades = 1               # one frag each: grenades are for clearing a position, not for every exchange
 var smokes = 1
 var rockets = 5
 var clip_n = 0
@@ -1528,7 +1528,7 @@ func set_class(c: String) -> void:
 	satchels = 2 if c == "engineer" else 0
 	kits = 3 if c == "engineer" else 0
 	stickies = 2 if c == "at" else (1 if c == "engineer" else 0)
-	rgren = 3 if c == "rifleman" and wid == "rifle" else 0
+	rgren = 1 if c == "rifleman" and wid == "rifle" else 0
 	if c == "radio":
 		smokes = 3
 		give_radio.call_deferred(true)
@@ -1715,7 +1715,7 @@ func resupply() -> void:
 		mines = maxi(mines, 3)
 		satchels = maxi(satchels, 2)
 		kits = maxi(kits, 3)
-	grenades = maxi(grenades, 2)
+	grenades = maxi(grenades, 1)
 	smokes = maxi(smokes, 1)
 	dressings = maxi(dressings, 6 if cls == "medic" else 2)
 	if wid == "rpg":
@@ -2232,10 +2232,19 @@ func tick() -> void:
 			return
 	if burn_t > 0.0 and state != "dead":
 		_burn()
+	# hands that were busy with a job (a dressing, a crate) go back to the rifle once the job stops
+	if hands_t != null and has_meta("work_hands_t") and G.sim_time - get_meta("work_hands_t") > 0.12:
+		hands_t = null
+		hand_t = null
+		remove_meta("work_hands_t")
 	match state:
 		"dead":
 			if dead_t < 0.9 and not lod_frozen:
 				_death_motion()
+			# whatever knocked him about (a blast, a vehicle, the physics catching a limb), a body doesn't
+			# go sailing up into the air
+			if not settled and not lod_frozen and (int(dead_t * 60.0) % 3 == 0):
+				Combat._cap(self, 9.0)
 			dead_t += G.DT
 			_settle()
 			if settled and (int(dead_t * 60.0) + id) % 120 == 0:
@@ -2619,18 +2628,19 @@ func _tick_alive() -> void:
 		for v in G.vehicles:
 			if absf(pos.x - v.pos.x) > 9.0 or absf(pos.z - v.pos.z) > 9.0:
 				continue
-			var rel = G.flat(pos - v.pos)
-			var vf = v.forward()
-			var vl = Vector3(vf.z, 0, -vf.x)
-			var a = rel.dot(vf)
-			var bb = rel.dot(vl)
-			var hl = v.spec["len"] * 0.5 + 0.3
-			var hw = v.spec["wid"] * 0.5 + 0.3
-			if absf(a) < hl and absf(bb) < hw and absf(pos.y - v.pos.y) < 2.5:
-				if hl - absf(a) < hw - absf(bb):
-					pos += vf * (hl - absf(a)) * signf(a if a != 0.0 else 1.0)
-				else:
-					pos += vl * (hw - absf(bb)) * signf(bb if bb != 0.0 else 1.0)
+			# the body as it's really built (a bonnet sticking out past the spec length, say), plus a margin
+			var ex: Array = VehExt.extents(v)
+			var lp: Vector3 = v.global_transform.affine_inverse() * Vector3(pos.x, v.pos.y + 0.5, pos.z)
+			var m = 0.32
+			if lp.x > ex[0].x - m and lp.x < ex[1].x + m and lp.z > ex[0].z - m and lp.z < ex[1].z + m and absf(pos.y - v.pos.y) < 2.5:
+				# out by the nearest side
+				var dl = [lp.x - (ex[0].x - m), (ex[1].x + m) - lp.x, lp.z - (ex[0].z - m), (ex[1].z + m) - lp.z]
+				var mi = 0
+				for q in range(1, 4):
+					if dl[q] < dl[mi]:
+						mi = q
+				var push_l = [Vector3(-dl[0], 0, 0), Vector3(dl[1], 0, 0), Vector3(0, 0, -dl[2]), Vector3(0, 0, dl[3])][mi]
+				pos += v.global_transform.basis * push_l
 		var bnd: Rect2 = G.world.bounds
 		pos.x = clampf(pos.x, bnd.position.x, bnd.end.x)
 		pos.z = clampf(pos.z, bnd.position.y, bnd.end.y)
@@ -2927,7 +2937,13 @@ func _tick_riding() -> void:
 		strength = 0.5
 		drive()
 		return
-	if role == "gunner":
+	if role == "gunner" and v.kind == "mortar" and v.load_t > 0.0:
+		_mortar_drill(v)
+	elif role == "gunner" and v.kind == "atgun" and v.atload_t > 0.0 and v.turret != null:
+		_atgun_drill(v)
+	elif role == "gunner" and v.belt_t > 0.0 and v.turret != null:
+		_belt_drill(v)
+	elif role == "gunner":
 		ready_ = false
 		stand_pose()
 		hand_t = v.turret.global_position + v._gun_dir() * 0.25 + Vector3(0, 0.15, 0) if v.turret != null else null
@@ -2940,6 +2956,129 @@ func _tick_riding() -> void:
 			AI.aim_and_fire(self)
 	strength = 0.5
 	drive()
+
+# loading a mortar: crouch to the ammo box at his side, lift a round, hold it over the tube, let it go,
+# then turn away with his hands over his ears as it fires
+func _mortar_drill(v) -> void:
+	ready_ = false
+	var k = 1.0 - v.load_t / 1.9
+	var uf = Vector3(sin(aim_yaw), 0, cos(aim_yaw))
+	var ur = Vector3(-cos(aim_yaw), 0, sin(aim_yaw))
+	var tube: Vector3 = v.muzzle()
+	var box: Vector3 = pos + ur * 0.38 + uf * 0.12 + Vector3(0, 0.25, 0)
+	var over = tube + Vector3(0, 0.3, 0)
+	var ears = P[0] if P.size() > 0 else pos + Vector3(0, 1.5, 0)
+	var held: Vector3
+	if k < 0.18:
+		crouch = lerpf(0.3, 0.9, k / 0.18)
+		held = (pos + uf * 0.3 + Vector3(0, 0.9, 0)).lerp(box, k / 0.18)
+	elif k < 0.45:
+		crouch = lerpf(0.9, 0.45, (k - 0.18) / 0.27)
+		held = box.lerp(over, (k - 0.18) / 0.27)
+	elif k < 0.66:
+		crouch = 0.45
+		held = over.lerp(tube + Vector3(0, 0.05, 0), (k - 0.45) / 0.21)
+	else:
+		crouch = 0.85
+		held = Vector3.ZERO
+	stand_pose()
+	if held != Vector3.ZERO:
+		hand_t = held
+		hands_t = [held - ur * 0.06 + Vector3(0, -0.06, 0), held + ur * 0.06 + Vector3(0, 0.06, 0)]
+		if v.round_mesh != null:
+			v.round_mesh.global_position = held
+			v.round_mesh.global_rotation = Vector3.ZERO
+	else:
+		# ducking: both hands up over his ears
+		var hp: Vector3 = parts[2].global_position if parts.size() > 2 else ears
+		hand_t = hp
+		hands_t = [hp - ur * 0.13, hp + ur * 0.13]
+	_arms_and_gun(0.0, false, uf, ur, uf)
+	hand_t = null
+	hands_t = null
+
+# reloading the anti-tank gun: down to the ammo box beside the trail for a shell, swing it up behind the
+# breech, ram it home with both hands, and back on the sights
+func _atgun_drill(v) -> void:
+	ready_ = false
+	var k = 1.0 - v.atload_t / 2.3
+	var uf = Vector3(sin(aim_yaw), 0, cos(aim_yaw))
+	var ur = Vector3(-cos(aim_yaw), 0, sin(aim_yaw))
+	var gd: Vector3 = v._gun_dir()
+	var breech: Vector3 = v.gun_pivot.global_position - gd * 0.25
+	var behind = breech - gd * 0.45 + Vector3(0, 0.05, 0)
+	var grip: Vector3 = v.turret.global_position + gd * 0.25 + Vector3(0, 0.15, 0)
+	var box: Vector3 = pos + ur * 0.42 - uf * 0.1 + Vector3(0, 0.28, 0)
+	var held = Vector3.ZERO
+	if k < 0.12:
+		crouch = lerpf(0.2, 0.85, k / 0.12)
+	elif k < 0.3:
+		crouch = 0.85
+		held = box
+	elif k < 0.6:
+		crouch = lerpf(0.85, 0.3, (k - 0.3) / 0.3)
+		held = box.lerp(behind, (k - 0.3) / 0.3)
+	elif k < 0.8:
+		crouch = 0.3
+		held = behind.lerp(breech + gd * 0.1, (k - 0.6) / 0.2)
+	else:
+		crouch = 0.25
+	stand_pose()
+	if held != Vector3.ZERO:
+		hand_t = held
+		hands_t = [held - gd * 0.2 + Vector3(0, -0.04, 0), held + gd * 0.12 + Vector3(0, 0.02, 0)] if k >= 0.3 else [held - ur * 0.08, held + ur * 0.08]
+		if v.round_mesh != null:
+			v.round_mesh.visible = true
+			v.round_mesh.global_position = held
+			# lying along the barrel once it's lifted, upright while it comes out of the box
+			if k >= 0.3:
+				v.round_mesh.global_basis = Basis.looking_at(gd, Vector3.UP) * Basis(Vector3(1, 0, 0), PI / 2.0)
+			else:
+				v.round_mesh.global_basis = Basis()
+	else:
+		if v.round_mesh != null:
+			v.round_mesh.visible = false
+		hand_t = grip
+		hands_t = [box, box + ur * 0.1] if k < 0.12 else null
+	_arms_and_gun(0.0, false, uf, ur, uf)
+	hand_t = null
+	hands_t = null
+
+# changing the belt on a mounted MG: one hand flips the feed cover up, the other brings the new belt from
+# the box and lays it in, then the cover is slapped shut and the hands go back to the grips
+func _belt_drill(v) -> void:
+	ready_ = false
+	var k = 1.0 - v.belt_t / 3.4
+	var uf = Vector3(sin(aim_yaw), 0, cos(aim_yaw))
+	var ur = Vector3(-cos(aim_yaw), 0, sin(aim_yaw))
+	var grip: Vector3 = v.turret.global_position + v._gun_dir() * 0.25 + Vector3(0, 0.15, 0)
+	var tray: Vector3 = v.turret.global_position + v._gun_dir() * 0.45 + Vector3(0, 0.3, 0)
+	var cover_up = tray + Vector3(0, 0.22, 0) - v._gun_dir() * 0.05
+	var box: Vector3 = pos + ur * 0.32 + uf * 0.1 + Vector3(0, 0.55, 0)
+	var lh: Vector3
+	var rh: Vector3
+	if k < 0.2:
+		rh = grip.lerp(cover_up, k / 0.2)
+		lh = grip.lerp(box, k / 0.2)
+	elif k < 0.5:
+		rh = cover_up
+		lh = box.lerp(tray, (k - 0.2) / 0.3)
+	elif k < 0.8:
+		rh = cover_up
+		lh = tray + ur * (0.08 * sin((k - 0.5) * 30.0))
+	elif k < 0.9:
+		rh = cover_up.lerp(tray + Vector3(0, 0.04, 0), (k - 0.8) / 0.1)
+		lh = tray.lerp(grip, (k - 0.8) / 0.1)
+	else:
+		rh = (tray + Vector3(0, 0.04, 0)).lerp(grip, (k - 0.9) / 0.1)
+		lh = grip
+	crouch = 0.2
+	stand_pose()
+	hand_t = grip
+	hands_t = [lh, rh]
+	_arms_and_gun(0.0, false, uf, ur, uf)
+	hand_t = null
+	hands_t = null
 
 # seated: upper body as when standing, thighs forward along the seat, shins hanging down
 func ride_pose(driving: bool) -> void:

@@ -70,7 +70,12 @@ static func step(dt: float) -> void:
 	var alive = []
 	for t in range(G.team_count()):
 		alive.append(G.alive_count(t))
-	timeline.append([G.game_time, alive, G.score.duplicate()])
+	var pts = []
+	var inc = []
+	for t in range(G.team_count()):
+		pts.append(Support.points[t] if t < Support.points.size() else 0)
+		inc.append(Support.earned[t] if t < Support.earned.size() else 0)
+	timeline.append([G.game_time, alive, G.score.duplicate(), pts, inc])
 
 static func mvp(team: int = -1):
 	var best = null

@@ -172,6 +172,27 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **HUD:** the orders card is now a slim strip above the dock, messages are smaller, the info panel sits above the minimap, and clicking a single soldier shows his card (health, ammo, kit, squad, what he's doing, and buttons to hold, take cover or take control)
 - **Building:** hold Shift while placing a structure to keep the blueprint and place more of the same
 - **Settings:** "Show soldiers' shouts as text" off hides the words above their heads; you still hear them
+- **Crews bail out:** a vehicle that's taken a heavy hit and can't move (or is nearly done for) is abandoned; the crew climbs out and runs for the nearest cover
+- **Ducking from turrets:** infantry who see an enemy tank or armoured car's turret swing onto them get behind cover or go flat
+- **Supply chart:** the battle report plots each side's supply over time (points earned, and points in hand)
+- **Craters stay:** shell holes have a raised rim you can see and use as cover; men lie in them below the rim
+- **Thicker dust and smoke:** a falling wall throws up a dense low cloud with a taller one drifting off it; smoke grenades now make a solid white wall in two layers
+- **Loading drills:** mortar crews take a bomb from the box, hold it over the tube, let it drop and duck with their hands over their ears; machine gunners (nests, jeeps, other mounted MGs) change the belt every hundred rounds (open the cover, lay the belt, slap it shut); the anti-tank gunner fetches a shell from beside the trail and rams it into the breech after every shot
+- **Anti-tank guns:** none at the start of a battle any more; when enemy armour shows up one is bought, and it sets up behind your line covering the approach instead of rolling up to the front
+- **Medics and pick-ups you can see:** a man dressing a wound winds the bandage round with both hands while the wounded man keeps still, and he wears a white dressing afterwards; men kneel at an ammo crate or over a body and go through it before they've restocked
+- **Wounded fight on less:** a man who's bleeding badly gets into cover (or flat) and dresses it rather than carrying on shooting
+- **Behind low walls:** men only rise as high as it takes to fire over the top, and go flat behind a low wall while they reload or the rounds are coming in
+- **No shooting while working:** engineers building, mending or sweeping don't fire; an enemy close by makes them drop the job and fight. Nobody sweeps for mines under fire
+- **Fewer grenades:** one frag each (and one rifle grenade), thrown much less often
+- **Take control in commander:** "Control him" on a soldier's card (or the Take control tool) puts you in his boots; X takes you back up to the commander view
+- **Order buttons:** only the order the selected men are actually on is lit
+- **Selection and order marks:** thin glowing rings on the ground under selected men with a chevron for the way they face; the hover preview shows a ring and chevron where each man will end up (green where there's cover) and a faint trail from him to it
+- **Vehicles:** tougher against small arms and near misses, fewer hits set them on fire and most fires burn out; two vehicles nose to nose sort themselves out (the smaller backs off at an angle while the bigger waits, a parked one with a driver shuffles out of the road, a wreck gets driven round); a lorry creeping back and forth counts as stuck and finds another way; men can't stand inside a lorry's bonnet any more
+- **Headlights:** set into the front of each vehicle in a dark housing, with a softer pool of light on the road
+- **Bodies and rubble:** whatever was lying on a wall or roof falls when it's blown away; rubble that's still moving or resting on nothing isn't frozen in mid-air; bodies aren't thrown as high or as far by blasts
+- **Roofs:** a man blown up onto a roof walks to the edge and drops off it
+- **Truck reinforcements:** the radio gives the real time until they arrive instead of "two minutes"
+- **AI-run Alpha (commander):** gets reinforcement waves and plans attacks like the enemy commander does; AI mortars fire again (they'd been stuck re-checking for targets)
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

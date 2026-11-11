@@ -803,7 +803,7 @@ static func _effect(st: Dictionary, dt: float) -> void:
 			_observe(st)
 		"hospital":
 			# each aid station keeps an ambulance running (the player commander buys his own)
-			if G.sim_time - st.get("amb_t", -999.0) > 45.0 and not (G.mode == "commander" and t == 0) and Rules.callin_ok(t, "ambulance"):
+			if G.sim_time - st.get("amb_t", -999.0) > 45.0 and not (G.mode == "commander" and t == 0 and not G.ai_runs(0)) and Rules.callin_ok(t, "ambulance"):
 				var have = false
 				for v in G.vehicles:
 					if v.kind == "ambulance" and v.team == t and not v.dead:

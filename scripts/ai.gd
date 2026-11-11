@@ -1219,7 +1219,7 @@ static func decide(s) -> void:
 	# grenades at enemies hiding behind cover
 	s.nade_cd -= 2.0
 	if s.grenades > 0 and s.nade_cd <= 0.0 and known and s.target != null and is_instance_valid(s.target) and s.target.state != "dead" and s.intel.has(s.target) and dT > 11.0 and dT < 30.0 and (s.target.in_cover or s.vis_t == null):
-		if randf() < 0.5:
+		if randf() < 0.35:
 			var e = s.intel[s.target]
 			var gp = Doors.throw_point(s, e["p"])
 			if gp == e["p"]:
@@ -1229,7 +1229,7 @@ static func decide(s) -> void:
 			Combat.throw_grenade(s, gp, "frag")
 			s.burst = 0
 			s.burst_cd = 0.8
-		s.nade_cd = randf_range(10.0, 18.0)
+		s.nade_cd = randf_range(28.0, 45.0)
 	if order["mode"] == "free" and _initiative(s, known, threat, dT):
 		return
 	if order["mode"] == "follow":
@@ -1533,9 +1533,36 @@ static func _watchdog(s) -> void:
 	go_to(s, goal + Vector3(cos(a), 0, sin(a)) * randf_range(2.0, 6.0), 4.6)
 	s.decide_t = 3.0
 
+# blown up onto a roof: walk to the nearest edge and drop off it, rather than standing about up there
+static func _off_the_roof(s) -> bool:
+	if s.vehicle != null or s.state != "alive" or G.world.roof_cols.is_empty():
+		return false
+	if G.sim_time < s.get_meta("roof_chk", 0.0):
+		return s.has_meta("roof_go")
+	s.set_meta("roof_chk", G.sim_time + 1.0)
+	var c = G.world.roof_under(s.pos)
+	if c == null:
+		s.remove_meta("roof_go")
+		return false
+	# the nearest edge, and a spot just past it on the ground
+	var p: Vector3 = s.pos
+	var opts = [[p.x - c.lo.x, Vector3(c.lo.x - 1.6, 0, p.z)], [c.hi.x - p.x, Vector3(c.hi.x + 1.6, 0, p.z)], [p.z - c.lo.z, Vector3(p.x, 0, c.lo.z - 1.6)], [c.hi.z - p.z, Vector3(p.x, 0, c.hi.z + 1.6)]]
+	opts.sort_custom(func(a, b): return a[0] < b[0])
+	var dest: Vector3 = opts[0][1]
+	dest.y = G.world.ground_y(dest.x, dest.z)
+	s.route = null
+	s.want = G.flat(dest - p).normalized() * 2.2
+	s.set_meta("roof_go", dest)
+	if not s.has_meta("roof_said"):
+		s.set_meta("roof_said", true)
+		G.fx.callout(s, G.pick(["How'd I get up here?!", "Jumping down!", "Off the roof!"]))
+	return true
+
 static func update(s) -> void:
 	if s.zombie:
 		Modes.zombie_tick(s)
+		return
+	if _off_the_roof(s):
 		return
 	if (s.bleed > 0.0 or s.bandage_t > 0.0 or s.think <= 0.05) and Medical.ai_tick(s):
 		stance(s)
@@ -1709,6 +1736,8 @@ static func update(s) -> void:
 				if s.task == "flee":
 					s.flee = null
 					s.task = null
+	if (Engine.get_physics_frames() + s.id) % 15 == 0:
+		_turret_check(s)
 	_keep_apart(s)
 	_keep_from_zombies(s)
 	_round_vehicles(s)
@@ -1829,6 +1858,14 @@ static func aim_and_fire(s) -> void:
 	if s.swim or s.dragging != null or (s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and G.dist2d(s.patient.pos, s.pos) < 1.3):
 		s.burst = 0
 		return
+	# hands full with a job (building, mending, sweeping): no shooting. An enemy close enough to matter
+	# makes him drop the job and fight
+	if ClassAI.busy(s) and s.vis_t != null and is_instance_valid(s.vis_t):
+		if G.dist2d(s.vis_t.pos, s.pos) < 14.0:
+			s.task = null
+		else:
+			s.burst = 0
+			return
 	var tgt = null
 	if s.vis_t != null and is_instance_valid(s.vis_t) and s.vis_t.state != "dead" and s.task != "medic":
 		tgt = s.vis_t
@@ -2014,6 +2051,11 @@ static func stance(s) -> void:
 		return
 	if s.want.length_squared() > 0.1 and not s.in_cover:
 		s.prone_t = false
+	# in a shell hole: lie in it, below the rim
+	if s.in_cover and s.cover != null and s.cover.has_meta("crater") and s.want.length_squared() < 0.1:
+		s.prone_t = true
+		s.crouch_t = 0.0
+		return
 	# a medic going in under fire crawls the last stretch to the man he's after
 	if s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and s.dragging == null and s.has_seen and G.sim_time - s.seen_t < 6.0:
 		var dp = G.dist2d(s.patient.pos, s.pos)
@@ -2038,7 +2080,17 @@ static func stance(s) -> void:
 			s.prone_t = false
 			s.crouch_t = 0.35 if peek else 0.7
 		elif cp.type == "low":
-			s.crouch_t = 0.0 if peek else 1.0
+			# only as high as it takes to see over the top: eyes just clear of the wall to fire, and below it
+			# (flat on the ground if the wall is a low one) while the rounds are coming in
+			var h = 1.0
+			if cp.col != null:
+				h = clampf(cp.col.hi.y - cp.col.gy, 0.4, 2.0)
+			if peek:
+				s.prone_t = false
+				s.crouch_t = clampf((1.53 - h) / 0.42, 0.0, 1.0)
+			else:
+				s.crouch_t = 1.0
+				s.prone_t = h < 1.2 and (s.supp > 0.6 or s.reload_t > 0.0)
 		elif cp.type == "corner" or (cp.type == "wall" and cp.side != 0.0):
 			var ldir: Vector3 = cp.t if cp.type == "corner" else wall_lean_dir(cp)
 			s.crouch_t = 0.45 if cp.type == "corner" else 0.3
@@ -2190,7 +2242,7 @@ static func pass_ammo(s) -> void:
 static func supply_tick(s, dt: float) -> void:
 	if s.state != "alive":
 		return
-	if s.ammo_frac() >= 0.999 and s.grenades >= 2:
+	if s.ammo_frac() >= 0.999 and s.grenades >= 1:
 		s.resupply_t = 0.0
 		return
 	var near = null
@@ -2199,6 +2251,11 @@ static func supply_tick(s, dt: float) -> void:
 			near = a
 			break
 	if near != null:
+		# down on one knee at the crate, hands in it and back to the pouches
+		if not s.is_player:
+			s.crouch_t = 0.85
+			s.want = Vector3.ZERO
+			Medical.work_hands(s, near["p"] + Vector3(0, 0.35, 0), "rummage")
 		s.resupply_t += dt
 		if s.resupply_t >= 1.0:
 			s.resupply_t = 0.0
@@ -2219,6 +2276,17 @@ static func supply_tick(s, dt: float) -> void:
 		return
 	s.resupply_t = 0.0
 	if s.task == "resupply" and s.supply_target is Object and is_instance_valid(s.supply_target) and G.dist2d(s.supply_target.pos, s.pos) < 1.8:
+		# kneel over him and go through his kit before taking anything
+		var body_p: Vector3 = s.supply_target.parts[1].global_position if not s.supply_target.parts.is_empty() else s.supply_target.pos
+		s.crouch_t = 0.9
+		s.want = Vector3.ZERO
+		AI.stop_move(s)
+		Medical.work_hands(s, body_p, "rummage")
+		var rt = s.get_meta("rummage_t", 0.0) + dt
+		s.set_meta("rummage_t", rt)
+		if rt < 1.6:
+			return
+		s.remove_meta("rummage_t")
 		scavenge(s, s.supply_target)
 		s.task = null
 		s.supply_target = null
@@ -2286,6 +2354,41 @@ static func grid_ref(p: Vector3) -> String:
 # vehicles aren't on the walking map, so a man heading past one walks round it instead of through it:
 # if his next steps would take him into a vehicle's footprint, he slides along its side; if he's already
 # inside it (just climbed out, or it rolled up to him) he steps out to the nearer side
+# an enemy tank's gun swinging round onto him: get behind something solid, or flat on the ground.
+# (anti-tank men stay up: that's their job)
+static func _turret_check(s) -> void:
+	if s.is_player or s.vehicle != null or s.zombie or s.state != "alive" or s.task in ["flee", "stretcher", "medic", "board", "post"]:
+		return
+	if s.W["rocket"] or s.W["ap"] or s.fausts > 0 or G.sim_time < s.get_meta("duck_t", -9.0):
+		return
+	for v in G.vehicles:
+		if v.team == s.team or v.team < 0 or v.dead or v.turret == null or not (v.spec["tracked"] or v.kind == "armoredcar"):
+			continue
+		var to = G.flat(s.pos - v.pos)
+		var d = to.length()
+		if d > 90.0 or d < 5.0:
+			continue
+		var a = v.yaw + v.turret_yaw
+		if Vector3(sin(a), 0, cos(a)).dot(to / d) < 0.97:
+			continue
+		if G.blocked(v.center() + Vector3(0, 1.0, 0), s.chest()):
+			continue
+		s.set_meta("duck_t", G.sim_time + 6.0)
+		Tactics.events["duck"] += 1
+		if s.in_cover and s.cover != null and cover_safe(s.cover, v.pos):
+			s.crouch_t = 1.0           # already behind something: keep his head down
+			return
+		var cp = find_cover(s, v.pos, "hold")
+		if cp != null and G.dist2d(cp.p, s.pos) < 16.0:
+			release_cover(s)
+			take_cover(s, cp)
+		else:
+			stop_move(s)
+			s.prone_t = true
+		if randf() < 0.5:
+			G.fx.callout(s, G.pick(["Tank! Get down!", "Turret's on us! Cover!", "Armour! Into cover!"]))
+		return
+
 # men step round each other instead of shoving, and take turns at a doorway
 static func _keep_apart(s) -> void:
 	if s.prone or s.vault != null or s.vehicle != null or s.climb != null or s.scramble != null or s.dragging != null:

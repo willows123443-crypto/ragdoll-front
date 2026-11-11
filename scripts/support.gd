@@ -47,6 +47,8 @@ static func pending_site(team: int, what: String):
 	return null
 
 static var points: Array = []
+static var earned: Array = [0, 0, 0, 0]     # supply taken in over the battle (not counting spending)
+static var last_pts: Array = [0, 0, 0, 0]
 static var hq_t: Array = [0, 0, 0, 0]
 static var trickle = 0.0
 static var ai_t: Array = []
@@ -55,6 +57,8 @@ static var air_seen: Array = [-999.0, -999.0, -999.0, -999.0]
 
 static func reset() -> void:
 	air_seen = [-999.0, -999.0, -999.0, -999.0]
+	earned = [0, 0, 0, 0]
+	last_pts = [-1, -1, -1, -1]
 	for r in recons:
 		if is_instance_valid(r["node"]):
 			r["node"].queue_free()
@@ -141,6 +145,11 @@ static func earn(team: int, n: int) -> void:
 		points[team] += n
 
 static func step(dt: float) -> void:
+	# income: every rise in a side's points (spending only ever lowers them)
+	for t in range(mini(points.size(), 4)):
+		if last_pts[t] >= 0 and points[t] > last_pts[t]:
+			earned[t] += points[t] - last_pts[t]
+		last_pts[t] = points[t]
 	_step_planes(dt)
 	_step_recons(dt)
 	_step_missions(dt)

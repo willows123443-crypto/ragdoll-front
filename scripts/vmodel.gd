@@ -438,6 +438,7 @@ static func _build_main(v) -> void:
 		"truck", "ambulance", "radar", "supplytruck", "ammotruck":
 			col(v, Vector3(2.4, 0.5, 7.0), Vector3(0, 0.95, 0))
 			col(v, Vector3(2.3, 0.75, 1.8), Vector3(0, 1.55, 2.5))
+			col(v, Vector3(2.1, 0.8, 1.3), Vector3(0, 1.48, 3.95))     # the bonnet: nobody stands in it
 			box(v, hull, Vector3(1.6, 0.3, 7.0), Vector3(0, 0.85, 0), METAL)
 			box(v, hull, Vector3(2.2, 0.75, 1.75), Vector3(0, 1.55, 2.5), base, {"b": 0.06})
 			box(v, hull, Vector3(2.32, 0.12, 1.85), Vector3(0, 2.62, 2.5), base, {"b": 0.05})

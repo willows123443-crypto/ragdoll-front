@@ -13,7 +13,7 @@ extends RefCounted
 const DANGER_LIFE = 150.0
 
 static var danger: Array = [[], [], [], []]       # per team: {"p", "w", "t"}
-static var events = {"pinned": 0, "help": 0, "stack": 0, "danger_smoke": 0, "doorwatch": 0, "screen": 0, "cover_smoke": 0}
+static var events = {"pinned": 0, "help": 0, "stack": 0, "danger_smoke": 0, "doorwatch": 0, "screen": 0, "cover_smoke": 0, "duck": 0, "bail": 0}
 
 static func reset() -> void:
 	danger = [[], [], [], []]

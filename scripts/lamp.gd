@@ -100,7 +100,7 @@ static func make(parent: Node3D, reach: float, spread: float, lens: float, warm:
 	pool.mesh = pq
 	pool.material_override = _pool_mat.duplicate()
 	if warm:
-		pool.material_override.albedo_color = Color(0.95, 0.86, 0.66, 0.55)
+		pool.material_override.albedo_color = Color(0.95, 0.86, 0.66, 0.38)
 	pool.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	pool.top_level = true
 	pool.name = "pool"

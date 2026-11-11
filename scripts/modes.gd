@@ -871,7 +871,7 @@ static func shop(k: String, p: Vector3) -> String:
 			for s in G.soldiers:
 				if s.team == 0 and s.state != "dead":
 					s.reserve = s.W["mag"] * s.W["mags"]
-					s.grenades = maxi(s.grenades, 2)
+					s.grenades = maxi(s.grenades, 1)
 			return "Everyone restocked"
 		"heal":
 			Support.points[0] -= c

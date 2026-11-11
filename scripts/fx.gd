@@ -675,9 +675,16 @@ func step(dt: float) -> void:
 		d["t"] -= dt
 		d["age"] = d.get("age", 0.0) + dt
 		if d["age"] > 7.0 and not d.get("still", false) and is_instance_valid(d["b"]):
-			d["still"] = true
-			d["b"].freeze = true
-			d["b"].collision_mask = 0
+			var b: RigidBody3D = d["b"]
+			# only once it's at rest on something: a piece still tumbling (or on nothing) is left to fall
+			var p = b.global_position
+			var rest = b.linear_velocity.length_squared() < 0.05 and not G.ray(p + Vector3(0, 0.1, 0), p - Vector3(0, 0.6, 0), G.L_WORLD).is_empty()
+			if rest or p.y - G.world.ground_y(p.x, p.z) < 0.4:
+				d["still"] = true
+				b.freeze = true
+				b.collision_mask = 0
+			elif d["age"] > 20.0:
+				d["t"] = 0.0      # stuck somewhere odd for this long: tidy it away rather than leave it hanging
 		if d["t"] <= 0.0 or not is_instance_valid(d["b"]):
 			if is_instance_valid(d["b"]):
 				d["b"].queue_free()

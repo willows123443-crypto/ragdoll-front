@@ -54,16 +54,22 @@ func set_rts(on: bool) -> void:
 	G.ui._render_tools()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
+var back_to_rts = false     # took over a man from the commander's view: X puts us back up there
+
 func possess(s) -> void:
-	if G.mode == "commander":
-		G.ui.message("You're in command here: select soldiers and right-click to send them")
-		return
 	if s == null or s.state == "dead":
 		G.ui.message("Pick a living soldier")
 		return
 	if not Rules.free_tools() and s.team != 0:
 		G.ui.message("That's one of theirs: pick one of your own soldiers")
 		return
+	if G.mode == "commander" and s.team != 0:
+		G.ui.message("That's one of theirs: pick one of your own soldiers")
+		return
+	if rts:
+		back_to_rts = true
+		rts = false
+		selection = []
 	if G.player != null and G.player != s and is_instance_valid(G.player):
 		G.player.is_player = false
 	G.player = s
@@ -85,7 +91,7 @@ func possess(s) -> void:
 	cam_yaw = s.aim_yaw
 	cam_pitch = 0.0
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-	G.ui.message("Now controlling %s — %s, %s" % [s.sname, G.TEAM_NAMES[s.team], s.W["name"]])
+	G.ui.message("Now controlling %s — %s, %s%s" % [s.sname, G.TEAM_NAMES[s.team], s.W["name"], " · X to go back to command" if back_to_rts else ""])
 
 func leave_soldier() -> void:
 	if G.player == null:
@@ -101,6 +107,11 @@ func leave_soldier() -> void:
 	G.player = null
 	mouse_down = false
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	if back_to_rts:
+		back_to_rts = false
+		rts = true
+		G.ui.tab = "command"
+		G.ui.tool = "sel"
 
 func player_update(s) -> void:
 	var W = s.W
@@ -1564,7 +1575,7 @@ func _special_order(mode: String) -> void:
 					Combat.throw_grenade(m, m.pos - away * 10.0, "smoke")
 					smoked = true
 				var off = Vector3((k % 4) - 1.5, 0, int(k / 4) - 1.0) * 2.2
-				m.order = {"mode": "move", "point": dest + off}
+				m.order = {"mode": "move", "point": dest + off, "tag": "fallback"}
 				_obey(m, dest + off)
 				k += 1
 			G.fx.order_marker(dest)
@@ -1576,11 +1587,11 @@ func _special_order(mode: String) -> void:
 				var cp = AI.find_cover(m, threat, "defend")
 				if cp != null:
 					AI.release_cover(m)
-					m.order = {"mode": "hold", "point": cp.pos}
+					m.order = {"mode": "hold", "point": cp.pos, "tag": "cover"}
 					_obey(m, cp.pos)
 					got += 1
 				else:
-					m.order = {"mode": "hold", "point": m.pos}
+					m.order = {"mode": "hold", "point": m.pos, "tag": "cover"}
 					m.prone_t = true
 			G.ui.message("Taking cover (%d found some, the rest go flat)" % got if got < men.size() else "Taking cover")
 	G.audio.radio_click()
@@ -1650,19 +1661,7 @@ func _toggle_follow(s) -> void:
 func _update_rings() -> void:
 	selection = selection.filter(func(x): return is_instance_valid(x) and x.state != "dead")
 	while sel_rings.size() < selection.size():
-		var r = MeshInstance3D.new()
-		var tm = TorusMesh.new()
-		tm.inner_radius = 0.42
-		tm.outer_radius = 0.5
-		r.mesh = tm
-		var m = StandardMaterial3D.new()
-		m.albedo_color = Color(1.0, 0.85, 0.25)
-		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		m.no_depth_test = true
-		r.material_override = m
-		r.scale = Vector3(1, 0.3, 1)
-		add_child(r)
-		sel_rings.append(r)
+		sel_rings.append(_mark_node(Color(1.0, 0.84, 0.3), true))
 	# men on foot get a ring each; a vehicle gets one ring round the whole hull
 	var marks = []
 	var seen = []
@@ -1682,16 +1681,112 @@ func _update_rings() -> void:
 		sel_sig = sig
 		if not selection.is_empty():
 			G.ui.message("Selected: " + _sel_summary())
+	# a thin glowing ring flat on the ground under each, breathing gently, with a small chevron on its
+	# edge showing which way he's facing
+	var pulse = 0.82 + 0.18 * sin(G.sim_time * 4.0)
+	var fl = []
+	for s in selection:
+		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
+			if not (s.vehicle in fl):
+				fl.append(s.vehicle)
+		else:
+			fl.append(s)
 	for i in range(sel_rings.size()):
-		var r = sel_rings[i]
+		var r: Node3D = sel_rings[i]
 		if i < marks.size():
 			r.visible = true
 			var p: Vector3 = marks[i][0]
-			r.global_position = Vector3(p.x, G.world.ground_y(p.x, p.z) + 0.08 if marks[i][1] > 1.0 else p.y + 0.06, p.z)
-			var sc = marks[i][1] * (1.0 + (rts_dist / 30.0 if rts and marks[i][1] <= 1.0 else 0.0))
-			r.scale = Vector3(sc, 0.3, sc)
+			var big = marks[i][1] > 1.0
+			var gy = G.world.surface_y(p.x, p.z, p.y + 0.3) if not big else G.world.ground_y(p.x, p.z)
+			r.global_position = Vector3(p.x, gy + 0.06, p.z)
+			var sc = marks[i][1] * (0.62 if not big else 1.0) * (clampf(1.0 + (rts_dist - 15.0) / 40.0, 1.0, 2.4) if rts else 1.0)
+			r.scale = Vector3(sc, 1, sc)
+			var who = fl[i] if i < fl.size() else null
+			var fy = 0.0
+			if who != null and is_instance_valid(who):
+				fy = who.yaw if who is Vehicle else who.body_yaw
+			r.rotation = Vector3(0, fy, 0)
+			_mark_alpha(r, pulse)
 		else:
 			r.visible = false
+
+# ---------------------------------------------------------------- ground marks
+# One look for everything drawn on the ground for orders: a soft-edged ring and a chevron, both flat on
+# the terrain, so selection, destinations and facing all read as the same family of marks.
+static var _ring_tex: ImageTexture = null
+static var _chev_tex: ImageTexture = null
+
+static func _mark_textures() -> void:
+	if _ring_tex != null:
+		return
+	var n = 128
+	var im = Image.create(n, n, false, Image.FORMAT_RGBA8)
+	for y in range(n):
+		for x in range(n):
+			var d = Vector2(x + 0.5 - n * 0.5, y + 0.5 - n * 0.5).length() / (n * 0.5)
+			# a crisp band with a soft glow inside it
+			var band = clampf(1.0 - absf(d - 0.83) / 0.1, 0.0, 1.0)
+			var glow = clampf((d - 0.4) / 0.43, 0.0, 1.0) * 0.3 if d < 0.83 else 0.0
+			var a = clampf(pow(band, 1.2) + glow, 0.0, 1.0)
+			im.set_pixel(x, y, Color(1, 1, 1, a))
+	_ring_tex = ImageTexture.create_from_image(im)
+	var m = 64
+	var ci = Image.create(m, m, false, Image.FORMAT_RGBA8)
+	for y in range(m):
+		for x in range(m):
+			# a chevron pointing toward -y in the image (forward once laid on the ground)
+			var u = (x + 0.5) / m - 0.5
+			var v = (y + 0.5) / m
+			var edge = 0.12 + absf(u) * 1.25        # the V
+			var a = clampf(1.0 - absf(v - edge) / 0.11, 0.0, 1.0) * (1.0 if absf(u) < 0.42 else 0.0)
+			ci.set_pixel(x, y, Color(1, 1, 1, a))
+	_chev_tex = ImageTexture.create_from_image(ci)
+
+static func _mark_mat(tex: Texture2D, c: Color) -> StandardMaterial3D:
+	var mt = StandardMaterial3D.new()
+	mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mt.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mt.albedo_texture = tex
+	mt.albedo_color = c
+	mt.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mt.render_priority = 2
+	mt.no_depth_test = true      # read through the grass
+	return mt
+
+# a ring (1 m radius at scale 1) with a chevron on its front edge; children: ring, chevron
+func _mark_node(c: Color, chevron: bool) -> Node3D:
+	_mark_textures()
+	var n = Node3D.new()
+	var ring = MeshInstance3D.new()
+	var pm = PlaneMesh.new()
+	pm.size = Vector2(2.0, 2.0)
+	ring.mesh = pm
+	ring.material_override = _mark_mat(_ring_tex, c)
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(ring)
+	var ch = MeshInstance3D.new()
+	var cm = PlaneMesh.new()
+	cm.size = Vector2(0.8, 0.8)
+	ch.mesh = cm
+	ch.material_override = _mark_mat(_chev_tex, c)
+	ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	ch.position = Vector3(0, 0.01, 1.2)
+	ch.rotation = Vector3(0, PI, 0)
+	ch.visible = chevron
+	n.add_child(ch)
+	add_child(n)
+	return n
+
+func _mark_alpha(n: Node3D, a: float) -> void:
+	for ch in n.get_children():
+		if ch is MeshInstance3D:
+			var mt: StandardMaterial3D = ch.material_override
+			mt.albedo_color.a = a
+
+func _mark_color(n: Node3D, c: Color) -> void:
+	for ch in n.get_children():
+		if ch is MeshInstance3D:
+			(ch.material_override as StandardMaterial3D).albedo_color = c
 
 # what each kind of soldier is, shown over him while he's selected
 const CLASS_TAG = {"rifleman": ["RIFLE", Color(0.9, 0.92, 0.88)], "mg": ["MG", Color(1.0, 0.75, 0.35)], "medic": ["MEDIC", Color(1.0, 0.45, 0.45)],
@@ -1924,44 +2019,23 @@ func _order_line(a: Vector3, b: Vector3, queue: bool) -> void:
 	G.ui.message("%d soldier%s forming a line%s" % [men.size(), "" if men.size() == 1 else "s", " (queued)" if queue else ""])
 
 func _pghost(i: int) -> Node3D:
-	if pg_mats.is_empty():
-		for c in [Color(0.95, 0.95, 0.9, 0.5), Color(0.4, 1.0, 0.45, 0.6)]:
-			var m = StandardMaterial3D.new()
-			m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			m.albedo_color = c
-			m.no_depth_test = true
-			pg_mats.append(m)
 	while pghosts.size() <= i:
-		var n = Node3D.new()
-		var body = MeshInstance3D.new()
-		var cm = CapsuleMesh.new()
-		cm.radius = 0.24
-		cm.height = 1.7
-		cm.radial_segments = 8
-		cm.rings = 2
-		body.mesh = cm
-		body.position = Vector3(0, 0.85, 0)
-		body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		n.add_child(body)
-		var nose = MeshInstance3D.new()
-		var bm = BoxMesh.new()
-		bm.size = Vector3(0.1, 0.1, 0.55)
-		nose.mesh = bm
-		nose.position = Vector3(0, 1.25, 0.4)
-		nose.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		n.add_child(nose)
-		var disc = MeshInstance3D.new()
-		var dm = CylinderMesh.new()
-		dm.top_radius = 0.5
-		dm.bottom_radius = 0.5
-		dm.height = 0.03
-		dm.radial_segments = 16
-		disc.mesh = dm
-		disc.position = Vector3(0, 0.05, 0)
-		disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		n.add_child(disc)
-		add_child(n)
+		var n = _mark_node(Color(0.95, 0.95, 0.9, 0.75), true)
+		# a faint trail from the man to his spot, so you can see who's going where
+		var tr = MeshInstance3D.new()
+		var pm = PlaneMesh.new()
+		pm.size = Vector2(0.12, 1.0)
+		tr.mesh = pm
+		var tm = StandardMaterial3D.new()
+		tm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		tm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		tm.albedo_color = Color(1, 1, 1, 0.22)
+		tm.render_priority = 1
+		tm.no_depth_test = true
+		tr.material_override = tm
+		tr.top_level = true
+		tr.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		n.add_child(tr)
 		pghosts.append(n)
 	return pghosts[i]
 
@@ -1995,14 +2069,22 @@ func _order_preview_tick() -> void:
 			g.visible = true
 			g.global_position = q
 			var cov = _covered(q)
-			var mat = pg_mats[1] if cov else pg_mats[0]
-			for ch in g.get_children():
-				ch.material_override = mat
-			# bigger when the camera's high up, so they still read from the commander view
-			var zoom = clampf(cam.global_position.distance_to(q) / 40.0, 1.0, 2.2)
-			g.scale = Vector3(zoom, zoom * (0.62 if cov else 1.0), zoom)
+			# green where there's cover to take, white in the open; a touch bigger from high up
+			var col = Color(0.45, 1.0, 0.5, 0.85) if cov else Color(0.97, 0.95, 0.88, 0.75)
+			_mark_color(g, col)
+			var zoom = clampf(cam.global_position.distance_to(q) / 30.0, 1.0, 2.4)
+			g.global_position = Vector3(q.x, G.world.surface_y(q.x, q.z, q.y + 0.3) + 0.07, q.z)
+			g.scale = Vector3(0.6 * zoom, 1, 0.6 * zoom)
 			var fy = face if face != null else atan2(q.x - e[0].pos.x, q.z - e[0].pos.z)
 			g.rotation = Vector3(0, fy, 0)
+			var tr: MeshInstance3D = g.get_child(2)
+			var from: Vector3 = e[0].pos
+			var L = G.dist2d(from, q)
+			tr.visible = L > 1.5
+			if tr.visible:
+				var mid = (from + q) * 0.5
+				tr.global_transform = Transform3D(Basis(Vector3.UP, atan2(q.x - from.x, q.z - from.z)).scaled(Vector3(zoom * 0.7, 1, maxf(0.2, L - 0.9 * zoom))), Vector3(mid.x, G.world.ground_y(mid.x, mid.z) + 0.08, mid.z))
+				(tr.material_override as StandardMaterial3D).albedo_color = Color(col.r, col.g, col.b, 0.3)
 	for i in range(used, pghosts.size()):
 		pghosts[i].visible = false
 	_drag_line_tick()

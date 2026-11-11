@@ -18,6 +18,7 @@ var piece = null
 var cover: Array = []                   # CoverPoint
 var terrain_cover: Array = []
 var towers: Array = []
+var roof_cols: Array = []     # pitched roofs: somewhere a man only ends up by being blown there
 var smoke_sources: Array = []
 var buildings: Array = []
 var roads: Array = []
@@ -1478,6 +1479,7 @@ func ruin_col(c) -> void:
 	_remove_grid(c)
 	if is_instance_valid(c.body):
 		c.body.queue_free()
+	_drop_resting_on(c)
 	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
 	for r in c.vis:
 		if r[1] == -2:
@@ -1498,6 +1500,33 @@ func ruin_col(c) -> void:
 			add_box(cx + rnd(-0.6, 0.6), 0.0, cz + rnd(-0.6, 0.6), rnd(0.4, 0.9), rnd(0.2, 0.4), rnd(0.4, 0.9), c.color.darkened(0.2), {"collide": false, "ry": rnd(0, 3)})
 
 var last_dust_ms = 0
+
+# whatever was lying on top of a box that's just gone (a body, rubble, a dropped crate) falls with it,
+# instead of hanging in the air where the box used to be
+func roof_under(p: Vector3):
+	for c in roof_cols:
+		if c.alive and p.x > c.lo.x - 0.1 and p.x < c.hi.x + 0.1 and p.z > c.lo.z - 0.1 and p.z < c.hi.z + 0.1 and p.y > c.hi.y - 0.4 and p.y < c.hi.y + 1.0:
+			return c
+	return null
+
+func _drop_resting_on(c) -> void:
+	var lo: Vector3 = c.lo - Vector3(0.5, 0.3, 0.5)
+	var hi: Vector3 = c.hi + Vector3(0.5, 2.5, 0.5)
+	var inside = func(p: Vector3) -> bool:
+		return p.x > lo.x and p.x < hi.x and p.z > lo.z and p.z < hi.z and p.y > lo.y and p.y < hi.y
+	for s in G.soldiers:
+		if s.state == "dead" and not s.parts.is_empty() and inside.call(s.parts[0].global_position):
+			s.unsettle()
+			for b in s.parts:
+				b.sleeping = false
+	for d in G.fx.debris_list:
+		var b = d["b"]
+		if is_instance_valid(b) and inside.call(b.global_position):
+			d["still"] = false
+			d["age"] = 0.0
+			b.freeze = false
+			b.sleeping = false
+			b.collision_mask = G.L_WORLD | G.L_DEBRIS
 
 func destroy_col(c, depth: int = 0) -> void:
 	if not c.alive:
@@ -2012,6 +2041,8 @@ func _pitched_roof(x: float, z: float, w: float, d: float, h: float, rc: Color, 
 	else:
 		ref = add_box(x, gy + h, z, w + 0.7, rh, d + 0.6, rc, {"shape": "prism", "abs": true, "collide": false})
 	var c = add_col(x, gy + h, z, w, minf(rh, 0.6), d)
+	c.set_meta("roof", true)
+	roof_cols.append(c)
 	c.vis = [ref]
 	c.dest = true
 	c.hp = 160.0
@@ -2584,6 +2615,17 @@ func blast_crater(p: Vector3, r: float) -> void:
 		lump.rotation.y = -a
 		lump.position = Vector3(cos(a) * r, 0.0, sin(a) * r)
 		node.add_child(lump)
+	# the thrown-up earth of the rim stops bullets and hides a man lying in the hole (you can still walk over it)
+	var rims = []
+	for k in range(6):
+		var a3 = k * TAU / 6.0
+		var rp = Vector3(p.x + cos(a3) * r * 0.95, 0, p.z + sin(a3) * r * 0.95)
+		var rc = add_col(rp.x, gy, rp.z, r * 0.9, 0.42 + r * 0.04, r * 0.9)
+		rc.no_move = true
+		rc.dest = false
+		rc.vis = []
+		rc.set_meta("crater_rim", true)
+		rims.append(rc)
 	# lying in the bowl, the rim keeps you out of sight
 	var cps = []
 	for k in range(4):
@@ -2591,12 +2633,20 @@ func blast_crater(p: Vector3, r: float) -> void:
 		var d = Vector3(cos(a2), 0, sin(a2))
 		var cp = add_cp(p.x + d.x * r * 0.55, p.z + d.z * r * 0.55, -d, Vector3(-d.z, 0, d.x), "low", null)
 		if cp != null:
+			cp.set_meta("crater", true)
 			cps.append(cp)
-	craters.append({"n": node, "cps": cps})
-	if craters.size() > 50:
+	craters.append({"n": node, "cps": cps, "rims": rims})
+	if craters.size() > 120:
 		var old = craters.pop_front()
 		if is_instance_valid(old["n"]):
 			old["n"].queue_free()
+		for rc2 in old.get("rims", []):
+			if rc2.alive:
+				rc2.alive = false
+				cols.erase(rc2)
+				_remove_grid(rc2)
+				if is_instance_valid(rc2.body):
+					rc2.body.queue_free()
 		for cp in old["cps"]:
 			cover.erase(cp)
 			var kk = _ckey(cp.p.x, cp.p.z)
@@ -3654,7 +3704,7 @@ func begin_edit(m: Dictionary) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
+	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]
 	paint = m.get("paint", PackedByteArray())
@@ -4448,7 +4498,7 @@ func load_map(id: String) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
+	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	paint = PackedByteArray()
 	if id == "random":
 		var rs = RandomNumberGenerator.new()

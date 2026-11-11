@@ -30,8 +30,8 @@ static func step(dt: float) -> void:
 	if not G.reinforce or G.over:
 		return
 	for t in range(G.team_count()):
-		if G.mode == "laststand" or (G.mode == "horde" and t == 1) or (G.mode == "commander" and t == 0):
-			continue          # waves are handled by the game mode
+		if G.mode == "laststand" or (G.mode == "horde" and t == 1) or (G.mode == "commander" and t == 0 and not G.ai_runs(0)):
+			continue          # waves are handled by the game mode (an AI-run Alpha gets them like any AI side)
 		# men crewing guns and vehicles don't count toward the infantry strength
 		var missing = G.size_of(t) - foot_count(t)
 		if not Campaign.reinforce_ok(t):
@@ -190,7 +190,7 @@ static func drive_in(t: int, kind: String, dest: Vector3, crew: bool = true, wai
 	var e = offmap(edge_near_hq(t))
 	var v = G.main.spawn_vehicle(kind, t, e, atan2(dest.x - e.x, dest.z - e.z), true)
 	# ours report to the depot or rally point and wait for orders; the AI's just drive on into the fight
-	if v != null and t == 0 and G.mode == "commander" and wait:
+	if v != null and t == 0 and G.mode == "commander" and wait and not G.ai_runs(0):
 		v.command(G.main._free_spot(dest))
 	return v
 
@@ -262,7 +262,9 @@ static func truck(t: int, n: int, dest = null) -> void:
 			G.main.force_cls = []
 			if s != null:
 				s.mount(v, seat_i))
-	G.ui.radio(t, "%d reinforcements inbound by truck, ETA two minutes" % n)
+	# the time it will really take: the road distance at the truck's cruising pace, plus getting going
+	var eta = int(round((G.dist2d(entry, drop) * 1.25) / maxf(3.0, v.spec["speed"] * 0.7) + 6.0))
+	G.ui.radio(t, "%d reinforcements inbound by truck, there in about %s" % [n, ("%d seconds" % (int(ceil(eta / 5.0)) * 5)) if eta < 90 else ("%d minutes" % int(round(eta / 60.0)))])
 
 # a transport helicopter flies troops in and lands them at the rally point
 static func heli(t: int, n: int) -> void:

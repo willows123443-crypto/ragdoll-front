@@ -2206,6 +2206,20 @@ func show_report() -> void:
 	report_chart.custom_minimum_size = Vector2(820, 140)
 	report_chart.draw.connect(_draw_report_chart)
 	report_body.add_child(report_chart)
+	# supply: what each side has taken in so far (bold) and has in hand (faint)
+	var tl0 = Stats.timeline
+	if tl0.size() >= 2 and tl0[tl0.size() - 1].size() > 4:
+		var last = tl0[tl0.size() - 1]
+		var mins = maxf(1.0, (last[0] - tl0[0][0]) / 60.0)
+		var parts = []
+		for ti in range(G.team_count()):
+			if ti < last[4].size():
+				parts.append("%s %d (%.1f a minute)" % [G.TEAM_NAMES[ti], last[4][ti], last[4][ti] / mins])
+		report_body.add_child(_label("Supply taken in over the battle (bold) and in hand (faint) · " + " · ".join(parts), 16))
+		supply_chart = Control.new()
+		supply_chart.custom_minimum_size = Vector2(820, 120)
+		supply_chart.draw.connect(_draw_supply_chart)
+		report_body.add_child(supply_chart)
 	# best performers
 	var m = Stats.mvp()
 	if m != null:
@@ -2276,6 +2290,37 @@ func _draw_report_chart() -> void:
 				pts.append(Vector2((e[0] - t0) / (t1 - t0) * (w - 10.0) + 5.0, h - 6.0 - e[1][ti] / top * (h - 16.0)))
 		if pts.size() > 1:
 			c.draw_polyline(pts, G.TEAM_BAND[ti].lightened(0.2), 2.0, true)
+
+var supply_chart: Control = null
+
+func _draw_supply_chart() -> void:
+	var c = supply_chart
+	var w = c.size.x
+	var h = c.size.y
+	c.draw_rect(Rect2(0, 0, w, h), Color(1, 1, 1, 0.04))
+	var tl = Stats.timeline.filter(func(e): return e.size() > 4)
+	if tl.size() < 2:
+		return
+	var t0 = tl[0][0]
+	var t1 = maxf(tl[tl.size() - 1][0], t0 + 1.0)
+	var top = 1.0
+	for e in tl:
+		for v in e[4]:
+			top = maxf(top, v)
+		for v in e[3]:
+			top = maxf(top, v)
+	for ti in range(G.team_count()):
+		for k in [3, 4]:
+			var pts = PackedVector2Array()
+			for e in tl:
+				if ti < e[k].size():
+					pts.append(Vector2((e[0] - t0) / (t1 - t0) * (w - 10.0) + 5.0, h - 6.0 - e[k][ti] / top * (h - 16.0)))
+			if pts.size() > 1:
+				var col = G.TEAM_BAND[ti].lightened(0.2)
+				if k == 3:
+					col.a = 0.45
+				c.draw_polyline(pts, col, 2.5 if k == 4 else 1.5, true)
+	c.draw_string(ThemeDB.fallback_font, Vector2(8, 14), str(int(top)), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.7, 0.7, 0.7))
 
 # ---------------------------------------------------------------- team customisation
 func _show_teams() -> void:
@@ -2421,7 +2466,17 @@ func _order_card_tick() -> void:
 	var riding = sel.any(func(x): return x.state == "riding")
 	var on_foot = sel.filter(func(x): return x.state != "riding")
 	var smokes = on_foot.any(func(x): return x.smokes > 0)
-	var sig = str(sel.size()) + str(riding) + str(smokes) + str(on_foot.size()) + G.pc._sel_summary()
+	# the order most of them are on right now: that one button is lit, the rest stay plain
+	var tally = {}
+	for m in on_foot:
+		var o = m.order
+		var tg = "free" if o == null else str(o.get("tag", o.get("mode", "")))
+		tally[tg] = tally.get(tg, 0) + 1
+	var active = ""
+	for k in tally:
+		if active == "" or tally[k] > tally[active]:
+			active = k
+	var sig = str(sel.size()) + str(riding) + str(smokes) + str(on_foot.size()) + G.pc._sel_summary() + active
 	if sig != order_sig:
 		order_sig = sig
 		order_title.text = G.pc._sel_short() + "  ▸"
@@ -2466,7 +2521,7 @@ func _order_card_tick() -> void:
 			b.tooltip_text = {"hold": "Hold here", "cover": "Take cover nearby", "charge": "Charge!", "fallback": "Fall back", "smoke": "Throw a smoke screen",
 				"vstop": "Stop where they are", "vback": "Back to the rally point", "vfree": "Drive freely", "vsmoke": "Pop smoke", "dismount": "Get out",
 				"free": "Act freely", "build": "Pick something to build", "clear": "Deselect"}.get(id, it[1])
-			var acc = id in ["charge", "fallback"]
+			var acc = id == active
 			b.add_theme_stylebox_override("normal", _dock_style(Color(0.16, 0.18, 0.2, 0.96), Color(0.95, 0.75, 0.25) if acc else Color(0.3, 0.33, 0.36)))
 			b.add_theme_stylebox_override("hover", _dock_style(Color(0.26, 0.29, 0.32, 1.0), Color(1.0, 0.85, 0.35)))
 			b.add_theme_stylebox_override("pressed", _dock_style(Color(0.3, 0.27, 0.15, 1.0), Color(1.0, 0.85, 0.35)))

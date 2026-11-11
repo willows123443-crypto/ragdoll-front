@@ -102,7 +102,7 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 			G.fx.callout(s, G.pick(["I'll fix her up!", "Repairing!"]))
 			return true
 	# the other side lays mines or bombs: sweep the road ahead with a detector
-	if s.task != "sweep" and randf() < 0.25 and _mine_threat(s.team) and s.get_meta("swept_t", -999.0) < G.sim_time - 40.0:
+	if s.task != "sweep" and s.supp < 0.3 and s.vis_t == null and G.sim_time - s.seen_t > 15.0 and randf() < 0.25 and _mine_threat(s.team) and s.get_meta("swept_t", -999.0) < G.sim_time - 40.0:
 		s.set_meta("swept_t", G.sim_time)
 		var goal = AI.objective_for(s)
 		var dir = G.flat(goal - s.pos)
@@ -158,6 +158,12 @@ static func work(s) -> void:
 	if s.task in ["build", "construct", "repair", "fixwheel", "salvage", "sweep", "defuse"]:
 		s.prone_t = false
 		s.prone = false
+	# sweeping for mines is slow, upright work: nobody does it with rounds coming in
+	if s.task == "sweep" and (s.supp > 0.7 or s.vis_t != null):
+		s.task = null
+		AI.stop_move(s)
+		G.fx.callout(s, G.pick(["Under fire! Sweep's off!", "Can't sweep under this!"]))
+		return
 	match s.task:
 		"build":
 			s.crouch_t = 1.0
@@ -303,6 +309,11 @@ static func work(s) -> void:
 				AI.stop_move(s)
 				s.crouch_t = 0.8
 				s.hand_t = w.chest()
+				Medical.work_hands(s, w.chest(), "wrap")
+				s.body_yaw = G.turn_to(s.body_yaw, atan2(w.pos.x - s.pos.x, w.pos.z - s.pos.z), 6.0 * G.DT)
+				w.want = Vector3.ZERO
+				if w.hp + 25.0 * G.DT >= 95.0:
+					Medical.show_dressing(w)
 				w.bleed = 0.0
 				w.hp = minf(100.0, w.hp + 25.0 * G.DT)
 				if w.hp >= 95.0:

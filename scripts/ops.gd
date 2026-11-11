@@ -31,7 +31,7 @@ static func reset() -> void:
 		events[k] = 0
 
 static func ai_side(team: int) -> bool:
-	if G.mode == "commander" and team == 0:
+	if G.mode == "commander" and team == 0 and not G.ai_runs(0):
 		return false
 	return not (G.mode == "horde" and team == 1)
 

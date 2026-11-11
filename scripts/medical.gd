@@ -40,8 +40,11 @@ static func bandage_tick(s) -> void:
 		s.bandage_who = null
 		return
 	s.hand_t = w.chest() if w != s else s.chest() + Vector3(0, -0.15, 0)
+	work_hands(s, w.chest() + Vector3(0, -0.05, 0) if w != s else s.chest() + Vector3(0, -0.18, 0), "wrap")
 	if w != s:
 		w.want = Vector3.ZERO
+		s.body_yaw = G.turn_to(s.body_yaw, atan2(w.pos.x - s.pos.x, w.pos.z - s.pos.z), 6.0 * G.DT)
+		s.aim_yaw = s.body_yaw
 	if s.bandage_t <= 0.0:
 		s.bandage_t = 0.0
 		s.bandage_who = null
@@ -49,10 +52,43 @@ static func bandage_tick(s) -> void:
 		s.dressings = maxi(0, s.dressings - 1)
 		w.bleed = 0.0
 		w.hp = minf(100.0, w.hp + (20.0 if s.cls == "medic" else 6.0))
+		show_dressing(w)
 		if w != s:
 			G.fx.callout(w, G.pick(["Thanks.", "Cheers, mate.", "That'll hold."]))
 		elif s.is_player:
 			G.ui.message("Wound dressed (%d dressing%s left)" % [s.dressings, "" if s.dressings == 1 else "s"])
+
+# hands busy at a spot, seen from across the field: "wrap" winds a dressing round and round a wound,
+# "rummage" reaches down into a crate or a dead man's pouches and back up to the belt
+static func work_hands(s, p: Vector3, how: String) -> void:
+	var ur = Vector3(-cos(s.body_yaw), 0, sin(s.body_yaw))
+	var uf = Vector3(sin(s.body_yaw), 0, cos(s.body_yaw))
+	var t = G.sim_time * (7.0 if how == "wrap" else 4.0) + float(s.id)
+	if how == "wrap":
+		var a = ur * 0.1 * cos(t) + Vector3(0, 0.08 * sin(t), 0)
+		s.hands_t = [p + a - uf * 0.04, p - a + uf * 0.02]
+	else:
+		var belt = s.chest() + Vector3(0, -0.3, 0) + uf * 0.15
+		var k = 0.5 + 0.5 * sin(t)
+		s.hands_t = [p.lerp(belt, k) - ur * 0.08, p.lerp(belt, 1.0 - k) + ur * 0.08]
+	s.hand_t = p
+	s.set_meta("work_hands_t", G.sim_time)
+
+# a white field dressing on a man who's been patched up, so you can see who's been seen to
+static func show_dressing(w) -> void:
+	if w.parts.size() < 4 or w.has_meta("dressing_mesh"):
+		return
+	var m = MeshInstance3D.new()
+	var bm = BoxMesh.new()
+	bm.size = Vector3(0.15, 0.07, 0.15)
+	m.mesh = bm
+	var mt = StandardMaterial3D.new()
+	mt.albedo_color = Color(0.93, 0.91, 0.86)
+	m.material_override = mt
+	var part = w.parts[3 + randi() % 2 * 2] if randf() < 0.6 else w.parts[1]
+	part.add_child(m)
+	m.position = Vector3(0, 0.02, 0)
+	w.set_meta("dressing_mesh", m)
 
 static func start(s, who, t: float) -> void:
 	s.bandage_t = t * (0.5 if s.cls == "medic" else 1.0)
@@ -63,13 +99,30 @@ static func start(s, who, t: float) -> void:
 static func ai_tick(s) -> bool:
 	if s.bandage_t > 0.0:
 		bandage_tick(s)
-		if s.supp > 1.1 and s.bandage_who == null:
+		if s.supp > (1.7 if s.in_cover or s.prone_t else 1.1) and s.bandage_who == null:
 			s.bandage_t = 0.0      # too hot to stay put: carry on bleeding
 		return s.bandage_t > 0.0
 	if s.dressings <= 0 or s.task == "patch" or s.task == "medic":
 		return false
 	var safe = s.vis_t == null and s.supp < 0.5
-	if not safe and not (s.in_cover and s.supp < 0.9 and s.bleed > 1.0):
+	# a real wound gets seen to: behind cover he dresses it even with rounds coming over, out in the open
+	# he first gets into cover (or flat on the ground) to do it
+	var hurt = s.bleed > 0.35
+	if not safe and not (s.in_cover and s.supp < (1.5 if hurt else 0.9)):
+		if hurt and s.state == "alive" and s.vehicle == null and G.sim_time > s.get_meta("dress_cover_t", 0.0):
+			s.set_meta("dress_cover_t", G.sim_time + 6.0)
+			var cp = AI.find_cover(s, s.threat if s.has_seen else s.pos + Vector3(0, 0, 10), "hold")
+			if cp != null and G.dist2d(cp.p, s.pos) < 18.0:
+				AI.release_cover(s)
+				AI.take_cover(s, cp)
+				G.fx.callout(s, G.pick(["I'm hit! Getting into cover!", "Hit! Need to patch this!", "I'm bleeding, moving to cover!"]))
+			elif s.vis_t == null or s.supp < 1.2:
+				# nothing near: go flat and dress it where he lies
+				AI.stop_move(s)
+				s.prone_t = true
+				start(s, null, SELF_T * 1.3)
+				G.fx.callout(s, G.pick(["Hit! Dressing it!", "I'm bleeding!"]))
+				return true
 		return false
 	# somebody close by bleeding worse than me?
 	if s.state == "alive" and (s.think <= 0.05 or s.bleed > 0.0):

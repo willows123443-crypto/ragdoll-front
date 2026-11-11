@@ -98,6 +98,14 @@ func _ready() -> void:
 			_amb_test()
 		if a == "--cbtest":
 			_cb_test()
+		if a.begins_with("--attest="):
+			_at_test(a.substr(9))
+		if a.begins_with("--lightshot="):
+			_light_shot(a.substr(12))
+		if a == "--ctltest":
+			_ctl_test()
+		if a.begins_with("--loadtest="):
+			_load_test(a.substr(11))
 		if a == "--recruittest":
 			_recruit_test()
 		if a.begins_with("--batchshot="):
@@ -521,9 +529,7 @@ func _starting_vehicles(t: int) -> void:
 	spawn_vehicle("mortar", t, _free_spot(home - fwd * 6.0 + side * 6.0), yaw)
 	if G.mode != "laststand" and G.mode != "sabotage" and not Faction.militia(t):
 		spawn_vehicle("radar", t, _free_spot(home - fwd * 16.0 - side * 8.0), yaw)
-	# an anti-tank gun covering the approach
-	if G.mode != "sabotage" and not Faction.militia(t):
-		spawn_vehicle("atgun", t, _free_spot(home + fwd * minf(26.0, G.dist2d(home, enemy) * 0.2) - side * 4.0), yaw)
+	# (no anti-tank gun at the start: it's bought once enemy armour shows up, and then sets up behind the line)
 	if G.mode != "laststand" or t == 0:
 		for k in [-1.0, 1.0]:
 			var np = _free_spot(home + fwd * minf(40.0, G.dist2d(home, enemy) * 0.3) + side * k * 14.0)
@@ -929,6 +935,8 @@ func _arg(name: String, def: String) -> String:
 	return def
 
 func _snap(dir: String, name: String) -> void:
+	if DisplayServer.get_name() == "headless":
+		return
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(dir + "/" + name + ".png")
 
@@ -2009,7 +2017,7 @@ func _mode_test(mode: String) -> void:
 		for v in G.vehicles:
 			if v.kind == "atgun":
 				pz += " at[%s %.1f]" % ["dead" if v.dead else ("crew" if v.gunner() != null else "nocrew"), G.sim_time - v.get_meta("fire_t", -99.0)]
-		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " raze %d hq %s" % [G.soldiers.filter(func(x): return x.state == "alive" and x.task == "raze").size(), str(Build.sites.filter(func(x): return x["kind"] == "hq").map(func(x): return "%d/%d%s" % [x["cols"].filter(func(c): return c.alive).size(), x["cols"].size(), "X" if x["dead"] else ""]))] + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()] + " route %s stuck %d" % [str(G.world.route_stats), _stuck_count()] + " cveh %d/%d depots %d" % [G.vehicles.filter(func(v): return v.team == 0 and not v.dead and v.kind in Support.AI_VEH).size(), G.vehicles.filter(func(v): return v.team == 1 and not v.dead and v.kind in Support.AI_VEH).size(), Build.sites.filter(func(x): return x["kind"] == "depot" and not x["dead"]).size()]])
+		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " raze %d hq %s" % [G.soldiers.filter(func(x): return x.state == "alive" and x.task == "raze").size(), str(Build.sites.filter(func(x): return x["kind"] == "hq").map(func(x): return "%d/%d%s" % [x["cols"].filter(func(c): return c.alive).size(), x["cols"].size(), "X" if x["dead"] else ""]))] + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()] + " route %s stuck %d" % [str(G.world.route_stats), _stuck_count()] + " pts %s earned %s" % [str(Support.points), str(Support.earned)] + " cveh %d/%d depots %d" % [G.vehicles.filter(func(v): return v.team == 0 and not v.dead and v.kind in Support.AI_VEH).size(), G.vehicles.filter(func(v): return v.team == 1 and not v.dead and v.kind in Support.AI_VEH).size(), Build.sites.filter(func(x): return x["kind"] == "depot" and not x["dead"]).size()]])
 		if G.over:
 			break
 	get_tree().quit()
@@ -2542,6 +2550,146 @@ func _amb_test() -> void:
 		print("AMBTEST pos %s yaw %.2f path %s | " % [str(amb.pos), amb.yaw, str(amb.path)] + "why %s path %d/%d y%.1f r%.1f st%.1f inp %s | " % [amb.why, amb.path_i, amb.path.size(), amb.yield_t, amb.reverse_t, amb.stuck_t, str(amb.player_inputs)] + "t%d amb d_w %.1f d_h %.1f spd %.1f | medics %s | w %s | rec %d | back out %s" % [k * 2, G.dist2d(amb.pos, wp), G.dist2d(amb.pos, hp), amb.speed, ",".join(meds.map(func(m): return (m.task if m.task != null else "-") + ("@veh" if m.vehicle != null else "") if is_instance_valid(m) else "x")), ws, Medical.recovering.size(), str(back.size() > 0) + (" dist_h %.0f" % G.dist2d(back[0].pos, hp) if back.size() > 0 else "")])
 		if back.size() > 0 and G.dist2d(back[0].pos, hp) > 15.0:
 			break
+	get_tree().quit()
+
+# the anti-tank gun's loader drill against a tank down the field
+func _at_test(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	G.pc.force_free = true
+	var c: Vector3 = _free_spot(G.world.rally_point(0))
+	var fw = G.flat(G.world.capture - c).normalized()
+	var ag = spawn_vehicle("atgun", 0, c, atan2(fw.x, fw.z))
+	var tk = spawn_vehicle("tank", 1, _free_spot(c + fw * 110.0), atan2(-fw.x, -fw.z), false)
+	await _wait(1.0)
+	var side = Vector3(fw.z, 0, -fw.x)
+	var shots = 0
+	var fired = 0
+	var was = 0.0
+	for k in range(400):
+		await _wait(0.1)
+		if not is_instance_valid(ag) or ag.dead:
+			break
+		if ag.atload_t > was + 0.5:
+			fired += 1
+		was = ag.atload_t
+		if ag.atload_t > 0.0 and shots < 4:
+			var ph = 1.0 - ag.atload_t / 2.3
+			if (shots == 0 and ph > 0.2) or (shots == 1 and ph > 0.45) or (shots == 2 and ph > 0.7) or (shots == 3 and ph > 0.9):
+				var gp: Vector3 = ag.gunner().pos if ag.gunner() != null else ag.pos
+				await _look(gp + side * 2.4 - fw * 1.8 + Vector3(0, 1.8, 0), gp + fw * 0.6 + Vector3(0, 0.9, 0))
+				await _snap(dir, "atgun_%d" % shots)
+				shots += 1
+		if shots >= 4 and fired >= 2:
+			break
+	print("ATTEST shots fired %d, pictures %d, tank hp %.0f" % [fired, shots, tk.hp if is_instance_valid(tk) else -1.0])
+	get_tree().quit()
+
+# vehicles with their headlights on at night, from the side, from in front and from above
+func _light_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "night"
+	apply_time()
+	await _wait(0.5)
+	start_game({"map": _arg("map", "field"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	G.pc.force_free = true
+	var c: Vector3 = _free_spot(G.world.rally_point(0))
+	var fw = G.flat(G.world.capture - c).normalized()
+	var side = Vector3(fw.z, 0, -fw.x)
+	var vs = []
+	var k = 0
+	for kind in ["jeep", "truck", "tank"]:
+		var v = spawn_vehicle(kind, 0, _free_spot(c + side * (k - 1) * 7.0), atan2(fw.x, fw.z), false)
+		v.set_meta("force_light", true)
+		vs.append(v)
+		k += 1
+	await _wait(2.0)
+	await _look(c - fw * 9.0 + side * 9.0 + Vector3(0, 4.0, 0), c + fw * 8.0)
+	await _wait(0.5)
+	await _snap(dir, "lights_behind")
+	await _look(c + fw * 22.0 + side * 6.0 + Vector3(0, 2.5, 0), c)
+	await _wait(0.5)
+	await _snap(dir, "lights_front")
+	await _look(c + side * 16.0 + fw * 6.0 + Vector3(0, 3.0, 0), c + fw * 6.0)
+	await _wait(0.5)
+	await _snap(dir, "lights_side")
+	get_tree().quit()
+
+# taking over one man from the commander's view, and handing him back
+func _ctl_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "commander", "size": 6, "limit": 999, "reinforce": true, "armor": "light", "teams": 2})
+	await _wait(3.0)
+	var u = G.soldiers.filter(func(o): return o.team == 0 and o.state == "alive" and o.vehicle == null)[0]
+	G.pc.selection = [u]
+	G.ui.show_unit(u)
+	await _wait(0.3)
+	G.pc.possess(u)
+	await _wait(2.0)
+	print("CTLTEST possessed %s rts %s player %s" % [str(G.player == u), str(G.pc.rts), u.sname])
+	G.pc.leave_soldier()
+	await _wait(0.5)
+	print("CTLTEST back rts %s player %s tool %s" % [str(G.pc.rts), str(G.player), G.ui.tool])
+	get_tree().quit()
+
+# a mortar crew dropping rounds and a jeep gunner changing his belt, with pictures through each drill
+func _load_test(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	G.pc.force_free = true
+	var c: Vector3 = _free_spot(G.world.rally_point(0))
+	var fw = G.flat(G.world.capture - c).normalized()
+	var mt = spawn_vehicle("mortar", 0, c, atan2(fw.x, fw.z))
+	var jp = spawn_vehicle("jeep", 0, _free_spot(c + Vector3(fw.z, 0, -fw.x) * 14.0), atan2(fw.x, fw.z))
+	for k in range(4):
+		var e = _free_spot(c + fw * (140.0 + k * 4.0) + Vector3(fw.z, 0, -fw.x) * (k * 3.0))
+		spawn_soldier(1, e.x, e.z, "rifle")
+	await _wait(1.0)
+	jp.belt = 4
+	var side = Vector3(fw.z, 0, -fw.x)
+	var mshots = 0
+	var bshots = 0
+	var fired = 0
+	var belts = 0
+	for k in range(300):
+		await _wait(0.1)
+		if mt.load_t > 0.0 and mshots < 4:
+			var ph = 1.0 - mt.load_t / 1.9
+			if (mshots == 0 and ph > 0.1) or (mshots == 1 and ph > 0.35) or (mshots == 2 and ph > 0.55) or (mshots == 3 and ph > 0.75):
+				await _look(mt.pos + side * 3.2 + fw * 1.6 + Vector3(0, 1.9, 0), mt.pos + Vector3(0, 0.8, 0))
+				await _snap(dir, "mortar_%d" % mshots)
+				mshots += 1
+		if jp.belt_t > 0.0 and bshots < 3:
+			var pb = 1.0 - jp.belt_t / 3.4
+			if (bshots == 0 and pb > 0.1) or (bshots == 1 and pb > 0.4) or (bshots == 2 and pb > 0.85):
+				var gp: Vector3 = jp.gunner().pos if jp.gunner() != null else jp.pos
+				var jf: Vector3 = jp.forward()
+				var js = Vector3(jf.z, 0, -jf.x)
+				await _look(gp - jf * 2.2 + js * 1.6 + Vector3(0, 2.6, 0), gp + jf * 0.4 + Vector3(0, 1.2, 0))
+				await _snap(dir, "belt_%d" % bshots)
+				bshots += 1
+		if jp.belt_t > 0.0 and jp.belt_t < 0.12:
+			belts += 1
+		fired = 20 - mt.shells
+		if mshots >= 4 and bshots >= 3:
+			break
+		if not is_instance_valid(mt):
+			print("LOADTEST mortar gone at t%.1f" % (k * 0.1))
+			break
+		if k % 5 == 0 and k < 40:
+			print("LOADTEST t%.1f mortar hp %.0f dead %s gunner %s load %.2f cd %.1f" % [k * 0.1, mt.hp, str(mt.get("dead")), str(mt.gunner() != null), mt.load_t, mt.cannon_cd])
+		if k % 20 == 0:
+			print("LOADTEST t%.0f mortar load %.1f cd %.1f shells %d | jeep belt %d belt_t %.1f heat %.2f" % [k * 0.1, mt.load_t, mt.cannon_cd, mt.shells, jp.belt, jp.belt_t, jp.gun_heat])
+	print("LOADTEST mortar shots %d, shells used %d, belt drill seen %d, belt now %d, mortar crew %d jeep crew %d" % [mshots, fired, bshots, jp.belt, mt.crew_count() if mt.has_method("crew_count") else -1, jp.crew_count() if jp.has_method("crew_count") else -1])
 	get_tree().quit()
 
 func _cb_test() -> void:

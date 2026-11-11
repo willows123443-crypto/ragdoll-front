@@ -227,6 +227,12 @@ var fuel_said = false
 var smoke_cd = 0.0
 var radar_t = 0.0
 var gun_heat = 0.0             # mounted machine guns overheat
+var belt = 100                 # rounds left on the mounted MG's belt
+var belt_t = 0.0               # changing the belt: the gunner's hands are busy
+var load_t = 0.0               # a mortar round on its way into the tube
+var load_target = null
+var atload_t = 0.0             # the anti-tank gun's crew ramming the next round home
+var round_mesh: MeshInstance3D = null
 var supply_t = 0.0
 var cmd = null                 # the commander's move order: drive here and wait
 
@@ -412,6 +418,23 @@ func step(dt: float) -> void:
 	if not doors.is_empty():
 		_doors_tick(dt)
 	gun_heat = maxf(0.0, gun_heat - 0.12 * dt)
+	if atload_t > 0.0:
+		atload_t = maxf(0.0, atload_t - dt)
+		if round_mesh != null and (atload_t <= 0.0 or gunner() == null):
+			round_mesh.visible = false
+		if gunner() == null:
+			atload_t = 0.0
+	if belt_t > 0.0:
+		belt_t -= dt
+		if belt_t <= 0.0:
+			belt_t = 0.0
+			belt = 100
+	# a loading drill with nobody left on the gun stops where it is
+	if load_t > 0.0 and gunner() == null:
+		load_t = 0.0
+		load_target = null
+		if round_mesh != null:
+			round_mesh.visible = false
 	if kind == "radar" and not dead:
 		VehExt.radar_tick(self, dt)
 	# mortars and field guns restock from nearby ammo crates, FOBs and supply dumps
@@ -647,6 +670,9 @@ func _weapons(dt: float) -> void:
 			want = t[0]
 			use_cannon = t[1]
 			shoot = true
+	if kind == "mortar" and load_t > 0.0:
+		_mortar_load(controller, dt)
+		return
 	if kind == "mortar" or kind == "artillery":
 		_mortar(controller, dt, want, shoot)
 		return
@@ -712,6 +738,17 @@ func _weapons(dt: float) -> void:
 		if fire_cd <= 0.0:
 			fire_cd = 0.085 if kind != "aagun" else 0.055
 			burst -= 1
+			# a fresh belt every hundred rounds: the gunner opens the cover, lays the belt in and slaps it shut
+			if belt_t > 0.0:
+				return
+			if belt <= 0 and kind != "aagun":
+				belt_t = 3.4
+				if controller.is_player:
+					G.ui.message("Belt's empty: changing it…")
+				elif randf() < 0.6:
+					G.fx.callout(controller, G.pick(["Reloading!", "Changing belts!", "New belt!"]))
+				return
+			belt -= 1
 			gun_heat += 0.007 if kind != "aagun" else 0.004
 			if gun_heat >= 1.0:
 				# overheated: wait for the barrel to be swapped
@@ -747,9 +784,12 @@ func _atgun(g, dt: float, want, shoot: bool) -> void:
 	var tp = atan2(want.y - piv.y, G.dist2d(want, piv))
 	gun_pitch = clampf(gun_pitch + clampf(tp - gun_pitch, -1.0 * dt, 1.0 * dt), -0.12, 0.3)
 	_apply_turret()
-	if not shoot or absf(speed) > 0.3 or cannon_cd > 0.0 or absf(wrapf(ty - turret_yaw, -PI, PI)) > 0.05:
+	if not shoot or absf(speed) > 0.3 or cannon_cd > 0.0 or atload_t > 0.0 or absf(wrapf(ty - turret_yaw, -PI, PI)) > 0.05:
 		return
 	set_meta("fire_t", G.sim_time)
+	# the breech opens, the case is thrown out, and the next round has to be fetched and rammed home
+	atload_t = 2.3
+	_make_round()
 	var ap = _at_target_is_vehicle
 	cannon_cd = (3.6 if ap else 6.5) if not g.is_player else 2.5
 	if ap:
@@ -765,6 +805,22 @@ func _atgun(g, dt: float, want, shoot: bool) -> void:
 		G.fx.callout(g, G.pick(["On the way!", "Fire!", "Reload, AP!", "Shot!"]) if ap else G.pick(["HE out!", "Fire!"]))
 
 var _at_target_is_vehicle = false
+
+# where an anti-tank gun sets up: behind the team's own line, picked once and moved only after a long quiet spell
+func _at_post():
+	if G.mode == "sandbox" or team < 0:
+		return null
+	var quiet = G.sim_time - get_meta("fire_t", -99.0) > 90.0
+	if not has_meta("post") or (quiet and G.sim_time - get_meta("post_t", 0.0) > 150.0):
+		var p: Vector3 = Reinforce.forward_drop(team)
+		var home: Vector3 = G.world.rally_point(team)
+		# no closer to the enemy than a third of the way out from home
+		var cap = home.lerp(G.world.capture, 0.4)
+		if G.dist2d(p, home) > G.dist2d(cap, home):
+			p = cap
+		set_meta("post", G.main._free_spot(p))
+		set_meta("post_t", G.sim_time)
+	return get_meta("post")
 
 func _apply_turret() -> void:
 	turret.rotation.y = turret_yaw
@@ -811,6 +867,8 @@ func _mortar(g, dt: float, want, shoot: bool) -> void:
 				target = o.pos
 	if target == null:
 		return
+	if not g.is_player:
+		cannon_cd = 0.0     # the search above held it a second; a target found fires now
 	var local = global_transform.affine_inverse() * target
 	turret_yaw = turret_yaw + clampf(wrapf(atan2(local.x, local.z) - turret_yaw, -PI, PI), -1.5 * dt, 1.5 * dt)
 	_apply_turret()
@@ -827,12 +885,60 @@ func _mortar(g, dt: float, want, shoot: bool) -> void:
 		return
 	shells -= 1
 	cannon_cd = (9.0 if arty else 5.5) if not g.is_player else (5.0 if arty else 3.0)
+	if kind == "mortar":
+		# the round goes in by hand: picked from the box, held over the tube, dropped, and the crew ducks
+		load_t = 1.9
+		load_target = target
+		return
+	_shoot_shell(g, target)
+
+func _shoot_shell(g, target: Vector3) -> void:
+	var arty = kind == "artillery"
 	var dist = G.dist2d(target, pos)
 	G.fx.muzzle(muzzle(), true)
 	G.audio.boom(muzzle())
 	Combat.shell_at(target, (5.0 + dist * 0.03) if arty else (3.0 + dist * 0.05), (4.0 + dist / 160.0) if arty else (2.5 + dist / 90.0), g, 1.9 if arty else 1.2, team)
 	if not g.is_player and randf() < 0.3:
 		G.fx.callout(g, G.pick(["Round out!", "Shot over!", "Firing for effect!"]))
+
+# the round the loader carries in his hands: a finned mortar bomb or a brass anti-tank shell
+func _make_round() -> void:
+	if round_mesh != null:
+		return
+	round_mesh = MeshInstance3D.new()
+	var cm = CylinderMesh.new()
+	var at = kind == "atgun"
+	cm.top_radius = 0.035 if at else 0.045
+	cm.bottom_radius = 0.045 if at else 0.055
+	cm.height = 0.6 if at else 0.42
+	round_mesh.mesh = cm
+	var m = StandardMaterial3D.new()
+	m.albedo_color = Color(0.78, 0.62, 0.3) if at else Color(0.42, 0.46, 0.3)
+	m.metallic = 0.5 if at else 0.0
+	round_mesh.material_override = m
+	round_mesh.visible = false
+	add_child(round_mesh)
+
+# the loading drill: where the round is through it, and the shot when it drops in
+func _mortar_load(g, dt: float) -> void:
+	var before = load_t
+	load_t -= dt
+	_make_round()
+	var k = 1.0 - load_t / 1.9
+	if load_target != null:
+		var lt = global_transform.affine_inverse() * load_target
+		turret_yaw = turret_yaw + clampf(wrapf(atan2(lt.x, lt.z) - turret_yaw, -PI, PI), -1.5 * dt, 1.5 * dt)
+		_apply_turret()
+	round_mesh.visible = k > 0.18 and k < 0.66
+	# it fires the moment the round reaches the bottom of the tube
+	if before > 0.55 and load_t <= 0.55 and load_target != null:
+		round_mesh.visible = false
+		_shoot_shell(g, load_target)
+		if not g.is_player and randf() < 0.3:
+			G.fx.callout(g, G.pick(["Round out!", "Shot over!", "Firing for effect!"]))
+	if load_t <= 0.0:
+		load_t = 0.0
+		load_target = null
 
 # what should an AI gunner shoot at? returns [point, use_cannon] or null
 func _ai_gun_target(g):
@@ -893,6 +999,7 @@ func _ai_gun_target(g):
 
 # ---------------------------------------------------------------- crew
 func _crew_tick(dt: float) -> void:
+	_bail_check()
 	_self_repair()
 	_riders_tick()
 	_lights_tick()
@@ -944,9 +1051,19 @@ func take_damage(amount: float, attacker, at: Vector3) -> void:
 		return
 	if Prod.has(team, "armour"):
 		amount *= 0.67
+	# vehicles are tougher than a run of hits suggests: rifle fire and near misses chip at them, and it
+	# takes a proper anti-tank weapon (or a lot of everything else) to finish one
+	if amount < 900.0:
+		amount *= 0.65 if amount < 60.0 else 0.8
 	if has_meta("plough") and G.sim_time - get_meta("plough_t", -9.0) < 0.15:
 		amount *= 0.08          # the plough takes the blast
 	hit_t = G.sim_time
+	if amount >= 60.0:
+		heavy_t = G.sim_time
+		if attacker != null and is_instance_valid(attacker):
+			hit_from = attacker.pos
+		else:
+			hit_from = at
 	# a round into a tyre: it goes flat and the vehicle limps
 	if not spec["tracked"] and not spec.get("air", false) and not spec.get("static", false) and not spec.get("boat", false) and tyres < 4 and amount < 200.0:
 		var lp = global_transform.affine_inverse() * at
@@ -962,7 +1079,7 @@ func take_damage(amount: float, attacker, at: Vector3) -> void:
 		if (spec["tracked"] or kind == "halftrack") and absf(local.x) > spec["wid"] * 0.36 and local.y < 1.3 and randf() < 0.5 and not tracks_broken:
 			tracks_broken = true
 			G.ui.radio(team, "%s tracks knocked out!" % spec["name"])
-		if not burning and randf() < (0.35 if local.z > spec["len"] * 0.15 else 0.15):
+		if not burning and randf() < (0.2 if local.z > spec["len"] * 0.15 else 0.08):
 			burning = true
 			G.ui.radio(team, "%s on fire!" % spec["name"])
 	if amount >= 150.0 and (spec["tracked"] or kind == "armoredcar" or kind == "halftrack") and G.sim_time > smoke_cd and not dead:
@@ -1419,6 +1536,12 @@ func _ai_drive(dt: float) -> Array:
 	elif kind == "atgun" and G.sim_time - get_meta("fire_t", -99.0) < 25.0:
 		why = "w8"
 		return [0.0, 0.0]
+	elif kind == "atgun" and _at_post() != null and G.dist2d(_at_post(), pos) < 5.0:
+		# dug in at its post covering the approach: it waits there for armour rather than driving into the fight
+		why = "w8"
+		return [0.0, 0.0]
+	elif kind == "atgun" and _at_post() != null:
+		target = _at_post()
 	else:
 		var obj: Vector3 = AI.objective_for(d)
 		var enemy = null
@@ -1573,13 +1696,16 @@ func _ai_drive(dt: float) -> Array:
 				if rel2.dot(f) < 0.0 and rel2.dot(f) > -(spec["len"] * 0.5 + 4.0) and absf(rel2.dot(lv)) < spec["wid"] * 0.5 + 1.0:
 					reverse_t = 0.0
 					return [0.0, r[1]]
+		if has_meta("rev_steer") and reverse_t > 0.0:
+			return [-1.0, get_meta("rev_steer")]
+		remove_meta("rev_steer")
 		return [-1.0, -r[1]]
 	if absf(r[0]) > 0.12 and absf(speed) < 0.6 and yield_t <= 0.0:
 		stuck_t += dt
 		if stuck_t > 1.6:
 			stuck_t = 0.0
-			reverse_t = 1.4
 			stuck_n += 1
+			_jam_sort(f, lv, dsg)
 	else:
 		stuck_t = 0.0
 	# really wedged (or off the map): slide to the nearest open ground and carry on
@@ -1590,17 +1716,67 @@ func _ai_drive(dt: float) -> Array:
 		prog_p = pos
 		var b = G.world.bounds
 		var outside = pos.x < b.position.x or pos.x > b.end.x or pos.z < b.position.y or pos.z > b.end.y
-		if (moved < 3.0 and stuck_n >= 3) or (outside and moved < 3.0):
+		# creeping back and forth a metre at a time counts as stuck too
+		if (moved < 5.0 and stuck_n >= 3) or (outside and moved < 3.0):
 			stuck_n = 0
 			_unwedge()
 			_plan_detour()
-		elif moved < 3.0 and stuck_n >= 1:
+		elif moved < 5.0 and stuck_n >= 1:
 			_plan_detour()
-		elif moved >= 3.0:
+		elif moved >= 5.0:
 			stuck_n = 0
 	return r
 
 var stuck_n = 0
+
+# stuck against another vehicle: sort it out between the two instead of both backing up and nosing in
+# again together. A parked one with a driver shuffles out of the road; of two that both want to move,
+# the smaller backs off at an angle while the bigger waits; a wreck or an empty truck gets driven round.
+func _jam_sort(f: Vector3, lv: Vector3, dsg: float) -> void:
+	var blk = null
+	var bd = 1e9
+	for o in G.vehicles:
+		if o == self or (o.spec.get("air", false) and o.alt > 3.0):
+			continue
+		var rel = G.flat(o.pos - pos)
+		var a2 = rel.dot(f) * dsg
+		var lat = rel.dot(lv)
+		if a2 > -1.0 and a2 < (spec["len"] + o.spec["len"]) * 0.5 + 3.0 and absf(lat) < (spec["wid"] + o.spec["wid"]) * 0.5 + 1.2 and rel.length() < bd:
+			bd = rel.length()
+			blk = o
+	if blk == null:
+		reverse_t = 1.4
+		return
+	var rel_b = G.flat(blk.pos - pos)
+	var away_side = -signf(rel_b.dot(lv)) if absf(rel_b.dot(lv)) > 0.2 else (1.0 if get_instance_id() % 2 == 0 else -1.0)
+	var drv = blk.driver()
+	var idle = drv != null and not blk.dead and blk.team == team and absf(blk.speed) < 0.3 and blk.mission == null and blk.cmd == null and not blk.spec.get("static", false)
+	if idle:
+		# the parked one moves over to let us by
+		var bl = Vector3(cos(blk.yaw), 0, -sin(blk.yaw))
+		var push = bl * (signf(G.flat(blk.pos - pos).dot(bl)) if absf(G.flat(blk.pos - pos).dot(bl)) > 0.3 else 1.0)
+		var spot = G.main._free_spot(blk.pos + push * (blk.spec["wid"] + 5.0) + blk.forward() * 4.0)
+		blk.detour = spot
+		blk.detour_t = G.sim_time + 8.0
+		blk.path_t = 0.0
+		yield_t = 2.5
+		return
+	if blk.dead or drv == null or blk.team != team or blk.spec.get("static", false):
+		# nothing that will move: back off a touch and go round it
+		reverse_t = 1.2
+		set_meta("rev_steer", -away_side * dsg)
+		_plan_detour()
+		return
+	var mine = rank()
+	var theirs = blk.rank()
+	if theirs > mine or (theirs == mine and get_instance_id() > blk.get_instance_id()):
+		reverse_t = 2.2
+		set_meta("rev_steer", -away_side * dsg)     # backing up with the wheel over opens a gap beside him
+		blk.yield_t = 0.0
+		blk.stuck_t = 0.0
+	else:
+		yield_t = 1.8          # the other one is clearing out of our way
+
 var hold_mode = ""         # "", "back", "hold", "there": which side of each line we were on last
 var may_enter = true
 var enter_t = 0.0
@@ -1758,8 +1934,64 @@ func _mission_target(dt: float):
 	return m["exit"]
 
 # ---------------------------------------------------------------- engine fires and bailing out
+var heavy_t = -99.0          # last time something big hit her
+var hit_from = Vector3.ZERO
+
+# stuck (track off, wheels shot) or badly holed, and still being hit by something heavy: the crew don't
+# sit there waiting for the next one, they get out and run for cover away from whoever's firing
+func _bail_check() -> void:
+	if bailed or dead or burning or spec.get("static", false) or spec.get("air", false) or spec.get("boat", false):
+		return
+	if G.sim_time - heavy_t > 4.0:
+		return
+	var stuck = tracks_broken or tyres >= 3 or (absf(speed) < 0.4 and fix_by != null)
+	var wrecked = hp < spec["hp"] * 0.25
+	if not (stuck or wrecked):
+		return
+	if not (spec["tracked"] or kind in ["armoredcar", "halftrack", "jeep", "truck", "technical", "supplytruck", "ammotruck", "ambulance", "radar"]):
+		return
+	bailed = true
+	Tactics.events["bail"] += 1
+	var threat: Vector3 = hit_from
+	for i in range(seats.size()):
+		var s = seats[i]
+		if s == null or not is_instance_valid(s) or s.is_player:
+			continue
+		s.dismount(false)
+		s.no_board_t = G.sim_time + 60.0
+		var away = G.flat(s.pos - threat)
+		if away.length_squared() < 0.01:
+			away = -forward()
+		var guy = s
+		(func():
+			if not is_instance_valid(guy) or guy.state != "alive":
+				return
+			guy.threat = threat
+			guy.has_threat = true
+			var cp = AI.find_cover(guy, threat, "hold")
+			if cp != null and G.dist2d(cp.p, guy.pos) < 30.0:
+				AI.take_cover(guy, cp)
+			else:
+				AI.go_to(guy, guy.pos + away.normalized() * 16.0, 5.8)
+			guy.task = "flee"
+			guy.flee_t = 6.0).call_deferred()
+		s.decide_t = 5.0
+		G.fx.callout(s, G.pick(["We're hit, bail out!", "Out, out, she's done!", "Get clear of her!"]))
+	if team == 0:
+		G.ui.radio(0, "%s crew bailing out!" % spec["name"])
+
 func _burn_tick(dt: float) -> void:
-	hp -= 14.0 * dt
+	hp -= 8.0 * dt
+	# most fires burn themselves out (or the crew beats them out) unless she's already badly hurt
+	if burn_t > get_meta("burn_len", 0.0) and hp > spec["hp"] * 0.2:
+		if not has_meta("burn_len"):
+			set_meta("burn_len", randf_range(14.0, 28.0))
+		else:
+			burning = false
+			burn_t = 0.0
+			remove_meta("burn_len")
+			G.ui.radio(team, "%s: the fire's out" % spec["name"])
+			return
 	burn_fx -= dt
 	if burn_fx <= 0.0:
 		burn_fx = 0.15

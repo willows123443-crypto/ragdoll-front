@@ -643,13 +643,17 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 
 # a wall coming down: a thick cloud of brick dust that rolls out, drifts and blocks sight for a while
 static func dust_at(p: Vector3, size: float) -> void:
-	var big = clampf(size / 5.0, 0.45, 1.0)
+	var big = clampf(size / 5.0, 0.5, 1.0)
 	var sc = SmokeCloud.new()
 	sc.p = p + Vector3(0, 0.6, 0)
-	sc.r = 1.5
-	sc.t = 9.0 + 4.0 * big
-	sc.node = G.fx.smoke_screen(Vector3(p.x, G.world.ground_y(p.x, p.z) + 1.2, p.z), sc.t - 3.0, Color(0.56, 0.49, 0.4), big * 1.25)
-	sc.node.scale = Vector3(0.65, 0.65, 0.65)      # it bursts out, rather than growing from nothing like a smoke grenade
+	sc.r = 2.5
+	sc.t = 15.0 + 6.0 * big
+	# two layers: a dense low cloud rolling out along the ground and a taller one drifting up off it
+	sc.node = G.fx.smoke_screen(Vector3(p.x, G.world.ground_y(p.x, p.z) + 1.0, p.z), sc.t - 3.0, Color(0.52, 0.46, 0.38), big * 1.6)
+	sc.node.scale = Vector3(0.85, 0.85, 0.85)      # it bursts out, rather than growing from nothing like a smoke grenade
+	var upper = G.fx.smoke_screen(Vector3(p.x, G.world.ground_y(p.x, p.z) + 3.2, p.z), sc.t - 6.0, Color(0.6, 0.55, 0.47), big * 1.1)
+	upper.scale = Vector3(0.6, 0.6, 0.6)
+	sc.set_meta("upper", upper)
 	# and a thick burst rolling out along the ground first
 	for k in range(4):
 		var a2 = k * TAU / 4.0 + randf() * 0.6
@@ -665,6 +669,13 @@ static func smoke_at(p: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.
 	sc.r = 0.5
 	sc.t = life
 	sc.node = G.fx.smoke_screen(p + Vector3(0, 0.5, 0), life - 4.0, tint, big)
+	# a smoke screen proper (not a coloured marker) is thick: a second dense bank hugging the ground
+	# under the main cloud, so it's a solid white wall you can't see a man through
+	if big >= 0.7:
+		var low = G.fx.smoke_screen(p + Vector3(0, 0.3, 0), life - 5.0, tint.lightened(0.05), big * 0.8)
+		low.amount = int(low.amount * 1.4)
+		var under = G.fx.smoke_screen(p + Vector3(0, 1.4, 0), life - 6.0, tint, big * 0.65)
+		under.amount = int(under.amount * 1.2)
 	sc.set_meta("max_r", 9.0 * big)
 	G.smoke_clouds.append(sc)
 
@@ -715,6 +726,9 @@ static func step_grenades() -> void:
 			c.p += dv * G.DT
 			if is_instance_valid(c.node):
 				c.node.global_position += dv * G.DT
+			var up_n = c.get_meta("upper", null)
+			if up_n != null and is_instance_valid(up_n):
+				up_n.global_position += (dv * 1.4 + Vector3(0, 0.15, 0)) * G.DT
 		if c.t < 4.0:
 			c.r = maxf(0.0, c.r - G.DT * 1.3)
 		if c.t <= 0.0:
@@ -848,6 +862,8 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 	G.world.damage_area(pos, R * 0.75, power)
 	if power >= 1.0:
 		G.world.blast_crater(pos, clampf(1.2 * power, 1.0, 3.2))
+	elif power >= 0.7:
+		G.world.blast_crater(pos, 0.9)        # grenades and rifle grenades leave a scrape too
 	# everyone in earshot looks round at the bang
 	for sl in G.soldiers:
 		if sl.state == "alive" and not sl.is_player and sl.look_t < 0.6:
@@ -889,9 +905,9 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 		# thrown flat and rolled, not launched skyward
 		for b in s.parts:
 			var away: Vector3 = b.global_position - pos
-			away.y = maxf(away.y, 0.0) + 0.25
-			b.apply_central_impulse(away.normalized() * 8.5 * f * randf_range(0.85, 1.1) * b.mass * (0.7 if s.state == "alive" else 0.8))
-		_cap(s, 9.0)
+			away.y = maxf(away.y, 0.0) * 0.4 + 0.12
+			b.apply_central_impulse(away.normalized() * 5.5 * f * randf_range(0.85, 1.1) * b.mass * (0.7 if s.state == "alive" else 0.8))
+		_cap(s, 6.0)
 	for d in G.fx.debris_list:
 		if is_instance_valid(d["b"]) and d["b"].global_position.distance_to(pos) < R:
 			var aw: Vector3 = d["b"].global_position - pos

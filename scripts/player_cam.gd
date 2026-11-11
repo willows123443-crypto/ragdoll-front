@@ -197,12 +197,12 @@ func player_update(s) -> void:
 	var f = Vector3(sin(cam_yaw), 0, cos(cam_yaw))
 	var r = Vector3(-cos(cam_yaw), 0, sin(cam_yaw))
 	var m = Vector3.ZERO
-	if Input.is_key_pressed(KEY_W): m += f
-	if Input.is_key_pressed(KEY_S): m -= f
-	if Input.is_key_pressed(KEY_D): m += r
-	if Input.is_key_pressed(KEY_A): m -= r
+	if Keys.held(KEY_W): m += f
+	if Keys.held(KEY_S): m -= f
+	if Keys.held(KEY_D): m += r
+	if Keys.held(KEY_A): m -= r
 	var shift = Input.is_key_pressed(KEY_SHIFT)
-	var sprint = shift and Input.is_key_pressed(KEY_W) and not s.p_crouch and not s.p_prone and not rmb_down
+	var sprint = shift and Keys.held(KEY_W) and not s.p_crouch and not s.p_prone and not rmb_down
 	var captured = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	s.ads = rmb_down and not sprint and captured
 	var sp = 3.0 if s.p_prone else (1.9 if s.p_crouch else (6.3 if sprint else (2.2 if s.ads else 3.6)))
@@ -213,7 +213,7 @@ func player_update(s) -> void:
 	s.prone_t = s.p_prone
 	var lean = 0.0
 	# hold Q for the squad command wheel (a tap still leans left)
-	if Input.is_key_pressed(KEY_Q) and s.state == "alive" and s.squad != null:
+	if Keys.held(KEY_Q) and s.state == "alive" and s.squad != null:
 		wheel_hold += G.DT
 		if wheel_hold > 0.28 and not wheel_open:
 			wheel_open = true
@@ -225,13 +225,13 @@ func player_update(s) -> void:
 	else:
 		wheel_hold = 0.0
 	if not sprint and not s.p_prone and not wheel_open:
-		lean = (1.0 if Input.is_key_pressed(KEY_E) else 0.0) - (1.0 if Input.is_key_pressed(KEY_Q) else 0.0)
+		lean = (1.0 if Keys.held(KEY_E) else 0.0) - (1.0 if Keys.held(KEY_Q) else 0.0)
 	s.lean_t = lean
 	# hold U next to a friendly construction site to help build it
 	s.tool_mode = ""
-	if s.hand_t != null and not Input.is_key_pressed(KEY_U):
+	if s.hand_t != null and not Keys.held(KEY_U):
 		s.hand_t = null
-	if Input.is_key_pressed(KEY_U) and m.length_squared() == 0.0:
+	if Keys.held(KEY_U) and m.length_squared() == 0.0:
 		var st = Build.work_site(s.team, s.pos, 30.0)
 		if st != null and G.dist2d(s.pos, st["p"]) < Build.build_radius(st) + 1.0:
 			s.crouch_t = 0.75
@@ -633,10 +633,10 @@ func _process(dt: float) -> void:
 		if aim_point.distance_to(piv) < 2.0:
 			aim_point = want_p + d * 20.0
 	else:
-		if not G.started and not G.editor.active:
+		if (not G.started or G.attract) and not G.editor.active:
 			orbit += dt * 0.05
 			var c = G.world.capture
-			var rad = maxf(55.0, G.world.TW * 0.22)
+			var rad = 42.0 if G.attract else maxf(55.0, G.world.TW * 0.22)
 			free_pos = Vector3(c.x + cos(orbit) * rad, G.world.ground_y(c.x, c.z) + rad * 0.4, c.z + sin(orbit) * rad)
 			free_yaw = atan2(c.x - free_pos.x, c.z - free_pos.z)
 			free_pitch = -0.32
@@ -646,13 +646,13 @@ func _process(dt: float) -> void:
 			var rt = Vector3(-cos(rts_yaw), 0, sin(rts_yaw))
 			if not G.ui.typing():
 				var spd = rts_dist * (1.6 if Input.is_key_pressed(KEY_SHIFT) else 0.75) * dt
-				if Input.is_key_pressed(KEY_W): rts_focus += fw * spd
-				if Input.is_key_pressed(KEY_S): rts_focus -= fw * spd
-				if Input.is_key_pressed(KEY_D): rts_focus += rt * spd
-				if Input.is_key_pressed(KEY_A): rts_focus -= rt * spd
+				if Keys.held(KEY_W): rts_focus += fw * spd
+				if Keys.held(KEY_S): rts_focus -= fw * spd
+				if Keys.held(KEY_D): rts_focus += rt * spd
+				if Keys.held(KEY_A): rts_focus -= rt * spd
 				var turning_bp = G.ui.tool.begins_with("b:")
-				if Input.is_key_pressed(KEY_Q) and not turning_bp: rts_yaw += 1.4 * dt
-				if Input.is_key_pressed(KEY_E) and not turning_bp: rts_yaw -= 1.4 * dt
+				if Keys.held(KEY_Q) and not turning_bp: rts_yaw += 1.4 * dt
+				if Keys.held(KEY_E) and not turning_bp: rts_yaw -= 1.4 * dt
 			var bb: Rect2 = G.world.bounds
 			rts_focus.x = clampf(rts_focus.x, bb.position.x, bb.end.x)
 			rts_focus.z = clampf(rts_focus.z, bb.position.y, bb.end.y)
@@ -667,13 +667,13 @@ func _process(dt: float) -> void:
 		var r = Vector3(-cos(free_yaw), 0, sin(free_yaw))
 		if (G.started or G.editor.active) and not G.ui.typing() and not G.editor.typing() and not rts:
 			var sp = (40.0 if Input.is_key_pressed(KEY_SHIFT) else 14.0) * dt
-			if Input.is_key_pressed(KEY_W): free_pos += d * sp
-			if Input.is_key_pressed(KEY_S): free_pos -= d * sp
-			if Input.is_key_pressed(KEY_D): free_pos += r * sp
-			if Input.is_key_pressed(KEY_A): free_pos -= r * sp
+			if Keys.held(KEY_W): free_pos += d * sp
+			if Keys.held(KEY_S): free_pos -= d * sp
+			if Keys.held(KEY_D): free_pos += r * sp
+			if Keys.held(KEY_A): free_pos -= r * sp
 			var bp = G.ui.tool.begins_with("b:")
-			if (Input.is_key_pressed(KEY_E) and not bp) or Input.is_key_pressed(KEY_SPACE): free_pos.y += sp
-			if (Input.is_key_pressed(KEY_Q) and not bp) or Input.is_key_pressed(KEY_C) or Input.is_key_pressed(KEY_CTRL): free_pos.y -= sp
+			if (Keys.held(KEY_E) and not bp) or Keys.held(KEY_SPACE): free_pos.y += sp
+			if (Keys.held(KEY_Q) and not bp) or Keys.held(KEY_C) or Input.is_key_pressed(KEY_CTRL): free_pos.y -= sp
 		free_pos.y = clampf(free_pos.y, G.world.ground_y(free_pos.x, free_pos.z) + 0.6, 240.0 if rts else 140.0)
 		cam.global_position = free_pos
 		cam.look_at(free_pos + d, Vector3.UP)
@@ -842,7 +842,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN and G.player == null and ev.pressed:
 			free_pos -= Vector3(sin(free_yaw) * cos(free_pitch), sin(free_pitch), cos(free_yaw) * cos(free_pitch)) * 2.0
 	elif ev is InputEventKey and ev.pressed and not ev.echo:
-		_key(ev.keycode)
+		var lk = Keys.logical(ev.keycode)
+		if lk != KEY_NONE:
+			_key(lk)
 
 func _key(k: int) -> void:
 	# a blueprint in hand: R, E or Q turn it (instead of turning the camera)
@@ -1294,16 +1296,16 @@ func rider_update(s) -> void:
 	var thr = 0.0
 	var steer = 0.0
 	if role == "driver":
-		if Input.is_key_pressed(KEY_W): thr += 1.0
-		if Input.is_key_pressed(KEY_S): thr -= 1.0
-		if Input.is_key_pressed(KEY_A): steer += 1.0
-		if Input.is_key_pressed(KEY_D): steer -= 1.0
+		if Keys.held(KEY_W): thr += 1.0
+		if Keys.held(KEY_S): thr -= 1.0
+		if Keys.held(KEY_A): steer += 1.0
+		if Keys.held(KEY_D): steer -= 1.0
 	v.player_inputs["thr"] = thr
 	v.player_inputs["steer"] = steer
 	var climb = 0.0
 	if role == "driver" and v.spec.get("air", false):
-		if Input.is_key_pressed(KEY_SPACE): climb += 1.0
-		if Input.is_key_pressed(KEY_C) or Input.is_key_pressed(KEY_CTRL): climb -= 1.0
+		if Keys.held(KEY_SPACE): climb += 1.0
+		if Keys.held(KEY_C) or Input.is_key_pressed(KEY_CTRL): climb -= 1.0
 	v.player_inputs["climb"] = climb
 	v.player_inputs["aim"] = aim_point
 	v.player_inputs["fire"] = mouse_down and captured and (role == "gunner" or (role == "driver" and v.kind in ["tank", "gunship", "armoredcar"] and v.gunner() == null))
@@ -1597,6 +1599,14 @@ func sel_vehicles() -> Array:
 func order_selected(mode: String) -> void:
 	if mode == "dismount":
 		dismount_selected(true)
+		return
+	if mode == "vtow":
+		var said = ""
+		for v in sel_vehicles():
+			if VehExt.can_tow(v):
+				said = VehExt.order_tow(v)
+		G.audio.radio_click()
+		G.ui.message(said if said != "" else "Nothing to tow nearby")
 		return
 	if mode in ["vstop", "vback", "vsmoke", "vfree"]:
 		for v in sel_vehicles():

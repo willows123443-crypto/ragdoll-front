@@ -87,6 +87,15 @@ static func flavour(s, text: String) -> String:
 	var sw = SWAP_MIL if st == "mil" else (SWAP_BRAVO if st == "bravo" else {})
 	return G.pick(sw[text]) if sw.has(text) else text
 
+# a free-form line, reworded a little for the militia and Bravo
+static func callout_line(s, text: String) -> void:
+	var st = style(s)
+	if st == "mil":
+		text = text.replace("Contact", G.pick(["There", "Look"])).replace("Movement", "They're")
+	elif st == "bravo":
+		text = text.replace("Contact", "Tango").replace("Movement", "Contact")
+	G.fx.callout(s, text)
+
 static func say(s, kind: String, args: Array = []) -> void:
 	if s == null or not is_instance_valid(s) or not LINES.has(kind):
 		return

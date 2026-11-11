@@ -103,7 +103,7 @@ static func get_icon(kind: String) -> ImageTexture:
 			_ln(img, Vector2(32, 8), Vector2(38, 12), 0.0)
 			_disc(img, 37, 8, 4)         # warhead
 			_r(img, 12, 10, 3, 4)
-		"knife":
+		"knife", "bayonet":
 			_r(img, 8, 6, 9, 4)
 			_r(img, 17, 4, 2, 8)
 			_ln(img, Vector2(19, 6), Vector2(38, 7), 0.0)

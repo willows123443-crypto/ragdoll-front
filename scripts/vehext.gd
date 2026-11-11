@@ -111,7 +111,9 @@ static func plane_step(v, dt: float) -> void:
 		var right = nd.cross(Vector3.UP).normalized()
 		for side in [-1.0, 1.0]:
 			var o = v.pos + right * side * 2.2 + nd * 2.0
+			Combat.bright = randf() < 0.25
 			Combat.fire_ray(d, o, Combat.spread_dir(nd, 0.012), W, true, [v.body.get_rid()])
+			Combat.bright = false
 		G.fx.muzzle(v.pos + nd * 3.0, false)
 		G.audio.shot(v.pos, W)
 	if bomb and v.bomb_cd <= 0.0 and d != null and is_instance_valid(d):
@@ -508,14 +510,82 @@ static func try_tow(v) -> String:
 	best.towed_by = v
 	return "Towing the %s (press Q again to unhitch)" % best.spec["name"].to_lower()
 
+static func can_tow(v) -> bool:
+	return not v.dead and v.kind in ["truck", "halftrack", "jeep", "supplytruck", "ammotruck", "technical"] and v.driver() != null
+
+static func _towable(v, o) -> bool:
+	return o != v and not o.dead and o.team == v.team and not o.spec.get("air", false) and o.towed_by == null and o.kind != "tank" \
+		and (o.kind in ["artillery", "mortar", "aagun", "atgun"] or o.tracks_broken or o.driver() == null or o.fuel <= 0.0)
+
+# commander order: drive over to the nearest gun or broken-down vehicle, hitch it up, and tow it
+# wherever you send the truck next
+static func order_tow(v) -> String:
+	if v.towing != null and is_instance_valid(v.towing):
+		v.towing.towed_by = null
+		v.towing = null
+		_tow_bar(v, false)
+		return "Unhitched"
+	var best = null
+	var bd = 90.0
+	for o in G.vehicles:
+		if _towable(v, o):
+			var d = G.dist2d(o.pos, v.pos)
+			if d < bd:
+				bd = d
+				best = o
+	if best == null:
+		return "Nothing to tow within 90 m (field guns, mortars or broken-down vehicles)"
+	v.set_meta("tow_target", best)
+	var side = G.flat(v.pos - best.pos)
+	side = side.normalized() if side.length_squared() > 0.01 else best.forward()
+	v.command(best.pos + side * (v.spec["len"] * 0.5 + best.spec["len"] * 0.5 + 1.5))
+	return "%s going to hitch up the %s" % [v.spec["name"], best.spec["name"].to_lower()]
+
+# a tow bar drawn between the two, so you can see what's pulling what
+static func _tow_bar(v, on: bool) -> void:
+	var bar = (v.get_meta("tow_bar") if v.has_meta("tow_bar") else null)
+	if not on:
+		if bar != null and is_instance_valid(bar):
+			bar.queue_free()
+		v.remove_meta("tow_bar")
+		return
+	if bar == null or not is_instance_valid(bar):
+		bar = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.07, 0.07, 1.0)
+		bar.mesh = bm
+		bar.material_override = VModel.mat(Color(0.18, 0.18, 0.17))
+		G.fx.add_child(bar)
+		v.set_meta("tow_bar", bar)
+	var o = v.towing
+	var a: Vector3 = v.pos - v.forward() * (v.spec["len"] * 0.5) + Vector3(0, 0.55, 0)
+	var b: Vector3 = o.pos + o.forward() * (o.spec["len"] * 0.5) + Vector3(0, 0.5, 0)
+	var L = a.distance_to(b)
+	if L < 0.05:
+		return
+	bar.global_transform = Transform3D(Basis.looking_at((b - a) / L, Vector3.UP).scaled(Vector3(1, 1, L)), (a + b) * 0.5)
+
 static func tow_tick(v, dt: float) -> void:
+	if v.towing == null and v.has_meta("tow_target"):
+		var t = v.get_meta("tow_target")
+		if t == null or not is_instance_valid(t) or not _towable(v, t) or v.dead:
+			v.remove_meta("tow_target")
+		elif G.dist2d(t.pos, v.pos) < v.spec["len"] * 0.5 + t.spec["len"] * 0.5 + 4.0:
+			v.remove_meta("tow_target")
+			v.towing = t
+			t.towed_by = v
+			v.command(v.pos)
+			G.ui.radio(v.team, "%s has the %s hitched up: send it where you want it" % [v.spec["name"], t.spec["name"].to_lower()])
 	var o = v.towing
 	if o == null:
+		if v.has_meta("tow_bar"):
+			_tow_bar(v, false)
 		return
 	if not is_instance_valid(o) or o.dead or v.dead:
 		if is_instance_valid(o):
 			o.towed_by = null
 		v.towing = null
+		_tow_bar(v, false)
 		return
 	var f = v.forward()
 	var hitch = v.pos - f * (v.spec["len"] * 0.5 + o.spec["len"] * 0.5 + 0.8)
@@ -524,6 +594,7 @@ static func tow_tick(v, dt: float) -> void:
 		o.yaw = lerp_angle(o.yaw, atan2(to.x, to.z), minf(1.0, dt * 2.5))
 	o.pos = o.pos.lerp(Vector3(hitch.x, o.pos.y, hitch.z), minf(1.0, dt * 6.0))
 	o._place(dt)
+	_tow_bar(v, true)
 
 # ---------------------------------------------------------------- bridges
 # lays the bridge across the water ahead; returns a message
@@ -611,6 +682,102 @@ static func dent(v, at: Vector3) -> void:
 		best.material_override = dm
 	best.rotation += Vector3(randf_range(-0.07, 0.07), randf_range(-0.05, 0.05), randf_range(-0.07, 0.07))
 	best.scale *= Vector3(randf_range(0.94, 1.0), randf_range(0.92, 1.0), 1.0)
+	# small bits near the hit (a mirror, a lamp, a jerrycan, an aerial) get knocked clean off
+	if randf() < 0.55:
+		for m in v.get_children():
+			if m is MeshInstance3D and m.visible and m != best and m.global_position.distance_to(at) < 1.4:
+				var bb: AABB = m.get_aabb()
+				var vol = bb.size.x * bb.size.y * bb.size.z * m.scale.x * m.scale.y * m.scale.z
+				if vol < 0.012 and vol > 0.00002:
+					m.visible = false
+					var c = Color(0.3, 0.3, 0.3)
+					if m.material_override is StandardMaterial3D:
+						c = m.material_override.albedo_color
+					G.fx.debris(m.global_position, (m.global_position - v.center()).normalized() * 4.0 + Vector3(0, 2.5, 0), 0.18, c)
+					break
+
+# bullet holes and soot that stay on the hull: small dark quads laid on the panel that was hit
+static var hole_mat: StandardMaterial3D = null
+static var soot_mat: StandardMaterial3D = null
+
+static func _mark_mats() -> void:
+	if hole_mat != null:
+		return
+	var img = Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	for y in range(32):
+		for x in range(32):
+			var d = Vector2(x - 15.5, y - 15.5).length() / 16.0
+			# a dark hole with a bright scuffed rim where the paint flaked off
+			var a = 1.0 if d < 0.32 else (0.75 if d < 0.5 else clampf((1.0 - d) * 1.4, 0.0, 1.0) * 0.35)
+			var c = Color(0.05, 0.05, 0.05) if d < 0.32 else (Color(0.62, 0.58, 0.5) if d < 0.5 else Color(0.2, 0.18, 0.15))
+			img.set_pixel(x, y, Color(c.r, c.g, c.b, a))
+	var m = StandardMaterial3D.new()
+	m.albedo_texture = ImageTexture.create_from_image(img)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	m.alpha_scissor_threshold = 0.3
+	m.roughness = 1.0
+	hole_mat = m
+	var sm = StandardMaterial3D.new()
+	sm.albedo_texture = G.fx.scorch_tex
+	sm.albedo_color = Color(0.25, 0.22, 0.2, 0.9)
+	sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	sm.roughness = 1.0
+	sm.render_priority = 1
+	soot_mat = sm
+
+# the visible panel nearest a point on the hull (the collision box is rougher than the model)
+static func _panel_at(v, at: Vector3):
+	var best = null
+	var bd = 0.35
+	var stack = v.get_children()
+	while not stack.is_empty():
+		var m = stack.pop_back()
+		if m is MeshInstance3D and m.visible and m.mesh != null and not m.has_meta("mark"):
+			var bb: AABB = m.global_transform * m.get_aabb()
+			if bb.size.length() > 0.25:
+				var cp = Vector3(clampf(at.x, bb.position.x, bb.end.x), clampf(at.y, bb.position.y, bb.end.y), clampf(at.z, bb.position.z, bb.end.z))
+				var d = cp.distance_to(at)
+				if d < bd:
+					bd = d
+					best = m
+		if m is Node3D and not (m is CPUParticles3D):
+			stack.append_array(m.get_children())
+	return best
+
+static func _stick(v, at: Vector3, n: Vector3, size: float, mat: Material) -> void:
+	var panel = _panel_at(v, at)
+	if panel == null:
+		return
+	var holes: Array = v.get_meta("holes", [])
+	if holes.size() >= 36:
+		var old = holes.pop_front()
+		if is_instance_valid(old):
+			old.queue_free()
+	var q = MeshInstance3D.new()
+	var qm = QuadMesh.new()
+	qm.size = Vector2(size, size)
+	q.mesh = qm
+	q.material_override = mat
+	q.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	q.set_meta("mark", true)
+	panel.add_child(q)
+	var nn = n.normalized() if n.length_squared() > 0.01 else Vector3.UP
+	var up = Vector3.UP if absf(nn.y) < 0.9 else Vector3.FORWARD
+	q.global_transform = Transform3D(Basis.looking_at(-nn, up).rotated(nn, randf() * TAU), at + nn * 0.012)
+	holes.append(q)
+	v.set_meta("holes", holes)
+
+static func bullet_hole(v, at: Vector3, n: Vector3, heavy: bool) -> void:
+	if v.spec.get("air", false):
+		return
+	_mark_mats()
+	_stick(v, at, n, randf_range(0.07, 0.1) * (1.6 if heavy else 1.0), hole_mat)
+
+static func soot(v, at: Vector3) -> void:
+	_mark_mats()
+	var n = (at - v.center())
+	n = n.normalized() if n.length_squared() > 0.01 else Vector3.UP
+	_stick(v, at, n, randf_range(0.7, 1.2), soot_mat)
 
 static func lose_door(v) -> void:
 	for d in v.doors:

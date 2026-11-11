@@ -716,6 +716,7 @@ func _fill_gun() -> void:
 		i += 1
 	bipod_k = 0.0
 	_pose_bipod()
+	_bayonet_mesh()
 
 func new_bipod(p: Array) -> bool:
 	return wid in ["lmg", "atrifle"] and absf(p[3] - 0.015) < 0.001 and p[4] > 0.15 and absf(p[5] - 0.015) < 0.001
@@ -1196,6 +1197,20 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 			lh = wp + uf * 0.08
 			g = (uf * 0.4 - ur * 0.3 + Vector3(0, -0.6, 0)).normalized()
 			anchor_l = false
+		elif habit_t > 0.0 and not shoulder and state == "alive" and habit != "look":
+			var hk = sin(clampf(1.0 - habit_t / HABIT_LEN, 0.0, 1.0) * PI)
+			if habit == "check":
+				# rifle brought up and tilted to look it over, then lowered again
+				var gup = (uf * 0.75 + ur * 0.15 + Vector3(0, 0.4, 0)).normalized()
+				g = g.lerp(gup, hk).normalized()
+				rh = rh.lerp(rsh + uf * 0.24 - ur * 0.05 + Vector3(0, -0.12, 0), hk)
+				lh = rh + g * W["hold"]
+			else:
+				# the left hand goes to the hip for the canteen, up to the mouth, and back
+				var mouth: Vector3 = parts[2].global_position + uf * 0.14 + Vector3(0, -0.08, 0)
+				var hip: Vector3 = parts[0].global_position + ur * -0.17 + uf * 0.05
+				lh = hip.lerp(mouth, clampf(hk * 1.5, 0.0, 1.0)) if hk > 0.15 else lh.lerp(hip, hk / 0.15)
+				anchor_l = false
 	if not reloading:
 		mag_drop = false
 	gun_dir_p = g
@@ -1381,7 +1396,35 @@ func _bone_xform(a: Vector3, b: Vector3, side: Vector3) -> Transform3D:
 var head_turn = 0.0          # head turned off the line of the shoulders (radians)
 
 # a crack overhead or a bang nearby: the head snaps round to it first, the body follows if it must
+# when it's quiet, men fidget: check the rifle over, look round, take a drink from the canteen
+var habit = ""
+var habit_t = 0.0
+var habit_cd = 0.0
+const HABIT_LEN = 2.6
+
+func _habit_tick() -> void:
+	if habit_t > 0.0:
+		habit_t -= G.DT
+		if habit_t <= 0.0 or ready_ or target != null or supp > 0.15 or state != "alive":
+			habit = ""
+			habit_t = 0.0
+		return
+	habit_cd -= G.DT
+	if habit_cd > 0.0:
+		return
+	habit_cd = randf_range(9.0, 22.0)
+	if is_player or zombie or state != "alive" or vehicle != null or ready_ or target != null or supp > 0.1 or want.length() > 0.5 \
+			or reload_t > 0.0 or hand_t != null or tool_mode != "" or prone or G.sim_time - seen_t < 15.0:
+		return
+	habit = G.pick(["check", "check", "look", "drink"])
+	habit_t = HABIT_LEN
+	if habit == "look":
+		var a = body_yaw + randf_range(-1.4, 1.4)
+		look_p = pos + Vector3(sin(a), 0, cos(a)) * 20.0
+		look_t = HABIT_LEN
+
 func _head_tick() -> void:
+	_habit_tick()
 	var want = 0.0
 	if look_t > 0.0:
 		look_t -= G.DT
@@ -1575,6 +1618,9 @@ func set_class(c: String) -> void:
 		_hpart(parts[2], "cyl", Vector3(0.36, 0.03, 0.37), Vector3(0, 0.17, -0.01), capm)
 		_hpart(parts[2], "cyl", Vector3(0.2, 0.015, 0.14), Vector3(0, 0.075, -0.13), _mat("boot", Color(0.16, 0.14, 0.12), false))
 		_hpart(parts[2], "cyl", Vector3(0.31, 0.03, 0.32), Vector3(0, 0.09, 0), _mat("band" + G.TEAM_BAND[team].to_html(), G.TEAM_BAND[team], false))
+	if not zombie and parts.size() > 6 and not has_meta("kit_" + c):
+		set_meta("kit_" + c, true)
+		_class_kit(c)
 	mines = 3 if c == "engineer" else 0
 	satchels = 2 if c == "engineer" else 0
 	kits = 3 if c == "engineer" else 0
@@ -1600,6 +1646,73 @@ func set_class(c: String) -> void:
 				sp.order = {"mode": "follow", "who": sn, "point": null}
 				break
 
+# what each kind of soldier carries, so you can tell them apart at a glance (front is -z, back +z)
+func _class_kit(c: String) -> void:
+	var wood = _mat("kwood", Color(0.42, 0.3, 0.18), false)
+	var steel = _mat("ksteel", Color(0.3, 0.31, 0.32), false)
+	var khaki = _mat("kkhaki", Color(0.5, 0.46, 0.34), false)
+	var bz = 0.17 if Faction.militia(team) else 0.3        # militia carry no pack
+	match c:
+		"medic":
+			# white armband and red crosses on the helmet sides, a medical bag on the hip
+			var white = _mat("kwhite", Color(0.92, 0.92, 0.88), false)
+			var red = _mat("kred", Color(0.75, 0.1, 0.08), false)
+			_mesh(parts[5], Vector3(0.145, 0.09, 0.145), Vector3(0, -0.02, 0), white)
+			_mesh(parts[5], Vector3(0.15, 0.025, 0.15), Vector3(0, -0.02, 0), red)
+			for x in [-1.0, 1.0]:
+				_mesh(parts[2], Vector3(0.012, 0.09, 0.09), Vector3(x * 0.16, 0.12, 0.0), white)
+				_mesh(parts[2], Vector3(0.016, 0.065, 0.02), Vector3(x * 0.163, 0.12, 0.0), red)
+				_mesh(parts[2], Vector3(0.016, 0.02, 0.065), Vector3(x * 0.163, 0.12, 0.0), red)
+			_mesh(parts[0], Vector3(0.1, 0.15, 0.2), Vector3(-0.22, -0.02, 0.02), white)
+			_mesh(parts[0], Vector3(0.104, 0.05, 0.02), Vector3(-0.22, -0.02, 0.02), red)
+			_mesh(parts[0], Vector3(0.104, 0.02, 0.06), Vector3(-0.22, -0.02, 0.02), red)
+		"engineer":
+			# an entrenching shovel strapped to the pack, a tool roll on the belt
+			_mesh(parts[1], Vector3(0.035, 0.5, 0.035), Vector3(0.1, 0.0, bz), wood)
+			_mesh(parts[1], Vector3(0.16, 0.19, 0.02), Vector3(0.1, -0.3, bz + 0.01), steel)
+			_mesh(parts[0], Vector3(0.22, 0.08, 0.08), Vector3(0.0, -0.04, 0.17), khaki)
+		"mg":
+			# a belt of rounds slung across the chest and a spare ammo tin on the hip
+			var brass = _mat("kbrass", Color(0.72, 0.56, 0.2), false)
+			var belt = MeshInstance3D.new()
+			var bm = BoxMesh.new()
+			bm.size = Vector3(0.07, 0.62, 0.035)
+			belt.mesh = bm
+			belt.material_override = brass
+			belt.position = Vector3(0, 0.02, -0.2)
+			belt.rotation.z = 0.75
+			belt.layers = 2
+			parts[1].add_child(belt)
+			_mesh(parts[0], Vector3(0.1, 0.15, 0.2), Vector3(-0.22, -0.03, 0.0), _mat("ktin", Color(0.28, 0.3, 0.22), false))
+		"at":
+			# two spare rockets in a carrier on the back
+			for x in [-0.07, 0.07]:
+				_mesh(parts[1], Vector3(0.08, 0.62, 0.08), Vector3(x, 0.08, bz + 0.02), _mat("ktube", Color(0.3, 0.33, 0.24), false))
+				_mesh(parts[1], Vector3(0.09, 0.05, 0.09), Vector3(x, 0.4, bz + 0.02), steel)
+		"assault":
+			# grenades hung on the chest straps
+			for k in range(3):
+				_mesh(parts[1], Vector3(0.06, 0.08, 0.06), Vector3((k - 1) * 0.1, 0.12, -0.25), _mat("kgren", Color(0.25, 0.29, 0.2), false))
+		"sniper", "spotter":
+			# scrim and strips of hessian on the helmet and shoulders break up the outline
+			var hess = [_mat("kh1", Color(0.4, 0.36, 0.24), false), _mat("kh2", Color(0.28, 0.33, 0.18), false)]
+			for k in range(9):
+				var m = MeshInstance3D.new()
+				var bm2 = BoxMesh.new()
+				bm2.size = Vector3(0.05, randf_range(0.12, 0.22), 0.012)
+				m.mesh = bm2
+				m.material_override = hess[k % 2]
+				m.layers = 2
+				var on_head = k < 5
+				var a = randf() * TAU
+				m.position = (Vector3(cos(a) * 0.15, 0.1, sin(a) * 0.15) if on_head else Vector3(randf_range(-0.2, 0.2), 0.2, randf_range(-0.1, 0.12)))
+				m.rotation = Vector3(randf_range(-0.6, 0.6), a, randf_range(-0.4, 0.4))
+				(parts[2] if on_head else parts[1]).add_child(m)
+		"officer":
+			# binoculars round the neck and a map case on the hip
+			_mesh(parts[1], Vector3(0.16, 0.07, 0.06), Vector3(0, 0.1, -0.24), _mat("kbino", Color(0.12, 0.12, 0.11), false))
+			_mesh(parts[0], Vector3(0.05, 0.18, 0.22), Vector3(0.21, -0.04, 0.0), _mat("kcase", Color(0.36, 0.22, 0.12), false))
+
 # a general: gold braid on the cap, shoulder boards and a Sam Browne belt
 func general_look() -> void:
 	var gold = _mat("gold", Color(0.86, 0.68, 0.22), false)
@@ -1616,7 +1729,9 @@ func to_sidearm() -> bool:
 	if wid == "pistol" or primary != null:
 		return false
 	primary = [wid, mag, reserve]
+	var long_gun = wid
 	set_weapon("pistol")
+	_sling(long_gun)
 	return true
 
 func from_sidearm() -> void:
@@ -1626,6 +1741,72 @@ func from_sidearm() -> void:
 	mag = primary[1]
 	reserve = primary[2]
 	primary = null
+	_sling("")
+
+# the empty rifle goes over the shoulder while he fights on with the pistol
+var slung: Node3D = null
+
+func _sling(w: String) -> void:
+	if slung != null and is_instance_valid(slung):
+		slung.queue_free()
+	slung = null
+	if w == "" or parts.size() < 2 or not G.WEAPONS.has(w) or G.WEAPONS[w]["rocket"] or w == "pfaust":
+		return
+	slung = Node3D.new()
+	for p in G.gun_model(w, team, id):
+		var mi = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(p[3], p[4], p[5])
+		mi.mesh = bm
+		mi.material_override = _mat("gun" + p[6].to_html(false), p[6], false)
+		mi.position = Vector3(p[0], p[1], p[2])
+		if p.size() > 7:
+			mi.rotation.x = p[7]
+		mi.layers = 2
+		slung.add_child(mi)
+	parts[1].add_child(slung)
+	# diagonally across the back, muzzle up over the left shoulder
+	slung.position = Vector3(0.05, -0.12, 0.32 if not Faction.militia(team) else 0.18)
+	slung.transform.basis = Basis(Vector3(0, 0, 1), 1.1) * Basis(Vector3(1, 0, 0), -PI / 2.0)
+
+# bayonets go on for a charge, and stay on
+const BAYONET_GUNS = ["rifle", "carbine", "bar"]
+
+func fix_bayonet() -> bool:
+	if has_meta("bayonet") or not (wid in BAYONET_GUNS) or zombie:
+		return false
+	set_meta("bayonet", true)
+	_bayonet_mesh()
+	return true
+
+func _bayonet_mesh() -> void:
+	if not has_meta("bayonet") or not (wid in BAYONET_GUNS) or gun_node == null:
+		return
+	# the muzzle end of the gun model: the furthest-forward part
+	var front = -1e9
+	var by = 0.0
+	for p in G.gun_model(wid, team, id):
+		if p[2] + p[5] * 0.5 > front:
+			front = p[2] + p[5] * 0.5
+			by = p[1]
+	var steel = _mat("bayo", Color(0.62, 0.63, 0.65), false)
+	var blade = MeshInstance3D.new()
+	var bm = BoxMesh.new()
+	bm.size = Vector3(0.012, 0.028, 0.3)
+	blade.mesh = bm
+	blade.material_override = steel
+	blade.position = Vector3(0, by - 0.035, front + 0.12)
+	blade.layers = 2
+	blade.name = "bayonet"
+	gun_node.add_child(blade)
+	var lug = MeshInstance3D.new()
+	var lm = BoxMesh.new()
+	lm.size = Vector3(0.03, 0.04, 0.05)
+	lug.mesh = lm
+	lug.material_override = _mat("bayolug", Color(0.2, 0.2, 0.2), false)
+	lug.position = Vector3(0, by - 0.03, front - 0.02)
+	lug.layers = 2
+	gun_node.add_child(lug)
 
 # ---------------------------------------------------------------- ladders
 # the player walks into the foot of a ladder (or toward its top from the roof) to use it
@@ -1866,7 +2047,9 @@ func give_radio(on: bool) -> void:
 		ant.position = Vector3(0.1, 0.92, -0.03)
 		ant.rotation = Vector3(-0.12, 0, -0.08)
 		radio_pack.add_child(ant)
-		radio_pack.position = Vector3(0, 0.02, -0.24)
+		# worn on the back, over the pack
+		radio_pack.position = Vector3(0, 0.04, 0.3)
+		radio_pack.rotation.y = PI
 		parts[1].add_child(radio_pack)
 		if leader_mark != null:
 			leader_mark.visible = false
@@ -2038,6 +2221,17 @@ func go_dead() -> void:
 	else:
 		var styles = ["slump", "knees", "clutch", "stagger", "spin", "forward", "twist", "reach", "sitback"]
 		death_style = styles[randi() % styles.size()]
+	# a wall or sandbags right at his back or side: he slides down it and ends up sitting against it
+	if death_style != "limp" and state == "alive" and randf() < 0.75:
+		var c: Vector3 = parts[1].global_position
+		for col in G.world.cols_in_rect(c.x - 0.9, c.z - 0.9, c.x + 0.9, c.z + 0.9):
+			if col.alive and col.hi.y > pos.y + 0.8 and col.lo.y < pos.y + 0.6 and col.prop != 1 and not col.has_meta("tree"):
+				var nearest = Vector3(clampf(c.x, col.lo.x, col.hi.x), c.y, clampf(c.z, col.lo.z, col.hi.z))
+				var to = G.flat(nearest - c)
+				if to.length() < 0.8 and to.length() > 0.05:
+					death_style = "wall"
+					set_meta("wall_dir", to.normalized())
+					break
 	settled = false
 	if vehicle != null:
 		dismount(true)
@@ -2383,6 +2577,16 @@ func _death_motion() -> void:
 				var fw2 = Vector3(sin(body_yaw), 0, cos(body_yaw))
 				parts[hand].linear_velocity = parts[hand].linear_velocity.lerp(fw2 * 1.4 + Vector3(0, 1.6 - t * 4.0, 0), 0.3)
 				parts[0].linear_velocity.y = minf(parts[0].linear_velocity.y, -0.9)
+		"wall":
+			# back to the wall: the chest leans into it while the hips slide down and out, so he ends up
+			# sitting slumped against it with his legs out in front
+			var wd: Vector3 = get_meta("wall_dir", Vector3.FORWARD)
+			if t < 0.9:
+				parts[1].linear_velocity = parts[1].linear_velocity.lerp(wd * 0.9 + Vector3(0, -0.5, 0), 0.25)
+				parts[2].linear_velocity = parts[2].linear_velocity.lerp(wd * 0.7 + Vector3(0, -0.3, 0), 0.2)
+				parts[0].linear_velocity = parts[0].linear_velocity.lerp(-wd * 0.6 + Vector3(0, -1.4, 0), 0.25)
+				for i in [8, 10]:
+					parts[i].linear_velocity = parts[i].linear_velocity.lerp(-wd * 1.2, 0.2)
 		"sitback":
 			# drops to the seat, then rolls back
 			if t < 0.3:
@@ -2775,6 +2979,8 @@ func _tick_alive() -> void:
 			G.audio.splash(pos, swim)
 		else:
 			G.audio.step(pos)
+			if not zombie and vehicle == null:
+				G.fx.footprint(pos, body_yaw, sin(phase) > 0.0)
 	stumble = maxf(0.0, stumble - G.DT)
 	kick_t = maxf(0.0, kick_t - G.DT)
 	# far away in a big battle: pose and body only every third tick, and no balance checks

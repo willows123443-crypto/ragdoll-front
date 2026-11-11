@@ -8,6 +8,7 @@ var flash_lights: Array = []
 var flash_i = 0
 var flash_boost = 1.0
 var tracer_mat: StandardMaterial3D = null
+var cam_now: Camera3D = null
 var night_now = false
 var dust_pool: Array = []
 var blood_pool: Array = []
@@ -257,9 +258,11 @@ func muzzle(pos: Vector3, big: bool) -> void:
 	flash_i = (flash_i + 1) % flash_lights.size()
 	f["l"].global_position = pos
 	# at night a flash lights up the walls and the men round it
-	f["l"].light_energy = (3.0 if big else 1.6) * flash_boost * (2.2 if night_now else 1.0)
-	f["l"].omni_range = 13.0 if night_now else 9.0
-	f["t"] = 0.05
+	# every flash a little different, so a burst flickers on the walls rather than strobing evenly
+	f["l"].light_energy = (3.0 if big else 1.6) * flash_boost * (2.6 if night_now else 1.0) * randf_range(0.65, 1.25)
+	f["l"].omni_range = (13.0 if night_now else 9.0) * randf_range(0.85, 1.1)
+	f["l"].light_color = Color(1.0, randf_range(0.62, 0.78), randf_range(0.28, 0.42))
+	f["t"] = randf_range(0.035, 0.06)
 	var p = _one_shot_smoke(pos, Color(1.0, 0.8, 0.4, 1.0), 3, 0.06, 0.25, 0.5, true)
 	p.initial_velocity_max = 0.5
 
@@ -516,15 +519,60 @@ func decal(pos: Vector3, size: float, scorch: bool) -> void:
 	d.visible = true
 
 # ---------------------------------------------------------------- tracers
-func tracer(o: Vector3, dir: Vector3, ln: float, speed: float, on_hit: Callable, visible_: bool) -> void:
-	var t = {"o": o, "dir": dir, "len": ln, "d": 0.0, "speed": speed, "on_hit": on_hit, "done": false, "mesh": null}
-	if visible_:
+func tracer(o: Vector3, dir: Vector3, ln: float, speed: float, on_hit: Callable, visible_: bool, bright: bool = false) -> void:
+	var t = {"o": o, "dir": dir, "len": ln, "d": 0.0, "speed": speed, "on_hit": on_hit, "done": false, "mesh": null, "tail": 3.5}
+	if visible_ and bright:
+		if bright_pool.is_empty():
+			_make_bright_pool()
+		for m in bright_pool:
+			if not m.visible:
+				t["mesh"] = m
+				t["tail"] = 7.0
+				t["bright"] = true
+				m.visible = true
+				break
+	if visible_ and t["mesh"] == null:
 		for m in tracer_pool:
 			if not m.visible:
 				t["mesh"] = m
 				m.visible = true
 				break
 	tracers.append(t)
+
+# the tracer rounds: a hot core and a wide glow round it, drawn on top of the haze so a line of them
+# reads from commander height, day or night
+var bright_pool: Array = []
+var bright_glow_mat: StandardMaterial3D = null
+
+func _make_bright_pool() -> void:
+	var cm = StandardMaterial3D.new()
+	cm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	cm.albedo_color = Color(1.0, 0.88, 0.55)
+	cm.disable_fog = true
+	var gm = StandardMaterial3D.new()
+	gm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	gm.albedo_color = Color(1.0, 0.5, 0.12, 0.55)
+	gm.disable_fog = true
+	bright_glow_mat = gm
+	var bm = BoxMesh.new()
+	bm.size = Vector3(0.045, 0.045, 1.0)
+	var gbm = BoxMesh.new()
+	gbm.size = Vector3(0.12, 0.12, 1.0)
+	for i in range(48):
+		var m = MeshInstance3D.new()
+		m.mesh = bm
+		m.material_override = cm
+		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		m.visible = false
+		add_child(m)
+		var gl = MeshInstance3D.new()
+		gl.mesh = gbm
+		gl.material_override = gm
+		gl.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		gl.name = "glow"
+		m.add_child(gl)
+		bright_pool.append(m)
 
 var torch_lights: Array = []
 
@@ -657,10 +705,13 @@ func step(dt: float) -> void:
 	_ambient_planes(dt)
 	if marks_mat != null:
 		marks_mat.set_shader_parameter("now", G.sim_time)
+	if foot_mat != null:
+		foot_mat.set_shader_parameter("now", G.sim_time)
 	grass_t -= dt
 	if grass_t <= 0.0 and G.world != null:
 		grass_t = 0.5
 		G.world.grass_recover()
+	cam_now = get_viewport().get_camera_3d()
 	var nn = G.main.is_night()
 	if nn != night_now:
 		night_now = nn
@@ -676,19 +727,25 @@ func step(dt: float) -> void:
 			t["done"] = true
 			if t["on_hit"].is_valid():
 				t["on_hit"].call()
-		if t["d"] - 3.5 >= t["len"]:
+		var tail: float = t["tail"]
+		var thick = 1.0
+		if t.has("bright") and cam_now != null:
+			# thicker and longer the further away the camera is, so it stays a visible streak from above
+			thick = clampf(cam_now.global_position.distance_to(t["o"] + t["dir"] * minf(t["d"], t["len"])) / 20.0, 1.0, 4.5)
+			tail = 7.0 * clampf(thick * 0.6, 1.0, 2.6)
+		if t["d"] - tail >= t["len"]:
 			if t["mesh"]:
 				t["mesh"].visible = false
 			tracers.remove_at(i)
 			continue
 		if t["mesh"]:
-			var a = maxf(0.0, t["d"] - 3.5)
+			var a = maxf(0.0, t["d"] - tail)
 			var b = minf(t["len"], t["d"])
 			var m: MeshInstance3D = t["mesh"]
 			var mid: Vector3 = t["o"] + t["dir"] * ((a + b) / 2.0)
 			var up = Vector3.UP if absf(t["dir"].y) < 0.95 else Vector3.RIGHT
-			m.global_transform = Transform3D(Basis.looking_at(t["dir"], up).scaled(Vector3(1, 1, maxf(0.01, b - a))), mid)
-			(m.get_child(0) as Node3D).visible = night_now
+			m.global_transform = Transform3D(Basis.looking_at(t["dir"], up).scaled(Vector3(thick, thick, maxf(0.01, b - a))), mid)
+			(m.get_child(0) as Node3D).visible = night_now or t.has("bright")
 	for f in flash_lights:
 		if f["t"] > 0.0:
 			f["t"] -= dt
@@ -1096,6 +1153,74 @@ func track_mark(p: Vector3, fwd: Vector3, w: float, l: float, tracked: bool) -> 
 	marks_mm.set_instance_transform(marks_i, Transform3D(Basis(side * w, up, along * l), Vector3(p.x, gy + 0.035, p.z)))
 	marks_mm.set_instance_custom_data(marks_i, Color(G.sim_time, 1.0 if tracked else 0.0, 0, 0))
 	marks_i = (marks_i + 1) % MARKS
+
+# boot prints: their own small ring of marks, deepest on wet ground (rain, the beach, by the water),
+# faint on dry grass, none on roads or floors
+const FEET = 700
+const FOOT_FADE = 110.0
+var foot_mm: MultiMesh = null
+var foot_mat: ShaderMaterial = null
+var foot_i = 0
+
+func _feet_setup() -> void:
+	foot_mm = MultiMesh.new()
+	foot_mm.transform_format = MultiMesh.TRANSFORM_3D
+	foot_mm.use_custom_data = true
+	var pm = PlaneMesh.new()
+	pm.size = Vector2(1, 1)
+	foot_mm.mesh = pm
+	foot_mm.instance_count = FEET
+	for i in range(FEET):
+		foot_mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0)))
+	var sh = Shader.new()
+	sh.code = """shader_type spatial;
+render_mode depth_draw_never, cull_disabled, shadows_disabled;
+uniform float now = 0.0;
+uniform float fade = 110.0;
+varying float age;
+varying float depth;
+void vertex() {
+	age = now - INSTANCE_CUSTOM.x;
+	depth = INSTANCE_CUSTOM.y;
+}
+void fragment() {
+	// a sole and a heel, with a few tread bars across the sole
+	vec2 q = UV - vec2(0.5);
+	float sole = 1.0 - smoothstep(0.85, 1.0, length(vec2(q.x / 0.42, (q.y + 0.12) / 0.36)));
+	float heel = 1.0 - smoothstep(0.85, 1.0, length(vec2(q.x / 0.36, (q.y - 0.3) / 0.17)));
+	float shape = max(sole, heel);
+	float bars = 0.7 + 0.3 * step(0.5, fract(UV.y * 8.0));
+	float a = clamp(1.0 - age / fade, 0.0, 1.0);
+	ALBEDO = vec3(0.2, 0.17, 0.13);
+	ROUGHNESS = 1.0;
+	ALPHA = shape * bars * a * a * depth;
+}"""
+	foot_mat = ShaderMaterial.new()
+	foot_mat.shader = sh
+	foot_mat.set_shader_parameter("fade", FOOT_FADE)
+	var mi = MultiMeshInstance3D.new()
+	mi.multimesh = foot_mm
+	mi.material_override = foot_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.extra_cull_margin = 10000.0
+	add_child(mi)
+
+func footprint(p: Vector3, yaw: float, left: bool) -> void:
+	if cam_now == null or cam_now.global_position.distance_squared_to(p) > 55.0 * 55.0:
+		return
+	var W = G.world
+	var gy = W.ground_y(p.x, p.z)
+	if absf(p.y - gy) > 0.4 or W.on_road(p.x, p.z):
+		return
+	var wet = rain != null or G.map_id == "beach" or (not W.water.is_empty() and W.near_water(p.x, p.z, 8.0))
+	if foot_mm == null:
+		_feet_setup()
+	var f = Vector3(sin(yaw), 0, cos(yaw))
+	var r = Vector3(f.z, 0, -f.x)
+	var at = p + r * (0.11 if left else -0.11)
+	foot_mm.set_instance_transform(foot_i, Transform3D(Basis(r * 0.13, Vector3.UP, -f * 0.3), Vector3(at.x, W.ground_y(at.x, at.z) + 0.03, at.z)))
+	foot_mm.set_instance_custom_data(foot_i, Color(G.sim_time, 0.75 if wet else 0.32, 0, 0))
+	foot_i = (foot_i + 1) % FEET
 
 # a puff from the exhaust pipe: heavy and dark under load, faint at idle
 func exhaust(p: Vector3, back: Vector3, k: float, diesel: bool) -> void:

@@ -253,7 +253,7 @@ func _process(dt: float) -> void:
 		cards[i]["b"].visible = false
 
 func _draw_men(c: Control) -> void:
-	var q = c.get_meta("q", null)
+	var q = (c.get_meta("q") if c.has_meta("q") else null)
 	if q == null:
 		return
 	var x = 0.0

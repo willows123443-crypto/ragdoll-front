@@ -115,9 +115,28 @@ static func step(dt: float) -> void:
 		if style_of(t) == "reckless":
 			timers[t] *= 0.75
 		_keep_scouts(t)
+		_move_command_post(t)
 		if VehExt.has_radar(t):
 			timers[t] *= 0.6       # the command truck keeps the picture fresh
 		_plan(t, off)
+
+# the AI brings its command truck up behind its own line and sets it up there (and moves it back if
+# the front comes too close), so it is a target worth hunting
+static func _move_command_post(t: int) -> void:
+	for v in G.vehicles:
+		if v.kind != "radar" or v.team != t or v.dead or v.driver() == null or v.driver().is_player:
+			continue
+		if v.cmd != null and G.dist2d(v.cmd, v.pos) > 6.0:
+			return
+		var want: Vector3 = VehExt.radar_spot(v)
+		# not too close to where the enemy is now
+		var foe = _enemy_center(t)
+		if foe != null and G.dist2d(want, foe) < 70.0:
+			want = want.lerp(G.world.spawn[t], 0.5)
+		want = G.main._free_spot(want)
+		if G.dist2d(want, v.pos) > 15.0:
+			v.command(want)
+		return
 
 static func _squads(team: int) -> Array:
 	return G.squads.filter(func(q): return q["team"] == team and not q["members"].is_empty() and not q.get("follow"))

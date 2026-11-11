@@ -879,6 +879,33 @@ func hit_marker(kill: bool) -> void:
 	hit_t = 0.35 if kill else 0.15
 	G.audio.hit_tick(kill)
 
+# dirt thrown over the view by a blast close by: a brown haze and clods that fade away
+func dust_hit(k: float) -> void:
+	var host = Control.new()
+	host.set_anchors_preset(Control.PRESET_FULL_RECT)
+	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(host)
+	var haze = ColorRect.new()
+	haze.set_anchors_preset(Control.PRESET_FULL_RECT)
+	haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	haze.color = Color(0.45, 0.38, 0.28, 0.45 * k)
+	host.add_child(haze)
+	var vs = get_viewport().get_visible_rect().size
+	for i in range(int(6 + 10 * k)):
+		var b = TextureRect.new()
+		b.texture = G.fx.soft_tex
+		b.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		var sz = randf_range(80.0, 260.0) * (0.6 + k)
+		b.size = Vector2(sz, sz * randf_range(0.6, 1.0))
+		b.position = Vector2(randf() * vs.x, randf() * vs.y) - b.size * 0.5
+		b.modulate = Color(0.32, 0.26, 0.18, randf_range(0.35, 0.75) * k)
+		b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		host.add_child(b)
+	var tw = host.create_tween()
+	tw.tween_interval(0.3)
+	tw.tween_property(host, "modulate:a", 0.0, 2.2)
+	tw.tween_callback(host.queue_free)
+
 func damage_indicator(from: Vector3) -> void:
 	var cam = G.pc.cam
 	var to = from - cam.global_position
@@ -1780,7 +1807,7 @@ func _title_header(text: String) -> void:
 func _fill_title() -> void:
 	for c in title_box.get_children():
 		c.queue_free()
-	if G.started:
+	if G.started and not G.attract:
 		title_sub.text = "Paused · %s on %s" % [G.mode.capitalize(), G.world.MAPS.get(G.map_id, {}).get("name", G.map_id) if G.world != null else ""]
 		_title_button("▶  Resume", "back to the battle", func(): _close_title(), true)
 		_title_button("Restart this battle", "same map, mode and forces", func():
@@ -1798,6 +1825,7 @@ func _fill_title() -> void:
 		_title_button("Zombie horde", "hold out against the waves", func(): _quick("horde"))
 		_title_header("CREATE")
 		_title_button("Map editor", "build, paint and script your own maps", func():
+			G.main.stop_attract()
 			title.visible = false
 			G.editor.new_map(Vector2(260, 190)))
 		_title_button("Scenario code", "save or load a battle as a code", func(): _show_scenario())
@@ -1934,37 +1962,46 @@ func typing() -> bool:
 
 # ---------------------------------------------------------------- per-frame
 func _unhandled_key_input(ev: InputEvent) -> void:
+	if ev is InputEventKey and ev.pressed and not ev.echo and binding != "":
+		# waiting for the new key for an action in the settings
+		if ev.keycode != KEY_ESCAPE:
+			Keys.set_key(binding, ev.keycode)
+		binding = ""
+		_show_settings()
+		get_viewport().set_input_as_handled()
+		return
 	if ev is InputEventKey and ev.pressed and not ev.echo:
-		if ev.keycode == KEY_TAB and G.started and not menu_open():
+		var kc = Keys.logical(ev.keycode)
+		if kc == KEY_TAB and G.started and not menu_open():
 			if tacmap == null:
 				tacmap = preload("res://scripts/tacmap.gd").new()
 				root.add_child(tacmap)
 			tacmap.toggle()
-		elif ev.keycode == KEY_M and G.started:
+		elif kc == KEY_M and G.started:
 			show_menu()
-		elif ev.keycode == KEY_H and G.player != null and is_instance_valid(G.player) and G.player.state == "alive" and not menu_open():
+		elif kc == KEY_H and G.player != null and is_instance_valid(G.player) and G.player.state == "alive" and not menu_open():
 			Medical.player_dress(G.player)
-		elif ev.keycode == KEY_H:
+		elif kc == KEY_H:
 			help.visible = not help.visible
-		elif ev.keycode == KEY_F2 and G.started:
+		elif kc == KEY_F2 and G.started:
 			toggle_nv()
-		elif ev.keycode == KEY_F9 and G.started:
+		elif kc == KEY_F9 and G.started:
 			G.navviz.toggle()
-		elif ev.keycode == KEY_SPACE and G.started and Prep.active() and G.player == null:
+		elif kc == KEY_SPACE and G.started and Prep.active() and G.player == null:
 			Prep.finish()
-		elif ev.keycode == KEY_J and G.started:
+		elif kc == KEY_J and G.started:
 			if report != null and report.visible:
 				report.visible = false
 			else:
 				show_report()
-		elif ev.keycode == KEY_ESCAPE and help.visible:
+		elif kc == KEY_ESCAPE and help.visible:
 			help.visible = false
-		elif ev.keycode == KEY_ESCAPE and menu.visible:
+		elif kc == KEY_ESCAPE and menu.visible:
 			menu.visible = false
 			show_menu()
-		elif ev.keycode == KEY_ESCAPE and title.visible and G.started:
+		elif kc == KEY_ESCAPE and title.visible and G.started and not G.attract:
 			_close_title()
-		elif ev.keycode == KEY_ESCAPE and G.started and G.player == null:
+		elif kc == KEY_ESCAPE and G.started and G.player == null:
 			show_menu()
 
 var perf_lbl: Label = null
@@ -1995,7 +2032,28 @@ func _perf(dt: float) -> void:
 	perf_lbl.text = "%d fps · %d soldiers (%d simplified) · %d vehicles · sim %.1f ms" % [fps, n, far, G.vehicles.size(), G.main.sim_ms]
 	perf_lbl.add_theme_color_override("font_color", Color(0.85, 0.95, 0.8) if fps >= 45 else (Color(1.0, 0.85, 0.4) if fps >= 25 else Color(1.0, 0.45, 0.4)))
 
+var attract_hud = false
+
 func update_hud(dt: float) -> void:
+	# while the title-screen battle plays, only the title (and any menu opened from it) is shown: the rest
+	# of the HUD is made see-through (not hidden, so nothing that toggles its own visibility fights this)
+	if G.attract:
+		if not attract_hud and title.get_index() < root.get_child_count() - 1:
+			root.move_child(title, -1)        # above the (see-through) HUD, so it gets the clicks
+		attract_hud = true
+		var keep = [title, menu, help, win, report, scen_panel, camp_panel, teams_panel, settings_panel]
+		for c in root.get_children():
+			if not (c in keep) and c is CanvasItem and c.modulate.a > 0.0:
+				c.modulate.a = 0.0
+				c.set_meta("att_hid", true)
+		if G.editor.active:
+			G.main.stop_attract()
+	elif attract_hud:
+		attract_hud = false
+		for c in root.get_children():
+			if c.has_meta("att_hid"):
+				c.modulate.a = 1.0
+				c.remove_meta("att_hid")
 	_perf(dt)
 	prep_box.visible = G.started and Prep.active() and not menu_open()
 	if prep_box.visible:
@@ -2411,11 +2469,13 @@ func _show_teams() -> void:
 	root.add_child(teams_panel)
 
 # ---------------------------------------------------------------- settings
+var binding = ""          # an action waiting for its new key
+
 func _show_settings() -> void:
 	if settings_panel != null:
 		settings_panel.queue_free()
 	settings_panel = _panel(Color(0.1, 0.12, 0.14, 0.98))
-	_place(settings_panel, Control.PRESET_CENTER, -250, -290, 500, 580)
+	_place(settings_panel, Control.PRESET_CENTER, -250, -345, 500, 690)
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	v.add_child(_label("Settings", 26))
@@ -2463,9 +2523,41 @@ func _show_settings() -> void:
 	var ld = _option(["30 m (fastest)", "55 m", "80 m", "120 m (best looking)"], maxi(0, ld_vals.find(float(G.settings["lod_dist"]))))
 	ld.item_selected.connect(func(i): G.settings["lod_dist"] = ld_vals[i])
 	_row(v, "Full detail within (big battles)", ld)
-	v.add_child(_button("Done", func():
+	# controls: click an action, then press the key you want for it
+	v.add_child(_label("Controls  ·  click one, then press a key", 16, Color(0.96, 0.85, 0.5)))
+	var grid = GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 3)
+	for a in Keys.ACTIONS:
+		var act: String = a[0]
+		var lbl = _label(a[1], 12, Color(0.85, 0.86, 0.82))
+		lbl.custom_minimum_size = Vector2(250, 0)
+		grid.add_child(lbl)
+		var kb = Button.new()
+		kb.focus_mode = Control.FOCUS_NONE
+		kb.custom_minimum_size = Vector2(150, 22)
+		kb.add_theme_font_size_override("font_size", 12)
+		kb.text = "Press a key…" if binding == act else Keys.name_of(Keys.bound(act))
+		kb.pressed.connect(func():
+			binding = act
+			kb.text = "Press a key…  (Esc cancels)")
+		grid.add_child(kb)
+	var sc = ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(460, 200)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.add_child(grid)
+	v.add_child(sc)
+	var hb = HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 8)
+	hb.add_child(_button("Default keys", func():
+		Keys.reset()
+		_show_settings()))
+	hb.add_child(_button("Done", func():
+		binding = ""
 		G.save_prefs()
 		settings_panel.visible = false))
+	v.add_child(hb)
 	settings_panel.add_child(v)
 	root.add_child(settings_panel)
 
@@ -2546,6 +2638,8 @@ func _order_card_tick() -> void:
 				items += [["vstop", "Stop"], ["vback", "Rally"], ["vfree", "Drive free"]]
 				if vs.any(func(x): return (x.spec["tracked"] or x.kind in ["armoredcar", "halftrack"]) and G.sim_time > x.smoke_cd):
 					items.append(["vsmoke", "Pop smoke"])
+				if vs.any(func(x): return VehExt.can_tow(x)):
+					items.append(["vtow", "Unhitch" if vs.any(func(x): return x.towing != null) else "Tow"])
 			if vs.any(func(x): return x.seats.size() > 1 or x.spec.get("static", false)):
 				items.append(["dismount", "Leave the gun" if guns else "Dismount"])
 		if not on_foot.is_empty():
@@ -2564,7 +2658,7 @@ func _order_card_tick() -> void:
 			b.custom_minimum_size = Vector2(0, 24)
 			b.add_theme_font_size_override("font_size", 12)
 			b.tooltip_text = {"hold": "Hold here", "cover": "Take cover nearby", "charge": "Charge!", "fallback": "Fall back", "smoke": "Throw a smoke screen",
-				"vstop": "Stop where they are", "vback": "Back to the rally point", "vfree": "Drive freely", "vsmoke": "Pop smoke", "dismount": "Get out",
+				"vstop": "Stop where they are", "vback": "Back to the rally point", "vfree": "Drive freely", "vsmoke": "Pop smoke", "dismount": "Get out", "vtow": "Hitch up the nearest field gun or broken-down vehicle and tow it (press again to unhitch)",
 				"free": "Act freely", "build": "Pick something to build", "clear": "Deselect", "amove": "Move, but stop and fight anything on the way (or Ctrl + right-click)"}.get(id, it[1])
 			var acc = id == active
 			b.add_theme_stylebox_override("normal", _dock_style(Color(0.16, 0.18, 0.2, 0.96), Color(0.95, 0.75, 0.25) if acc else Color(0.3, 0.33, 0.36)))

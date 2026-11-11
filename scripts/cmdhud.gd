@@ -150,16 +150,19 @@ func _watch() -> void:
 		if st["team"] != 0 or st["dead"]:
 			continue
 		var hp = Build.damage(st)
-		var was = hp_seen.get(st, hp)
-		hp_seen[st] = hp
+		# keyed by where it stands: a site's dictionary is too big (and loops back on itself) to hash
+		var sk = "s%d_%d" % [int(st["p"].x * 4.0), int(st["p"].z * 4.0)]
+		var was = hp_seen.get(sk, hp)
+		hp_seen[sk] = hp
 		if hp > was + 0.02:
 			alert("st" + str(st["p"]), "%s under fire" % st["name"], st["p"], 30.0, Color(1.0, 0.3, 0.3) if st["kind"] == "hq" else Color(1.0, 0.6, 0.35),
 				"%s under fire!" % ("HQ is" if st["kind"] == "hq" else "The " + st["name"].to_lower() + " is"))
 	for v in G.vehicles:
 		if v.team != 0:
 			continue
-		var was2 = hp_seen.get(v, v.hp)
-		hp_seen[v] = v.hp
+		var vk = v.get_instance_id()
+		var was2 = hp_seen.get(vk, v.hp)
+		hp_seen[vk] = v.hp
 		if v.dead and not v.has_meta("lost_said"):
 			v.set_meta("lost_said", true)
 			alert("vl" + str(v.get_instance_id()), "%s lost" % v.spec["name"], v.pos, 1.0, Color(1.0, 0.25, 0.25),

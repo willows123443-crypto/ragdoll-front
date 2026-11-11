@@ -169,7 +169,8 @@ static func _escorts(team: int) -> void:
 		# walk a little behind and to the side of it, and go after anyone with a rocket near it
 		q["cmd"] = {"job": "escort", "p": v.pos - v.forward() * 7.0 + Vector3(cos(v.yaw), 0, -sin(v.yaw)) * 4.0, "t": G.sim_time + 2.0}
 		# quiet and the tank is rolling slowly: climb up on the engine deck and ride (they jump off at the first shot)
-		if absf(v.speed) > 0.3 and absf(v.speed) < 3.0 and G.sim_time - v.hit_t > 20.0 and v.kind == "tank" and randf() < 0.1:
+		# (they'll climb up even with fire about, as long as the tank isn't being hit hard right now)
+		if absf(v.speed) > 0.3 and absf(v.speed) < 3.5 and G.sim_time - v.heavy_t > 10.0 and v.kind == "tank" and randf() < 0.12:
 			var free = []
 			for i in range(v.seats.size()):
 				if v.seats[i] == null and v.spec["seats"][i].get("rider", false):
@@ -177,7 +178,7 @@ static func _escorts(team: int) -> void:
 			for m in q["members"]:
 				if free.is_empty():
 					break
-				if is_instance_valid(m) and m.state == "alive" and m.vehicle == null and m.vis_t == null and m.task == null \
+				if is_instance_valid(m) and m.state == "alive" and m.vehicle == null and (m.vis_t == null or not is_instance_valid(m.vis_t) or G.dist2d(m.vis_t.pos, m.pos) > 40.0) and m.task == null \
 						and G.sim_time > m.no_board_t and G.dist2d(m.pos, v.pos) < 10.0 and not m.is_player:
 					m.task = "board"
 					m.board_target = v

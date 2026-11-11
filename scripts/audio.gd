@@ -41,6 +41,12 @@ func _ready() -> void:
 	rev.wet = 0.18
 	rev.dry = 1.0
 	AudioServer.add_bus_effect(bus, rev)
+	# a blast close by leaves you half deaf for a moment: everything dull and muffled, then it comes back
+	deaf_fx = AudioEffectLowPassFilter.new()
+	deaf_fx.cutoff_hz = 20000.0
+	AudioServer.add_bus_effect(bus, deaf_fx)
+	AudioServer.set_bus_effect_enabled(bus, AudioServer.get_bus_effect_count(bus) - 1, false)
+	deaf_bus = bus
 	s_shot = _noise(0.32, 0.055, 0.45, 2.2)
 	s_boom = _noise(1.8, 0.35, 0.08, 1.0, 55.0)
 	s_whizz = _noise(0.12, 0.03, 0.9, 1.0)
@@ -95,6 +101,8 @@ const MRATE = 11025
 var music: Array = []           # AudioStreamPlayer per layer
 var intensity = 0.0
 var heat = 0.0                  # recent fighting near the camera
+var battle = 0.0                # how much of the whole battle is in contact (0..1)
+var battle_t = 0.0
 var rumble_t = 3.0
 var s_far: AudioStreamWAV
 var reverb: AudioEffectReverb
@@ -181,14 +189,62 @@ func _wav_rate(samples: PackedFloat32Array, rate: int) -> AudioStreamWAV:
 	w.mix_rate = rate
 	return w
 
+var deaf_fx: AudioEffectLowPassFilter = null
+var deaf_bus = -1
+var deaf = 0.0
+var s_ring: AudioStreamWAV = null
+
+func deafen(k: float) -> void:
+	k = clampf(k, 0.0, 1.0)
+	if k < 0.15 or deaf_fx == null:
+		return
+	var was = deaf
+	deaf = maxf(deaf, 1.2 + 2.0 * k)
+	AudioServer.set_bus_effect_enabled(deaf_bus, AudioServer.get_bus_effect_count(deaf_bus) - 1, true)
+	if was < 0.5 and k > 0.4:
+		if s_ring == null:
+			var rate = 22050
+			var n = int(rate * 2.4)
+			var smp = PackedFloat32Array()
+			smp.resize(n)
+			for i in range(n):
+				var t = float(i) / rate
+				smp[i] = sin(TAU * 3700.0 * t) * 0.35 * exp(-t * 1.3) * minf(1.0, t * 30.0)
+			s_ring = _wav(smp)
+			s_ring.mix_rate = rate
+		ui_player2.stream = s_ring
+		ui_player2.pitch_scale = randf_range(0.95, 1.05)
+		ui_player2.volume_db = -20.0 + 6.0 * k
+		ui_player2.play()
+
 func _process(dt: float) -> void:
+	_engine_loops()
 	bark_t -= dt
+	if deaf > 0.0:
+		deaf = maxf(0.0, deaf - dt)
+		# the world comes back gradually: from a dull thump up to full brightness
+		deaf_fx.cutoff_hz = lerpf(20000.0, 450.0, clampf(deaf / 1.6, 0.0, 1.0))
+		if deaf <= 0.0:
+			AudioServer.set_bus_effect_enabled(deaf_bus, AudioServer.get_bus_effect_count(deaf_bus) - 1, false)
 	tts_try_t -= dt
 	if not music_ready:
 		return
 	var on = G.started and not G.over
 	heat = maxf(0.0, heat - dt * 0.25)
-	var want = clampf(heat / 2.0, 0.0, 1.0) if on else 0.0
+	# how hot the whole battle is, not just what's in front of the camera (the commander's view is high up):
+	# the share of men who can see an enemy right now
+	battle_t -= dt
+	if battle_t <= 0.0 and on:
+		battle_t = 1.0
+		var n = 0
+		var c = 0
+		for sl in G.soldiers:
+			if sl.state == "alive" and not sl.zombie:
+				n += 1
+				if sl.vis_t != null:
+					c += 1
+		battle = clampf(float(c) / maxf(8.0, n * 0.5), 0.0, 1.0)
+	var want = clampf(maxf(heat / 2.0, battle * 0.9), 0.0, 1.0) if on else 0.0
 	intensity = move_toward(intensity, want, dt * (0.35 if want > intensity else 0.08))
 	var mv = G.settings["music"]
 	var lv = [0.25 + intensity * 0.5, maxf(0.0, intensity - 0.25) * 1.3, maxf(0.0, intensity - 0.55) * 2.0]
@@ -497,7 +553,7 @@ func _tts_ready() -> bool:
 	return not tts_voices.is_empty()
 
 func bark(s, text: String) -> void:
-	if not G.settings.get("voices", true) or bark_t > 0.0 or not G.started:
+	if not G.settings.get("voices", true) or bark_t > 0.0 or not G.started or G.attract:
 		return
 	var p: Vector3 = s.pos if s.state != "dead" else s.parts[0].global_position
 	var d = cam_dist(p)
@@ -577,7 +633,106 @@ func splash(pos: Vector3, deep: bool) -> void:
 		play(s_splash, pos, -10.0 if deep else -15.0, randf_range(0.7, 1.1) if deep else randf_range(1.0, 1.4))
 
 # engines: short rumbles re-triggered while driving, pitched up with speed
+# the few vehicles nearest the camera get a continuous engine note instead of the short rumbles: the
+# revs climb through each gear and drop at the change, tracks clatter with speed, and a gearbox whine
+# when it's backing up
+var eng_loops: Array = []
+var eng_assigned: Array = []
+var s_eng_loop: AudioStreamWAV = null
+var s_whine: AudioStreamWAV = null
+
+func _make_engine_loops() -> void:
+	var n = RATE
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var lp = 0.0
+	for i in range(n):
+		var t = float(i) / RATE
+		lp += (randf() * 2.0 - 1.0 - lp) * 0.08
+		# whole numbers of cycles in one second, so the loop joins without a click
+		var v = sin(TAU * 42.0 * t) * 0.35 + sin(TAU * 84.0 * t) * 0.2 + sin(TAU * 126.0 * t) * 0.1 + lp * 0.45
+		v *= 0.75 + 0.25 * sin(TAU * 14.0 * t)
+		var edge = minf(1.0, minf(t, 1.0 - t) * 200.0)
+		out[i] = v * 0.6 * lerpf(1.0, 1.0, edge)
+	s_eng_loop = _wav(out)
+	s_eng_loop.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	s_eng_loop.loop_begin = 0
+	s_eng_loop.loop_end = n
+	var w = PackedFloat32Array()
+	w.resize(n)
+	for i in range(n):
+		var t = float(i) / RATE
+		w[i] = (sin(TAU * 620.0 * t) * 0.6 + sin(TAU * 1240.0 * t) * 0.25) * 0.3
+	s_whine = _wav(w)
+	s_whine.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	s_whine.loop_begin = 0
+	s_whine.loop_end = n
+	for i in range(4):
+		var pair = []
+		for k in range(2):
+			var p = AudioStreamPlayer3D.new()
+			p.bus = "World"
+			p.unit_size = 10.0
+			p.max_distance = 110.0
+			p.stream = s_eng_loop if k == 0 else s_whine
+			p.volume_db = -80.0
+			add_child(p)
+			pair.append(p)
+		eng_loops.append(pair)
+
+func _engine_loops() -> void:
+	if not G.started or G.over:
+		for pr in eng_loops:
+			for p in pr:
+				if p.playing:
+					p.stop()
+		eng_assigned.clear()
+		return
+	var cam = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	if eng_loops.is_empty():
+		_make_engine_loops()
+	var near = []
+	for v in G.vehicles:
+		if v.dead or v.driver() == null or v.spec.get("static", false) or v.spec.get("air", false) or not v.visible:
+			continue
+		var d = cam.global_position.distance_squared_to(v.pos)
+		if d < 75.0 * 75.0:
+			near.append([d, v])
+	near.sort_custom(func(a, b): return a[0] < b[0])
+	eng_assigned.clear()
+	for i in range(eng_loops.size()):
+		var eng: AudioStreamPlayer3D = eng_loops[i][0]
+		var wh: AudioStreamPlayer3D = eng_loops[i][1]
+		if i >= near.size():
+			if eng.playing:
+				eng.stop()
+				wh.stop()
+			continue
+		var v = near[i][1]
+		eng_assigned.append(v.pos)
+		var heavy: bool = v.spec["tracked"]
+		var r = clampf(absf(v.speed) / maxf(1.0, v.spec["speed"]), 0.0, 1.0)
+		var gears = 3.0 if heavy else 4.0
+		var gi = minf(gears - 1.0, floorf(r * gears))
+		var within = r * gears - gi
+		var rpm = 0.15 + 0.85 * within if r > 0.04 else 0.0
+		eng.global_position = v.pos
+		wh.global_position = v.pos
+		eng.pitch_scale = (0.55 if heavy else 0.8) * (1.0 + rpm * 0.7 + gi * 0.06)
+		eng.volume_db = (-7.0 if heavy else -10.0) + r * 5.0
+		var back = v.speed < -0.4
+		wh.pitch_scale = 0.8 + r * 0.8
+		wh.volume_db = -17.0 if back else -80.0
+		if not eng.playing:
+			eng.play(randf() * 0.9)
+			wh.play(randf() * 0.9)
+
 func engine(pos: Vector3, load_: float, heavy: bool) -> void:
+	for a in eng_assigned:
+		if a.distance_squared_to(pos) < 4.0:
+			return
 	var d = cam_dist(pos)
 	if d < 90.0:
 		play(s_engine, pos, -6.0 if heavy else -9.0, (0.55 if heavy else 0.8) + load_ * 0.5)
@@ -652,6 +807,8 @@ func hit_tick(kill: bool) -> void:
 var radio_t = 0.0
 
 func radio_say(text: String) -> void:
+	if G.attract:
+		return
 	if not G.settings.get("voices", true) or not G.started or G.sim_time < radio_t:
 		return
 	radio_click()

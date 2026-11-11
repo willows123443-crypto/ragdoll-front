@@ -220,6 +220,7 @@ var doors: Array = []          # {"n", "open"/"shut" or "slide", "t", "c"}
 var shells = 20                # mortar and field-gun rounds
 var fuel = 1.0
 var towing = null              # the vehicle we're pulling
+var tracer_n = 0
 var towed_by = null
 var bomb_cd = 0.0
 var bridge_laid = false
@@ -410,8 +411,45 @@ func _place(dt: float) -> void:
 	pitch = lerpf(pitch, tp, k)
 	roll = lerpf(roll, tr, k)
 	pos.y = maxf((hf + hb + hL + hR) * 0.25, _ground(pos.x, pos.z) - 0.1)
-	global_transform = Transform3D(Basis.from_euler(Vector3(pitch, yaw, roll)), pos)
+	if dt > 0.0:
+		_suspension(dt)
+	global_transform = Transform3D(Basis.from_euler(Vector3(pitch + sus_p, yaw, roll + sus_r)), pos)
 	body.global_transform = global_transform
+
+# the hull rocks on its springs: squats as it pulls away, dips its nose when it brakes, leans out on a
+# turn, bounces over rough ground, and rocks back when the main gun fires
+var sus_p = 0.0
+var sus_pv = 0.0
+var sus_r = 0.0
+var sus_rv = 0.0
+var sus_speed = 0.0
+var sus_yaw = 0.0
+
+func kick(p: float, r: float = 0.0) -> void:
+	sus_pv += p
+	sus_rv += r
+
+func _suspension(dt: float) -> void:
+	if spec.get("static", false) or spec.get("air", false) or spec.get("boat", false):
+		return
+	var tracked: bool = spec["tracked"]
+	var soft = 0.55 if tracked else 1.0
+	var acc = (speed - sus_speed) / dt
+	sus_speed = speed
+	var yr = G.wrap_a(yaw - sus_yaw) / dt
+	sus_yaw = yaw
+	var tgt_p = clampf(-acc * 0.014 * soft, -0.07, 0.07)
+	var tgt_r = clampf(-yr * speed * 0.012 * soft, -0.06, 0.06)
+	# rough ground off the road: little kicks, more the faster it goes
+	if absf(speed) > 1.5 and randf() < dt * absf(speed) * 0.5 and not G.world.on_road(pos.x, pos.z):
+		sus_pv += randf_range(-0.25, 0.25) * soft
+		sus_rv += randf_range(-0.2, 0.2) * soft
+	var stiff = 55.0 if tracked else 38.0
+	var damp = 7.5 if tracked else 5.0
+	sus_pv += ((tgt_p - sus_p) * stiff - sus_pv * damp) * dt
+	sus_rv += ((tgt_r - sus_r) * stiff - sus_rv * damp) * dt
+	sus_p = clampf(sus_p + sus_pv * dt, -0.12, 0.12)
+	sus_r = clampf(sus_r + sus_rv * dt, -0.1, 0.1)
 
 # ---------------------------------------------------------------- per physics tick
 func step(dt: float) -> void:
@@ -449,10 +487,29 @@ func step(dt: float) -> void:
 	if dead:
 		dead_t += dt
 		speed = move_toward(speed, 0.0, 10.0 * dt)
-		# wrecks get towed away after a while so they don't block the roads and spawns
-		if dead_t > 20.0 and not spec.get("plane", false):
-			position.y -= dt * 0.6
-			if dead_t > 25.0:
+		# wrecks stay where they died, smouldering, for a few minutes; ones blocking a road or a spawn
+		# (or one too many on the map) get towed away sooner
+		if not spec.get("plane", false):
+			if not has_meta("wreck_life"):
+				var blocking = G.world.near_road(pos.x, pos.z, 3.5)
+				for t in range(G.team_count()):
+					if G.dist2d(G.world.rally_point(t), pos) < 30.0:
+						blocking = true
+				set_meta("wreck_life", 25.0 if blocking else randf_range(150.0, 200.0))
+			var life: float = get_meta("wreck_life")
+			if life > 25.0 and dead_t > 25.0 and int(dead_t * 2.0) % 10 == 0:
+				var wrecks = G.vehicles.filter(func(o): return o.dead and not o.spec.get("plane", false))
+				if wrecks.size() > 8:
+					wrecks.sort_custom(func(a, b): return a.dead_t > b.dead_t)
+					if wrecks[0] == self:
+						set_meta("wreck_life", dead_t)
+						life = dead_t
+			# the fire dies down after the first minute or so, the smoke goes on
+			if dead_t < minf(life, 70.0) and int(dead_t * 60.0) % 9 == 0 and visible:
+				G.fx.flame_puff(center() + Vector3(randf_range(-0.7, 0.7), 0.6, randf_range(-0.7, 0.7)), Vector3(0, 2.5, 0), 0.9)
+			if dead_t > life - 5.0:
+				position.y -= dt * 0.6
+			if dead_t > life:
 				remove()
 				return
 		if spec.get("plane", false):
@@ -588,7 +645,7 @@ func step(dt: float) -> void:
 	_place(dt)
 	if not spec.get("boat", false):
 		VehExt.ground_tick(self, dt, thr)
-	if towing != null:
+	if towing != null or has_meta("tow_target") or has_meta("tow_bar"):
 		VehExt.tow_tick(self, dt)
 	_hit_people(f)
 	for w in wheels:
@@ -728,6 +785,9 @@ func _weapons(dt: float) -> void:
 			else:
 				Combat.launch_shell(self, controller, muzzle(), _gun_dir())
 			G.fx.muzzle(muzzle(), true)
+			# the whole hull rocks back on its springs with the shot
+			var lg = global_transform.basis.inverse() * _gun_dir()
+			kick(lg.z * 0.9, -lg.x * 0.6)
 			G.audio.boom(muzzle())
 			Combat.shake = maxf(Combat.shake, 0.3 if controller.is_player else 0.0)
 			# shoot and scoot: after a shot at armour an AI tank backs off a few metres out of the
@@ -768,7 +828,10 @@ func _weapons(dt: float) -> void:
 				return
 			var W = G.WEAPONS["hmg"]
 			var spread = W["spread"] + (0.008 if absf(speed) > 1.0 else 0.0) + (0.02 if kind == "aagun" else 0.0)
+			tracer_n += 1
+			Combat.bright = tracer_n % 4 == 0
 			Combat.fire_ray(controller, muzzle(), Combat.spread_dir(_gun_dir(), spread), W, true, [body.get_rid()])
+			Combat.bright = false
 			G.fx.muzzle(muzzle(), false)
 			G.audio.shot(muzzle(), W)
 
@@ -1122,6 +1185,7 @@ func take_damage(amount: float, attacker, at: Vector3) -> void:
 		VehExt.pop_smoke(self, at)
 	if amount >= 60.0 and not spec.get("plane", false):
 		VehExt.dent(self, at)
+		VehExt.soot(self, at)
 		if hp < spec["hp"] * 0.55 and randf() < 0.3:
 			VehExt.lose_door(self)
 	# damage you can read from across the field: grey wisps from the engine when it's been hurt,
@@ -1175,10 +1239,37 @@ func destroy(attacker) -> void:
 			if bail or randf() < (0.3 if rider else (0.55 if kind == "tank" else 0.5)):
 				Combat.kill(s, attacker, false)
 			else:
-				s.hp = minf(s.hp, 30.0)
+				s.hp = minf(s.hp, randf_range(30.0, 55.0))
+				s.no_board_t = G.sim_time + 60.0
+				# out of the wreck and into the nearest cover, then back in the fight with his rifle
+				if not s.is_player:
+					var threat: Vector3 = attacker.pos if attacker != null and is_instance_valid(attacker) else hit_from
+					_scatter(s, threat)
+					if randf() < 0.6:
+						G.fx.callout(s, G.pick(["She's gone! Get to cover!", "I'm out! Where's the rest of the crew?", "Get down, get down!"]))
 	if attacker != null and is_instance_valid(attacker) and attacker.team != team:
 		G.ui.feed(attacker, null, false, spec["name"])
 	Stats.vehicle_lost(team)
+
+# a crewman out of a knocked-out vehicle: away from whoever did it, into cover, ready to fight on foot
+func _scatter(guy, threat: Vector3) -> void:
+	var away = G.flat(guy.pos - threat)
+	if away.length_squared() < 0.01:
+		away = -forward()
+	away = away.normalized()
+	(func():
+		if not is_instance_valid(guy) or guy.state != "alive":
+			return
+		guy.threat = threat
+		guy.has_threat = true
+		var cp = AI.find_cover(guy, threat, "hold")
+		if cp != null and G.dist2d(cp.p, guy.pos) < 30.0:
+			AI.take_cover(guy, cp)
+		else:
+			AI.go_to(guy, guy.pos + away * 14.0, 5.8)
+		guy.task = "flee"
+		guy.flee_t = 5.0
+		guy.decide_t = 4.0).call_deferred()
 
 # closest points between segments a0-a1 and b0-b1 (on the ground plane)
 static func _seg_closest(a0: Vector3, a1: Vector3, b0: Vector3, b1: Vector3) -> Array:
@@ -1213,6 +1304,8 @@ static func _seg_closest(a0: Vector3, a1: Vector3, b0: Vector3, b1: Vector3) -> 
 
 func _wreck_paint(n: Node) -> void:
 	for m in n.get_children():
+		if m.has_meta("mark") or m is CPUParticles3D:
+			continue        # bullet holes and soot keep their own look
 		if m is MeshInstance3D:
 			# scorched: every part keeps its own shade, blackened and rusted, so the wreck still reads as the vehicle it was
 			var cur = m.material_override
@@ -2186,12 +2279,13 @@ func _riders_tick() -> void:
 			any = true
 	if not any:
 		return
-	# stopped for a while: they've arrived, everybody off
+	# riders hang on through scattered fire and only jump down when it gets close: the tank stops for
+	# a while, takes a heavy hit, is badly hurt, or someone on the deck sees the enemy close by
 	stop_t = stop_t + G.DT if absf(speed) < 0.4 else 0.0
-	var contact = G.sim_time - hit_t < 3.0 or stop_t > 7.0
+	var contact = G.sim_time - heavy_t < 3.0 or stop_t > 5.0 or hp < spec["hp"] * 0.5
 	if not contact:
 		for c in seats:
-			if c != null and is_instance_valid(c) and c.vis_t != null:
+			if c != null and is_instance_valid(c) and c.vis_t != null and is_instance_valid(c.vis_t) and G.dist2d(c.vis_t.pos, pos) < 30.0:
 				contact = true
 				break
 	if not contact:

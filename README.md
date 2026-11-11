@@ -240,6 +240,30 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Cover behind vehicles:** men kneel behind a vehicle instead of lying with their legs sticking out
 - **Quieter selection:** the ring under selected men is smaller and fainter, and the line from each man to his spot only shows while you're giving the order
 - **Camo nets drape:** the net rides over the roof, sags, and slopes down to pegs on the ground with a ragged edge, blotchy colours and scraps of foliage; masts poke through
+- **Muzzle flashes at night** flicker on walls and the ground, each one a little different
+- **Tracers you can follow:** every fourth round from a machine gun is a bright tracer that stays visible from commander height
+- **Battle damage on vehicles:** bullet holes and soot stay on the hull, small parts like mirrors and lamps get shot off, and wrecks burn and then smoulder for a few minutes (ones blocking a road or a spawn are still towed away sooner)
+- **Footprints:** boot prints in the ground near the camera, deepest in the rain, on the beach and by the water
+- **Close blasts in first person** throw dirt over the view and leave your hearing muffled and ringing for a moment
+- **Hit reactions:** a round in the arm twists a man round, one in the chest rocks him back, a head graze snaps his head back
+- **Deaths against cover:** men killed with a wall at their back slide down it and end up sitting against it
+- **Quiet moments:** men check their rifle over, look around, or drink from their canteen
+- **Bayonets:** a charge order fixes bayonets, and men run through anyone they reach
+- **Sidearms:** out of rifle ammo, a man slings his rifle across his back and fights on with his pistol
+- **Kit by class:** medics wear a white armband and red crosses with a medical bag, engineers carry a shovel, machine gunners a belt of rounds and an ammo tin, AT men spare rockets on their back, assault troops grenades, snipers scrim on the helmet, officers binoculars. The radio is worn on the back
+- **Badly wounded men** stop fighting and drag themselves toward the nearest medic, who comes to meet them
+- **Crews who survive** a knocked-out vehicle get to cover and fight on as infantry
+- **The AI's command truck** drives up behind its own line and sets up as a command post, so it's worth hunting
+- **Flares** open a small parachute and throw long moving shadows at night
+- **Suspension:** vehicles squat when pulling away, dip when braking, lean in turns, bounce over rough ground, and rock back when the main gun fires
+- **Towing:** select a truck, jeep, halftrack or technical and press Tow to hitch up the nearest field gun, mortar or broken-down vehicle, then send the truck where you want it (a tow bar shows the hitch)
+- **Tank riders** hold on through scattered fire and only jump off when the tank stops, is hit hard, or the enemy is close
+- **Engine sound:** the nearest vehicles have a continuous engine note that climbs through the gears, plus a gearbox whine when backing up
+- **Battle music** now follows the whole battle (not just what's near the camera), so commander mode gets the drums too
+- **Callouts** say where the enemy is relative to the speaker and what's next to them ("Contact left, by the truck!"), and say where a man was hit
+- **Title screen battle:** a small battle plays out behind the main menu while the camera circles it
+- **Rebindable keys:** Settings → Controls. Click an action, then press the new key (Default keys puts them back)
+- **Fixed:** a stream of errors from wounded men being helped along, and from smoke being thrown for a crossing
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

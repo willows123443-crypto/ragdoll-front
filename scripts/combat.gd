@@ -58,8 +58,11 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 		s.parts[6].apply_central_impulse(-s.gun_dir * W["force"] * 0.08)
 		return
 	else:
+		# machine guns load every fourth round as a tracer that glows hot enough to see from the air
+		bright = W["id"] in ["lmg", "hmg", "bar"] and s.mag % 4 == 0
 		for k in range(W["pellets"]):
 			fire_ray(s, origin, spread_dir(dir, spread + (W["spread"] if W["pellets"] > 1 else 0.0)), W, k == 0 or k % 3 == 0)
+		bright = false
 	if not W.get("silent", false):
 		G.fx.muzzle(origin, W["id"] == "shotgun" or W["id"] == "sniper")
 		G.audio.shot(origin, W)
@@ -93,6 +96,8 @@ static func _box_exit(o: Vector3, d: Vector3, lo: Vector3, hi: Vector3) -> float
 		var t2 = (hi[k] - o[k]) / dk
 		t_exit = minf(t_exit, maxf(t1, t2))
 	return t_exit
+
+static var bright = false     # the next round fired is a glowing tracer
 
 static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, extra_ex: Array = []) -> void:
 	var exclude: Array = shooter.rids.duplicate()
@@ -188,6 +193,8 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 					# a stray round from our own side mostly just dents the paint
 					var own_side = shooter != null and is_instance_valid(shooter) and "team" in shooter and shooter.team == v.team
 					v.take_damage(ev["dmg"] * (0.9 if W["ap"] else v.spec["bullet"]) * (0.15 if own_side else 1.0), shooter, ev["p"])
+					if not v.dead or randf() < 0.3:
+						VehExt.bullet_hole(v, ev["p"], ev["n"], W["ap"] or W["id"] == "hmg")
 					# rounds that can't get through whine off the armour
 					if not W["ap"] and v.spec["bullet"] < 0.2 and randf() < 0.5:
 						var rd = d.bounce(ev["n"]).normalized()
@@ -222,7 +229,7 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 					col.hp -= W["dmg"] * 0.05
 					if col.hp <= 0.0:
 						G.world.destroy_col(col)
-	G.fx.tracer(o, d, t_end, W["tracer"], on_hit, vis)
+	G.fx.tracer(o, d, t_end, W["tracer"], on_hit, vis, bright)
 
 # keep ragdolls from flying off like rockets
 static func _cap(s, maxv: float) -> void:
@@ -308,8 +315,30 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 				s.stumble_dir = G.flat(dir).normalized()
 			else:
 				s.aim_yaw += randf_range(-0.5, 0.5)       # spun half round by the impact
-		if s.state == "alive" and randf() < 0.4:
-			G.fx.callout(s, G.pick(["I'm hit!", "Argh!", "Taking fire!"]))
+			# where it hit decides the jolt: a shoulder or arm twists him round toward that side, a round
+			# in the chest from the front rocks him back a step, the head snaps back
+			var local_hit: Vector3 = point - s.chest()
+			var rgt = Vector3(cos(s.body_yaw), 0, -sin(s.body_yaw))
+			if kind == "arm":
+				var side = signf(local_hit.dot(rgt))
+				s.body_yaw += side * randf_range(0.35, 0.7)
+				s.aim_yaw = s.body_yaw
+				s.parts[1].angular_velocity += Vector3.UP * side * randf_range(2.0, 3.5)
+			elif kind == "torso":
+				s.stumble = maxf(s.stumble, 0.3)
+				s.stumble_dir = G.flat(dir).normalized()
+			elif kind == "head":
+				s.parts[2].apply_central_impulse(G.flat(dir).normalized() * 1.2 * s.parts[2].mass)
+		if s.state == "alive" and randf() < 0.45:
+			match kind:
+				"leg":
+					G.fx.callout(s, G.pick(["My leg! I'm hit!", "Argh, my leg!", "Took one in the leg!"]))
+				"arm":
+					G.fx.callout(s, G.pick(["Took one in the arm!", "My arm! I can still shoot!", "Argh! Arm's hit!"]))
+				"head":
+					G.fx.callout(s, G.pick(["Grazed me! I'm okay!", "Christ, that was close!"]))
+				_:
+					G.fx.callout(s, G.pick(["I'm hit!", "Argh!", "I'm hit, I'm hit!", "Hit! Still in it!"]))
 	else:
 		if s.state == "getup":
 			s.fall(1.0)
@@ -380,6 +409,19 @@ static func knife(s, t) -> void:
 	else:
 		hit_soldier(t, 1, t.chest(), G.flat(t.pos - s.pos).normalized(), 110.0, s, 1.5)
 	s.fire_cd = 0.9
+
+# a bayonet thrust: a lunge forward, and it goes in hard from any side
+static func bayonet(s, t) -> void:
+	if t == null or t.state == "dead" or s.state != "alive":
+		return
+	s.throw_t = 0.35
+	s.stumble = 0.25
+	s.stumble_dir = G.flat(t.pos - s.pos).normalized()
+	G.audio.play(G.audio.s_hit, t.chest(), -8.0, 0.55)
+	cause = "bayonet"
+	hit_soldier(t, 1, t.chest(), G.flat(t.pos - s.pos).normalized(), randf_range(95.0, 150.0), s, 2.0)
+	cause = ""
+	s.fire_cd = 1.0
 
 # ---------------------------------------------------------------- rockets
 static func launch_rocket(s, origin: Vector3, dir: Vector3, veh = null) -> void:
@@ -511,6 +553,36 @@ static func step_flares() -> void:
 				f["lit"] = true
 				f["t"] = 0.0
 				G.audio.whistle(p)
+				# the parachute pops open above it, and the light throws long moving shadows (only for
+				# a couple of flares at once, they're costly)
+				var chute = Node3D.new()
+				var dome = MeshInstance3D.new()
+				var dm = SphereMesh.new()
+				dm.radius = 0.7
+				dm.height = 0.7
+				dm.is_hemisphere = true
+				dome.mesh = dm
+				var cm = StandardMaterial3D.new()
+				cm.albedo_color = Color(0.85, 0.85, 0.8)
+				cm.cull_mode = BaseMaterial3D.CULL_DISABLED
+				dome.material_override = cm
+				dome.position = Vector3(0, 1.3, 0)
+				chute.add_child(dome)
+				for a in [0.0, PI * 0.5, PI, PI * 1.5]:
+					var line = MeshInstance3D.new()
+					var lm = BoxMesh.new()
+					lm.size = Vector3(0.01, 1.4, 0.01)
+					line.mesh = lm
+					line.material_override = cm
+					line.position = Vector3(cos(a) * 0.32, 0.65, sin(a) * 0.32)
+					line.rotation = Vector3(-sin(a) * 0.45, 0, cos(a) * 0.45)
+					chute.add_child(line)
+				n.add_child(chute)
+				var shadowed = 0
+				for o in flares:
+					if o["light"].shadow_enabled:
+						shadowed += 1
+				f["light"].shadow_enabled = shadowed < 2 and G.main.is_night()
 		else:
 			# under its little parachute it sways and sinks slowly, lighting the ground for the best part of a minute
 			var life = f["t"]
@@ -762,7 +834,7 @@ static func step_grenades() -> void:
 			c.p += dv * G.DT
 			if is_instance_valid(c.node):
 				c.node.global_position += dv * G.DT
-			var up_n = c.get_meta("upper", null)
+			var up_n = (c.get_meta("upper") if c.has_meta("upper") else null)
 			if up_n != null and is_instance_valid(up_n):
 				up_n.global_position += (dv * 1.4 + Vector3(0, 0.15, 0)) * G.DT
 		if c.t < 4.0:
@@ -895,6 +967,14 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 	var cam = G.main.get_viewport().get_camera_3d()
 	if cam:
 		shake = maxf(shake, clampf(1.2 - cam.global_position.distance_to(pos) / 40.0, 0.0, 1.0))
+		# in first person a blast close by: dust thrown over the view and the hearing goes for a moment
+		if G.player != null and G.player.state != "dead":
+			var dd = G.player.pos.distance_to(pos)
+			var k = clampf(1.0 - dd / (16.0 * clampf(power, 0.6, 2.0)), 0.0, 1.0)
+			if k > 0.05:
+				shake = maxf(shake, 0.6 + k)
+				G.audio.deafen(k * 1.2)
+				G.ui.dust_hit(k)
 	G.world.damage_area(pos, R * 0.75, power)
 	if power >= 1.0:
 		G.world.blast_crater(pos, clampf(1.2 * power, 1.0, 3.2))

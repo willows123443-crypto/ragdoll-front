@@ -39,6 +39,8 @@ func _ready() -> void:
 	markers = Node3D.new()
 	add_child(markers)
 	preview_map("town")
+	if OS.get_cmdline_user_args().is_empty():
+		start_attract.call_deferred()
 	if "--autotest" in OS.get_cmdline_user_args():
 		_autotest()
 	for a in OS.get_cmdline_user_args():
@@ -112,6 +114,12 @@ func _ready() -> void:
 			_load_test(a.substr(11))
 		if a == "--recruittest":
 			_recruit_test()
+		if a == "--towtest":
+			_tow_test()
+		if a.begins_with("--attractshot="):
+			_attract_shot(a.substr(14))
+		if a.begins_with("--fxshot="):
+			_fx_shot(a.substr(9))
 		if a.begins_with("--camoshot="):
 			_camo_shot(a.substr(11))
 		if a.begins_with("--batchshot="):
@@ -365,10 +373,26 @@ func quit_to_title() -> void:
 func preview_map(id: String) -> void:
 	_clear()
 	G.started = false
+	G.attract = false
 	G.world.load_map(id)
 	refresh_markers()
 
+# behind the title screen: a small battle on the menu map, fighting on its own while the camera circles
+func start_attract() -> void:
+	if G.started or G.editor.active:
+		return
+	var keep = G.ui.title.visible
+	start_game({"map": G.map_id, "mode": "capture", "size": 6, "limit": 999999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	G.attract = true
+	G.ui.title.visible = keep
+	G.ui.menu.visible = false
+
+func stop_attract() -> void:
+	if G.attract:
+		preview_map(G.map_id)
+
 func start_game(o: Dictionary) -> void:
+	G.attract = false
 	_clear()
 	spawn_q.clear()
 	Prep.reset()
@@ -681,7 +705,7 @@ func on_kill(_s, _attacker) -> void:
 				end_game(t)
 
 func end_game(t: int) -> void:
-	if G.over:
+	if G.over or G.attract:
 		return
 	if OS.get_cmdline_user_args().has("--enddbg"):
 		print("ENDGAME team ", t, " at ", G.sim_time, " ", get_stack())
@@ -1002,6 +1026,13 @@ func _shot_mode(dir: String) -> void:
 				sx.face(0.0)
 				if _arg("fwid", "") != "":
 					sx.set_weapon(_arg("fwid", "").split(",")[i % _arg("fwid", "").split(",").size()])
+				if _arg("fcls", "") != "":
+					sx.set_class(_arg("fcls", "").split(",")[i % _arg("fcls", "").split(",").size()])
+				if _arg("fbayo", "") != "" and i % 2 == 1:
+					sx.set_weapon("rifle")
+					sx.fix_bayonet()
+				if _arg("fbayo", "") != "" and i == 4:
+					sx.to_sidearm()
 				row.append(sx)
 		await _wait(1.2)
 		for sx in row:
@@ -2605,6 +2636,91 @@ func _at_test(dir: String) -> void:
 	get_tree().quit()
 
 # vehicles with their headlights on at night, from the side, from in front and from above
+# a truck sent to hitch up an anti-tank gun, then driven off with it
+func _tow_test() -> void:
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.3)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	var c: Vector3 = _free_spot(G.world.rally_point(0))
+	var tr = spawn_vehicle("truck", 0, c, 0.0, true)
+	var gun = spawn_vehicle("atgun", 0, _free_spot(c + Vector3(25, 0, 10)), 0.0, false)
+	await _wait(1.0)
+	print("TOWTEST order: ", VehExt.order_tow(tr), " driver ", tr.driver() != null)
+	for k in range(30):
+		await _wait(1.0)
+		if tr.towing != null:
+			break
+	print("TOWTEST hitched ", tr.towing == gun, " dist ", G.dist2d(tr.pos, gun.pos))
+	tr.command(tr.pos + Vector3(-40, 0, -20))
+	await _wait(15.0)
+	print("TOWTEST after drive: towing ", tr.towing == gun, " gap ", G.dist2d(tr.pos, gun.pos), " bar ", tr.has_meta("tow_bar"), " moved ", G.dist2d(gun.pos, c + Vector3(25, 0, 10)))
+	print("TOWTEST unhitch: ", VehExt.order_tow(tr), " bar ", tr.has_meta("tow_bar"))
+	get_tree().quit()
+
+# the title screen with its little battle going on behind
+func _attract_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	await _wait(0.5)
+	start_attract()
+	await _wait(float(_arg("secs", "25")))
+	print("ATTRACT started ", G.started, " attract ", G.attract, " soldiers ", G.soldiers.size(), " root ", G.ui.root.visible, " title ", G.ui.title.visible)
+	await _snap(dir, "title")
+	await _wait(6.0)
+	await _snap(dir, "title2")
+	G.ui._show_settings()
+	await _wait(0.5)
+	print("ATTRACT settings root ", G.ui.root.visible)
+	await _snap(dir, "settings")
+	get_tree().quit()
+
+# effects up close: a machine gun's tracers from commander height, a shot-up truck, a flare at night
+func _fx_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = _arg("time", "dusk")
+	apply_time()
+	await _wait(0.5)
+	start_game({"map": _arg("map", "field"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	G.pc.force_free = true
+	var c: Vector3 = _free_spot(G.world.capture)
+	var gunner = spawn_soldier(0, c.x - 30.0, c.z, "lmg")
+	var targ = []
+	for k in range(4):
+		var t = spawn_soldier(1, c.x + 25.0, c.z - 6.0 + k * 4.0, "rifle")
+		t.hp = 9999.0
+		targ.append(t)
+	var tr = spawn_vehicle("truck", 1, _free_spot(c + Vector3(5, 0, 12)), 0.0, false)
+	await _wait(1.0)
+	for k in range(30):
+		Combat.fire_ray(gunner, tr.center() + Vector3(-12, 0, randf_range(-2, 2)), (tr.center() + Vector3(randf_range(-1.5, 1.5), randf_range(-0.6, 0.4), randf_range(-1.5, 1.5)) - (tr.center() + Vector3(-12, 0, 0))).normalized(), G.WEAPONS["hmg"], true)
+	tr.take_damage(90.0, gunner, tr.center() + Vector3(-1, 0.3, 0))
+	gunner.order = {"mode": "hold", "point": gunner.pos}
+	await _wait(2.5)
+	await _look(c + Vector3(-5, 70, 30), c)
+	var g0: Vector3 = c + Vector3(-30, 1.2, -4)
+	for f in range(36):
+		Combat.bright = f % 4 == 0
+		var tgt: Vector3 = c + Vector3(25, 1.0, randf_range(-8, 8))
+		Combat.fire_ray(targ[0], g0, (tgt - g0).normalized(), G.WEAPONS["lmg"], true)
+		Combat.bright = false
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+	print("FXSHOT tracers ", G.fx.tracers.size(), " bright ", G.fx.tracers.filter(func(t): return t.has("bright")).size(), " lens ", G.fx.tracers.map(func(t): return int(t["len"])))
+	await _snap(dir, "tracers_high")
+	await _look(tr.center() + Vector3(-6, 1.5, 3), tr.center())
+	await _wait(0.3)
+	await _snap(dir, "truck_holes")
+	print("FXSHOT holes ", tr.get_meta("holes", []).size(), " flares ", Combat.flares.size())
+	G.settings["time"] = "night"
+	apply_time()
+	Combat.flare(c, c + Vector3(10, 0, 0))
+	await _wait(5.0)
+	await _look(c + Vector3(-30, 8, 30), c + Vector3(10, 10, 0))
+	await _snap(dir, "flare")
+	get_tree().quit()
+
 # camo nets thrown over a few finished structures, from two angles
 func _camo_shot(dir: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)

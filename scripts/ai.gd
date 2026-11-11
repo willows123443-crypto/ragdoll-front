@@ -57,6 +57,34 @@ static func bearing_text(from: Vector3, to: Vector3) -> String:
 	var i = int(round(fposmod(a, TAU) / (PI / 4.0))) % 8
 	return dirs[i]
 
+# where an enemy is, the way a soldier would shout it: relative to the way he's facing, and by
+# whatever's next to the enemy ("Contact left, by the truck!")
+static func rel_text(s, to: Vector3) -> String:
+	var a = G.wrap_a(atan2(to.x - s.pos.x, to.z - s.pos.z) - s.body_yaw)
+	if absf(a) < 0.5:
+		return "front"
+	if absf(a) > 2.5:
+		return "behind us"
+	return "left" if a > 0.0 else "right"
+
+static func landmark(p: Vector3) -> String:
+	for v in G.vehicles:
+		if G.dist2d(v.pos, p) < 6.0:
+			var nm: String = v.spec["name"].to_lower()
+			return ("by the burning " + nm) if v.dead else ("by the " + nm)
+	if Doors.building_at(p) >= 0:
+		return "upstairs window" if p.y > G.world.ground_y(p.x, p.z) + 2.0 else "in the house"
+	for c in G.world.cols_in_rect(p.x - 2.5, p.z - 2.5, p.x + 2.5, p.z + 2.5):
+		if not c.alive:
+			continue
+		if c.has_meta("tree"):
+			return "by the trees"
+		if c.prop == 2:
+			return "in the hedge"
+		if c.hi.y - c.lo.y < 2.0 and c.hi.y - c.lo.y > 0.6:
+			return "behind the wall"
+	return ""
+
 static func order_of(s) -> Dictionary:
 	return s.order if s.order != null else G.orders[s.team]
 
@@ -794,7 +822,16 @@ static func perceive(s) -> void:
 			share_intel(s, o, o.pos)
 		if fresh and s.is_up() and G.sim_time - s.seen_t > 6.0:
 			var dist = int(round(s.pos.distance_to(o.pos) / 5.0)) * 5
-			G.fx.callout(s, G.pick(["Contact %s, %dm!" % [bearing_text(s.pos, o.pos), dist], "Enemy %s!" % bearing_text(s.pos, o.pos), "Contact!"]))
+			var lm = landmark(o.pos)
+			var rel = rel_text(s, o.pos)
+			var lines = ["Contact %s, %dm!" % [bearing_text(s.pos, o.pos), dist], "Contact %s!" % rel]
+			if lm != "":
+				lines += ["Contact %s, %s!" % [rel, lm], "Enemy %s, %dm!" % [lm, dist], "Movement %s, %s!" % [lm, rel]]
+			if o.W["id"] == "lmg":
+				lines = ["MG %s, %s!" % [rel, lm if lm != "" else "%dm" % dist]]
+			elif o.W["rocket"]:
+				lines = ["Rocket team %s!" % (lm if lm != "" else rel)]
+			Voice.callout_line(s, G.pick(lines))
 		if vis == null:
 			vis = o
 			peek_only = po
@@ -1035,6 +1072,41 @@ static func _initiative(s, known: bool, threat: Vector3, dT: float) -> bool:
 			if randf() < 0.5:
 				G.fx.callout(s, G.pick(["Too many of them, fall back!", "Pull back, pull back!", "Back to the next cover!"]))
 			return true
+	# badly hurt: no more fighting. He drags himself toward the nearest medic (who comes to meet him),
+	# or into cover if there's no medic about
+	if s.hp < 30.0 and s.state == "alive" and not s.is_player and s.vehicle == null and not s.zombie and s.task != "crawl_med":
+		var med = null
+		var md = 70.0
+		for o in G.soldiers:
+			if o != s and o.team == s.team and o.cls == "medic" and o.state == "alive" and o.vehicle == null:
+				var d = G.dist2d(o.pos, s.pos)
+				if d < md:
+					md = d
+					med = o
+		if med != null and md > 2.5:
+			release_cover(s)
+			s.task = "crawl_med"
+			s.set_meta("crawl_med", med)
+			go_to(s, med.pos.lerp(s.pos, 0.4), 2.2)
+			if not s.has_meta("said_hurt"):
+				s.set_meta("said_hurt", true)
+				G.fx.callout(s, G.pick(["I'm hit bad! Medic!", "Doc! I need you!", "I can't fight, I'm hit!"]))
+			if med.task == null or med.task == "patch":
+				med.patient = s
+				med.task = "patch"
+				med.job_cd = 6.0
+				go_to(med, s.pos.lerp(med.pos, 0.4), 5.0)
+			return true
+	if s.task == "crawl_med":
+		var med2 = (s.get_meta("crawl_med") if s.has_meta("crawl_med") else null)
+		if s.hp >= 45.0 or med2 == null or not is_instance_valid(med2) or med2.state != "alive" or G.dist2d(med2.pos, s.pos) < 2.0:
+			s.task = null
+			s.remove_meta("crawl_med")
+			stop_move(s)
+		else:
+			if s.move_target == null or s.move_target.distance_to(med2.pos) > 4.0:
+				go_to(s, med2.pos, 2.2)
+			return true
 	# hurt and out in the open: get out of the line, to a field hospital if there's one close
 	if s.hp < 40.0 and not s.in_cover:
 		if s.supp > 0.3:
@@ -1264,6 +1336,8 @@ static func decide(s) -> void:
 			return
 	if order["mode"] == "charge":
 		release_cover(s)
+		if s.fix_bayonet() and Morale.is_leader(s):
+			G.fx.callout(s, G.pick(["Fix bayonets!", "Bayonets! Up and at 'em!", "Cold steel, lads!"]))
 		s.task = "charge"
 		s.prone_t = false
 		var best = null
@@ -1555,7 +1629,7 @@ static func _help_walk(s) -> bool:
 		return false
 	# the one helping
 	if s.task == "help_walk":
-		var w = s.get_meta("helping", null)
+		var w = (s.get_meta("helping") if s.has_meta("helping") else null)
 		var done = w == null or not is_instance_valid(w) or w.state != "alive" or not w.has_meta("leg_wound") or w.vehicle != null
 		var dest: Vector3 = s.get_meta("help_to", s.pos)
 		if not done and (G.dist2d(s.pos, dest) < 3.0 or G.sim_time > s.get_meta("help_until", 0.0) or s.supp > 1.4):
@@ -1583,7 +1657,7 @@ static func _help_walk(s) -> bool:
 		return true
 	if not s.has_meta("leg_wound") or s.task in ["medic", "stretcher"]:
 		return false
-	var h = s.get_meta("helper", null)
+	var h = (s.get_meta("helper") if s.has_meta("helper") else null)
 	if h != null and is_instance_valid(h) and h.state == "alive" and h.task == "help_walk":
 		# beside him, his arm over the helper's shoulders
 		var hr = Vector3(-cos(h.body_yaw), 0, sin(h.body_yaw))
@@ -1892,7 +1966,7 @@ static func update(s) -> void:
 			var dw = G.dist2d(w.pos, s.pos)
 			var hot = s.has_seen and G.sim_time - s.seen_t < 6.0
 			# under fire: screen him with smoke first, then go in low and crawl the last few metres
-			if hot and dw < 22.0 and s.smokes > 0 and s.get_meta("smoked_for", null) != w:
+			if hot and dw < 22.0 and s.smokes > 0 and (s.get_meta("smoked_for") if s.has_meta("smoked_for") else null) != w:
 				s.set_meta("smoked_for", w)
 				Combat.throw_grenade(s, w.pos + G.flat(s.threat - w.pos).normalized() * 5.0, "smoke")
 				G.fx.callout(s, G.pick(["Smoke out, I'm going for him!", "Covering smoke! Going in!"]))
@@ -2126,6 +2200,11 @@ static func aim_and_fire(s) -> void:
 		s.set_meta("knife", true)
 		s.decide_t = 0.0
 		G.fx.callout(s, G.pick(["I'm out! Come on then!", "Nothing left... for the lads!", "Fix knives! At them!", "Last of it, let's go!"]))
+	# fixed bayonets and right on top of him: run him through rather than fumble a shot
+	if tgt != null and s.has_meta("bayonet") and s.wid in Soldier.BAYONET_GUNS and s.fire_cd <= 0.0 and tgt.state == "alive" \
+			and G.dist2d(tgt.pos, s.pos) < 1.9 and absf(tgt.pos.y - s.pos.y) < 1.0 and not s.is_player:
+		Combat.bayonet(s, tgt)
+		return
 	# raiders and fighters with a knife finish it quietly when they're on top of someone
 	if tgt != null and s.has_meta("knife") and s.fire_cd <= 0.0 and tgt.state == "alive" and G.dist2d(tgt.pos, s.pos) < 1.7 and absf(tgt.pos.y - s.pos.y) < 1.0:
 		Combat.knife(s, tgt)
@@ -2292,6 +2371,15 @@ static func stance(s) -> void:
 		s.crouch_t = 1.0
 		s.prone_t = false
 		return
+	# badly hurt and under fire: crawls the whole way to the medic or cover
+	if s.task == "crawl_med":
+		var md = (s.get_meta("crawl_med") if s.has_meta("crawl_med") else null)
+		if s.hp >= 45.0 or md == null or not is_instance_valid(md) or md.state != "alive" or G.dist2d(md.pos, s.pos) < 2.0:
+			s.task = null
+			s.remove_meta("crawl_med")
+		else:
+			s.prone_t = s.supp > 0.25 or G.sim_time - s.seen_t < 4.0
+			return
 	if s.want.length_squared() > 0.1 and not s.in_cover:
 		s.prone_t = false
 	# in a shell hole: lie in it, below the rim

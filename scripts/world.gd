@@ -137,6 +137,13 @@ func in_water(x: float, z: float) -> bool:
 			return true
 	return false
 
+# close to the edge of a river or the sea (wet, muddy ground)
+func near_water(x: float, z: float, r: float) -> bool:
+	for w in water:
+		if x > w[0] - r and x < w[1] + r and z > w[2] - r and z < w[3] + r and ground_y(x, z) < w[4] + 1.2:
+			return true
+	return false
+
 # vehicles drive on bridge decks; everything else on the ground
 func drive_y(x: float, z: float) -> float:
 	for b in bridges:

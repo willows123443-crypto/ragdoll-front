@@ -238,6 +238,7 @@ static func truck(t: int, n: int, dest = null) -> void:
 	var yaw = atan2(drop.x - entry.x, drop.z - entry.z)
 	var v = Vehicle.make("truck", t, entry, yaw)
 	v.mission = {"type": "deliver", "drop": drop, "exit": entry, "stage": 0, "wait": 0.0}
+	v.set_meta("transport", true)
 	AI.batch_begin(AI.CREW)
 	var drv = G.main.spawn_soldier(t, entry.x, entry.z, "rifle")
 	AI.batch_end()
@@ -245,13 +246,22 @@ static func truck(t: int, n: int, dest = null) -> void:
 		v.remove()
 		return
 	drv.mount(v, 0)
-	AI.batch_begin()
+	# the men are made a couple a frame (it starts off the map), so a big order doesn't stall the game
+	var cls_list: Array = G.main.force_cls.duplicate()
+	var holder = {"q": null}
 	for i in range(n):
-		var s = G.main.spawn_soldier(t, entry.x, entry.z, "")
-		if s == null:
-			break
-		s.mount(v, i + 1)
-	AI.batch_end()
+		var ci: String = cls_list[i] if i < cls_list.size() else ""
+		var seat_i = i + 1
+		G.main.queue_spawn(func():
+			if not is_instance_valid(v) or v.dead or seat_i >= v.seats.size():
+				return
+			G.main.force_cls = [ci] if ci != "" else []
+			AI.batch_begin({}, holder["q"])
+			var s = G.main.spawn_soldier(t, entry.x, entry.z, "")
+			holder["q"] = AI.batch_end()
+			G.main.force_cls = []
+			if s != null:
+				s.mount(v, seat_i))
 	G.ui.radio(t, "%d reinforcements inbound by truck, ETA two minutes" % n)
 
 # a transport helicopter flies troops in and lands them at the rally point

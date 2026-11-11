@@ -11,6 +11,10 @@ var spawn_flags: Array = []
 var tick_us = 0
 var prof = [0, 0]
 var force_cls: Array = []   # classes for the next soldiers made (bought squads)
+var spawn_q: Array = []      # soldiers still to be made, a couple a frame
+
+func queue_spawn(f: Callable) -> void:
+	spawn_q.append(f)
 var sim_ms = 0.0        # smoothed cost of one simulation tick, for the performance readout
 var tick_n = 0
 
@@ -88,6 +92,14 @@ func _ready() -> void:
 			_map_shots(a.substr(11))
 		if a == "--camptest2":
 			_camp_test2()
+		if a == "--stairtest":
+			_stair_test()
+		if a == "--ambtest":
+			_amb_test()
+		if a == "--cbtest":
+			_cb_test()
+		if a == "--recruittest":
+			_recruit_test()
 		if a.begins_with("--batchshot="):
 			_batch_shot(a.substr(12))
 		if a == "--ruintest":
@@ -342,6 +354,7 @@ func preview_map(id: String) -> void:
 
 func start_game(o: Dictionary) -> void:
 	_clear()
+	spawn_q.clear()
 	Prep.reset()
 	G.storm = false
 	G.fx.set_storm(false)
@@ -575,6 +588,9 @@ func _sim_step() -> void:
 	if not G.over and not Prep.active():
 		G.game_time += G.DT
 	G.path_budget = 4
+	for k in range(mini(2, spawn_q.size())):
+		var f: Callable = spawn_q.pop_front()
+		f.call()
 	Reinforce.step(G.DT)
 	Build.step(G.DT)
 	var ta = Time.get_ticks_usec()
@@ -1993,7 +2009,7 @@ func _mode_test(mode: String) -> void:
 		for v in G.vehicles:
 			if v.kind == "atgun":
 				pz += " at[%s %.1f]" % ["dead" if v.dead else ("crew" if v.gunner() != null else "nocrew"), G.sim_time - v.get_meta("fire_t", -99.0)]
-		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " raze %d hq %s" % [G.soldiers.filter(func(x): return x.state == "alive" and x.task == "raze").size(), str(Build.sites.filter(func(x): return x["kind"] == "hq").map(func(x): return "%d/%d%s" % [x["cols"].filter(func(c): return c.alive).size(), x["cols"].size(), "X" if x["dead"] else ""]))] + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()] + " route %s stuck %d" % [str(G.world.route_stats), _stuck_count()]])
+		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " raze %d hq %s" % [G.soldiers.filter(func(x): return x.state == "alive" and x.task == "raze").size(), str(Build.sites.filter(func(x): return x["kind"] == "hq").map(func(x): return "%d/%d%s" % [x["cols"].filter(func(c): return c.alive).size(), x["cols"].size(), "X" if x["dead"] else ""]))] + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()] + " route %s stuck %d" % [str(G.world.route_stats), _stuck_count()] + " cveh %d/%d depots %d" % [G.vehicles.filter(func(v): return v.team == 0 and not v.dead and v.kind in Support.AI_VEH).size(), G.vehicles.filter(func(v): return v.team == 1 and not v.dead and v.kind in Support.AI_VEH).size(), Build.sites.filter(func(x): return x["kind"] == "depot" and not x["dead"]).size()]])
 		if G.over:
 			break
 	get_tree().quit()
@@ -2030,6 +2046,14 @@ func _batch_shot(dir: String) -> void:
 	pc.test_mouse = pc.cam.unproject_position(c + fwd * 22.0 + Vector3(fwd.z, 0, -fwd.x) * 6.0)
 	await _wait(0.4)
 	await _snap(dir, "ghosts")
+	# one man clicked: his card
+	var keep_sel = pc.selection.duplicate()
+	pc.selection = [men[0]]
+	G.ui.show_unit(men[0])
+	await _wait(0.5)
+	await _snap(dir, "unit_card")
+	pc.selection = keep_sel
+	G.ui.hide_info()
 	print("BATCHSHOT ghosts ", pc.pghosts.filter(func(x): return x.visible).size(), " tool ", G.ui.tool, " menu ", G.ui.menu_open(), " mouse ", pc.test_mouse, " ground ", pc._ground_at(pc.test_mouse))
 	# a dragged line across their front
 	pc.test_mouse = Vector2(-5000, -5000)
@@ -2102,6 +2126,99 @@ func _batch_shot(dir: String) -> void:
 	for k in range(6):
 		Campaign._event([])
 		print("BATCHSHOT event ", Campaign.data.get("event", ""), " weather ", Campaign.data.get("weather", ""), " funds ", Campaign.data["funds"])
+	get_tree().quit()
+
+# men sent upstairs by the stairs; then the floor is blown away and they're sent again (they mustn't
+# keep climbing into thin air); then a ladder's wall comes down (the ladder must fall)
+func _stair_test() -> void:
+	await _wait(0.5)
+	start_game({"map": _arg("map", "town"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(1.0)
+	var T = null
+	var L = null
+	for t in G.world.towers:
+		if t.get("ladder", false):
+			if L == null:
+				L = t
+		elif T == null and not t.get("posts", []).is_empty():
+			T = t
+	print("STAIR towers ", G.world.towers.size(), " house ", T != null, " ladder ", L != null)
+	if T == null:
+		get_tree().quit()
+		return
+	var inside: Vector3 = T["inside"]
+	var men = []
+	for i in range(3):
+		var sx = spawn_soldier(0, inside.x + i * 0.8, inside.z + 3.0, "rifle")
+		men.append(sx)
+	await _wait(0.5)
+	var post = T["posts"][0]
+	var goal = Vector3(post[0], T["stair_top"].y + G.world.ground_y(post[0], post[1]), post[1])
+	print("STAIR under-stairs blockers ", G.world.cols.filter(func(c): return c.has_meta("under_stairs")).size(), " floor at goal ", G.world.floor_at(goal.x, goal.z, goal.y), " tower ok ", G.world.tower_ok(T))
+	for m in men:
+		m.order = {"mode": "move", "point": goal}
+		AI.route_to(m, goal, 4.4)
+	for k in range(10):
+		await _wait(1.5)
+		print("STAIR up t%d " % k + " | ".join(men.map(func(m): return "y%.1f route %s task %s" % [m.pos.y - G.world.ground_y(m.pos.x, m.pos.z), m.route != null, m.task])))
+	# blow the upper floor away
+	var gone = 0
+	for c in G.world.cols.duplicate():
+		if c.alive and c.dest and c.hi.y - c.lo.y < 0.7 and absf(c.hi.y - c.gy - T["floor_y"]) < 0.5 and absf((c.lo.x + c.hi.x) / 2.0 - T["x"]) < T["w"] / 2.0 and absf((c.lo.z + c.hi.z) / 2.0 - T["z"]) < T["d"] / 2.0:
+			G.world.destroy_col(c)
+			gone += 1
+	print("STAIR floor pieces destroyed ", gone, " tower ok now ", G.world.tower_ok(T))
+	await _wait(3.0)
+	for m in men:
+		m.order = {"mode": "move", "point": goal}
+		m.decide_t = 0.0
+	var climbs = 0
+	for k in range(8):
+		await _wait(1.5)
+		for m in men:
+			if m.route != null:
+				climbs += 1
+		print("STAIR after t%d " % k + " | ".join(men.map(func(m): return "y%.1f route %s state %s" % [m.pos.y - G.world.ground_y(m.pos.x, m.pos.z), m.route != null, m.state])))
+	print("STAIR route ticks after floor gone ", climbs)
+	if L != null:
+		var lp: Vector3 = L["lad_pts"][1]
+		var wall = null
+		for c in G.world.cols:
+			if c.alive and lp.x > c.lo.x - 0.6 and lp.x < c.hi.x + 0.6 and lp.z > c.lo.z - 0.6 and lp.z < c.hi.z + 0.6 and lp.y > c.lo.y - 0.3 and lp.y < c.hi.y + 0.3:
+				wall = c
+				break
+		print("STAIR ladder wall found ", wall != null)
+		if wall != null:
+			G.world.destroy_col(wall)
+		print("STAIR ladder down ", L.get("ladder_down", false), " tower ok ", G.world.tower_ok(L))
+	get_tree().quit()
+
+# recruit squads in commander mode and follow their trucks: where they go, how fast, why they stop
+func _recruit_test() -> void:
+	await _wait(0.5)
+	start_game({"map": _arg("map", "field"), "mode": "commander", "size": 10, "limit": 999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	await _wait(2.0)
+	var before = G.vehicles.duplicate()
+	var t0 = Time.get_ticks_usec()
+	for k in range(4):
+		spawn_soldier(0, -150.0 + k, 0.0, "")
+	print("RECRUIT perf: 4 soldiers %.1f ms" % ((Time.get_ticks_usec() - t0) / 1000.0))
+	for k in range(int(_arg("n", "3"))):
+		var t1 = Time.get_ticks_usec()
+		Reinforce.truck_cls(0, ["rifleman", "rifleman", "mg", "rifleman", "at", "medic", "rifleman", "rifleman"])
+		print("RECRUIT perf: truck of 8 %.1f ms" % ((Time.get_ticks_usec() - t1) / 1000.0))
+		await _wait(float(_arg("gap", "4")))
+	var trucks = G.vehicles.filter(func(v): return not (v in before))
+	for k in range(int(_arg("secs", "70")) / 2):
+		await _wait(2.0)
+		var parts = []
+		for v in trucks:
+			if not is_instance_valid(v):
+				parts.append("gone")
+				continue
+			var m = v.mission
+			parts.append("%s(%.0f,%.0f) spd%.1f %s st%s drop%.0f riders%d" % [v.kind, v.pos.x, v.pos.z, v.speed, v.why, str(m.get("stage", "-")) if m != null else "-", G.dist2d(v.pos, m["drop"]) if m != null and m.has("drop") else -1.0, v.seats.filter(func(x): return x != null).size()])
+		print("RECRUIT t%02d " % (k * 2) + " | ".join(parts))
 	get_tree().quit()
 
 func _camp_test2() -> void:
@@ -2400,6 +2517,46 @@ func _dog_test() -> void:
 	get_tree().quit()
 
 # a wounded man far from the field hospital gets carried back on a stretcher by two men
+# an ambulance fetches a wounded man: medics out with a stretcher, back in, to the hospital, inside, out again
+func _amb_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	var home: Vector3 = G.world.rally_point(0)
+	var fw = G.flat(G.world.capture - home).normalized()
+	var hp = _free_spot(home)
+	Build.place("hospital", 0, hp, fw, true)
+	var amb = spawn_vehicle("ambulance", 0, _free_spot(hp + fw * 12.0), atan2(fw.x, fw.z))
+	var wp = _free_spot(hp + fw * 60.0)
+	var w = spawn_soldier(0, wp.x, wp.z, "rifle")
+	var wname = w.sname
+	await _wait(0.5)
+	w.hp = 30.0
+	w.make_wounded()
+	w.bleed = 0.0
+	for k in range(45):
+		await _wait(2.0)
+		var meds = amb.get_meta("medics", [])
+		var ws = (w.state + (" in-veh" if w.vehicle != null else "") + (" stretcher" if w.has_meta("stretcher") else "")) if is_instance_valid(w) else "gone(in hospital)"
+		var back = G.soldiers.filter(func(x): return x.sname == wname and not is_instance_valid(w) and x.state == "alive")
+		print("AMBTEST pos %s yaw %.2f path %s | " % [str(amb.pos), amb.yaw, str(amb.path)] + "why %s path %d/%d y%.1f r%.1f st%.1f inp %s | " % [amb.why, amb.path_i, amb.path.size(), amb.yield_t, amb.reverse_t, amb.stuck_t, str(amb.player_inputs)] + "t%d amb d_w %.1f d_h %.1f spd %.1f | medics %s | w %s | rec %d | back out %s" % [k * 2, G.dist2d(amb.pos, wp), G.dist2d(amb.pos, hp), amb.speed, ",".join(meds.map(func(m): return (m.task if m.task != null else "-") + ("@veh" if m.vehicle != null else "") if is_instance_valid(m) else "x")), ws, Medical.recovering.size(), str(back.size() > 0) + (" dist_h %.0f" % G.dist2d(back[0].pos, hp) if back.size() > 0 else "")])
+		if back.size() > 0 and G.dist2d(back[0].pos, hp) > 15.0:
+			break
+	get_tree().quit()
+
+func _cb_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	var p = _free_spot(G.world.rally_point(0))
+	var st = Build.place("cbgun", 0, p, Vector3(1, 0, 0), true)
+	await _wait(0.5)
+	print("CBTEST site ", st != null and st["done"], " alive ", Build.alive(st))
+	Support.fire_mission(1, p + Vector3(15, 0, 0), null, 12, 12.0, 1.6)
+	await _wait(25.0)
+	print("CBTEST intercepted ", Combat.intercepts, " of 13 shells")
+	get_tree().quit()
+
 func _stretch_test() -> void:
 	await _wait(0.5)
 	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})

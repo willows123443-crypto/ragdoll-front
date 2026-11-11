@@ -8,7 +8,7 @@ const TROOPS = ["paradrop", "heli"]
 const AIR = ["gunship", "fighter", "bomber"]
 const LIGHT = ["jeep", "motorbike", "technical", "ambulance", "ammotruck"]
 const ARMOUR = ["halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "bridger", "radar"]
-const BASE = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "tower", "bunker", "hospital", "radio", "depot", "supply", "observer"]
+const BASE = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "cbgun", "tower", "bunker", "hospital", "radio", "depot", "supply", "observer"]
 const DIG_IN = ["sandbags", "wire", "traps", "mgnest", "bunker", "tower"]
 
 # what side t may build (the AI side builds from this list, and so does the player)
@@ -50,7 +50,7 @@ static func has_hq(t: int) -> bool:
 
 # what the AI builds for side t (the player's own side in commander mode builds only what the player orders)
 static func ai_build(t: int) -> Array:
-	if G.mode == "sandbox" or (G.mode == "commander" and t == 0):
+	if G.mode == "sandbox" or (G.mode == "commander" and t == 0 and not G.ai_runs(0)):
 		return []
 	return build(t)
 

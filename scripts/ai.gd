@@ -450,8 +450,11 @@ static func find_post(s, threat: Vector3):
 	var best = null
 	var bs = 1e9
 	for T in G.world.towers:
+		# a building whose floor (or ladder) is gone isn't somewhere to go up to
+		if not G.world.tower_ok(T):
+			continue
 		for cp in T["cps"]:
-			if not cover_free(cp, s) or cp.ban > G.sim_time:
+			if not cover_free(cp, s) or cp.ban > G.sim_time or not G.world.cp_ok(cp):
 				continue
 			var d = G.dist2d(cp.p, s.pos)
 			if d > 70.0:
@@ -468,6 +471,9 @@ static func find_post(s, threat: Vector3):
 	return best
 
 static func take_post(s, cp) -> void:
+	if not G.world.cp_ok(cp):
+		cp.ban = G.sim_time + 600.0
+		return
 	release_cover(s)
 	cp.owner_s = s
 	s.cover = cp
@@ -476,6 +482,35 @@ static func take_post(s, cp) -> void:
 	s.prone_t = false
 	s.route = {"pts": [cp.tower["stair_bottom"], cp.tower["stair_top"], cp.p], "i": 0, "nav": true}
 	go_to(s, s.route["pts"][0], 4.4)
+
+# which building or tower a spot is in, if any
+static func tower_at(p: Vector3) -> Variant:
+	for T in G.world.towers:
+		if absf(p.x - T["x"]) < T["w"] / 2.0 + 0.3 and absf(p.z - T["z"]) < T["d"] / 2.0 + 0.3:
+			return T
+	return null
+
+# go somewhere, by the stairs (or ladder) if it's upstairs, or down them first if we're up and it isn't
+static func route_to(s, goal: Vector3, speed: float) -> void:
+	var up_goal = goal.y - G.world.ground_y(goal.x, goal.z) > 1.5
+	if up_goal:
+		var T = tower_at(goal)
+		if T != null and G.world.tower_ok(T) and G.world.floor_at(goal.x, goal.z, goal.y):
+			if upstairs(s) and s.tower != T:
+				go_downstairs(s)
+				return
+			if not upstairs(s):
+				s.tower = T
+				s.route = {"pts": [T["stair_bottom"], T["stair_top"], goal], "i": 0, "nav": true}
+				go_to(s, T["stair_bottom"], speed)
+				return
+		elif T != null:
+			# the floor up there is gone: the nearest spot on the ground below instead
+			goal = Vector3(goal.x, G.world.ground_y(goal.x, goal.z), goal.z)
+	elif upstairs(s) and G.dist2d(s.pos, goal) > 3.0:
+		go_downstairs(s)
+		return
+	go_to(s, goal, speed)
 
 static func upstairs(s) -> bool:
 	return s.pos.y - G.world.ground_y(s.pos.x, s.pos.z) > 1.5
@@ -665,6 +700,19 @@ static func follow_route(s) -> void:
 	var R = s.route
 	if s.climb != null:
 		return
+	# heading up somewhere that's been knocked down since: give it up instead of climbing into thin air
+	var last: Vector3 = R["pts"][R["pts"].size() - 1]
+	if s.tower != null and last.y > s.pos.y + 1.0 and (Engine.get_physics_frames() + s.id) % 20 == 0:
+		if not G.world.tower_ok(s.tower) or (s.cover != null and not G.world.cp_ok(s.cover)):
+			if s.cover != null:
+				s.cover.ban = G.sim_time + 600.0
+			release_cover(s)
+			s.route = null
+			s.tower = null
+			s.task = null
+			s.decide_t = 0.0
+			stop_move(s)
+			return
 	var wp: Vector3 = R["pts"][R["i"]]
 	var d = G.dist2d(wp, s.pos)
 	# a ladder instead of stairs: at its foot (or the top) climb it in one go
@@ -1001,6 +1049,13 @@ static func _initiative(s, known: bool, threat: Vector3, dT: float) -> bool:
 
 static func decide(s) -> void:
 	s.decide_t = randf_range(1.6, 2.6)
+	# the floor he was keeping watch from (or its stairs or ladder) has been blown away: forget that spot
+	if s.cover != null and s.cover.upper and not G.world.cp_ok(s.cover):
+		s.cover.ban = G.sim_time + 600.0
+		release_cover(s)
+		if s.task == "post":
+			s.task = null
+		s.tower = null
 	if s.task == "stretcher" and Stretcher.busy(s):
 		return
 	if s.task == "flee" or s.route != null or s.task == "board" or s.task == "get_radio":
@@ -1109,6 +1164,31 @@ static func decide(s) -> void:
 	var W = s.W
 	var dT = G.dist2d(threat, s.pos)
 	if upstairs(s):
+		# sent up here on purpose: stay up, at the nearest window or parapet if there's a free one
+		var op = order.get("point")
+		if order["mode"] == "move" and op != null and op.y - G.world.ground_y(op.x, op.z) > 1.5 and G.dist2d(s.pos, op) < 8.0:
+			if s.task != "post":
+				var T = tower_at(s.pos)
+				var best = null
+				var bd = 7.0
+				if T != null:
+					for cp in T["cps"]:
+						if cover_free(cp, s) and cp.ban < G.sim_time and G.world.cp_ok(cp) and G.dist2d(cp.p, s.pos) < bd:
+							bd = G.dist2d(cp.p, s.pos)
+							best = cp
+				if best != null:
+					release_cover(s)
+					best.owner_s = s
+					s.cover = best
+					s.tower = T
+					s.task = "post"
+					s.route = {"pts": [best.p], "i": 0, "nav": false}
+				else:
+					stop_move(s)
+					s.task = "hold"
+			if s.order != null and not s.order.has("arrived"):
+				s.order["arrived"] = G.sim_time
+			return
 		if s.task == "post" and s.cover != null and s.cover_bad < 2 and order["mode"] != "move" and order["mode"] != "charge":
 			return
 		if s.cover != null and s.cover_bad >= 2:
@@ -1207,14 +1287,14 @@ static func decide(s) -> void:
 		var k1 = (s.id * 37) % 9 - 4
 		var k2 = (s.id * 13) % 5 - 2
 		var goal: Vector3 = order["point"] if s.order != null else order["point"] + Vector3(k2 * 1.8, 0, k1 * 1.8)
-		if G.dist2d(s.pos, goal) > 5.0:
+		if G.dist2d(s.pos, goal) > 5.0 or absf(goal.y - s.pos.y) > 1.6:
 			if s.in_cover and s.supp > 1.1:
 				return
 			if s.cover != null:
 				release_cover(s)
 			s.task = "move"
 			s.prone_t = false
-			go_to(s, goal, 4.4)
+			route_to(s, goal, 4.4)
 			return
 		# more waypoints queued with Shift: on to the next one
 		if s.order != null and not s.order.get("queue", []).is_empty():
@@ -1338,7 +1418,7 @@ static func decide(s) -> void:
 		# a long walk: hop on a friendly vehicle heading up
 		if G.dist2d(s.pos, obj) > 110.0 and s.vehicle == null and G.sim_time > s.no_board_t and s.order == null:
 			for v in G.vehicles:
-				if v.team == s.team and not v.dead and v.mission == null and v.cmd == null and not v.spec.get("static", false) and not v.spec.get("air", false) and v.driver() != null and not v.driver().is_player and G.dist2d(v.pos, s.pos) < 25.0:
+				if v.team == s.team and not v.dead and v.mission == null and v.cmd == null and not v.spec.get("static", false) and not v.spec.get("air", false) and v.driver() != null and not v.driver().is_player and G.dist2d(v.pos, s.pos) < 25.0 and not (v.kind in ["radar", "ammotruck", "supplytruck", "ambulance", "bridger"]) and absf(v.speed) < 6.0:
 					var fsi = v.free_seat("pass")
 					if fsi >= 0 and v.spec["seats"][fsi]["role"] == "pass":
 						s.task = "board"
@@ -2208,7 +2288,7 @@ static func grid_ref(p: Vector3) -> String:
 # inside it (just climbed out, or it rolled up to him) he steps out to the nearer side
 # men step round each other instead of shoving, and take turns at a doorway
 static func _keep_apart(s) -> void:
-	if s.vault != null or s.vehicle != null or s.climb != null or s.scramble != null or s.dragging != null:
+	if s.prone or s.vault != null or s.vehicle != null or s.climb != null or s.scramble != null or s.dragging != null:
 		return
 	var moving = s.want.length_squared() > 0.04
 	var push = Vector3.ZERO

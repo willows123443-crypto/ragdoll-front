@@ -695,23 +695,80 @@ static func pop_smoke(v, at: Vector3) -> void:
 			v.reverse_t = 2.5
 
 # ambulances fetch the wounded and run them back to the field hospital (or HQ)
+# an ambulance carries two medics of its own. It drives to a wounded man well clear of the enemy, the
+# medics get out and carry him to the back on a stretcher, climb back in, and it takes him to the
+# field hospital, where he goes inside to be treated.
+static func _amb_medics(v) -> Array:
+	var out = []
+	for m in v.get_meta("medics", []):
+		if is_instance_valid(m) and (m.state == "alive" or m.state == "riding"):
+			out.append(m)
+	return out
+
+static func _amb_crew_up(v) -> void:
+	if v.has_meta("medics"):
+		return
+	var meds = []
+	for k in range(2):
+		var seat = v.free_seat("pass")
+		if seat < 0:
+			break
+		G.main.force_cls = ["medic"]
+		AI.batch_begin(AI.CREW)
+		var m = G.main.spawn_soldier(v.team, v.pos.x, v.pos.z, "")
+		AI.batch_end()
+		G.main.force_cls = []
+		if m == null:
+			break
+		m.mount(v, seat)
+		m.set_meta("amb_crew", v)
+		meds.append(m)
+	v.set_meta("medics", meds)
+
 static func medevac(v, dt: float):
+	_amb_crew_up(v)
+	var meds = _amb_medics(v)
+	# patients aboard (not counting the medics)
 	var load = 0
 	for i in range(1, v.seats.size()):
-		if v.seats[i] != null:
+		var p = v.seats[i]
+		if p != null and not p.has_meta("amb_crew"):
 			load += 1
 	var hosp = null
 	for st in Build.sites:
 		if st["team"] == v.team and st["kind"] == "hospital" and Build.alive(st):
 			if hosp == null or G.dist2d(st["p"], v.pos) < G.dist2d(hosp["p"], v.pos):
 				hosp = st
-	var home: Vector3 = hosp["p"] if hosp != null else G.world.spawn[v.team]
+	var home: Vector3 = G.world.spawn[v.team]
+	if hosp != null:
+		# a free bay beside the hospital tent, not the tent itself
+		if not v.has_meta("bay") or G.dist2d(v.get_meta("bay_for"), hosp["p"]) > 1.0:
+			v.set_meta("bay", G.world.park_spot(hosp["p"], v, G.world.capture))
+			v.set_meta("bay_for", hosp["p"])
+		home = v.get_meta("bay")
+	# the medics are out with a stretcher: wait for them
+	var out_meds = meds.filter(func(m): return m.vehicle == null)
+	if not out_meds.is_empty():
+		v.set_meta("load_t", v.get_meta("load_t", 0.0) + dt)
+		if v.get_meta("load_t", 0.0) < 45.0:
+			for m in out_meds:
+				if not Stretcher.busy(m) and m.task != "board":
+					m.task = "board"
+					m.board_target = v
+			return null
+		v.set_meta("load_t", 0.0)        # given up on them: carry on without
+		v.set_meta("medics", meds.filter(func(m): return m.vehicle == v))
+	v.set_meta("load_t", 0.0)
+	var free_seats = 0
+	for i in range(1, v.seats.size()):
+		if v.seats[i] == null:
+			free_seats += 1
 	# the nearest wounded soldier nobody is already helping
 	var best = null
 	var bd = 160.0
-	if load < v.seats.size() - 1:
+	if free_seats > 0 and meds.size() >= 2:
 		for s in G.soldiers:
-			if s.team == v.team and s.state == "wounded" and s.dragger == null and s.carried_by == null:
+			if s.team == v.team and s.state == "wounded" and s.dragger == null and s.carried_by == null and not Stretcher.busy(s):
 				var d = G.dist2d(s.pos, v.pos)
 				var near_enemy = false
 				for o in G.soldiers:
@@ -722,24 +779,29 @@ static func medevac(v, dt: float):
 					bd = d
 					best = s
 	if best != null and (load == 0 or bd < 50.0):
-		if bd < 5.0 and absf(v.speed) < 1.0:
-			var seat = v.free_seat("pass")
-			if seat > 0 and best.mount(v, seat):
-				G.fx.callout(best, "Thank God…")
+		if bd < 9.0 and absf(v.speed) < 1.0:
+			# out with the stretcher
+			for m in meds:
+				m.dismount(false)
+				m.no_board_t = -1.0
+			(func(): Stretcher.start_to_vehicle(best, meds[0], meds[1], v)).call_deferred()
 			return null
 		return best.pos
 	if load == 0:
 		# wait by the hospital for the next call
-		return home if G.dist2d(home, v.pos) > 14.0 else null
-	if G.dist2d(home, v.pos) < 12.0 and absf(v.speed) < 1.0:
+		return home if G.dist2d(home, v.pos) > 6.0 else null
+	if G.dist2d(home, v.pos) < 7.0 and absf(v.speed) < 1.0:
+		var n = 0
 		for i in range(1, v.seats.size()):
 			var p = v.seats[i]
-			if p != null and is_instance_valid(p):
-				p.dismount(false)
-				p.hp = 100.0
-				p.heal_t = 0.0
-				G.fx.callout(p, G.pick(["Patched up and ready.", "Back in the fight."]))
-		G.ui.radio(v.team, "Ambulance: wounded delivered to the aid station")
+			if p != null and is_instance_valid(p) and not p.has_meta("amb_crew"):
+				if hosp != null and Medical.blood(hosp) > 0:
+					Medical.admit(p, hosp)
+				else:
+					p.dismount(false)
+				n += 1
+		if n > 0:
+			G.ui.radio(v.team, "Ambulance: %d wounded taken into the field hospital" % n)
 		return null
 	return home
 

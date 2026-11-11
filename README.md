@@ -147,12 +147,31 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Smarter driving:** vehicles aim a little way ahead along their route so corners become curves, and slow for sharp bends; they keep their route unless a new one is clearly better (no more dithering between two); parked and jammed vehicles count as obstacles when planning; when two meet, the smaller gives way (backing off if nose to nose); trucks keep to roads, tanks go cross-country; supply and ammo trucks park in free bays instead of on top of each other; several vehicles sent a long way drive in a column behind the biggest
 - **Path debug view (F9):** every man's and vehicle's planned route, where each vehicle is aiming, who's giving way, parking bays, and each side's danger spots
 - **Orders you can see:** with men selected, faint figures show where each will stand (green and crouched where there's cover); right-drag in the commander view draws a line for them to form up on, facing away from where they are now (middle-drag turns the camera); Shift + right-click queues more stops, shown as numbered flags
-- **Kill feed with icons:** a weapon silhouette between the names (rifle, SMG, machine gun, scoped rifle, shotgun, pistol, flamethrower, rocket, knife, blast, tank, bleeding out) and a mark for headshots; in the commander view a +1 pops up over whoever on your side got the kill
-- **Squad cards:** a column of cards for your squads in the commander view, each with its kind, men left, a health bar and what it's doing (moving, in combat, pinned down, building, in cover, mounted); click one to select the squad and look at it
+- **Kill feed with icons:** a weapon silhouette between the names (rifle, SMG, machine gun, scoped rifle, shotgun, pistol, flamethrower, rocket, knife, blast, tank, bleeding out) and a mark for headshots
+- **Squad cards:** a slim, foldable column of one-line cards for your squads in the commander view: kind (or the vehicle a crew runs), men left, a thin health bar and what it's doing (moving, fighting, pinned, building, in cover, mounted, driving, parked); click one to select the squad and look at it
 - **Battle prep (campaign):** a minute before each campaign battle to place your men, build and dig in; nobody advances, nothing is called in and the clock doesn't run; Space or the button starts it early
 - **Campaign events:** most turns something happens: a storm (rain, grey light, shorter sight and no aircraft in that turn's battles), partisans ambushing an enemy army or handing a region over, a captured enemy dump for the war chest, or one of your convoys ambushed
 - **Wall dust:** a wall or a building coming down throws up a cloud of brick dust that drifts off and blocks sight for several seconds
 - **Heads turn:** men snap their heads round toward a near miss or an explosion before their bodies follow
+- **Vehicles unstuck:** steep banks and mounds are now part of the driving map (wheels go round them, tracks slow down), so lorries no longer grind against a slope; vehicles skip waypoints they've already passed instead of turning back to touch them; they never crawl too slowly to move; they stop fidgeting between driving and waiting near their target; men standing in the road step out of it
+- **Transports:** troops riding along are dropped part way to their objective, short of the enemy, and the lorry goes back; nobody sits in the back of a command truck, ammo truck or ambulance; empty transport lorries leave the map; recruited squads' men are made a couple a frame so big orders don't stall the game
+- **Ambulances:** each carries two medics who get out with a stretcher, carry the wounded man to the back, climb in after him and drive him to a bay beside the field hospital
+- **Field hospitals:** the wounded go inside the tent and come back out patched up a quarter of a minute later, then head back to the fight
+- **Upstairs:** stairs and ladders are part of route planning (send men to a window and they go by the stairs, and stay up there); nobody walks through the underside of a staircase; men won't climb to a floor that's been blown away, and those up there when it goes find somewhere else
+- **Ladders fall:** a ladder whose wall or roof comes down topples over, and nobody tries to climb it
+- **Getting out of vehicles:** men climbing out no longer get flung into the air by the hull (it looked like they'd been blown up)
+- **Prone:** men lying still aren't shoved along the ground by their mates, and men moving while down crawl instead of sliding
+- **Fog of war:** men in an enemy vehicle show only when the vehicle does
+- **Counter-battery gun:** a new structure that shoots most incoming shells out of the sky within about 60 m (and fires at aircraft); the AI builds one by its HQ when shelled, and its own shelling round your HQ is rationed to one barrage every few minutes
+- **AI commander:** builds a supply dump early (so its trucks run) and a vehicle depot, and buys a few fighting vehicles as the battle goes on; an AI-run player side now builds too
+- **Vehicle damage:** grey smoke from the engine once a vehicle's hurt, black smoke when it's badly hit (both stop when it's repaired); a crewman gets out to patch up a badly damaged vehicle as well as to fix tracks and tyres
+- **Wrecks:** towed away after 20 seconds instead of 40
+- **New weapons:** carbine (engineers, radio operators, spotters), automatic rifle (riflemen and assault troops), marksman rifle (some snipers) and grenade launcher (some riflemen), each with its own model; shotguns and bolt-action rifles are loaded a round at a time, the grenade launcher breaks open, rockets go in the back of the tube, and bolt actions are worked after every shot
+- **RPG fix:** no more black disc behind a rocket (the web build drew smoke puffs before they'd started)
+- **Campaign balance:** Bravo takes at most one undefended region a turn, only attacks armies it clearly outnumbers, and regroups for a turn after an attack; when you're defending, your men start dug in (sandbags and an MG nest) with a 90 second prep
+- **HUD:** the orders card is now a slim strip above the dock, messages are smaller, the info panel sits above the minimap, and clicking a single soldier shows his card (health, ammo, kit, squad, what he's doing, and buttons to hold, take cover or take control)
+- **Building:** hold Shift while placing a structure to keep the blueprint and place more of the same
+- **Settings:** "Show soldiers' shouts as text" off hides the words above their heads; you still hear them
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

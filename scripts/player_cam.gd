@@ -1054,10 +1054,14 @@ func use_tool(screen: Vector2) -> void:
 				return
 			Support.points[team] -= c
 		Build.place(kind, team, p, to, false, true)
-		G.ui.message("%s site marked out for %s%s · engineers will build it" % [Build.KINDS[kind]["name"], G.TEAM_NAMES[team], (" (-%d points)" % c) if c > 0 else ""])
-		# placed: put the blueprint away (pick the card again to place another)
-		G.ui.tool = "sel" if G.mode == "commander" else "ctl"
-		G.ui._render_tools()
+		G.audio.radio_click()
+		# Shift held: keep the blueprint in hand to put down another of the same; otherwise put it away
+		if Input.is_key_pressed(KEY_SHIFT):
+			G.ui.message("%s site marked out%s · keep Shift held to place more" % [Build.KINDS[kind]["name"], (" (-%d points)" % c) if c > 0 else ""])
+		else:
+			G.ui.message("%s site marked out for %s%s · engineers will build it (hold Shift to place several)" % [Build.KINDS[kind]["name"], G.TEAM_NAMES[team], (" (-%d points)" % c) if c > 0 else ""])
+			G.ui.tool = "sel" if G.mode == "commander" else "ctl"
+			G.ui._render_tools()
 	elif tool == "dis":
 		dismantle_at(p, hit)
 	elif tool == "up" or tool == "camo" or tool == "rep":
@@ -1311,6 +1315,10 @@ func _finish_select(add: bool) -> void:
 				continue
 			if r.has_point(cam.unproject_position(s.chest())) and not (s in selection):
 				selection.append(s)
+	if selection.size() == 1 and is_instance_valid(selection[0]) and selection[0].state != "riding":
+		G.ui.show_unit(selection[0])      # one man: his card (class, health, ammo, what he's doing)
+	elif not selection.is_empty():
+		G.ui.hide_info()
 	if not selection.is_empty():
 		G.ui.message("%d selected. Right-click the ground to send them there%s" % [selection.size(), " · double-click a man for his whole squad" if selection.size() == 1 else ""])
 
@@ -1360,6 +1368,8 @@ func _order_move(screen: Vector2) -> void:
 				s.order["queue"] = []
 			if s.order["queue"].size() < 8:
 				s.order["queue"].append(p + off)
+			G.ui.message("Waypoint added")
+			G.audio.order_tick(true)
 			continue
 		s.order = {"mode": "move", "point": p + off}
 		_obey(s, p + off)
@@ -1399,7 +1409,10 @@ func _obey(s, to: Vector3) -> void:
 	s.flee = null
 	s.build_site = null if s.task != "construct" else s.build_site
 	s.prone_t = false
-	AI.go_to(s, G.main._free_spot(to) if G.world.inside_any(to.x, to.z, 0.4) else to, 5.0)
+	if to.y - G.world.ground_y(to.x, to.z) > 1.5:
+		AI.route_to(s, to, 5.0)          # upstairs: by the stairs or ladder
+	else:
+		AI.route_to(s, G.main._free_spot(to) if G.world.inside_any(to.x, to.z, 0.4) else to, 5.0)
 	s.path_prio = true
 	s.decide_t = 1.2
 	s.think = 0.0
@@ -1715,6 +1728,27 @@ func _class_tags(marks: Array) -> void:
 		else:
 			l.visible = false
 
+# a short version for the orders strip: "5 men", "3 men + jeep"
+func _sel_short() -> String:
+	var men = 0
+	var veh = []
+	for s in selection:
+		if not is_instance_valid(s) or s.state == "dead":
+			continue
+		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
+			if not (s.vehicle in veh):
+				veh.append(s.vehicle)
+			continue
+		men += 1
+	var parts = []
+	if men > 0:
+		parts.append("%d %s" % [men, "man" if men == 1 else "men"])
+	if veh.size() == 1:
+		parts.append(veh[0].spec["name"].to_lower())
+	elif veh.size() > 1:
+		parts.append("%d vehicles" % veh.size())
+	return " + ".join(parts)
+
 func _sel_summary() -> String:
 	var n = {}
 	var veh = []
@@ -1886,6 +1920,7 @@ func _order_line(a: Vector3, b: Vector3, queue: bool) -> void:
 		v.command(r["c"])
 	G.fx.order_marker(r["c"])
 	G.audio.radio_click()
+	G.audio.order_tick()
 	G.ui.message("%d soldier%s forming a line%s" % [men.size(), "" if men.size() == 1 else "s", " (queued)" if queue else ""])
 
 func _pghost(i: int) -> Node3D:

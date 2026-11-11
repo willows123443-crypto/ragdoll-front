@@ -1087,9 +1087,29 @@ func _build_vnav() -> void:
 			var r = _vroad(ix, iz)
 			vastar.set_point_weight_scale(Vector2i(ix, iz), 1.0 if r else 2.4)
 			tastar.set_point_weight_scale(Vector2i(ix, iz), 1.0 if r else 1.15)
+	_vnav_slopes()
 	for c in cols:
 		_vnav_mark(c)
 	_vnav_water(0, 0, VW - 1, VH - 1)
+
+# ground too steep to drive up (banks, mounds, ditches): closed to wheels, slow going for tracks
+var vsteep = PackedByteArray()
+
+func _vnav_slopes() -> void:
+	vsteep = PackedByteArray()
+	vsteep.resize(VW * VH)
+	for iz in range(VH):
+		for ix in range(VW):
+			var x = TX0 + (ix + 0.5) * VCS
+			var z = TZ0 + (iz + 0.5) * VCS
+			var h0 = ground_y(x, z)
+			var top = 0.0
+			for o in [Vector2(1.6, 0), Vector2(-1.6, 0), Vector2(0, 1.6), Vector2(0, -1.6)]:
+				top = maxf(top, absf(ground_y(x + o.x, z + o.y) - h0))
+			if top > 0.9:
+				vsteep[iz * VW + ix] = 1
+				vastar.set_point_solid(Vector2i(ix, iz), true)
+				tastar.set_point_weight_scale(Vector2i(ix, iz), 5.0 if top < 1.6 else 50.0)
 
 func _vroad(ix: int, iz: int) -> bool:
 	return on_road(TX0 + (ix + 0.5) * VCS, TZ0 + (iz + 0.5) * VCS)
@@ -1149,6 +1169,9 @@ func _vnav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 			tastar.set_point_solid(p, false)
 			vastar.set_point_weight_scale(p, _vbase_w(ix, iz, false))
 			tastar.set_point_weight_scale(p, _vbase_w(ix, iz, true))
+			if vsteep.size() == VW * VH and vsteep[iz * VW + ix] == 1:
+				vastar.set_point_solid(p, true)
+				tastar.set_point_weight_scale(p, 5.0)
 	var m = VCLEAR + VCS * 2.0
 	for c in cols_in_rect(TX0 + a.x * VCS - m, TZ0 + a.y * VCS - m, TX0 + (b.x + 1) * VCS + m, TZ0 + (b.y + 1) * VCS + m):
 		_vnav_mark(c)
@@ -1498,6 +1521,7 @@ func destroy_col(c, depth: int = 0) -> void:
 			g["mm"].set_instance_transform(r[1], zero)
 	if c.has_meta("tree"):
 		_tree_down(c)
+	_ladder_check(c)
 	var size: Vector3 = c.hi - c.lo
 	if c.has_meta("furn") and c.prop == 1:
 		_splinter(c)
@@ -1807,20 +1831,25 @@ func flat_house(x: float, z: float, w: float, d: float, h: float = 3.3) -> void:
 	var top_y = ground_y(x, z) + rh
 	var ladc = Color(0.4, 0.3, 0.2)
 	var rl = top_y + 0.9 - gy
+	var lrefs = []
 	for e in [-0.25, 0.25]:
 		var rp = wall_c + lad_n * 0.42 + along * e
-		add_box(rp.x, 0.0, rp.z, 0.07, rl, 0.07, ladc, {"collide": false})
+		lrefs.append(add_box(rp.x, 0.0, rp.z, 0.07, rl, 0.07, ladc, {"collide": false}))
 	var nr = int(rl / 0.3)
 	for k in range(1, nr):
 		var ry = k * 0.3
 		var rp2 = wall_c + lad_n * 0.42
 		if ladder_side < 2:
-			add_box(rp2.x, ry, rp2.z, 0.5, 0.04, 0.05, ladc.darkened(0.1), {"collide": false})
+			lrefs.append(add_box(rp2.x, ry, rp2.z, 0.5, 0.04, 0.05, ladc.darkened(0.1), {"collide": false}))
 		else:
-			add_box(rp2.x, ry, rp2.z, 0.05, 0.04, 0.5, ladc.darkened(0.1), {"collide": false})
+			lrefs.append(add_box(rp2.x, ry, rp2.z, 0.05, 0.04, 0.5, ladc.darkened(0.1), {"collide": false}))
 	var T = {"x": x, "z": z, "w": w, "d": d, "floor_y": top_y, "posts": [], "cps": [], "rect": [x - w / 2.0 - 1.2, x + w / 2.0 + 1.2, z - d / 2.0 - 1.2, z + d / 2.0 + 1.2], "ladder": true, "n": lad_n,
 		"stair_bottom": Vector3(base.x, gy, base.z), "stair_top": Vector3(wall_c.x, top_y, wall_c.z) - lad_n * 0.9, "lad_x": Vector3(wall_c.x, 0, wall_c.z) + lad_n * 0.42}
 	T["inside"] = T["stair_bottom"] + lad_n * 1.5
+	T["lad_refs"] = lrefs
+	T["lad_base"] = Vector3(wall_c.x, gy, wall_c.z) + lad_n * 0.42
+	T["lad_len"] = rl
+	T["lad_pts"] = [Vector3(wall_c.x, gy + rl * 0.35, wall_c.z), Vector3(wall_c.x, top_y - 0.6, wall_c.z), Vector3(wall_c.x, top_y - 0.1, wall_c.z)]
 	# firing spots along the parapet, facing out
 	for side in range(4):
 		var n2 = [Vector3(0, 0, -1), Vector3(0, 0, 1), Vector3(-1, 0, 0), Vector3(1, 0, 0)][side]
@@ -2305,6 +2334,7 @@ func _tower(x: float, z: float, w: float, d: float) -> void:
 	for i in range(steps):
 		var sh = (i + 1) * FY / steps
 		add_box(sx0 + (i + 0.5) * (sx1 - sx0) / steps, 0.0, (sz0 + sz1) / 2.0, (sx1 - sx0) / steps, sh, sz1 - sz0, Color(0.43, 0.4, 0.36), {"collide": false})
+	_under_stairs(sx0, sx1, sz0, sz1, ground_y(x, z), FY, 1.0)
 	var ramp = StaticBody3D.new()
 	ramp.collision_layer = G.L_WORLD
 	ramp.collision_mask = 0
@@ -2333,6 +2363,79 @@ func _tower(x: float, z: float, w: float, d: float) -> void:
 				break
 	T["posts"] = ok
 	towers.append(T)
+
+# the space under a flight of stairs: solid on the ground floor (nobody walks through the steps), open on
+# top (the ramp is walked on above it). dir: which way along x the stairs rise.
+func _under_stairs(x0: float, x1: float, z0: float, z1: float, gy: float, rise: float, dir: float) -> void:
+	var n = 6
+	for i in range(n):
+		var k0 = float(i) / n
+		var k1 = float(i + 1) / n
+		var hk = k0 if dir > 0.0 else 1.0 - k1     # the low end of this slice
+		var h = rise * hk - 0.45
+		if h < 0.5:
+			continue
+		var c = add_col(lerpf(x0, x1, (k0 + k1) / 2.0), gy, (z0 + z1) / 2.0, (x1 - x0) / n, h, z1 - z0)
+		c.dest = false
+		c.vis = []
+		c.set_meta("under_stairs", true)
+
+# is there a floor (a slab, roof or platform) under this spot at this height?
+func floor_at(x: float, z: float, y: float) -> bool:
+	for c in cell_at(x, z):
+		if not c.alive or c.hi.y - c.lo.y > 0.7 or absf(c.hi.y - y) > 0.45:
+			continue
+		if x > c.lo.x - 0.35 and x < c.hi.x + 0.35 and z > c.lo.z - 0.35 and z < c.hi.z + 0.35:
+			return true
+	return false
+
+# can men still get up into this building/tower and stand up there?
+func tower_ok(T: Dictionary) -> bool:
+	if T.get("ladder_down", false):
+		return false
+	var top: Vector3 = T["stair_top"]
+	return floor_at(top.x, top.z, top.y) or floor_at(top.x, top.z, top.y + ground_y(top.x, top.z))
+
+# is this upstairs post still somewhere a man can stand?
+func cp_ok(cp) -> bool:
+	if cp == null:
+		return false
+	if not cp.upper:
+		return true
+	if cp.tower != null and not tower_ok(cp.tower):
+		return false
+	return floor_at(cp.p.x, cp.p.z, cp.p.y)
+
+# a ladder whose wall (or roof) has come down falls over and is gone
+func _ladder_check(c) -> void:
+	for T in towers:
+		if not T.get("ladder", false) or T.get("ladder_down", false) or not T.has("lad_pts"):
+			continue
+		var hit = false
+		for q in T["lad_pts"]:
+			if q.x > c.lo.x - 0.6 and q.x < c.hi.x + 0.6 and q.z > c.lo.z - 0.6 and q.z < c.hi.z + 0.6 and q.y > c.lo.y - 0.3 and q.y < c.hi.y + 0.3:
+				hit = true
+		if not hit:
+			continue
+		T["ladder_down"] = true
+		var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
+		for r in T.get("lad_refs", []):
+			var g = r[0]
+			if r[1] >= 0 and r[1] < g["xforms"].size():
+				g["xforms"][r[1]] = zero
+				if g["mm"]:
+					g["mm"].set_instance_transform(r[1], zero)
+		G.fx.falling_ladder(T["lad_base"], T["n"], T["lad_len"])
+		# anyone on it comes off
+		for s in G.soldiers:
+			if s.climb != null and s.climb["T"] == T:
+				s.climb = null
+				s.vy = 0.0
+			if s.tower == T and s.route != null:
+				s.route = null
+				s.tower = null
+				s.task = null
+				s.decide_t = 0.0
 
 func _tower_piece(horiz: bool, fixed: float, c: float, seg: float, y0: float, h: float, color: Color, t: float) -> void:
 	if horiz:
@@ -4101,6 +4204,7 @@ func _catwalk(e: float, x0: float, x1: float, HZ: float, stairs_west: bool) -> v
 	ramp.add_child(rcs)
 	var ang = atan2(FY, absf(st - sb)) * signf(st - sb)
 	var gy = ground_y((sb + st) / 2.0, zc)
+	_under_stairs(minf(sb, st), maxf(sb, st), zc - wd / 2.0, zc + wd / 2.0, gy, FY, signf(st - sb))
 	ramp.transform = Transform3D(Basis(Vector3(0, 0, 1), ang), Vector3((sb + st) / 2.0, gy + FY / 2.0 - 0.1, zc))
 	_geo().add_child(ramp)
 	var xa = minf(sb, x0) - 0.5

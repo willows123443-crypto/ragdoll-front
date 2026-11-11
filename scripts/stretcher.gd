@@ -45,6 +45,21 @@ static func try_start(w, a) -> bool:
 	G.fx.callout(a, G.pick(["Stretcher! Give me a hand!", "Help me carry him!", "Get the stretcher, we're taking him back!"]))
 	return true
 
+# the ambulance's own two medics carry a wounded man to the back of it; he's loaded when they get there
+static func start_to_vehicle(w, a, b, v) -> bool:
+	if busy(a) or busy(b) or busy(w) or w.dragger != null or w.carried_by != null:
+		return false
+	var rear: Vector3 = v.pos - v.forward() * (v.spec["len"] * 0.5 + 1.2)
+	var t = {"w": w, "a": a, "b": b, "dest": rear, "stage": 0, "mesh": null, "t": 0.0, "veh": v}
+	teams.append(t)
+	for s in [w, a, b]:
+		s.set_meta("stretcher", t)
+	for s in [a, b]:
+		s.task = "stretcher"
+		AI.go_to(s, w.pos, 4.5)
+	G.fx.callout(a, G.pick(["Stretcher!", "We've got you, hold on!", "Medic coming!"]))
+	return true
+
 static func step(dt: float) -> void:
 	for i in range(teams.size() - 1, -1, -1):
 		var t = teams[i]
@@ -138,9 +153,23 @@ static func _tick(t, dt: float) -> void:
 		t["mesh"].rotation.y = atan2(axis.x, axis.z)
 	_lay(w, c + Vector3(0, 0.14, 0), axis)
 	w.pos = Vector3(c.x, G.world.ground_y(c.x, c.z), c.z)
+	if t.has("veh") and is_instance_valid(t["veh"]):
+		var v = t["veh"]
+		t["dest"] = v.pos - v.forward() * (v.spec["len"] * 0.5 + 1.2)
 	if G.dist2d(a.pos, t["dest"]) < 2.5:
 		t["done"] = true
-		G.fx.callout(a, G.pick(["Doc! Got one for you!", "Put him down here, gently.", "Made it!"]))
+		if t.has("veh") and is_instance_valid(t["veh"]) and not t["veh"].dead:
+			# into the back of the ambulance with him, and the bearers climb in after
+			var v2 = t["veh"]
+			var seat = v2.free_seat("pass")
+			if seat > 0:
+				w.mount(v2, seat)
+			for s in [a, b]:
+				s.task = "board"
+				s.board_target = v2
+			G.fx.callout(a, G.pick(["In you go.", "Easy, lift him in.", "Loaded, let's move!"]))
+		else:
+			G.fx.callout(a, G.pick(["Doc! Got one for you!", "Put him down here, gently.", "Made it!"]))
 
 # the wounded man lying on his back along the stretcher, head toward the front: one hand pressed on his
 # wound, the other arm hanging over the side, head rolling, a knee drawn up

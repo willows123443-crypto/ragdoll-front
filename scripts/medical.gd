@@ -114,6 +114,21 @@ static func reset_hospitals() -> void:
 	recovering = []
 	regen_t = 0.0
 
+# a wounded man goes in through the tent flap; he comes back out patched up a while later
+static func admit(s, st: Dictionary) -> void:
+	st["blood"] = blood(st) - 1
+	var r = {"team": s.team, "cls": s.cls, "name": s.sname, "t": G.sim_time + randf_range(14.0, 20.0), "site": st, "hp": 100.0,
+		"kills": s.kills, "vet": s.vet, "squad": s.squad}
+	if s.has_meta("roster"):
+		r["roster"] = s.get_meta("roster")
+	recovering.append(r)
+	if G.pc != null and s in G.pc.selection:
+		G.pc.selection.erase(s)
+	if s.vehicle != null and is_instance_valid(s.vehicle):
+		s.dismount(false)
+	G.soldiers.erase(s)
+	s.queue_free()
+
 static func hospital_near(team: int, p: Vector3, r: float):
 	var best = null
 	var bd = r
@@ -140,14 +155,10 @@ static func hospitals_tick(dt: float) -> void:
 			continue
 		if regen:
 			st["blood"] = mini(8, blood(st) + 1)
-		# the wounded brought to the door are treated
-		for s in G.soldiers:
-			if s.team == st["team"] and s.state == "wounded" and s.dragger == null and G.dist2d(s.pos, st["p"]) < 7.0 and blood(st) > 0:
-				st["blood"] -= 1
-				s.bleed = 0.0
-				s.hp = 100.0
-				s.start_getup()
-				G.fx.callout(s, G.pick(["Patched up. Back to it.", "Thanks, doc.", "I'm good to go."]))
+		# the wounded brought to the door are taken inside to be treated
+		for s in G.soldiers.duplicate():
+			if s.team == st["team"] and s.state == "wounded" and s.dragger == null and not s.has_meta("stretcher") and G.dist2d(s.pos, st["p"]) < 7.0 and blood(st) > 0:
+				admit(s, st)
 	for i in range(recovering.size() - 1, -1, -1):
 		var r = recovering[i]
 		if G.sim_time < r["t"]:
@@ -156,11 +167,30 @@ static func hospitals_tick(dt: float) -> void:
 		var st2 = r["site"]
 		var p: Vector3 = st2["p"] if Build.alive(st2) else G.world.rally_point(r["team"])
 		G.main.force_cls = [r["cls"]]
+		var q = r.get("squad")
+		if q != null and q in G.squads:
+			AI.batch_begin({}, q)
 		var n = G.main.spawn_soldier(r["team"], p.x + randf_range(-3, 3), p.z + randf_range(-3, 3), "")
+		if q != null and q in G.squads:
+			AI.batch_end()
 		G.main.force_cls = []
 		if n != null:
 			n.sname = r["name"]
-			n.hp = 80.0
+			n.hp = r.get("hp", 80.0)
+			n.kills = r.get("kills", 0)
+			if r.get("vet", 0) > 0:
+				n.set_vet(r["vet"])
+			if r.has("roster"):
+				n.set_meta("roster", r["roster"])
+			# straight back to the fight, not standing about at the tent
+			n.order = null
+			n.task = null
+			n.decide_t = 0.0
+			var front = Reinforce.forward_drop(r["team"])
+			if G.dist2d(front, p) < 20.0:
+				front = AI.objective_for(n)
+			AI.go_to(n, front + Vector3(randf_range(-4, 4), 0, randf_range(-4, 4)), 4.6)
+			G.fx.callout(n, G.pick(["Patched up. Back to it.", "Thanks, doc.", "I'm good to go."]))
 			G.ui.radio(r["team"], "%s is back on his feet and returning to the line" % r["name"])
 
 # called when a soldier dies: close to a field hospital with blood, he's saved and comes back later

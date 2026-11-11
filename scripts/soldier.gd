@@ -1097,21 +1097,63 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 		var pm = rh + g * 0.13 + gd * 0.13
 		var pp: Vector3 = P[1] + uf * 0.2 + Vector3(0, -0.28, 0)
 		var home: Vector3 = rh + g * W["hold"]
-		if rk < 0.25:
-			lh = home.lerp(pm, rk / 0.25)
-		elif rk < 0.55:
-			lh = pm.lerp(pp, (rk - 0.25) / 0.3)
-		elif rk < 0.85:
-			lh = pp.lerp(pm, (rk - 0.55) / 0.3)
-		else:
-			lh = pm.lerp(home, (rk - 0.85) / 0.15)
-		_show_mag(rk > 0.12 and rk < 0.88 and W["mag"] > 1 and not W["rocket"])
-		if rk > 0.3 and not mag_drop:
-			mag_drop = true
-			if wid != "rpg":
-				G.fx.debris(pm, Vector3(randf_range(-0.3, 0.3), -0.5, randf_range(-0.3, 0.3)), 0.1, G.C_DARK)
+		match W.get("reload_style", "mag"):
+			"shells":
+				# one round at a time from the belt pouch into the gun: hand to the pouch and back, four times
+				var port = rh + g * 0.1 + Vector3(0, 0.03, 0) - ur * 0.04
+				var cyc = fmod(rk * 4.0, 1.0)
+				if rk < 0.08:
+					lh = home.lerp(port, rk / 0.08)
+				elif rk > 0.92:
+					lh = port.lerp(home, (rk - 0.92) / 0.08)
+				else:
+					lh = port.lerp(pp, sin(cyc * PI))
+				_show_mag(false)
+			"single":
+				# break it open, a round from the pouch into the breech, snap it shut
+				var breech = rh + g * 0.16 + Vector3(0, 0.02, 0)
+				if rk < 0.2:
+					lh = home.lerp(breech, rk / 0.2)
+				elif rk < 0.45:
+					lh = breech.lerp(pp, (rk - 0.2) / 0.25)
+				elif rk < 0.75:
+					lh = pp.lerp(breech, (rk - 0.45) / 0.3)
+				else:
+					lh = breech.lerp(home, (rk - 0.75) / 0.25)
+				g = (g + Vector3(0, -0.35, 0)).normalized()        # muzzle tipped down while it's open
+				_show_mag(false)
+			"rocket":
+				# a fresh rocket from over the shoulder slid into the back of the tube
+				var back = rh - g * 0.32 + Vector3(0, 0.06, 0)
+				var over = P[1] - uf * 0.15 + Vector3(0, 0.12, 0) + ur * 0.12
+				if rk < 0.3:
+					lh = home.lerp(over, rk / 0.3)
+				elif rk < 0.65:
+					lh = over.lerp(back, (rk - 0.3) / 0.35)
+				else:
+					lh = back.lerp(home, (rk - 0.65) / 0.35)
+				_show_mag(false)
+			_:
+				if rk < 0.25:
+					lh = home.lerp(pm, rk / 0.25)
+				elif rk < 0.55:
+					lh = pm.lerp(pp, (rk - 0.25) / 0.3)
+				elif rk < 0.85:
+					lh = pp.lerp(pm, (rk - 0.55) / 0.3)
+				else:
+					lh = pm.lerp(home, (rk - 0.85) / 0.15)
+				_show_mag(rk > 0.12 and rk < 0.88 and W["mag"] > 1 and not W["rocket"])
+				if rk > 0.3 and not mag_drop:
+					mag_drop = true
+					G.fx.debris(pm, Vector3(randf_range(-0.3, 0.3), -0.5, randf_range(-0.3, 0.3)), 0.1, G.C_DARK)
 	else:
 		lh = rh + g * W["hold"]
+		# a bolt action: up, back, forward, down after every shot
+		if W.get("bolt", false) and shoulder:
+			var since = W["rof"] - fire_cd
+			if since > 0.15 and since < 0.75:
+				var bk = sin((since - 0.15) / 0.6 * PI)
+				rh = rh + Vector3(0, 0.05, 0) * bk + ur * 0.05 * bk - g * 0.07 * sin((since - 0.15) / 0.6 * TAU * 0.5) * bk
 		# hurt and not shooting: one hand presses on the wound, the gun hangs from the other
 		if wound_part >= 0 and hp < 60.0 and not shoulder and state == "alive" and wound_part != 4 and wound_part != 3:
 			var wp: Vector3 = parts[wound_part].global_position
@@ -2140,7 +2182,23 @@ func _glint_tick() -> void:
 
 var flat_t = 0.0
 
+var exc_veh = null
+var exc_t = 0.0
+
+func _exc_tick() -> void:
+	if exc_veh == null:
+		return
+	var v = exc_veh
+	var clear = not is_instance_valid(v) or G.sim_time > exc_t or (vault == null and G.dist2d(pos, v.pos) > v.spec["len"] * 0.5 + v.spec["wid"] * 0.5 + 0.6)
+	if not clear:
+		return
+	exc_veh = null
+	if is_instance_valid(v) and is_instance_valid(v.body) and vehicle != v:
+		for b in parts:
+			b.remove_collision_exception_with(v.body)
+
 func tick() -> void:
+	_exc_tick()
 	if prone and state == "alive" and vehicle == null:
 		flat_t -= G.DT
 		if flat_t <= 0.0:
@@ -2539,8 +2597,10 @@ func _tick_alive() -> void:
 		vel.z += clampf(want.z * sm - vel.z, -12.0 * G.DT, 12.0 * G.DT)
 		pos.x += vel.x * G.DT
 		pos.z += vel.z * G.DT
+		# a man lying still isn't shoved along the ground by his mates (that slid prone men about)
+		var still_flat = prone and want.length_squared() < 0.04
 		for o in G.soldiers_near(pos):
-			if o == self or o.state != "alive" or absf(o.pos.y - pos.y) > 1.0:
+			if still_flat or o == self or o.state != "alive" or absf(o.pos.y - pos.y) > 1.0:
 				continue
 			var dx: float = pos.x - o.pos.x
 			var dz: float = pos.z - o.pos.z
@@ -2641,8 +2701,8 @@ func _tick_alive() -> void:
 			return
 	if not far:
 		check_gun_clip()
-	if prone and zombie:
-		crawl_pose()
+	if prone and (zombie or Vector2(vel.x, vel.z).length() > 0.25):
+		crawl_pose()          # moving while down: elbows and knees, not sliding on his belly
 	elif prone:
 		prone_pose()
 	else:
@@ -2747,8 +2807,10 @@ func dismount(eject: bool) -> void:
 			out = G.world.push_out_circle(v.pos + side * (v.spec["wid"] * 0.5 + 1.0), 0.35)[0]
 		if hidden_in_vehicle and v.turret != null:
 			start = v.turret.global_position + Vector3(0, 0.9, 0) - Vector3(0, 0.95, 0)
-		for b in parts:
-			b.remove_collision_exception_with(v.body)
+		# keep ignoring the hull until he's clear of it: his body starts inside it, and letting the physics
+		# push the two apart flings him into the air (it looked like the men blew up on getting out)
+		exc_veh = v
+		exc_t = G.sim_time + 2.5
 	vehicle = null
 	seat = -1
 	visible = true

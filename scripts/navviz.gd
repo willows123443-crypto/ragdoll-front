@@ -16,6 +16,8 @@ func _ready() -> void:
 	m.vertex_color_use_as_albedo = true
 	m.no_depth_test = true
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.emission_enabled = true
+	m.emission = Color(0.3, 0.3, 0.3)
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
@@ -37,10 +39,12 @@ func _process(dt: float) -> void:
 	_draw()
 
 func _line(im: ImmediateMesh, a: Vector3, b: Vector3, c: Color) -> void:
-	im.surface_set_color(c)
-	im.surface_add_vertex(a)
-	im.surface_set_color(c)
-	im.surface_add_vertex(b)
+	# twice, a hair apart, so it reads as a thicker line from up high
+	for o in [Vector3.ZERO, Vector3(0.06, 0.04, 0.06)]:
+		im.surface_set_color(c)
+		im.surface_add_vertex(a + o)
+		im.surface_set_color(c)
+		im.surface_add_vertex(b + o)
 
 func _ring(im: ImmediateMesh, p: Vector3, r: float, c: Color) -> void:
 	var y = G.world.ground_y(p.x, p.z) + 0.2
@@ -62,7 +66,7 @@ func _draw() -> void:
 	for s in G.soldiers:
 		if s.state != "alive" or s.vehicle != null:
 			continue
-		var col = Color(0.35, 0.65, 1.0, 0.75) if s.team == 0 else Color(1.0, 0.4, 0.35, 0.75)
+		var col = Color(0.45, 0.8, 1.0, 1.0) if s.team == 0 else Color(1.0, 0.5, 0.4, 1.0)
 		if s.path_i < s.path.size() and s.move_target != null:
 			var prev: Vector3 = s.pos + up
 			for i in range(s.path_i, s.path.size()):
@@ -78,7 +82,7 @@ func _draw() -> void:
 	for v in G.vehicles:
 		if v.dead or v.spec.get("air", false) or v.spec.get("static", false):
 			continue
-		var vc = Color(1.0, 0.65, 0.15, 0.9)
+		var vc = Color(1.0, 0.75, 0.2, 1.0)
 		if v.path_i < v.path.size():
 			var prev: Vector3 = v.pos + up * 2.0
 			for i in range(v.path_i, v.path.size()):
@@ -93,7 +97,7 @@ func _draw() -> void:
 		if v.has_meta("park"):
 			_ring(im, v.get_meta("park"), 2.0, Color(0.4, 1.0, 0.9, 0.8))
 	for team in range(2):
-		var dc = Color(1.0, 0.15, 0.1, 0.8) if team == 0 else Color(1.0, 0.55, 0.1, 0.6)
+		var dc = Color(1.0, 0.2, 0.15, 1.0) if team == 0 else Color(1.0, 0.6, 0.15, 0.9)
 		for d in Tactics.danger[team]:
 			var age = G.sim_time - d["t"]
 			if age > Tactics.DANGER_LIFE:

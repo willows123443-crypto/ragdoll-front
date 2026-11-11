@@ -260,9 +260,6 @@ func feed(a, v, head: bool, what: String = "", cause: String = "") -> void:
 		var n = wr.get_ref()
 		if n != null:
 			n.queue_free())
-	# commander view: a little +1 pops up over whoever on your side got him
-	if a != null and v != null and G.player == null and a.team == 0 and v.team != 0 and is_instance_valid(a) and a.state != "dead":
-		G.fx.float_text(a.chest() + Vector3(0, 0.9, 0), "+1", Color(1.0, 0.9, 0.35))
 
 func _icon(kind: String, col: Color) -> TextureRect:
 	var tr = TextureRect.new()
@@ -315,7 +312,7 @@ const SB_VEH = [["jeep", "Jeep"], ["truck", "Truck"], ["motorbike", "Motorbike"]
 	["tank", "Tank"], ["heavytank", "Heavy tank"], ["plough", "Mine plough tank"], ["technical", "Technical"], ["ambulance", "Ambulance"], ["radar", "Command truck"], ["bridger", "Bridge layer"], ["gunship", "Gunship"],
 	["fighter", "Fighter"], ["bomber", "Dive bomber"], ["nest", "MG nest"], ["mortar", "Mortar"], ["artillery", "Field gun"], ["aagun", "AA gun"], ["atgun", "AT gun"], ["dinghy", "Assault boat"]]
 const BUILD_LIST = [["fob", "FOB"], ["sandbags", "Sandbags"], ["wire", "Barbed wire"], ["traps", "Tank traps"], ["mgnest", "MG nest"],
-	["mortarpit", "Mortar pit"], ["aa", "AA gun"], ["tower", "Watchtower"], ["bunker", "Bunker"], ["hospital", "Field hospital"],
+	["mortarpit", "Mortar pit"], ["aa", "AA gun"], ["cbgun", "Counter-battery gun"], ["tower", "Watchtower"], ["bunker", "Bunker"], ["hospital", "Field hospital"],
 	["radio", "Radio mast"], ["depot", "Vehicle depot"], ["supply", "Supply dump"], ["observer", "Observer post"]]
 const RECRUIT = {
 	"inf": {"name": "Rifle squad", "cost": 16, "cls": ["rifleman", "rifleman", "rifleman", "rifleman", "mg", "at", "medic", "rifleman"],
@@ -782,9 +779,11 @@ func _build_center() -> void:
 	dmg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dmg.draw.connect(_draw_dmg)
 	root.add_child(dmg)
-	msg = _label("", 22)
-	_place(msg, Control.PRESET_CENTER_TOP, -400, 230, 800, 40)
+	msg = _label("", 18)
+	# narrower than the screen so it clears the squad cards on the left and the feed on the right
+	_place(msg, Control.PRESET_CENTER_TOP, -260, 200, 520, 40)
 	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(msg)
 	scope = TextureRect.new()
 	scope.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -2357,7 +2356,7 @@ func _show_settings() -> void:
 	sens.custom_minimum_size = Vector2(220, 0)
 	sens.value_changed.connect(func(x): G.settings["sens"] = x)
 	_row(v, "Mouse sensitivity", sens)
-	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Soldier callouts"], ["shadows", "Shadows"], ["grass", "Grass (next battle)"], ["fps", "Show frame rate and soldier count"], ["voices", "Spoken callouts"]]:
+	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Show soldiers' shouts as text"], ["shadows", "Shadows"], ["grass", "Grass (next battle)"], ["fps", "Show frame rate and soldier count"], ["voices", "Spoken callouts"]]:
 		var key = item[0]
 		var cb = CheckBox.new()
 		cb.button_pressed = G.settings[key]
@@ -2394,18 +2393,19 @@ func _build_order_card() -> void:
 	sb.set_corner_radius_all(6)
 	sb.border_width_top = 2
 	sb.border_color = Color(0.96, 0.74, 0.27, 0.8)
-	sb.set_content_margin_all(8)
+	sb.set_content_margin_all(4)
+	sb.bg_color = Color(0.07, 0.08, 0.09, 0.78)
 	order_card.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	order_card.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	var v = VBoxContainer.new()
-	v.add_theme_constant_override("separation", 5)
-	order_title = _label("", 13, Color(0.96, 0.9, 0.75))
-	v.add_child(order_title)
+	# one slim strip just above the dock: what's selected, then the orders as small buttons
 	order_grid = HFlowContainer.new()
-	order_grid.add_theme_constant_override("h_separation", 4)
-	order_grid.add_theme_constant_override("v_separation", 4)
-	v.add_child(order_grid)
-	order_card.add_child(v)
+	order_grid.add_theme_constant_override("h_separation", 3)
+	order_grid.add_theme_constant_override("v_separation", 3)
+	order_title = _label("", 12, Color(0.96, 0.9, 0.75))
+	order_title.custom_minimum_size = Vector2(0, 24)
+	order_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	order_title.mouse_filter = Control.MOUSE_FILTER_STOP
+	order_card.add_child(order_grid)
 	order_card.visible = false
 	root.add_child(order_card)
 
@@ -2424,29 +2424,33 @@ func _order_card_tick() -> void:
 	var sig = str(sel.size()) + str(riding) + str(smokes) + str(on_foot.size()) + G.pc._sel_summary()
 	if sig != order_sig:
 		order_sig = sig
-		order_title.text = "ORDERS  ·  " + G.pc._sel_summary()
+		order_title.text = G.pc._sel_short() + "  ▸"
+		order_title.tooltip_text = G.pc._sel_summary()
 		for c in order_grid.get_children():
-			c.queue_free()
+			if c != order_title:
+				c.queue_free()
+		if order_title.get_parent() == null:
+			order_grid.add_child(order_title)
 		# only the orders that make sense for what's selected
 		var items = []
 		if not on_foot.is_empty():
-			items += [["hold", "Hold here"], ["cover", "Take cover"]]
+			items += [["hold", "Hold"], ["cover", "Cover"]]
 			if not on_foot.all(func(x): return x.cls in ["sniper", "spotter", "medic"]):
 				items.append(["charge", "Charge!"])
 			items.append(["fallback", "Fall back"])
 			if smokes:
-				items.append(["smoke", "Smoke screen"])
+				items.append(["smoke", "Smoke"])
 		if riding:
 			var vs = G.pc.sel_vehicles()
 			var guns = vs.all(func(x): return x.spec.get("static", false))
 			if not guns:
-				items += [["vstop", "Stop"], ["vback", "Back to rally"], ["vfree", "Drive freely"]]
+				items += [["vstop", "Stop"], ["vback", "Rally"], ["vfree", "Drive free"]]
 				if vs.any(func(x): return (x.spec["tracked"] or x.kind in ["armoredcar", "halftrack"]) and G.sim_time > x.smoke_cd):
 					items.append(["vsmoke", "Pop smoke"])
 			if vs.any(func(x): return x.seats.size() > 1 or x.spec.get("static", false)):
 				items.append(["dismount", "Leave the gun" if guns else "Dismount"])
 		if not on_foot.is_empty():
-			items.append(["free", "Act freely"])
+			items.append(["free", "Free"])
 			if on_foot.any(func(x): return x.cls == "engineer") or G.mode != "commander":
 				items.append(["build", "Build…"])
 			if on_foot.size() >= 3:
@@ -2457,8 +2461,11 @@ func _order_card_tick() -> void:
 			var b = Button.new()
 			b.focus_mode = Control.FOCUS_NONE
 			b.text = it[1]
-			b.custom_minimum_size = Vector2(96, 32)
-			b.add_theme_font_size_override("font_size", 13)
+			b.custom_minimum_size = Vector2(0, 24)
+			b.add_theme_font_size_override("font_size", 12)
+			b.tooltip_text = {"hold": "Hold here", "cover": "Take cover nearby", "charge": "Charge!", "fallback": "Fall back", "smoke": "Throw a smoke screen",
+				"vstop": "Stop where they are", "vback": "Back to the rally point", "vfree": "Drive freely", "vsmoke": "Pop smoke", "dismount": "Get out",
+				"free": "Act freely", "build": "Pick something to build", "clear": "Deselect"}.get(id, it[1])
 			var acc = id in ["charge", "fallback"]
 			b.add_theme_stylebox_override("normal", _dock_style(Color(0.16, 0.18, 0.2, 0.96), Color(0.95, 0.75, 0.25) if acc else Color(0.3, 0.33, 0.36)))
 			b.add_theme_stylebox_override("hover", _dock_style(Color(0.26, 0.29, 0.32, 1.0), Color(1.0, 0.85, 0.35)))
@@ -2476,13 +2483,12 @@ func _order_card_tick() -> void:
 				else:
 					G.pc.order_selected(id))
 			order_grid.add_child(b)
-	var w = minf(6.0 * 100.0 + 20.0, 640.0)
-	order_grid.custom_minimum_size = Vector2(w - 16.0, 0)
+	var w = 880.0
+	order_grid.custom_minimum_size = Vector2(w - 8.0, 0)
 	order_card.offset_left = -w / 2.0
 	order_card.offset_right = w / 2.0
-	order_card.offset_bottom = dock.offset_top - 6.0
-	var rows = ceili(order_grid.get_child_count() / 6.0)
-	order_card.offset_top = order_card.offset_bottom - (40.0 + 36.0 * maxi(1, rows))
+	order_card.offset_bottom = dock.offset_top - 3.0
+	order_card.offset_top = order_card.offset_bottom - (order_grid.get_combined_minimum_size().y + 8.0)
 
 # ---------------------------------------------------------------- command panel
 var cmd_panel: PanelContainer = null
@@ -2608,7 +2614,13 @@ var info_key = ""
 
 func _build_info() -> void:
 	info = _panel(Color(0.07, 0.08, 0.09, 0.92))
-	_place(info, Control.PRESET_TOP_LEFT, 12, 70, 300, 10)
+	# bottom right, just above the minimap: clear of the menu buttons, the squad cards and the battle
+	info.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	info.offset_left = -312
+	info.offset_right = -12
+	info.offset_bottom = -212
+	info.offset_top = -222
+	info.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 5)
 	var head = HBoxContainer.new()
@@ -2636,6 +2648,12 @@ func show_site(st: Dictionary) -> void:
 
 func show_vehicle(v) -> void:
 	info_obj = {"veh": v}
+	info_key = ""
+	info_t = 0.0
+	_info_tick(0.0)
+
+func show_unit(s) -> void:
+	info_obj = {"unit": s}
 	info_key = ""
 	info_t = 0.0
 	_info_tick(0.0)
@@ -2727,6 +2745,37 @@ func _info_tick(dt: float) -> void:
 					v.cmd = v.pos
 				message("%s stopping" % v.spec["name"])
 				info_key = ""])
+	if info_obj.has("unit"):
+		var u = info_obj["unit"]
+		if not is_instance_valid(u) or u.state == "dead" or not (u in G.pc.selection):
+			hide_info()
+			return
+		var tag = G.pc.CLASS_TAG.get(u.cls, ["", Color.WHITE])
+		title = "%s · %s" % [u.sname, G.pc.PLURAL.get(u.cls, [u.cls, u.cls])[0].capitalize()]
+		var stars = "· veteran %d" % u.vet if u.vet > 0 else ""
+		var mags = int(u.reserve / maxf(1.0, u.W["mag"]))
+		body = "Health %d%%%s  ·  kills %d %s" % [int(clampf(u.hp, 0.0, 100.0)), " (bleeding)" if u.state == "wounded" else "", u.kills, stars]
+		body += "\n%s: %d in the gun, %d spare mag%s" % [u.W["name"], u.mag, mags, "" if mags == 1 else "s"]
+		var kit = []
+		if u.grenades > 0:
+			kit.append("%d grenade%s" % [u.grenades, "" if u.grenades == 1 else "s"])
+		if u.smokes > 0:
+			kit.append("%d smoke" % u.smokes)
+		if u.rockets > 0 and u.W["rocket"]:
+			kit.append("%d rocket%s" % [u.rockets, "" if u.rockets == 1 else "s"])
+		if not kit.is_empty():
+			body += "\n" + ", ".join(kit)
+		var sq = G.pc.my_squads().find(u.squad) if u.squad != null else -1
+		var doing = SquadCards.doing({"members": [u]})[0]
+		body += "\n%s%s" % ["Squad %d · " % (sq + 1) if sq >= 0 else "", doing]
+		if u.supp > 0.9:
+			body += " (under heavy fire)"
+		key = "u%d" % u.id
+		btns.append(["Hold", func(): G.pc.order_selected("hold")])
+		btns.append(["Take cover", func(): G.pc.order_selected("cover")])
+		btns.append(["Control him", func():
+			if is_instance_valid(u) and u.state == "alive":
+				G.pc.possess(u)])
 	info.visible = true
 	info_title.text = title
 	info_body.text = body
@@ -2736,7 +2785,10 @@ func _info_tick(dt: float) -> void:
 			c.queue_free()
 		for b in btns:
 			_info_button(b[0], b[1])
-	info.reset_size()
+	# grows upward from just above the minimap
+	var hgt = info.get_combined_minimum_size().y
+	info.offset_bottom = -212
+	info.offset_top = -212 - hgt
 
 func _site_act(what: String) -> void:
 	if not info_obj.has("site"):

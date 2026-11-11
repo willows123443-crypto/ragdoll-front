@@ -105,7 +105,7 @@ static func _step_missions(dt: float) -> void:
 			0:
 				# ranging round
 				var p = tgt + m["err"]
-				Combat.shell_at(p, 1.5, 3.5, c if has_eyes else null, m["power"])
+				Combat.shell_at(p, 1.5, 3.5, c if has_eyes else null, m["power"], m["team"])
 				var los = G.flat(tgt - m["from"]).normalized()
 				if los.length_squared() < 0.5:
 					los = Vector3(1, 0, 0)
@@ -124,7 +124,7 @@ static func _step_missions(dt: float) -> void:
 				m["stage"] = 2
 				m["t"] = 2.5
 			2:
-				Combat.shell_at(tgt + m["err"], 1.5, 3.5, c if has_eyes else null, m["power"])
+				Combat.shell_at(tgt + m["err"], 1.5, 3.5, c if has_eyes else null, m["power"], m["team"])
 				m["err"] = m["err"] * 0.15
 				m["stage"] = 3
 				m["t"] = 6.5
@@ -133,7 +133,7 @@ static func _step_missions(dt: float) -> void:
 					G.fx.callout(c, G.pick(["On target! Fire for effect!", "Good hit, fire for effect!"]))
 				G.ui.radio(m["team"], "Fire for effect on %s!" % AI.grid_ref(tgt))
 				for k in range(m["shells"]):
-					Combat.shell_at(tgt + m["err"], m["spread"], 3.0 + k * randf_range(0.4, 0.9), c if has_eyes else null, m["power"])
+					Combat.shell_at(tgt + m["err"], m["spread"], 3.0 + k * randf_range(0.4, 0.9), c if has_eyes else null, m["power"], m["team"])
 				missions.remove_at(i)
 
 static func earn(team: int, n: int) -> void:
@@ -176,6 +176,9 @@ static func _ai_spend(t: int) -> void:
 		if G.vehicles.any(func(v): return v.team != t and not v.dead and v.spec.get("air", false)):
 			air_seen[t] = G.sim_time
 		if G.sim_time - air_seen[t] < 240.0 and _ai_aa(t):
+			return
+		# a few fighting vehicles as the battle goes on, built at its depot (more the longer it lasts)
+		if _ai_vehicle(t):
 			return
 		if _ai_recruit(t):
 			return
@@ -399,6 +402,29 @@ static func _step_planes(dt: float) -> void:
 
 # what the AI commander buys: riflemen first, engineers if it has none, AT men against armour,
 # more when it's losing men; capped so it can't flood the map
+const AI_VEH = ["jeep", "halftrack", "armoredcar", "tank", "heavytank", "technical", "motorbike"]
+
+static func _ai_vehicle(t: int) -> bool:
+	if G.armor == "none" and not Prod.active():
+		return false
+	var have = 0
+	for v in G.vehicles:
+		if v.team == t and not v.dead and v.kind in AI_VEH:
+			have += 1
+	var queued = Prod.queue_size(t) if Prod.active() else 0
+	var want = 1 + int(G.game_time / 180.0)
+	if have + queued >= mini(want, 5) or randf() < 0.35:
+		return false
+	var enemy_armour = G.vehicles.any(func(v): return v.team != t and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar"))
+	var picks = ["tank", "armoredcar", "halftrack"] if enemy_armour else ["halftrack", "armoredcar", "jeep", "tank"]
+	if Faction.militia(t):
+		picks = ["technical"]
+	for k in picks:
+		if COSTS.has(k) and COSTS[k] <= points[t] and unlocked(t, k) and Faction.support_ok(t, k) and Rules.callin_ok(t, k):
+			if call_in(t, k, G.world.capture):
+				return true
+	return false
+
 static func _ai_recruit(t: int) -> bool:
 	var R = G.ui.RECRUIT
 	var mine = G.soldiers.filter(func(x): return x.team == t and x.state != "dead")

@@ -33,10 +33,16 @@ static func _ln(img: Image, a: Vector2, b: Vector2, t: float) -> void:
 
 static func kind_of(wid: String) -> String:
 	match wid:
-		"rifle", "ak", "bolt", "silenced", "spotter":
+		"rifle", "ak", "bolt", "spotter", "carbine":
 			return "rifle"
-		"lmg", "hmg":
+		"silenced":
+			return "pistol"
+		"lmg", "hmg", "bar":
 			return "mg"
+		"dmr":
+			return "sniper"
+		"gl":
+			return "blast"
 		"rpg", "pfaust", "atrifle":
 			return "at"
 		_:

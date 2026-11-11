@@ -34,8 +34,34 @@ static func step(dt: float) -> void:
 	for v in G.vehicles:
 		if v.team == 0 and not v.dead:
 			mine.append(v.pos)
+	# vehicles first: seen up close (or by their lights), or because someone's spotted a man aboard
+	for v in G.vehicles:
+		if v.team == 0:
+			continue
+		var vv = v.dead
+		var vs = 140.0 if v.lights_on else sight      # headlights give it away from far off
+		if not vv:
+			for p in mine:
+				if G.dist2d(p, v.pos) < vs:
+					vv = true
+					break
+		if not vv:
+			for seat in v.seats:
+				if seat != null and is_instance_valid(seat):
+					for o in eyes:
+						var k2 = o.intel.get(seat)
+						if k2 != null and k2["seen"] and G.sim_time - k2["t"] < 1.2:
+							vv = true
+							break
+				if vv:
+					break
+		v.visible = vv
 	for s in G.soldiers:
 		if s.team == 0:
+			continue
+		# a man in a vehicle shows exactly when his vehicle does: never floating on his own in the fog
+		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
+			_show(s, s.vehicle.visible)
 			continue
 		var vis = s.state == "dead"
 		if not vis:
@@ -56,17 +82,6 @@ static func step(dt: float) -> void:
 					vis = true
 					break
 		_show(s, vis)
-	for v in G.vehicles:
-		if v.team == 0:
-			continue
-		var vv = v.dead
-		var vs = 140.0 if v.lights_on else sight      # headlights give it away from far off
-		if not vv:
-			for p in mine:
-				if G.dist2d(p, v.pos) < vs:
-					vv = true
-					break
-		v.visible = vv
 	for st in Build.sites:
 		if st["team"] == 0 or st.get("seen0", false):
 			continue

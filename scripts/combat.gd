@@ -45,6 +45,18 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 		return
 	if W["rocket"]:
 		launch_rocket(s, origin, spread_dir(dir, spread))
+	elif W["gl"]:
+		# lobbed: aimed at where the target stands (or a long way out along the aim), not straight at it
+		var tp: Vector3 = origin + dir * 45.0
+		if s.target != null and is_instance_valid(s.target) and not s.is_player:
+			tp = s.target.pos + Vector3(randf_range(-2.5, 2.5), 0, randf_range(-2.5, 2.5))
+		if G.dist2d(tp, origin) < 14.0:
+			tp = origin + G.flat(dir).normalized() * 14.0      # never lob one at his own feet
+		elif s.is_player and G.pc != null:
+			tp = G.pc.aim_point
+		launch_rifle_grenade(s, origin, tp)
+		s.parts[6].apply_central_impulse(-s.gun_dir * W["force"] * 0.08)
+		return
 	else:
 		for k in range(W["pellets"]):
 			fire_ray(s, origin, spread_dir(dir, spread + (W["spread"] if W["pellets"] > 1 else 0.0)), W, k == 0 or k % 3 == 0)
@@ -66,7 +78,8 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 			AI.add_intel(o, s, origin, 1.5 if d < 15.0 else d * 0.12, false)
 
 # how much material a bullet can punch through (metres of plain wall); wood and foliage count for much less
-const PEN = {"rifle": 0.34, "lmg": 0.42, "sniper": 0.75, "shotgun": 0.08, "rpg": 0.0, "hmg": 0.55, "smg": 0.2, "pistol": 0.12, "atrifle": 1.3, "flamer": 0.0, "pfaust": 0.0}
+const PEN = {"rifle": 0.34, "lmg": 0.42, "sniper": 0.75, "shotgun": 0.08, "rpg": 0.0, "hmg": 0.55, "smg": 0.2, "pistol": 0.12, "atrifle": 1.3, "flamer": 0.0, "pfaust": 0.0,
+	"carbine": 0.24, "bar": 0.4, "dmr": 0.6, "gl": 0.0}
 const MAT_FACTOR = [1.0, 0.3, 0.1]   # solid, wood, foliage
 
 # metres of the ray o + d*t inside an axis-aligned box, starting from entry distance t0
@@ -518,22 +531,54 @@ static func mortar_strike(center: Vector3, n: int) -> void:
 		strikes.append({"p": p, "t": 1.4 + i * randf_range(0.4, 0.8), "whistled": false})
 
 # one shell from a mortar team or an artillery call: lands after the flight time near the target
-static func shell_at(target: Vector3, spread: float, flight: float, owner_s, power: float = 1.35) -> void:
+static func shell_at(target: Vector3, spread: float, flight: float, owner_s, power: float = 1.35, team: int = -1) -> void:
 	var a = randf() * TAU
 	var r = sqrt(randf()) * spread
 	var p = Vector3(target.x + cos(a) * r, 0, target.z + sin(a) * r)
 	p.y = G.world.ground_y(p.x, p.z) + 0.1
-	strikes.append({"p": p, "t": flight, "whistled": false, "owner": owner_s, "power": power})
+	if team < 0 and owner_s != null and is_instance_valid(owner_s):
+		team = owner_s.team
+	strikes.append({"p": p, "t": flight, "whistled": false, "owner": owner_s, "power": power, "team": team})
+
+static var intercepts = 0
+
+# a counter-battery gun near where a shell is coming down gets a burst off at it
+static func _intercept(s) -> bool:
+	if s.get("checked", false):
+		return false
+	s["checked"] = true
+	for st in Build.sites:
+		if st["kind"] != "cbgun" or not Build.alive(st) or not st["done"] or st["team"] == s.get("team", -1):
+			continue
+		if G.dist2d(st["p"], s["p"]) > 60.0 or randf() > 0.75:
+			continue
+		var gun: Vector3 = st["p"] + Vector3(0, 2.2, 0)
+		var burst: Vector3 = s["p"] + Vector3(randf_range(-3, 3), randf_range(26.0, 34.0), randf_range(-3, 3))
+		var dir = (burst - gun).normalized()
+		for k in range(3):
+			G.fx.tracer(gun, (dir + Vector3(randf_range(-0.03, 0.03), randf_range(-0.03, 0.03), randf_range(-0.03, 0.03))).normalized(), 2.0, 260.0, func(): pass, true)
+		G.fx.explosion(burst, 0.35)
+		G.audio.play(G.audio.s_boom, burst, -10.0, 1.6)
+		intercepts += 1
+		return true
+	return false
 
 static func step_strikes() -> void:
 	for i in range(strikes.size() - 1, -1, -1):
 		var s = strikes[i]
 		s["t"] -= G.DT
+		if s["t"] < 0.9 and _intercept(s):
+			strikes.remove_at(i)
+			continue
 		if not s["whistled"] and s["t"] < 1.15:
 			s["whistled"] = true
 			G.audio.whistle(s["p"])
 		if s["t"] <= 0.0:
 			var ow = s.get("owner")
+			# remembered by the side whose HQ it fell near (an AI builds a counter-battery gun)
+			for st in Build.sites:
+				if st["kind"] == "hq" and not st["dead"] and st["team"] != s.get("team", -1) and G.dist2d(st["p"], s["p"]) < 50.0:
+					st["shelled_t"] = G.sim_time
 			arty = true
 			explode(s["p"], ow if (ow != null and is_instance_valid(ow)) else null, s.get("power", 1.35))
 			arty = false

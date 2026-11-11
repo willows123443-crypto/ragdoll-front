@@ -320,7 +320,10 @@ static func _cut_note(team: int) -> String:
 static func end_turn() -> Array:
 	var lines = []
 	var net1 = supply_net(1)
-	var attacked_army = false
+	# after attacking, Bravo spends a turn regrouping before it attacks one of your armies again
+	var attacked_army = data.get("bravo_rest", false)
+	data["bravo_rest"] = false
+	var grabs = 0          # Bravo takes at most one undefended region a turn
 	var bravo = data["armies"].filter(func(x): return x["team"] == 1)
 	# the strongest first
 	bravo.sort_custom(func(x, y): return x["str"] > y["str"])
@@ -335,10 +338,11 @@ static func end_turn() -> Array:
 			if own == 0:
 				var foe = army_at(j, 0)
 				if foe == null:
-					sc = 6.0 + (12.0 if j == HQ[0] else 0.0)
+					sc = (6.0 + (12.0 if j == HQ[0] else 0.0)) if grabs == 0 else -1e9
 				elif not attacked_army:
-					sc = (b["str"] - foe["str"]) * 1.2 + (2.0 if not supplied(0, j) else 0.0) + (10.0 if j == HQ[0] else 0.0)
-					if b["str"] < 5:
+					# only attacks it clearly outnumbers: defenders are dug in
+					sc = (b["str"] - foe["str"] * 1.3) * 1.2 + (2.0 if not supplied(0, j) else 0.0) + (10.0 if j == HQ[0] else 0.0)
+					if b["str"] < 5 or b["str"] < foe["str"] * 1.15:
 						sc -= 8.0
 				# cutting our line counts for a lot
 				if sc > -1e8:
@@ -368,11 +372,13 @@ static func end_turn() -> Array:
 			continue
 		var foe2 = army_at(best, 0)
 		if foe2 == null:
+			grabs += 1
 			b["region"] = best
 			data["owner"][best] = 1
 			lines.append("Bravo's %s pushes into %s." % [b["name"], r["name"]] + _cut_note(0))
 		else:
 			attacked_army = true
+			data["bravo_rest"] = true
 			data["battle"] = {"region": best, "attacker": 1, "army": foe2["id"], "foe": b["id"], "from": here}
 			lines.append("Bravo's %s attacks your %s at %s! Defend it." % [b["name"], foe2["name"], r["name"]])
 	if data["battle"] == null:
@@ -587,8 +593,20 @@ static func attack(i: int, mode: String = "", size: int = SQUAD, supply: Array =
 		G.fx.set_storm(true)
 		G.main.apply_time()
 		note += " · storm: no aircraft"
+	# defending: our men have had time to dig in (sandbags and an MG nest already up), and a longer prep
+	if b != null and b.get("attacker", 0) == 1:
+		var home: Vector3 = G.world.rally_point(0)
+		var fw = G.flat(G.world.capture - home).normalized()
+		var sd = Vector3(fw.z, 0, -fw.x)
+		var made = 0
+		for item in [["mgnest", 0.0, 14.0], ["sandbags", -7.0, 11.0], ["sandbags", 7.0, 11.0], ["sandbags", 0.0, 18.0]]:
+			var spot = Build.find_spot(home + sd * item[1] + fw * item[2], item[0], 5.0, 10, true)
+			if spot != null and Build.place(item[0], 0, spot, fw, true) != null:
+				made += 1
+		if made > 0:
+			note += " · dug in"
 	G.ui.message("Battle for %s · %d of our vehicles%s" % [r["name"], nveh, note])
-	Prep.start()
+	Prep.start(90.0 if b != null and b.get("attacker", 0) == 1 else Prep.SECS)
 
 # reinforcements are off for a side that's cut off
 static func reinforce_ok(t: int) -> bool:

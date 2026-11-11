@@ -25,8 +25,9 @@ const KINDS = {
 	"fob2": {"name": "FOB (hut)", "work": 60.0, "size": Vector2(11, 10)},
 	"supply": {"name": "Supply dump", "work": 25.6, "size": Vector2(6.5, 5.5)},
 	"observer": {"name": "Observer post", "work": 26.0, "size": Vector2(4.4, 4.4)},
+	"cbgun": {"name": "Counter-battery gun", "work": 30.0, "size": Vector2(4.6, 4.6)},
 }
-const ORDER = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "tower", "bunker", "hospital", "radio", "depot", "supply", "observer"]
+const ORDER = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "cbgun", "tower", "bunker", "hospital", "radio", "depot", "supply", "observer"]
 # what an AI team adds around a finished FOB, in order: [kind, sideways, forward]
 const FOB_PLAN = [["mgnest", 0.0, 13.0], ["sandbags", -6.0, 10.0], ["sandbags", 6.0, 10.0], ["hospital", -11.0, -6.0],
 	["supply", 11.0, -5.0], ["radio", -12.0, 5.0], ["mortarpit", 6.0, -12.0], ["tower", 12.0, 7.0], ["wire", 0.0, 20.0],
@@ -66,7 +67,7 @@ static func reset() -> void:
 
 # what a structure costs in commander mode (supply points)
 const COSTS = {"fob": 24, "sandbags": 2, "wire": 2, "traps": 3, "mgnest": 8, "mortarpit": 10, "aa": 10, "tower": 6, "bunker": 14,
-	"hospital": 12, "radio": 10, "depot": 16, "supply": 8, "observer": 9}
+	"hospital": 12, "radio": 10, "depot": 16, "supply": 8, "observer": 9, "cbgun": 14}
 
 static func cost(kind: String) -> int:
 	return COSTS.get(kind, 0) if G.mode in ["commander", "horde"] else 0
@@ -102,7 +103,7 @@ static func ghost(kind: String, p: Vector3, front: Vector3) -> Node3D:
 		"depot": _geo_depot(st)
 		"supply": _geo_supply(st)
 		"observer": _geo_observer(st)
-		"aa": _geo_aa(st)
+		"aa", "cbgun": _geo_aa(st)
 	G.world.edit_node = null
 	G.world.piece = keep_piece
 	# the outline of its footprint and an arrow out of the front
@@ -198,7 +199,7 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 		"depot": _geo_depot(st)
 		"supply": _geo_supply(st)
 		"observer": _geo_observer(st)
-		"aa": _geo_aa(st)
+		"aa", "cbgun": _geo_aa(st)
 		"concrete": _geo_concrete(st)
 		"pillbox": _geo_pillbox(st)
 		"fob2": _geo_fob2(st)
@@ -382,10 +383,10 @@ static func _complete(st: Dictionary, quiet: bool) -> void:
 			# only HQ never runs dry; FOBs and dumps start with what the builders brought and rely on supply trucks
 			st["ammo"] = {"p": a, "team": t, "stock": 60.0 if st["kind"] != "hq" else 1e9, "site": st}
 			G.world.ammo_points.append(st["ammo"])
-		"mgnest", "mortarpit", "aa", "pillbox":
+		"mgnest", "mortarpit", "aa", "pillbox", "cbgun":
 			VModel.bare = true
 			var yaw = atan2(_front(st).x, _front(st).z)
-			st["veh"] = G.main.spawn_vehicle({"mgnest": "nest", "mortarpit": "mortar", "aa": "aagun", "pillbox": "nest"}[st["kind"]], t, st["p"], yaw, false)
+			st["veh"] = G.main.spawn_vehicle({"mgnest": "nest", "mortarpit": "mortar", "aa": "aagun", "pillbox": "nest", "cbgun": "aagun"}[st["kind"]], t, st["p"], yaw, false)
 			VModel.bare = false
 	if st.get("camo_wanted", false):
 		add_camo(st)
@@ -568,7 +569,8 @@ const DESCR = {"hq": "Headquarters: earns supply points; lose it and you lose th
 	"pillbox": "Concrete machine-gun position", "mortarpit": "Shells enemies your side has spotted",
 	"tower": "Lookout: spots the enemy from far off", "bunker": "Shelter from artillery",
 	"hospital": "Treats the wounded and gives blood", "radio": "Keeps your radio net up for call-ins",
-	"depot": "Unlocks vehicles", "aa": "Shoots down aircraft", "observer": "Forward observer post: sees a long way round it (through the fog of war) and makes artillery called near it far more accurate", "supply": "Earns supply points when the trucks get through, and restocks ammo. Must be 70 m or more from HQ"}
+	"depot": "Unlocks vehicles", "aa": "Shoots down aircraft",
+	"cbgun": "Counter-battery gun: shoots incoming artillery shells out of the sky within about 60 m (most of them), and fires at aircraft too", "observer": "Forward observer post: sees a long way round it (through the fog of war) and makes artillery called near it far more accurate", "supply": "Earns supply points when the trucks get through, and restocks ammo. Must be 70 m or more from HQ"}
 
 # how badly knocked about a finished structure is (0 = as new, 1 = gone)
 static func damage(st: Dictionary) -> float:
@@ -952,6 +954,30 @@ static func _ai_plan(t: int) -> void:
 			place("fob", t, spot, to)
 			G.ui.radio(t, "Engineers: setting up a FOB at %s" % AI.grid_ref(spot))
 		return
+	# commander mode: a supply dump well out from HQ comes first, so the supply trucks have somewhere to run
+	if Prod.active() and "supply" in ok and hq_alive(t) and mine.filter(func(st): return st["kind"] == "supply").is_empty() and G.sim_time > 20.0:
+		if _ai_supply(t, obj):
+			return
+	# being shelled round HQ: a counter-battery gun beside it
+	if Prod.active() and "cbgun" in ok and hq_alive(t) and G.sim_time - hq(t).get("shelled_t", -999.0) < 150.0 and mine.filter(func(st): return st["kind"] == "cbgun").is_empty():
+		var hq3: Dictionary = hq(t)
+		var spot3 = find_spot(hq3["p"] + _front(hq3) * 10.0, "cbgun", 12.0, 16, true, t)
+		if spot3 != null:
+			place("cbgun", t, spot3, _front(hq3))
+			G.ui.radio(t, "Engineers: putting up a counter-battery gun by HQ")
+			return
+	# then a vehicle depot by HQ, so it can build armour
+	if Prod.active() and "depot" in ok and hq_alive(t) and mine.filter(func(st): return st["kind"] == "depot").is_empty() and G.sim_time > 60.0:
+		var hq2: Dictionary = hq(t)
+		var hp2: Vector3 = hq2["p"]
+		var tw2 = G.flat(obj - hp2).normalized()
+		var sd2 = Vector3(tw2.z, 0, -tw2.x)
+		for sgn in [1.0, -1.0]:
+			var spot2 = find_spot(hp2 + tw2 * 14.0 + sd2 * sgn * 16.0, "depot", 10.0, 16, false, t)
+			if spot2 != null:
+				place("depot", t, spot2, tw2)
+				G.ui.radio(t, "Engineers: building a vehicle depot at %s" % AI.grid_ref(spot2))
+				return
 	# rebuild what's been knocked about, net the important stuff, then upgrade
 	for st in mine:
 		if st["done"] and needs_repair(st) and st["kind"] != "hq" and randf() < 0.5:
@@ -972,9 +998,10 @@ static func _ai_plan(t: int) -> void:
 			if not (item[0] in ok):
 				continue
 			var key = "%s_%d_%d" % [item[0], int(item[1]), int(item[2])]
-			if f.has("plan_" + key):
+			# a few goes at each, not just one: a blocked first try shouldn't rule it out for good
+			if f.get("plan_" + key, 0) is bool or f.get("plan_" + key, 0) >= 3:
 				continue
-			f["plan_" + key] = true
+			f["plan_" + key] = f.get("plan_" + key, 0) + 1
 			var want = f["p"] + side * item[1] + fw * item[2]
 			if item[0] == "bunker":
 				if Obj.points.is_empty():
@@ -992,11 +1019,33 @@ static func _ai_plan(t: int) -> void:
 				var hp: Vector3 = hq_st["p"]
 				var tow = G.flat(obj - hp)
 				want = hp + tow.normalized() * minf(SUPPLY_MIN + 18.0, maxf(SUPPLY_MIN + 5.0, tow.length() - 40.0)) + side * 10.0
-			var spot = find_spot(want, item[0], 8.0, 14, false, t)
+			var spot = find_spot(want, item[0], 8.0 + 6.0 * (f["plan_" + key] - 1), 14, f["plan_" + key] >= 3, t)
 			if spot != null:
+				f["plan_" + key] = true
 				place(item[0], t, spot, fw)
 				return
 	_ai_upgrade(t)
+
+# a supply dump between HQ and the front, at least SUPPLY_MIN from HQ; tries wider each time
+static func _ai_supply(t: int, obj: Vector3) -> bool:
+	var h: Dictionary = hq(t)
+	var hp: Vector3 = h["p"]
+	var tow = G.flat(obj - hp)
+	if tow.length() < 1.0:
+		tow = G.flat(G.world.capture - hp)
+	var dir = tow.normalized()
+	var side = Vector3(dir.z, 0, -dir.x)
+	var n: int = h.get("supply_tries", 0)
+	h["supply_tries"] = n + 1
+	var dist = minf(SUPPLY_MIN + 15.0 + (n % 3) * 8.0, maxf(SUPPLY_MIN + 4.0, tow.length() - 35.0))
+	for sgn in [1.0, -1.0, 0.0]:
+		var want = hp + dir * dist + side * sgn * (12.0 + 4.0 * (n % 4))
+		var spot = find_spot(want, "supply", 10.0 + 4.0 * mini(n, 5), 16, n >= 3, t)
+		if spot != null:
+			place("supply", t, spot, dir)
+			G.ui.radio(t, "Engineers: building a supply dump at %s" % AI.grid_ref(spot))
+			return true
+	return false
 
 static func _ai_defend_plan(t: int, ok: Array) -> void:
 	var held = []

@@ -262,7 +262,7 @@ static func work(s) -> void:
 		"fixwheel":
 			# a crewman out at the side of his vehicle with a hammer and a wrench
 			var fv = s.board_target
-			if fv == null or not (fv is Vehicle) or not is_instance_valid(fv) or fv.dead or not (fv.tracks_broken or fv.tyres > 0):
+			if fv == null or not (fv is Vehicle) or not is_instance_valid(fv) or fv.dead or not (fv.tracks_broken or fv.tyres > 0 or fv.hp < fv.spec["hp"] * 0.6):
 				s.task = "board" if fv != null and fv is Vehicle and is_instance_valid(fv) and not fv.dead else null
 				s.decide_t = 0.0
 				return
@@ -279,7 +279,9 @@ static func work(s) -> void:
 				s.hand_t = wheel
 				s.tool_mode = "hammer"
 				s.build_t += G.DT
-				if s.build_t > (10.0 if fv.tracks_broken else 6.0):
+				fv.hp = minf(fv.spec["hp"], fv.hp + 12.0 * G.DT)      # patching up the damage while he's at it
+				fv._clear_damage_smoke()
+				if s.build_t > (10.0 if fv.tracks_broken else 6.0) and fv.hp >= fv.spec["hp"] * 0.6:
 					fv.tracks_broken = false
 					fv._fix_tyres()
 					fv.fix_by = null
@@ -387,8 +389,22 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 					if d < 20.0:
 						friends2 = true
 			if spotted and not friends2:
-				return st["p"]
-	return best
+				return _hq_rationed(team, st["p"])
+	return _hq_rationed(team, best)
+
+# shelling round the enemy HQ is rationed: one barrage there every few minutes, not a constant rain
+static var hq_fire_t = [-999.0, -999.0, -999.0, -999.0]
+
+static func _hq_rationed(team: int, p):
+	if p == null or not Prod.active():
+		return p
+	for st in Build.sites:
+		if st["kind"] == "hq" and st["team"] != team and not st["dead"] and G.dist2d(st["p"], p) < 45.0:
+			if G.sim_time - hq_fire_t[team] < 180.0:
+				return null
+			hq_fire_t[team] = G.sim_time
+			break
+	return p
 
 static func call_artillery(s, target: Vector3) -> void:
 	# a red smoke marker goes down where the shells will fall
@@ -706,7 +722,7 @@ static func _spotter(s) -> bool:
 		var best = null
 		var bd = 1e9
 		for cp in sn.tower["cps"]:
-			if cp == sn.cover or not AI.cover_free(cp, s) or cp.ban > G.sim_time:
+			if cp == sn.cover or not AI.cover_free(cp, s) or cp.ban > G.sim_time or not G.world.cp_ok(cp):
 				continue
 			var d = cp.p.distance_to(sn.cover.p if sn.cover != null else sn.pos)
 			if d < bd:

@@ -248,7 +248,7 @@ func _one_shot_smoke(pos: Vector3, col: Color, amount: int, life: float, s0: flo
 	p.one_shot = true
 	p.amount = amount
 	p.lifetime = life
-	p.explosiveness = 0.9
+	p.explosiveness = 1.0
 	p.spread = 180.0
 	p.initial_velocity_min = 0.2
 	p.initial_velocity_max = 1.5
@@ -266,6 +266,14 @@ func _one_shot_smoke(pos: Vector3, col: Color, amount: int, life: float, s0: flo
 	add_child(p)
 	p.global_position = pos
 	p.emitting = true
+	# the web build draws particles that haven't been emitted yet as black discs (the black circle
+	# behind a rocket): keep the puff hidden for its first couple of frames, until they all exist
+	p.visible = false
+	var wp = weakref(p)
+	get_tree().create_timer(0.05, false).timeout.connect(func():
+		var pp = wp.get_ref()
+		if pp != null:
+			pp.visible = true)
 	get_tree().create_timer(life + 0.5, false).timeout.connect(p.queue_free)
 	return p
 
@@ -414,9 +422,9 @@ func ripple(pos: Vector3, size: float) -> void:
 	tw.tween_property(mat, "albedo_color:a", 0.0, 1.4)
 	tw.chain().tween_callback(m.queue_free)
 
-func wreck_smoke(pos: Vector3, parent: Node) -> void:
+func wreck_smoke(pos: Vector3, parent: Node, c: Color = Color(0.17, 0.16, 0.15, 0.6), amount: int = 40) -> CPUParticles3D:
 	var p = CPUParticles3D.new()
-	p.amount = 40
+	p.amount = amount
 	p.lifetime = 10.0
 	p.direction = Vector3(0.12, 1, 0.03)
 	p.spread = 8.0
@@ -426,7 +434,6 @@ func wreck_smoke(pos: Vector3, parent: Node) -> void:
 	var q = QuadMesh.new()
 	p.mesh = q
 	p.material_override = billboard_mat(Color(1, 1, 1, 1), false)
-	var c = Color(0.17, 0.16, 0.15, 0.6)
 	p.color = c
 	p.color_ramp = _fade_ramp(c)
 	p.scale_amount_min = 1.2
@@ -437,6 +444,7 @@ func wreck_smoke(pos: Vector3, parent: Node) -> void:
 	parent.add_child(p)
 	p.global_position = pos
 	p.emitting = true
+	return p
 
 # a lingering smoke screen; returns the emitter so it can be stopped
 func smoke_screen(pos: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.83), big: float = 1.0) -> CPUParticles3D:
@@ -675,6 +683,48 @@ func step(dt: float) -> void:
 				d["b"].queue_free()
 			debris_list.remove_at(i)
 
+# a ladder whose wall came down: it topples away from where the wall was and lies there a while
+func falling_ladder(base: Vector3, n: Vector3, length: float) -> void:
+	var b = RigidBody3D.new()
+	b.collision_layer = G.L_DEBRIS
+	b.collision_mask = G.L_WORLD | G.L_DEBRIS
+	b.mass = 25.0
+	var root = Node3D.new()
+	var col = Color(0.4, 0.3, 0.2)
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = col
+	for e in [-0.25, 0.25]:
+		var rail = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.07, length, 0.07)
+		rail.mesh = bm
+		rail.material_override = mat
+		rail.position = Vector3(e, 0, 0)
+		root.add_child(rail)
+	var nr = int(length / 0.3)
+	for k in range(1, nr):
+		var rung = MeshInstance3D.new()
+		var rm = BoxMesh.new()
+		rm.size = Vector3(0.5, 0.04, 0.05)
+		rung.mesh = rm
+		rung.material_override = mat
+		rung.position = Vector3(0, k * 0.3 - length / 2.0, 0)
+		root.add_child(rung)
+	b.add_child(root)
+	var cs = CollisionShape3D.new()
+	var bs = BoxShape3D.new()
+	bs.size = Vector3(0.55, length, 0.08)
+	cs.shape = bs
+	b.add_child(cs)
+	add_child(b)
+	# rails along the ladder's own x, facing out from the wall
+	var x_axis = Vector3(n.z, 0, -n.x)
+	b.global_transform = Transform3D(Basis(x_axis, Vector3.UP, x_axis.cross(Vector3.UP)), base + Vector3(0, length / 2.0 + 0.05, 0))
+	b.apply_impulse(n * 30.0, Vector3(0, length * 0.45, 0))
+	var tw = b.create_tween()
+	tw.tween_interval(25.0)
+	tw.tween_callback(b.queue_free)
+
 func debris(pos: Vector3, vel: Vector3, size: float, col: Color, shape: Vector3 = Vector3.ZERO) -> void:
 	if debris_list.size() > 260:
 		var old = debris_list.pop_front()
@@ -731,7 +781,12 @@ func clear_all() -> void:
 
 # ---------------------------------------------------------------- speech bubbles
 func callout(s, text: String) -> void:
-	if not G.settings["callouts"] or s.callout_cd > 0.0 or s.zombie or Fog.hidden(s):
+	if s.callout_cd > 0.0 or s.zombie or Fog.hidden(s):
+		return
+	# text over heads switched off: they still shout (you hear it), you just don't see the words
+	if not G.settings["callouts"]:
+		s.callout_cd = randf_range(4.0, 7.0)
+		G.audio.bark(s, Voice.flavour(s, text))
 		return
 	# supply and logistics crews just get on with it: no chatter over trucks and ambulances
 	var sv = s.vehicle

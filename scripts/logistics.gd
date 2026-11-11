@@ -125,7 +125,7 @@ static func _dispatch(t: int, v, h) -> void:
 			best = st
 	if best == null:
 		return
-	var home = G.main._free_spot(h["p"] + Build._front(h) * 12.0)
+	var home = G.world.park_spot(h["p"] + Build._front(h) * 12.0, v, best["p"])
 	var drop = G.world.park_spot(best["p"], v, h["p"])
 	var load = int(LOAD * (1.5 if Prod.has(t, "logistics") else 1.0)) if best["kind"] == "supply" else 0
 	v.cmd = null

@@ -1,21 +1,61 @@
 class_name SquadCards
 extends VBoxContainer
-# Commander view: a column of cards down the left, one per squad on your side. Each shows the squad's
-# number and kind, how many men are left, a health bar for the whole squad and what it's doing.
-# Click a card to select that squad and look at it.
+# Commander view: a slim column of cards, one per squad on your side, next to the menu buttons.
+# Each is one line: number, kind (or the vehicle a crew runs), men left, what it's doing, and a thin
+# health bar underneath. Click a card to select that squad and look at it; the header folds them away.
 
 var cards: Array = []
 var t = 0.0
-const CW = 176
+var folded = false
+var head: Button
+const CW = 182
 
 func _ready() -> void:
-	add_theme_constant_override("separation", 4)
+	add_theme_constant_override("separation", 2)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_preset(Control.PRESET_TOP_LEFT)
 	position = Vector2(192, 12)
 	visible = false
+	head = Button.new()
+	head.focus_mode = Control.FOCUS_NONE
+	head.custom_minimum_size = Vector2(CW, 20)
+	head.add_theme_font_size_override("font_size", 11)
+	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var hs = StyleBoxFlat.new()
+	hs.bg_color = Color(0.07, 0.08, 0.09, 0.7)
+	hs.set_corner_radius_all(3)
+	hs.content_margin_left = 6
+	head.add_theme_stylebox_override("normal", hs)
+	head.add_theme_stylebox_override("hover", hs)
+	head.add_theme_stylebox_override("pressed", hs)
+	head.pressed.connect(func():
+		folded = not folded
+		t = 0.0)
+	add_child(head)
+
+# the vehicle a squad's men are all riding in (as its crew), or null
+static func crew_vehicle(q: Dictionary):
+	var v = null
+	var any = false
+	for m in q["members"]:
+		if not is_instance_valid(m) or m.state == "dead":
+			continue
+		any = true
+		if m.state != "riding" or m.vehicle == null or not is_instance_valid(m.vehicle):
+			return null
+		if v == null:
+			v = m.vehicle
+		elif v != m.vehicle:
+			return null
+		var role = m.vehicle.spec["seats"][m.seat]["role"] if m.seat >= 0 and m.seat < m.vehicle.spec["seats"].size() else "pass"
+		if role == "pass" and not m.vehicle.spec.get("static", false):
+			return null
+	return v if any else null
 
 static func kind_of(q: Dictionary) -> String:
+	var cv = crew_vehicle(q)
+	if cv != null:
+		return cv.spec["name"]
 	var roles = {}
 	var n = 0
 	for m in q["members"]:
@@ -25,7 +65,7 @@ static func kind_of(q: Dictionary) -> String:
 	if n == 0:
 		return "Squad"
 	if roles.get("sniper", 0) + roles.get("spotter", 0) >= n:
-		return "Sniper team"
+		return "Snipers"
 	if roles.get("mg", 0) * 2 >= n:
 		return "MG team"
 	if roles.get("at", 0) * 2 >= n:
@@ -34,11 +74,13 @@ static func kind_of(q: Dictionary) -> String:
 		return "Engineers"
 	if roles.get("medic", 0) * 2 >= n:
 		return "Medics"
-	return "Rifle squad"
+	return "Rifles"
 
 static func icon_of(q: Dictionary) -> String:
+	if crew_vehicle(q) != null:
+		return "vehicle"
 	match kind_of(q):
-		"Sniper team":
+		"Snipers":
 			return "sniper"
 		"MG team":
 			return "mg"
@@ -50,8 +92,15 @@ static func icon_of(q: Dictionary) -> String:
 			return "medic"
 	return "rifle"
 
-# what the squad is up to, from its men
+# what the squad is up to, from its men (a crew: from its vehicle)
 static func doing(q: Dictionary) -> Array:
+	var cv = crew_vehicle(q)
+	if cv != null:
+		if cv.spec.get("static", false):
+			return ["Manning", Color(0.75, 0.85, 0.75)]
+		if absf(cv.speed) > 1.0:
+			return ["Driving", Color(0.75, 0.9, 1.0)]
+		return ["Parked", Color(0.8, 0.82, 0.78)]
 	var n = 0
 	var moving = 0
 	var fighting = 0
@@ -63,7 +112,8 @@ static func doing(q: Dictionary) -> Array:
 		if not is_instance_valid(m) or m.state == "dead":
 			continue
 		n += 1
-		if m.state == "riding" or (m.vehicle != null and is_instance_valid(m.vehicle)):
+		# only men actually sitting in a vehicle count as mounted
+		if m.state == "riding" and m.vehicle != null and is_instance_valid(m.vehicle) and not m.vehicle.dead:
 			riding += 1
 			continue
 		if m.state != "alive":
@@ -80,12 +130,12 @@ static func doing(q: Dictionary) -> Array:
 			cover += 1
 	if n == 0:
 		return ["Wiped out", Color(0.6, 0.6, 0.6)]
-	if riding * 2 >= n:
+	if riding * 2 > n:
 		return ["Mounted", Color(0.7, 0.8, 1.0)]
 	if pinned * 2 >= n:
-		return ["Pinned down!", Color(1.0, 0.45, 0.35)]
+		return ["Pinned!", Color(1.0, 0.45, 0.35)]
 	if fighting > 0:
-		return ["In combat", Color(1.0, 0.7, 0.35)]
+		return ["Fighting", Color(1.0, 0.7, 0.35)]
 	if building > 0:
 		return ["Building", Color(0.95, 0.85, 0.45)]
 	if moving * 2 >= n:
@@ -98,59 +148,54 @@ func _card(i: int) -> Dictionary:
 	while cards.size() <= i:
 		var k = cards.size()
 		var b = Button.new()
-		b.custom_minimum_size = Vector2(CW, 40)
+		b.custom_minimum_size = Vector2(CW, 24)
 		b.focus_mode = Control.FOCUS_NONE
-		b.mouse_filter = Control.MOUSE_FILTER_STOP
 		var sb = StyleBoxFlat.new()
-		sb.bg_color = Color(0.07, 0.08, 0.09, 0.82)
-		sb.set_corner_radius_all(4)
+		sb.bg_color = Color(0.07, 0.08, 0.09, 0.72)
+		sb.set_corner_radius_all(3)
 		sb.border_color = Color(1.0, 0.86, 0.3, 0.0)
-		sb.set_border_width_all(2)
+		sb.set_border_width_all(1)
 		var sh = sb.duplicate()
-		sh.bg_color = Color(0.14, 0.16, 0.17, 0.9)
+		sh.bg_color = Color(0.14, 0.16, 0.17, 0.85)
 		b.add_theme_stylebox_override("normal", sb)
 		b.add_theme_stylebox_override("hover", sh)
 		b.add_theme_stylebox_override("pressed", sh)
 		var h = HBoxContainer.new()
 		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		h.set_anchors_preset(Control.PRESET_FULL_RECT)
-		h.offset_left = 6
-		h.offset_right = -6
-		h.add_theme_constant_override("separation", 6)
-		var num = G.ui._label(str(k + 1), 20, Color(1.0, 0.86, 0.4))
-		num.custom_minimum_size = Vector2(16, 0)
+		h.offset_left = 5
+		h.offset_right = -5
+		h.offset_bottom = -3
+		h.add_theme_constant_override("separation", 5)
+		var num = G.ui._label(str(k + 1), 14, Color(1.0, 0.86, 0.4))
+		num.custom_minimum_size = Vector2(10, 0)
 		h.add_child(num)
 		var ic = TextureRect.new()
 		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		ic.custom_minimum_size = Vector2(34, 16)
+		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ic.custom_minimum_size = Vector2(28, 12)
 		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		h.add_child(ic)
-		var v = VBoxContainer.new()
-		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		v.add_theme_constant_override("separation", 1)
-		var top = G.ui._label("", 12, Color(0.92, 0.92, 0.88))
-		v.add_child(top)
-		var bar = ProgressBar.new()
-		bar.show_percentage = false
-		bar.custom_minimum_size = Vector2(0, 5)
-		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var bg = StyleBoxFlat.new()
-		bg.bg_color = Color(0.2, 0.08, 0.06, 0.9)
-		var fg = StyleBoxFlat.new()
-		fg.bg_color = Color(0.45, 0.85, 0.4)
-		bar.add_theme_stylebox_override("background", bg)
-		bar.add_theme_stylebox_override("fill", fg)
-		v.add_child(bar)
+		var top = G.ui._label("", 11, Color(0.92, 0.92, 0.88))
+		top.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		top.clip_text = true
+		h.add_child(top)
 		var act = G.ui._label("", 11, Color(0.8, 0.8, 0.8))
-		v.add_child(act)
-		h.add_child(v)
+		act.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		h.add_child(act)
 		b.add_child(h)
+		var bar = ColorRect.new()
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bar.anchor_top = 1.0
+		bar.anchor_bottom = 1.0
+		bar.offset_top = -3
+		bar.offset_left = 3
+		b.add_child(bar)
 		b.pressed.connect(func():
 			G.pc.select_squad(k)
 			G.pc.select_squad(k))     # twice: select it and look at it
 		add_child(b)
-		cards.append({"b": b, "sb": sb, "ic": ic, "top": top, "bar": bar, "fg": fg, "act": act})
+		cards.append({"b": b, "sb": sb, "ic": ic, "top": top, "bar": bar, "act": act})
 	return cards[i]
 
 func _process(dt: float) -> void:
@@ -163,11 +208,14 @@ func _process(dt: float) -> void:
 	if t > 0.0:
 		return
 	t = 0.25
-	var n = mini(qs.size(), 8)
+	var n = mini(qs.size(), 9)
+	head.text = ("▸ " if folded else "▾ ") + "Squads (%d)" % qs.size()
 	for i in range(n):
 		var q = qs[i]
 		var c = _card(i)
-		c["b"].visible = true
+		c["b"].visible = not folded
+		if folded:
+			continue
 		var alive = 0
 		var hp = 0.0
 		var sel = false
@@ -180,11 +228,10 @@ func _process(dt: float) -> void:
 		var total = maxi(alive, q.get("size0", q["members"].size()))
 		q["size0"] = total
 		c["ic"].texture = Icons.get_icon(icon_of(q))
-		c["top"].text = "%s  %d/%d" % [kind_of(q), alive, total]
-		c["bar"].max_value = total * 100.0
-		c["bar"].value = hp
+		c["top"].text = "%s %d/%d" % [kind_of(q), alive, total]
 		var frac = hp / maxf(1.0, total * 100.0)
-		c["fg"].bg_color = Color(0.45, 0.85, 0.4) if frac > 0.6 else (Color(0.95, 0.75, 0.3) if frac > 0.3 else Color(0.95, 0.35, 0.3))
+		c["bar"].color = Color(0.45, 0.85, 0.4, 0.9) if frac > 0.6 else (Color(0.95, 0.75, 0.3, 0.9) if frac > 0.3 else Color(0.95, 0.35, 0.3, 0.9))
+		c["bar"].offset_right = 3.0 + (CW - 6.0) * clampf(frac, 0.0, 1.0)
 		var d = doing(q)
 		c["act"].text = d[0]
 		c["act"].add_theme_color_override("font_color", d[1])

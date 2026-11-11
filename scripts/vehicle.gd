@@ -427,9 +427,9 @@ func step(dt: float) -> void:
 		dead_t += dt
 		speed = move_toward(speed, 0.0, 10.0 * dt)
 		# wrecks get towed away after a while so they don't block the roads and spawns
-		if dead_t > 40.0 and not spec.get("plane", false):
-			position.y -= dt * 0.5
-			if dead_t > 46.0:
+		if dead_t > 20.0 and not spec.get("plane", false):
+			position.y -= dt * 0.6
+			if dead_t > 25.0:
 				remove()
 				return
 		if spec.get("plane", false):
@@ -830,7 +830,7 @@ func _mortar(g, dt: float, want, shoot: bool) -> void:
 	var dist = G.dist2d(target, pos)
 	G.fx.muzzle(muzzle(), true)
 	G.audio.boom(muzzle())
-	Combat.shell_at(target, (5.0 + dist * 0.03) if arty else (3.0 + dist * 0.05), (4.0 + dist / 160.0) if arty else (2.5 + dist / 90.0), g, 1.9 if arty else 1.2)
+	Combat.shell_at(target, (5.0 + dist * 0.03) if arty else (3.0 + dist * 0.05), (4.0 + dist / 160.0) if arty else (2.5 + dist / 90.0), g, 1.9 if arty else 1.2, team)
 	if not g.is_player and randf() < 0.3:
 		G.fx.callout(g, G.pick(["Round out!", "Shot over!", "Firing for effect!"]))
 
@@ -971,9 +971,12 @@ func take_damage(amount: float, attacker, at: Vector3) -> void:
 		VehExt.dent(self, at)
 		if hp < spec["hp"] * 0.55 and randf() < 0.3:
 			VehExt.lose_door(self)
+	# damage you can read from across the field: grey wisps from the engine when it's been hurt,
+	# thick black smoke when it's badly hit
+	if hp < spec["hp"] * 0.7 and not has_meta("dmg_smoke") and not spec.get("air", false):
+		set_meta("dmg_smoke", G.fx.wreck_smoke(center() + forward() * spec["len"] * 0.3 + Vector3(0, 0.6, 0), self, Color(0.62, 0.62, 0.6, 0.35), 14))
 	if hp < spec["hp"] * 0.35 and smoke_node == null:
-		G.fx.wreck_smoke(center(), self)
-		smoke_node = true
+		smoke_node = G.fx.wreck_smoke(center(), self)
 	if hp <= 0.0:
 		destroy(attacker)
 
@@ -1270,9 +1273,67 @@ func _steer_to(target: Vector3, dt: float) -> Array:
 			thr = minf(thr, 0.45)
 	return [thr, steer]
 
+# where to let troops off: part way up toward their objective, short of known enemies
+func rider_drop(obj: Vector3) -> Vector3:
+	if G.sim_time < get_meta("drop_t", -99.0) and has_meta("drop_p"):
+		return get_meta("drop_p")
+	var home: Vector3 = G.world.rally_point(team)
+	var p = Reinforce.forward_drop(team)
+	if G.dist2d(p, home) < 20.0:
+		# nobody up front yet: well forward of home toward the objective
+		var to = G.flat(obj - home)
+		p = home + to * 0.55 if to.length() > 60.0 else obj
+	var ec = AI.team_intel_center(team)
+	if ec != null and G.dist2d(ec, p) < 60.0:
+		p = ec + G.flat(p - ec).normalized() * 60.0
+	if G.dist2d(p, obj) > G.dist2d(pos, obj):
+		p = pos            # already past it: let them off here
+	p = G.main._free_spot(p)
+	set_meta("drop_p", p)
+	set_meta("drop_t", G.sim_time + 10.0)
+	return p
+
+func unload_riders() -> void:
+	for i in range(1, seats.size()):
+		var ps2 = seats[i]
+		if ps2 != null and spec["seats"][i]["role"] == "pass" and not ps2.is_player and not spec["seats"][i].get("turret", false) and not spec["seats"][i].get("rider", false):
+			ps2.dismount(false)
+			ps2.no_board_t = G.sim_time + 40.0
+	pass_stall = 0.0
+
+var pass_stall = 0.0
+
+var idle_empty = 0.0
+
 func _ai_drive(dt: float) -> Array:
 	why = "drive"
 	path_t -= dt
+	# a transport lorry with nobody left in the back and nothing to do clears off the map
+	if mission == null and has_meta("transport"):
+		var empty = true
+		for i in range(1, seats.size()):
+			if seats[i] != null:
+				empty = false
+		if empty and (absf(speed) < 0.6 or cmd == null):
+			idle_empty += dt
+		else:
+			idle_empty = 0.0
+		if idle_empty > 12.0:
+			cmd = null
+			mission = {"type": "deliver", "drop": pos, "exit": Reinforce.offmap(Reinforce.edge_near_hq(team)), "stage": 2, "wait": 0.0}
+			if team == 0:
+				G.ui.radio(0, "Empty truck heading back")
+	# men sitting in the back of something that isn't going anywhere get out and walk
+	if mission == null and seats.size() > 1 and kind != "ambulance":
+		var aboard = false
+		for i in range(1, seats.size()):
+			if seats[i] != null and not seats[i].is_player and spec["seats"][i]["role"] == "pass" and not spec["seats"][i].get("turret", false) and not spec["seats"][i].get("rider", false):
+				aboard = true
+				break
+		if aboard:
+			pass_stall = pass_stall + dt if absf(speed) < 0.5 else maxf(0.0, pass_stall - dt * 2.0)
+			if pass_stall > 12.0 or kind in ["radar", "ammotruck", "supplytruck", "ambulance", "bridger"]:
+				unload_riders()
 	var d = driver()
 	var target = null
 	if mission != null:
@@ -1367,13 +1428,17 @@ func _ai_drive(dt: float) -> Array:
 		var stand = spec["standoff"]
 		if enemy != null and stand > 0.0:
 			var de = G.dist2d(enemy, pos)
-			if de < stand * 0.55:
+			# a band either side of each line, so it doesn't flick between backing off, holding and closing in
+			if de < stand * (0.62 if hold_mode == "back" else 0.5):
 				# too close: back away from the enemy
+				hold_mode = "back"
 				target = pos + G.flat(pos - enemy).normalized() * 15.0
-			elif de < stand:
+			elif de < stand * (1.15 if hold_mode == "hold" else 1.0):
+				hold_mode = "hold"
 				why = "w9"
 				return [0.0, 0.0]        # in a good firing position: hold
 			else:
+				hold_mode = ""
 				target = enemy
 		else:
 			target = obj
@@ -1388,26 +1453,40 @@ func _ai_drive(dt: float) -> Array:
 			for i in range(1, seats.size()):
 				var ps = seats[i]
 				if ps != null and spec["seats"][i]["role"] == "pass" and not ps.is_player and not spec["seats"][i].get("turret", false) and not spec["seats"][i].get("rider", false):
-					target = AI.objective_for(ps)
+					target = rider_drop(AI.objective_for(ps))
 					break
-			if G.dist2d(target, pos) < 35.0 or (enemy != null and G.dist2d(enemy, pos) < 45.0):
-				for i in range(1, seats.size()):
-					var ps2 = seats[i]
-					if ps2 != null and spec["seats"][i]["role"] == "pass" and not ps2.is_player and not spec["seats"][i].get("turret", false) and not spec["seats"][i].get("rider", false):
-						ps2.dismount(false)
+			# drop them a sensible way up, short of the fighting, then (a lorry) go back for more
+			if G.dist2d(target, pos) < 12.0 or (enemy != null and G.dist2d(enemy, pos) < 55.0) or pass_stall > 8.0:
+				unload_riders()
+				if kind == "truck":
+					cmd = G.main._free_spot(G.world.rally_point(team))
 				why = "w10"
 				return [0.0, 0.0]
-		if G.dist2d(target, pos) < 8.0:
+		# there (or near enough): stay put until the target has moved well away, not the moment it shifts a metre
+		var dt_ = G.dist2d(target, pos)
+		if dt_ < 8.0 or (hold_mode == "there" and dt_ < 15.0):
+			hold_mode = "there"
 			why = "w11"
 			return [0.0, 0.0]
-		# armour doesn't drive into a built-up street on its own: wait for the infantry
-		if spec["tracked"] and enemy == null and not Ops.tank_may_enter(self):
-			why = "w12"
-			return [0.0, 0.0]
+		if hold_mode == "there":
+			hold_mode = ""
+		# armour doesn't drive into a built-up street on its own: wait for the infantry (and decide
+		# that for a few seconds at a time, not every tick)
+		if spec["tracked"] and enemy == null:
+			if G.sim_time > enter_t:
+				may_enter = Ops.tank_may_enter(self)
+				enter_t = G.sim_time + (6.0 if may_enter else 4.0)
+			if not may_enter:
+				why = "w12"
+				return [0.0, 0.0]
 	_set_goal(target)
 	# follow the path, aiming a little way ahead on it
 	var aim: Vector3 = target
 	while path_i < path.size() and G.dist2d(path[path_i], pos) < 4.0:
+		path_i += 1
+	# already nearer the next waypoint than this one is to it: this one's behind or beside us, skip it
+	# (turning round to touch a corner we've cut is what makes a lorry shuffle back and forth)
+	while path_i < path.size() - 1 and G.dist2d(path[path_i + 1], pos) < G.dist2d(path[path_i + 1], path[path_i]) and G.dist2d(path[path_i], pos) < 12.0:
 		path_i += 1
 	if path_i < path.size():
 		aim = _pursuit()
@@ -1418,8 +1497,14 @@ func _ai_drive(dt: float) -> Array:
 			path = np
 			path_i = 0
 	var r = _steer_to(aim, dt)
+	# ease off for a bend ahead (only when we're more or less lined up; a hard turn already goes slow),
+	# but never so far that the engine can't move the thing
 	if r[0] > 0.0:
-		r[0] *= _bend_speed()
+		var to_aim = G.flat(aim - pos)
+		var off = absf(wrapf(atan2(to_aim.x, to_aim.z) - yaw, -PI, PI))
+		if off < 0.6:
+			r[0] *= _bend_speed()
+		r[0] = maxf(r[0], 0.3)
 	# whiskers: veer away from walls just ahead
 	if r[0] > 0.0:
 		var f0 = forward()
@@ -1440,6 +1525,11 @@ func _ai_drive(dt: float) -> Array:
 			if a > 0.0 and a < spec["len"] * 0.5 + 5.0 and absf(rel.dot(Vector3(f.z, 0, -f.x))) < spec["wid"] * 0.5 + 0.8:
 				# our own men in the way step aside (the driver waits only for you, or a man who can't move)
 				if not s.is_player and s.vault == null and not s.prone and s.dragging == null:
+					# a man just standing there in the road is told to step out of it
+					if s.move_target == null and G.sim_time > s.get_meta("clear_t", -9.0):
+						s.set_meta("clear_t", G.sim_time + 4.0)
+						var sdir = Vector3(f.z, 0, -f.x) * (1.0 if rel.dot(Vector3(f.z, 0, -f.x)) >= 0.0 else -1.0)
+						AI.go_to(s, s.pos + sdir * (spec["wid"] * 0.5 + 3.0), 4.0)
 					if true:
 						var sd = rel.dot(Vector3(f.z, 0, -f.x))
 						s.pos += Vector3(f.z, 0, -f.x) * (1.0 if sd >= 0.0 else -1.0) * 0.07
@@ -1484,7 +1574,7 @@ func _ai_drive(dt: float) -> Array:
 					reverse_t = 0.0
 					return [0.0, r[1]]
 		return [-1.0, -r[1]]
-	if absf(r[0]) > 0.3 and absf(speed) < 0.6 and yield_t <= 0.0:
+	if absf(r[0]) > 0.12 and absf(speed) < 0.6 and yield_t <= 0.0:
 		stuck_t += dt
 		if stuck_t > 1.6:
 			stuck_t = 0.0
@@ -1511,6 +1601,9 @@ func _ai_drive(dt: float) -> Array:
 	return r
 
 var stuck_n = 0
+var hold_mode = ""         # "", "back", "hold", "there": which side of each line we were on last
+var may_enter = true
+var enter_t = 0.0
 var prog_t = 0.0
 var prog_p = Vector3.ZERO
 
@@ -1539,7 +1632,7 @@ func _plan_detour() -> void:
 		detour = best
 		detour_t = G.sim_time + 14.0
 		path_t = 0.0
-	if mission == null:
+	if mission == null and kind != "ambulance":
 		for i in range(1, seats.size()):
 			var ps = seats[i]
 			if ps != null and is_instance_valid(ps) and spec["seats"][i]["role"] == "pass" and not ps.is_player:
@@ -1717,7 +1810,7 @@ func _fix_tyres() -> void:
 
 # a thrown track or a flat: a crewman climbs out (under fire if need be) and fixes it, then gets back in
 func _self_repair() -> void:
-	if dead or not (tracks_broken or tyres > 0) or spec.get("air", false) or spec.get("static", false):
+	if dead or not (tracks_broken or tyres > 0 or (hp < spec["hp"] * 0.4 and not burning)) or spec.get("air", false) or spec.get("static", false):
 		return
 	if fix_by != null and is_instance_valid(fix_by) and fix_by.state == "alive" and fix_by.task == "fixwheel":
 		return
@@ -1791,10 +1884,22 @@ func _lights_tick() -> void:
 
 func repair(amount: float) -> void:
 	hp = minf(spec["hp"], hp + amount)
+	_clear_damage_smoke()
 	if hp > spec["hp"] * 0.5:
 		burning = false
 		tracks_broken = false
 		bailed = false
+
+# repaired well enough: the smoke stops
+func _clear_damage_smoke() -> void:
+	if hp >= spec["hp"] * 0.7 and has_meta("dmg_smoke"):
+		var d = get_meta("dmg_smoke")
+		if is_instance_valid(d):
+			d.queue_free()
+		remove_meta("dmg_smoke")
+	if hp >= spec["hp"] * 0.45 and smoke_node is Node and is_instance_valid(smoke_node) and not dead:
+		smoke_node.queue_free()
+		smoke_node = null
 
 # ---------------------------------------------------------------- aircraft
 func _air_step(dt: float) -> void:

@@ -165,9 +165,13 @@ var WEAPONS = {
 	"atrifle": {"id": "atrifle", "mags": 6, "name": "Anti-tank rifle", "mag": 5, "rof": 1.6, "auto": false, "dmg": 130.0, "pellets": 1, "spread": 0.002, "move_spread": 0.05, "force": 9.0, "reload": 3.5, "recoil": 0.08, "len": 1.5, "hold": 0.5, "snd_pitch": 0.55, "snd_vol": 5.0, "zoom": 30.0, "tracer": 600.0, "range": [20.0, 140.0], "burst": [1, 1], "speed": 0.85, "rocket": false, "ap": true},
 	"rpg":     {"id": "rpg", "mags": 4, "name": "Bazooka", "mag": 1, "rof": 1.0, "auto": false, "dmg": 0.0, "pellets": 1, "spread": 0.007, "move_spread": 0.03, "force": 5.0, "reload": 3.6, "recoil": 0.035, "len": 1.12, "hold": 0.42, "snd_pitch": 0.5, "snd_vol": 4.0, "zoom": 38.0, "tracer": 0.0, "range": [16.0, 85.0], "burst": [1, 1], "speed": 0.9, "rocket": true},
 	"silenced": {"id": "silenced", "mags": 6, "name": "Silenced pistol", "mag": 8, "rof": 0.3, "auto": false, "dmg": 30.0, "pellets": 1, "spread": 0.014, "move_spread": 0.02, "force": 2.0, "reload": 1.8, "recoil": 0.02, "len": 0.48, "hold": 0.14, "snd_pitch": 2.2, "snd_vol": -20.0, "zoom": 50.0, "tracer": 0.0, "range": [2.0, 25.0], "burst": [1, 2], "speed": 1.05, "rocket": false, "silent": true},
+	"carbine": {"id": "carbine", "mags": 8, "name": "Carbine", "mag": 15, "rof": 0.16, "auto": false, "dmg": 26.0, "pellets": 1, "spread": 0.012, "move_spread": 0.016, "force": 2.8, "reload": 2.0, "recoil": 0.012, "len": 0.8, "hold": 0.3, "snd_pitch": 1.1, "snd_vol": -1.0, "zoom": 44.0, "tracer": 320.0, "range": [8.0, 65.0], "burst": [2, 4], "speed": 1.05, "rocket": false},
+	"bar":     {"id": "bar", "mags": 7, "name": "Automatic rifle", "mag": 20, "rof": 0.11, "auto": true, "dmg": 32.0, "pellets": 1, "spread": 0.014, "move_spread": 0.035, "force": 3.6, "reload": 2.8, "recoil": 0.016, "len": 1.04, "hold": 0.38, "snd_pitch": 0.9, "snd_vol": 1.0, "zoom": 42.0, "tracer": 330.0, "range": [12.0, 85.0], "burst": [3, 7], "speed": 0.92, "rocket": false},
+	"dmr":     {"id": "dmr", "mags": 7, "name": "Marksman rifle", "mag": 10, "rof": 0.45, "auto": false, "dmg": 62.0, "pellets": 1, "spread": 0.003, "move_spread": 0.04, "force": 5.0, "reload": 2.6, "recoil": 0.035, "len": 1.08, "hold": 0.38, "snd_pitch": 0.8, "snd_vol": 2.0, "zoom": 22.0, "tracer": 520.0, "range": [25.0, 130.0], "burst": [1, 2], "speed": 0.97, "rocket": false},
+	"gl":      {"id": "gl", "mags": 10, "name": "Grenade launcher", "mag": 1, "rof": 1.2, "auto": false, "dmg": 0.0, "pellets": 1, "spread": 0.02, "move_spread": 0.03, "force": 3.0, "reload": 2.2, "recoil": 0.04, "len": 0.7, "hold": 0.3, "snd_pitch": 1.6, "snd_vol": 0.0, "zoom": 46.0, "tracer": 0.0, "range": [20.0, 110.0], "burst": [1, 1], "speed": 1.0, "rocket": false, "gl": true, "reload_style": "single"},
 	"pfaust":  {"id": "pfaust", "mags": 0, "name": "Panzerfaust", "mag": 1, "rof": 1.0, "auto": false, "dmg": 0.0, "pellets": 1, "spread": 0.012, "move_spread": 0.04, "force": 4.0, "reload": 1.0, "recoil": 0.03, "len": 1.0, "hold": 0.4, "snd_pitch": 0.6, "snd_vol": 3.0, "zoom": 44.0, "tracer": 0.0, "range": [8.0, 45.0], "burst": [1, 1], "speed": 0.95, "rocket": true},
 }
-const WEAPON_LIST = ["rifle", "lmg", "sniper", "shotgun", "rpg", "smg", "pistol", "flamer", "atrifle", "pfaust"]
+const WEAPON_LIST = ["rifle", "lmg", "sniper", "shotgun", "rpg", "smg", "pistol", "flamer", "atrifle", "pfaust", "carbine", "bar", "dmr", "gl"]
 
 # gun models: [x, y, z, w, h, l, colour] along the gun (z forward from the grip)
 const C_DARK = Color(0.14, 0.15, 0.15)
@@ -192,6 +196,19 @@ var GUN_MODELS = {
 	"silenced": [[0, 0.03, 0.06, 0.035, 0.05, 0.2, C_DARK], [0, 0.03, 0.26, 0.045, 0.045, 0.24, C_MID], [0, -0.04, 0.0, 0.035, 0.1, 0.05, C_DARK]],
 	"pfaust": [[0, 0.02, 0.2, 0.055, 0.055, 0.9, C_OLIVE], [0, 0.02, 0.75, 0.16, 0.16, 0.2, C_GREEN], [0, 0.02, 0.89, 0.11, 0.11, 0.12, C_GREEN], [0, 0.02, 0.97, 0.05, 0.05, 0.08, C_DARK], [0, 0.08, 0.38, 0.025, 0.07, 0.03, C_DARK], [0, -0.035, 0.3, 0.035, 0.06, 0.04, C_DARK]],
 	"rpg": [[0, 0.02, 0.3, 0.11, 0.11, 1.12, C_OLIVE], [0, 0.02, 0.93, 0.15, 0.15, 0.22, C_GREEN], [0, -0.08, 0.12, 0.04, 0.11, 0.05, C_DARK], [0.07, 0.08, 0.28, 0.03, 0.07, 0.05, C_DARK], [0, -0.07, 0.36, 0.04, 0.1, 0.05, C_DARK]],
+	# a short wooden carbine with a small box magazine
+	"carbine": [[0, -0.01, -0.14, 0.045, 0.09, 0.16, C_WOOD], [0, 0.025, 0.08, 0.05, 0.07, 0.36, C_WOOD], [0, 0.05, 0.08, 0.035, 0.03, 0.22, C_DARK],
+		[0, 0.045, 0.4, 0.022, 0.022, 0.26, C_DARK], [0, -0.055, 0.1, 0.035, 0.08, 0.05, C_DARK], [0, -0.05, -0.01, 0.035, 0.09, 0.045, C_WOOD], [0, 0.08, 0.04, 0.015, 0.03, 0.02, C_DARK]],
+	# a heavy automatic rifle: long receiver, bipod folded under the barrel, box magazine underneath
+	"bar": [[0, -0.01, -0.17, 0.05, 0.11, 0.18, C_WOOD], [0, 0.03, 0.1, 0.065, 0.1, 0.4, C_DARK], [0, 0.04, 0.5, 0.03, 0.03, 0.42, C_DARK],
+		[0, 0.025, 0.36, 0.06, 0.06, 0.2, C_WOOD], [0, -0.07, 0.14, 0.05, 0.12, 0.08, C_DARK], [0.015, 0.0, 0.6, 0.012, 0.012, 0.22, C_DARK], [-0.015, 0.0, 0.6, 0.012, 0.012, 0.22, C_DARK],
+		[0, 0.095, 0.0, 0.02, 0.03, 0.05, C_DARK], [0, -0.06, -0.01, 0.04, 0.1, 0.05, C_DARK]],
+	# a semi-automatic rifle with a short scope
+	"dmr": [[0, -0.01, -0.15, 0.05, 0.11, 0.19, C_WOOD], [0, 0.025, 0.14, 0.055, 0.08, 0.46, C_WOOD], [0, 0.045, 0.6, 0.024, 0.024, 0.42, C_DARK],
+		[0, 0.1, 0.12, 0.045, 0.045, 0.24, C_DARK], [0, 0.1, 0.25, 0.055, 0.055, 0.03, C_DARK], [0, -0.065, 0.1, 0.04, 0.1, 0.06, C_DARK], [0, -0.05, -0.01, 0.035, 0.09, 0.045, C_WOOD]],
+	# a stubby break-open grenade launcher with a fat barrel and a leaf sight
+	"gl": [[0, -0.01, -0.12, 0.05, 0.1, 0.18, C_WOOD], [0, 0.03, 0.08, 0.05, 0.07, 0.14, C_DARK], [0, 0.04, 0.32, 0.085, 0.085, 0.36, C_OLIVE],
+		[0, 0.04, 0.5, 0.095, 0.095, 0.03, C_DARK], [0, 0.1, 0.16, 0.04, 0.05, 0.015, C_DARK], [0, -0.05, -0.01, 0.035, 0.09, 0.045, C_WOOD], [0, 0.0, 0.2, 0.06, 0.04, 0.16, C_WOOD]],
 }
 
 # the militia's guns look different: AK-pattern rifles with wood furniture and curved magazines,
@@ -233,6 +250,14 @@ func _fill_weapon_defaults() -> void:
 			w["flame"] = false
 		if not w.has("ap"):
 			w["ap"] = false
+		if not w.has("gl"):
+			w["gl"] = false
+		# how it's reloaded: a magazine swapped, shells pushed in one by one, a round dropped into the breech,
+		# or a rocket slid into the back of the tube
+		if not w.has("reload_style"):
+			w["reload_style"] = {"shotgun": "shells", "sniper": "shells", "rpg": "rocket", "atrifle": "mag", "pfaust": "rocket"}.get(k, "mag")
+		# bolt actions: the bolt is worked by hand after every shot
+		w["bolt"] = k in ["sniper", "atrifle"]
 
 # the area round a side's spawn and rally point, where fresh troops and vehicles arrive: no shelling it
 func near_spawn(p: Vector3, r: float = 40.0) -> bool:
@@ -259,15 +284,15 @@ func _ready() -> void:
 
 # ---------------------------------------------------------------- classes
 const CLASSES = {
-	"rifleman": {"name": "Rifleman", "w": ["rifle"], "share": 0.26},
+	"rifleman": {"name": "Rifleman", "w": ["rifle", "rifle", "rifle", "rifle", "bar", "gl", "carbine"], "share": 0.26},
 	"mg": {"name": "Machine gunner", "w": ["lmg"], "share": 0.12},
 	"medic": {"name": "Medic", "w": ["smg"], "share": 0.12},
 	"at": {"name": "Anti-tank", "w": ["rpg", "rpg", "atrifle"], "share": 0.1},
-	"engineer": {"name": "Engineer", "w": ["shotgun", "smg"], "share": 0.14},
-	"assault": {"name": "Assault", "w": ["smg", "smg", "shotgun", "flamer"], "share": 0.1},
-	"radio": {"name": "Radio operator", "w": ["rifle"], "share": 0.06},
-	"sniper": {"name": "Sniper", "w": ["sniper"], "share": 0.05},
-	"spotter": {"name": "Spotter", "w": ["rifle"], "share": 0.05},
+	"engineer": {"name": "Engineer", "w": ["shotgun", "smg", "carbine"], "share": 0.14},
+	"assault": {"name": "Assault", "w": ["smg", "smg", "shotgun", "flamer", "bar"], "share": 0.1},
+	"radio": {"name": "Radio operator", "w": ["carbine", "rifle"], "share": 0.06},
+	"sniper": {"name": "Sniper", "w": ["sniper", "sniper", "dmr"], "share": 0.05},
+	"spotter": {"name": "Spotter", "w": ["carbine", "rifle"], "share": 0.05},
 	"officer": {"name": "Officer", "w": ["smg", "pistol"], "share": 0.0},
 }
 

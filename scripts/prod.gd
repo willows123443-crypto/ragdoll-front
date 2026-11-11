@@ -36,6 +36,9 @@ static func reset() -> void:
 static func active() -> bool:
 	return G.mode == "commander"
 
+static func queue_size(team: int) -> int:
+	return queues[team].size() if team < queues.size() else 0
+
 static func is_vehicle(what: String) -> bool:
 	return TIME.has(what)
 

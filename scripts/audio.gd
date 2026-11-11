@@ -275,6 +275,27 @@ func radio_click() -> void:
 	ui_player.volume_db = -10.0
 	ui_player.play()
 
+# a small two-note blip when a waypoint goes down or a line is drawn (not the radio squelch)
+var s_tick: AudioStreamWAV = null
+var tick_player: AudioStreamPlayer = null
+
+func order_tick(high: bool = false) -> void:
+	if s_tick == null:
+		var n = int(0.11 * RATE)
+		var out = PackedFloat32Array()
+		out.resize(n)
+		for i in range(n):
+			var t = float(i) / RATE
+			var f = 880.0 if t < 0.045 else 1320.0
+			out[i] = sin(TAU * f * t) * 0.3 * minf(1.0, t * 400.0) * exp(-t / 0.05)
+		s_tick = _wav(out)
+		tick_player = AudioStreamPlayer.new()
+		add_child(tick_player)
+	tick_player.stream = s_tick
+	tick_player.pitch_scale = 1.2 if high else 1.0
+	tick_player.volume_db = -12.0
+	tick_player.play()
+
 func set_volume(v: float) -> void:
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(v, 0.001)))
 

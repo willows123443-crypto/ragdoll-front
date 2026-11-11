@@ -32,7 +32,7 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Night fighting:** only the point man shows a light, soldiers creep forward crouched, leaders fire flares and everyone shoots at muzzle flashes
 - **Air war:** fighters and dive bombers you can fly, AA guns, helicopter transports and gunships
 - **Logistics:** fuel, towing, bridge layers, supply trucks that restock FOBs, ammo boxes you can carry, upgrades (concrete walls, pillboxes, huts), camo nets and rebuilding
-- **Campaign:** nine regions to take one battle at a time; survivors become veterans with stripes, and whatever gets wrecked in a region stays wrecked, structures left standing are still there next time, and your surviving vehicles carry on as a motor pool
+- **Campaign:** regions to take one battle at a time; survivors become veterans with stripes, and whatever gets wrecked in a region stays wrecked, and structures left standing are still there next time
 - **Scenario codes:** save a battle as a code and share it
 - **Commander's map** (Tab): see the whole battle and send squads around
 - **Building with a blueprint:** a see-through preview follows the mouse with an arrow for its front; hold right-click to turn it
@@ -139,6 +139,10 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Commander economy:** the first supply trucks only arrive once you have a supply dump or FOB, and they also keep FOBs stocked; buy more (and the ammo truck) from the new Supply tab, no depot needed; bigger recruit squads (rifle squad of eight, a sixteen-man platoon in two trucks, an MG team, a radio team); hover any card to see what it does, including what each upgrade does in full
 - **Forward observer post:** a sandbagged lookout with a periscope: it sees a long way round it (through the fog of war, passing what it sees to your men nearby), and artillery called near it lands far more accurately
 - **Long days, short nights:** in the day and night cycle about sixteen minutes of daylight to two and a half of darkness
+- **Campaign, reworked:** a bigger campaign screen with the map on the left and your army on the right. Each army has its own named men (by class, with stars, kills and battles) and its own vehicles; spend the war chest (it grows with every region you hold in supply) on rifle squads, MG, anti-tank and sniper teams, engineers, medics, radio operators, jeeps, half-tracks, armoured cars and tanks for any army in supply, or raise a new army at HQ. Battles are fought with exactly the men and vehicles each army has; survivors carry on, reinforcements who live fill the gaps, and Bravo recruits too
+- **Who runs your side:** in every mode except sandbox your side no longer builds, buys or plans on its own; pick "AI commander" in the setup screen (or on the campaign screen) to have an AI run it while you watch or help
+- **Looks:** barbed wire at HQs is proper coiled wire (no more grey lumps), bunkers and FOBs have sandbags laid over their roofs, camouflage nets are tied to the tops of their poles, and tents are canvas ridge tents with guy ropes and door flaps
+- **Map backgrounds:** a patchwork of fields, hedgerows along them, round-crowned trees among the firs, and smoke rising from fighting somewhere beyond the hills
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

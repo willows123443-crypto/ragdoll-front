@@ -2633,6 +2633,109 @@ func build_trenches() -> void:
 var backdrop: Node3D = null
 
 # rolling country (or ruined suburbs, or shell-torn mud) stretching to the horizon, with forests and buildings
+# round-crowned trees among the firs, hedgerows along the field edges, and smoke rising from fighting
+# somewhere far off
+func _backdrop_extras(x0: float, hw: float, hd: float, hfun: Callable, tn: FastNoiseLite) -> void:
+	var trees: Array = []
+	var hedges: Array = []
+	var tries = 0
+	while trees.size() < 1300 and tries < 9000:
+		tries += 1
+		var x = rng.randf_range(x0, -x0)
+		var z = rng.randf_range(x0, -x0)
+		var ex = maxf(absf(x) - hw, absf(z) - hd)
+		if ex < 10.0 or ex > 480.0:
+			continue
+		var y = hfun.call(x, z)
+		if y < -1.0:
+			continue
+		if tn.get_noise_2d(x * 1.3 + 50.0, z * 1.3) > 0.0 or rng.randf() < 0.12:
+			trees.append(Vector3(x, y, z))
+	# hedgerows: lines of bushes along the field boundaries near the map
+	for k in range(140):
+		var horiz = rng.randf() < 0.5
+		var x = rng.randf_range(x0 * 0.55, -x0 * 0.55)
+		var z = rng.randf_range(x0 * 0.55, -x0 * 0.55)
+		x = roundf(x / 70.0) * 70.0 if not horiz else x
+		z = roundf(z / 52.0) * 52.0 if horiz else z
+		var L = rng.randf_range(30.0, 70.0)
+		for i in range(int(L / 3.0)):
+			var p = Vector3(x + (i * 3.0 if horiz else 0.0), 0, z + (0.0 if horiz else i * 3.0))
+			if maxf(absf(p.x) - hw, absf(p.z) - hd) < 6.0:
+				continue
+			p.y = hfun.call(p.x, p.z)
+			if p.y < -1.0 or p.y > 24.0:
+				continue
+			hedges.append(p)
+	var blob = shape_mesh("blob")
+	var mm = MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = blob
+	mm.instance_count = trees.size() * 2 + hedges.size()
+	var trunk = MultiMesh.new()
+	trunk.transform_format = MultiMesh.TRANSFORM_3D
+	var tm = CylinderMesh.new()
+	tm.top_radius = 0.25
+	tm.bottom_radius = 0.35
+	tm.height = 1.0
+	tm.radial_segments = 5
+	tm.rings = 1
+	trunk.mesh = tm
+	trunk.instance_count = trees.size()
+	var i2 = 0
+	for i in range(trees.size()):
+		var p: Vector3 = trees[i]
+		var s = rng.randf_range(4.5, 8.5)
+		var th = s * 0.55
+		trunk.set_instance_transform(i, Transform3D(Basis().scaled(Vector3(1, th, 1)), p + Vector3(0, th * 0.5, 0)))
+		mm.set_instance_transform(i2, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, s * 0.8, s)), p + Vector3(0, th + s * 0.3, 0)))
+		mm.set_instance_transform(i2 + 1, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s * 0.7, s * 0.6, s * 0.7)), p + Vector3(rng.randf_range(-1, 1) * s * 0.3, th + s * 0.62, rng.randf_range(-1, 1) * s * 0.3)))
+		i2 += 2
+	for p in hedges:
+		var s2 = rng.randf_range(2.4, 3.6)
+		mm.set_instance_transform(i2, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s2 * 1.2, s2 * 0.8, s2)), p + Vector3(0, s2 * 0.3, 0)))
+		i2 += 1
+	var cm = MultiMeshInstance3D.new()
+	cm.multimesh = mm
+	cm.material_override = Props.foliage(Color(0.27, 0.35, 0.18))
+	cm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	backdrop.add_child(cm)
+	var tmi = MultiMeshInstance3D.new()
+	tmi.multimesh = trunk
+	var bm = StandardMaterial3D.new()
+	bm.albedo_color = Color(0.25, 0.2, 0.15)
+	bm.roughness = 1.0
+	tmi.material_override = bm
+	tmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	backdrop.add_child(tmi)
+	# smoke from a battle somewhere beyond the hills
+	for k in range(rng.randi_range(2, 3)):
+		var a = rng.randf() * TAU
+		var r = rng.randf_range(420.0, 650.0)
+		var sp = Vector3(cos(a) * r, 0, sin(a) * r)
+		sp.y = maxf(0.0, hfun.call(sp.x, sp.z))
+		var p = CPUParticles3D.new()
+		p.amount = 14
+		p.lifetime = 40.0
+		p.preprocess = 40.0
+		p.direction = Vector3(0.15, 1, 0)
+		p.spread = 8.0
+		p.gravity = Vector3(0.25, 0.6, 0)
+		p.initial_velocity_min = 2.0
+		p.initial_velocity_max = 3.0
+		var q = QuadMesh.new()
+		q.size = Vector2(1, 1)
+		p.mesh = q
+		p.material_override = G.fx.billboard_mat(Color(1, 1, 1, 1), false)
+		p.color = Color(0.32, 0.3, 0.29, 0.55)
+		p.color_ramp = G.fx._fade_ramp(Color(0.32, 0.3, 0.29, 0.55))
+		p.scale_amount_min = 18.0
+		p.scale_amount_max = 26.0
+		p.scale_amount_curve = G.fx._grow_curve(1.0, 3.0)
+		p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		backdrop.add_child(p)
+		p.position = sp
+
 func build_backdrop(style: String) -> void:
 	if backdrop:
 		backdrop.queue_free()
@@ -2707,6 +2810,13 @@ func build_backdrop(style: String) -> void:
 				nrm = -nrm
 			var hh = (pv[0].y + pv[3].y) * 0.5
 			var col = base_c.lerp(hill_c, clampf(hh / 20.0, 0.0, 1.0)).lerp(far_c, clampf((hh - 40.0) / 80.0, 0.0, 0.7))
+			# farm country: a patchwork of fields (wheat, pasture, ploughed earth, green crops) on the low ground
+			if style == "farm" and hh < 26.0 and hh > -1.0:
+				var fx = floori((xa + 0.35 * cell + noise.get_noise_2d(za, 0.0) * 30.0) / 70.0)
+				var fz = floori((za + noise.get_noise_2d(0.0, xa) * 30.0) / 52.0)
+				var fh = absi((fx * 73856093) ^ (fz * 19349663)) % 6
+				var fc = [Color(0.74, 0.66, 0.38), Color(0.44, 0.52, 0.26), Color(0.5, 0.41, 0.3), Color(0.56, 0.6, 0.3), Color(0.66, 0.6, 0.36), base_c][fh]
+				col = col.lerp(fc, 0.55 * (1.0 - clampf(hh / 26.0, 0.0, 1.0)))
 			col = col * (0.93 + 0.07 * noise.get_noise_2d(xa * 3.0, za * 3.0))
 			col.a = 1.0
 			for idx in [0, 1, 2, 1, 3, 2]:
@@ -2780,6 +2890,8 @@ func build_backdrop(style: String) -> void:
 	tmi.material_override = tmat
 	tmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	backdrop.add_child(tmi)
+	if style != "war":
+		_backdrop_extras(x0, hw, hd, hfun, tree_noise)
 	# buildings: ruined suburbs around the town, farmsteads in the country
 	var houses = 140 if style == "urban" else (36 if style == "farm" else 12)
 	var walls = [Color(0.78, 0.71, 0.56), Color(0.73, 0.64, 0.49), Color(0.61, 0.59, 0.55), Color(0.56, 0.33, 0.27), Color(0.82, 0.76, 0.62)]

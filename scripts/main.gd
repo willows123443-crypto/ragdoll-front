@@ -370,12 +370,17 @@ func start_game(o: Dictionary) -> void:
 		var n_here = G.size_of(t) if o.get("armies", true) else 0
 		if G.mode == "sabotage" and t == 0:
 			n_here = maxi(4, G.team_size / 2)
+		# a campaign army fights with the men it actually has, class by class
+		var cl_list: Array = o.get("cls", [])
+		if t < cl_list.size() and not cl_list[t].is_empty():
+			force_cls = cl_list[t].duplicate()
 		for i in range(n_here):
 			if G.mode == "laststand":
 				var c: Vector3 = Obj.points[0]["p"]
 				spawn_soldier(0, c.x + randf_range(-8, 8), c.z + randf_range(-8, 8), "")
 			else:
 				base_spawn(t)
+		force_cls = []
 		if G.mode == "sabotage" and t == 0:
 			# the raiders: satchels, knives, wire cutters, and silenced pistols for half of them
 			var k = 0
@@ -386,7 +391,7 @@ func start_game(o: Dictionary) -> void:
 					if k % 2 == 0 and not sd.W["rocket"]:
 						sd.set_weapon("silenced")
 					k += 1
-		elif not (G.mode == "escort" and t == 0) and o.get("armies", true) and not (Campaign.active and t == 0):
+		elif not (G.mode == "escort" and t == 0) and o.get("armies", true) and not (Campaign.active and t == 0) and not o.get("armies_veh", false):
 			_starting_vehicles(t)
 	Modes.setup()
 	Ferry.setup()
@@ -1328,6 +1333,10 @@ func _shot_mode(dir: String) -> void:
 		G.ui._show_campaign("3rd Company takes Mud Flats unopposed.")
 		await _wait(0.6)
 		await _snap(dir, "campaign")
+		Campaign.selected = -1
+		G.ui._show_campaign()
+		await _wait(0.4)
+		await _snap(dir, "campaign_list")
 		G.ui.camp_panel.visible = false
 	if _arg("climbshot", "") != "":
 		var lads = G.world.towers.filter(func(T): return T.get("ladder", false))

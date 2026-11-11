@@ -19,6 +19,13 @@ var reinf_mode = "truck"     # truck, para, instant
 var armor = "light"          # none, light, heavy: vehicles each side starts with
 const L_VEH = 8
 var KNEE_SIGN = 1.0
+
+# does an AI commander run this side (orders, building, buying troops)? Your own side only if you asked
+# for one in the setup screen; in sandbox every side runs itself
+func ai_runs(t: int) -> bool:
+	if t != 0:
+		return true
+	return mode == "sandbox" or settings.get("ai_side", false)
 var ELBOW_SIGN = 1.0
 
 var main = null
@@ -75,7 +82,7 @@ func soldiers_near(p: Vector3) -> Array:
 			if a != null:
 				out.append_array(a)
 	return out
-var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true}
+var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true, "ai_side": false}
 
 # ---------------------------------------------------------------- teams: names, armband colours and uniforms
 const UNIFORMS = {

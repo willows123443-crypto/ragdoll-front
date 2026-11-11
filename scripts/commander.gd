@@ -66,7 +66,7 @@ static func report(team: int, p: Vector3, n: int) -> void:
 
 # keep one or two scouts out on each side
 static func _keep_scouts(t: int) -> void:
-	if G.mode in ["horde", "laststand", "sandbox", "escort"] or (G.mode == "commander" and t == 0) or (G.mode == "sabotage" and t == 0):
+	if G.mode in ["horde", "laststand", "sandbox", "escort"] or not G.ai_runs(t) or (G.mode == "sabotage" and t == 0):
 		return
 	var want = 2 if G.team_size >= 14 else 1
 	var have = 0
@@ -107,7 +107,7 @@ static func step(dt: float) -> void:
 		timers[t] -= dt
 		if timers[t] > 0.0:
 			continue
-		if (G.mode == "horde" and t == 1) or (G.mode == "commander" and t == 0):
+		if (G.mode == "horde" and t == 1) or not G.ai_runs(t):
 			timers[t] = 999.0
 			continue
 		var off = officer(t)

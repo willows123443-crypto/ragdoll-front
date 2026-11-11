@@ -833,7 +833,7 @@ static func _effect(st: Dictionary, dt: float) -> void:
 		"depot":
 			# vehicles cost supply points and take time to put together (an AI side's depot builds for it;
 			# the player commander orders his own from the Vehicles tab)
-			if G.mode == "commander" and t == 0:
+			if not G.ai_runs(t):
 				pass
 			elif st.get("making", "") == "":
 				if st["t"] > 20.0:
@@ -921,6 +921,8 @@ const DEFENCE_PLAN = [["mgnest", 0.0, 9.0], ["sandbags", -5.0, 7.0], ["sandbags"
 	["traps", 9.0, 14.0], ["tower", -9.0, -6.0], ["mortarpit", 6.0, -10.0], ["aa", -6.0, -12.0]]
 
 static func _ai_plan(t: int) -> void:
+	if not G.ai_runs(t):
+		return        # your side builds what you mark out, nothing more
 	if G.alive_count(t) == 0:
 		return
 	var ok = allowed(t)
@@ -1191,6 +1193,61 @@ static func _cyl(st: Dictionary, lx: float, y: float, lz: float, r: float, h: fl
 	o["collide"] = collide
 	return _b(st, lx, y, lz, r * 2.0, h, r * 2.0, c, o)
 
+# a camouflage net tied to the tops of poles at the four corners of a rectangle, sagging in between
+static func _net(st: Dictionary, lx0: float, lz0: float, lx1: float, lz1: float, top: float, sag: float = 0.45) -> void:
+	if not is_instance_valid(st["root"]):
+		return
+	var gy0 = G.world.ground_y(st["p"].x, st["p"].z) + st.get("base_y", 0.0)
+	var stt = SurfaceTool.new()
+	stt.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var N = 10
+	var w = absf(lx1 - lx0)
+	var d = absf(lz1 - lz0)
+	for i in range(N):
+		for j in range(N):
+			for q in [[i, j], [i + 1, j], [i + 1, j + 1], [i, j], [i + 1, j + 1], [i, j + 1]]:
+				var u = float(q[0]) / N
+				var v = float(q[1]) / N
+				var lx = lerpf(lx0, lx1, u)
+				var lz = lerpf(lz0, lz1, v)
+				var wp = _w(st, lx, lz)
+				var dip = sag * sin(u * PI) * sin(v * PI) + sag * 0.35 * (sin(u * PI) + sin(v * PI)) * 0.5
+				stt.set_uv(Vector2(u * w * 0.5, v * d * 0.5))
+				stt.add_vertex(Vector3(wp.x, gy0 + top - dip + 0.05 * sin(u * 23.0 + v * 17.0), wp.y))
+	stt.generate_normals()
+	var nm = MeshInstance3D.new()
+	nm.mesh = stt.commit()
+	var mat = StandardMaterial3D.new()
+	mat.albedo_texture = Tex.net()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.alpha_scissor_threshold = 0.5
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.roughness = 1.0
+	nm.material_override = mat
+	st["root"].add_child(nm)
+
+# a roll of barbed wire (concertina): overlapping coils along a line, on short pickets
+static func _concertina(st: Dictionary, lx: float, lz: float, L: float, along_lx: bool) -> void:
+	var c = Color(0.3, 0.28, 0.26)
+	var n = int(L / 0.45)
+	for i in range(n):
+		var o = -L / 2.0 + (i + 0.5) * L / n
+		var px = lx + (o if along_lx else 0.0)
+		var pz = lz + (0.0 if along_lx else o)
+		_b(st, px, 0.05, pz, 0.025, 0.75, 0.75, c, {"collide": false, "shape": "cyl", "rz": PI / 2.0 if along_lx == st["ax"] else 0.0, "rx": 0.0 if along_lx == st["ax"] else PI / 2.0, "no_shadow": true})
+	for k in range(3):
+		var o2 = -L / 2.0 + k * L / 2.0
+		_b(st, lx + (o2 if along_lx else 0.0), 0.0, lz + (0.0 if along_lx else o2), 0.06, 0.9, 0.06, WOODC, {"collide": false})
+
+# a layer of sandbags laid flat over a roof
+static func _roof_bags(st: Dictionary, cx: float, cz: float, w: float, d: float, y: float) -> void:
+	var nx = maxi(1, int(w / 0.95))
+	var nz = maxi(1, int(d / 0.62))
+	for i in range(nx):
+		for j in range(nz):
+			var c = Color(0.66, 0.6, 0.45) if (i + j) % 3 == 0 else (Color(0.6, 0.55, 0.41) if (i + j) % 3 == 1 else Color(0.69, 0.64, 0.48))
+			_b(st, cx - w / 2.0 + (i + 0.5) * w / nx + (0.2 if j % 2 == 1 else 0.0), y, cz - d / 2.0 + (j + 0.5) * d / nz, 0.93, 0.32, 0.6, c, {"collide": false, "shape": "pillow", "ry": randf_range(-0.08, 0.08)})
+
 static func _sandbags(st: Dictionary, lx: float, lz: float, ln: float, along_lx: bool, h: float = 1.0) -> void:
 	var wp = _w(st, lx, lz)
 	G.world.sandbags(wp.x, wp.y, ln, along_lx == st["ax"], h)
@@ -1213,12 +1270,28 @@ static func _flagpole(st: Dictionary, lx: float, lz: float, h: float, c: Color) 
 	_cyl(st, lx, 0.0, lz, 0.07, h, Color(0.3, 0.3, 0.3), true, {"hp": 120.0})
 	_b(st, lx + 0.85, h - 1.2, lz, 1.6, 1.0, 0.05, c, {"collide": false, "no_shadow": true})
 
+# a canvas ridge tent: low walls, the canvas sloping down from a ridge pole, a dark door flap,
+# end poles, and guy ropes out to pegs in the ground
 static func _tent(st: Dictionary, lx: float, lz: float, w: float, d: float, h: float, c: Color) -> void:
-	_b(st, lx, 0.0, lz, w, h, d, c, {"hp": 160.0})
-	_roof(st, lx, h, lz, w + 0.3, h * 0.55, d + 0.4, c.darkened(0.08))
-	_b(st, lx + w * 0.25, 0.0, lz + d * 0.5 + 0.02, 1.0, h * 0.85, 0.05, c.darkened(0.45), {"collide": false})
+	var H = h * 1.45
+	var canvas = c.lerp(Color(0.55, 0.52, 0.4), 0.25)
+	_b(st, lx, 0.0, lz, w + 0.1, 0.55, d, canvas.darkened(0.12), {"collide": false})
+	_b(st, lx, 0.5, lz, w + 0.3, H - 0.5, d + 0.1, canvas, {"shape": "prism", "hp": 160.0})
+	_b(st, lx, H - 0.06, lz, 0.09, 0.09, d + 0.45, WOODC.darkened(0.2), {"collide": false})
 	for e in [-1.0, 1.0]:
-		_cyl(st, lx + e * (w * 0.5 + 0.35), 0.0, lz + d * 0.5 + 0.4, 0.03, 0.4, WOODC)
+		_cyl(st, lx, 0.0, lz + e * (d * 0.5 + 0.12), 0.045, H + 0.12, WOODC)
+		# seams down the canvas
+		for k in [-0.25, 0.25]:
+			_b(st, lx + e * w * 0.27, 0.6 + (H - 0.6) * 0.45, lz + k * d, 0.03, 0.03, 0.06, canvas.darkened(0.3), {"collide": false})
+	# the door flap, tied back on one side
+	_b(st, lx, 0.0, lz + d * 0.5 + 0.08, w * 0.34, H * 0.78, 0.04, canvas.darkened(0.45), {"shape": "prism", "collide": false})
+	_b(st, lx + w * 0.12, 0.0, lz + d * 0.5 + 0.12, w * 0.12, H * 0.6, 0.05, canvas.darkened(0.15), {"collide": false, "rz": 0.15})
+	# guy ropes and pegs
+	for e in [-1.0, 1.0]:
+		for k in [-0.35, 0.35]:
+			var pz = lz + k * d
+			_cyl(st, lx + e * (w * 0.5 + 1.0), 0.0, pz, 0.025, 0.22, WOODC.darkened(0.3))
+			_b(st, lx + e * (w * 0.5 + 0.5), 0.05, pz, 1.05, 0.015, 0.015, Color(0.7, 0.66, 0.55), {"collide": false, "rz": -e * 0.62})
 
 static func _geo_hq(st: Dictionary) -> void:
 	if Faction.militia(st["team"]):
@@ -1237,8 +1310,8 @@ static func _geo_hq(st: Dictionary) -> void:
 	_b(st, 1.6, 0.0, 2.0, 1.9, 1.2, 3.4, G.TEAM_UNI[st["team"]].darkened(0.2), {"hp": 160.0})
 	_b(st, 1.6, 1.2, 2.4, 1.7, 0.08, 1.2, Color(0.3, 0.32, 0.34), {"collide": false})
 	for x in [-6.5, -2.5, 1.5]:
-		_b(st, x, 0.4, 6.6, 3.6, 0.5, 0.35, Color(0.32, 0.3, 0.27), {"collide": false, "shape": "blob"})
-	_b(st, 5.5, 2.8, 2.6, 5.4, 0.06, 3.4, Color(0.3, 0.33, 0.22), {"collide": false})
+		_concertina(st, x, 6.6, 3.6, true)
+	_net(st, 2.9, 1.0, 8.1, 4.2, 2.8, 0.4)
 	for p in [Vector2(2.9, 1.0), Vector2(8.1, 1.0), Vector2(2.9, 4.2), Vector2(8.1, 4.2)]:
 		_cyl(st, p.x, 0.0, p.y, 0.05, 2.8, WOODC)
 	_b(st, -3.5, 2.65, 0.6, 1.2, 0.5, 0.06, tcol, {"collide": false})
@@ -1304,8 +1377,7 @@ static func _geo_hq_army(st: Dictionary) -> void:
 	_b(st, cx + 1.9, 0.0, cz + 2.0, 2.2, 2.6, 0.45, CONCRETE)
 	_b(st, cx, 2.1, cz + 2.0, 1.6, 0.5, 0.45, CONCRETE)
 	_b(st, cx, 2.6, cz, 6.4, 0.4, 4.8, CONCRETE.darkened(0.1))
-	for k in range(3):
-		_b(st, cx - 2.0 + k * 2.0, 3.0, cz, 1.5, 0.3, 3.6, Color(0.42, 0.42, 0.3), {"collide": false, "shape": "blob"})
+	_roof_bags(st, cx, cz, 5.6, 3.6, 3.0)
 	_b(st, cx, 2.3, cz + 2.25, 2.0, 0.25, 0.08, G.team_color(st["team"]), {"collide": false})
 	# big tent, flags, stores, a sandbag front
 	_tent(st, 4.5, -2.5, 5.5, 4.0, 2.0, tc)
@@ -1395,8 +1467,7 @@ static func _geo_pillbox(st: Dictionary) -> void:
 	# doorway at the back
 	_b(st, -1.3, 0.0, -2.35, 1.4, 2.1, 0.4, c)
 	_b(st, 1.3, 0.0, -2.35, 1.4, 2.1, 0.4, c)
-	for k in range(3):
-		_b(st, -1.4 + k * 1.4, 2.45, 0.0, 1.6, 0.4, 3.8, Color(0.42, 0.4, 0.28), {"collide": false, "shape": "blob"})
+	_roof_bags(st, 0.0, 0.0, 3.8, 3.6, 2.55)
 
 static func _geo_fob2(st: Dictionary) -> void:
 	# a proper hut in place of the tent, bigger stores, sandbagged all round
@@ -1460,8 +1531,7 @@ static func _geo_bunker(st: Dictionary) -> void:
 		_b(st, x, 1.2, 2.9, 0.4, 0.55, 0.6, c)
 	_b(st, 0.0, 2.3, 0.0, 7.6, 0.4, 6.6, c.darkened(0.1))
 	# earth banked against the sides and over the roof
-	for k in range(4):
-		_b(st, -2.6 + k * 1.75, 2.55, 0.0, 2.2, 0.55, 5.6, Color(0.42, 0.4, 0.28), {"collide": false, "shape": "blob"})
+	_roof_bags(st, 0.0, 0.0, 6.6, 5.6, 2.5)
 	for e in [-1.0, 1.0]:
 		for k in range(3):
 			_b(st, e * 4.0, -0.3, -2.0 + k * 2.0, 1.4, 2.0, 2.2, Color(0.4, 0.38, 0.27), {"collide": false, "shape": "blob"})
@@ -1528,7 +1598,7 @@ static func _geo_observer(st: Dictionary) -> void:
 	for x in [-1.6, 1.6]:
 		for z in [-1.6, 1.6]:
 			_cyl(st, x, 0.7, z, 0.04, 1.6, WOODC)
-	_b(st, 0.0, 2.3, 0.0, 3.8, 0.35, 3.8, Color(0.3, 0.35, 0.22), {"collide": false, "shape": "blob", "bare": true})
+	_net(st, -1.6, -1.6, 1.6, 1.6, 2.3, 0.3)
 
 # the observer post's eyes: who it can see from up on its platform; they go on the map (through the fog)
 # and to every friendly soldier round about

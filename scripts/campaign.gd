@@ -14,7 +14,7 @@ extends RefCounted
 # join the motor pool; ruins and anything built stay as they were left.
 
 const PATH = "user://campaign.dat"
-const VERSION = 2
+const VERSION = 3
 const REGIONS = [
 	{"name": "Westfield", "map": "field", "p": Vector2(0.07, 0.5), "mode": "capture", "hq": 0},
 	{"name": "Old Town", "map": "town", "p": Vector2(0.24, 0.24), "mode": "capture"},
@@ -36,8 +36,28 @@ const ARMY_NAMES = [["1st Company", "2nd Company", "3rd Company", "4th Company",
 const FIRST = ["Abe", "Bill", "Carl", "Dan", "Ed", "Frank", "Gus", "Hank", "Ike", "Jack", "Ken", "Lou", "Mack", "Ned", "Ollie", "Pete", "Ray", "Sam", "Ted", "Vic", "Walt", "Zeke"]
 const LAST = ["Adams", "Baker", "Cole", "Dixon", "Evans", "Fisher", "Grant", "Hayes", "Irwin", "Jones", "Kelly", "Lane", "Moore", "Nash", "Olsen", "Price", "Reed", "Stone", "Tate", "Webb", "Young"]
 const SQUAD = 10
-const MAX_STR = 14
+const MAX_STR = 40         # men in one army
+const MAX_VEH = 4
 const HQ = [0, 11]
+# what an army is made up of when it's raised: a mix of the classes
+const MIX = ["rifleman", "rifleman", "mg", "rifleman", "at", "medic", "rifleman", "engineer", "rifleman", "mg", "rifleman", "radio", "at", "rifleman", "sniper", "spotter"]
+# what you can buy for an army in supply, from the war chest
+const PACKS = {
+	"rifle": {"name": "Rifle squad", "cost": 10, "cls": ["rifleman", "rifleman", "rifleman", "rifleman", "mg", "at", "medic", "rifleman"]},
+	"mg": {"name": "MG team", "cost": 7, "cls": ["mg", "mg", "rifleman"]},
+	"at": {"name": "Anti-tank team", "cost": 8, "cls": ["at", "at", "rifleman"]},
+	"eng": {"name": "Engineers", "cost": 7, "cls": ["engineer", "engineer", "engineer"]},
+	"med": {"name": "Medics", "cost": 4, "cls": ["medic", "medic"]},
+	"snp": {"name": "Sniper team", "cost": 6, "cls": ["sniper", "spotter"]},
+	"rad": {"name": "Radio operator", "cost": 4, "cls": ["radio"]},
+	"jeep": {"name": "Jeep", "cost": 6, "veh": "jeep"},
+	"halftrack": {"name": "Half-track", "cost": 11, "veh": "halftrack"},
+	"armoredcar": {"name": "Armoured car", "cost": 15, "veh": "armoredcar"},
+	"tank": {"name": "Tank", "cost": 22, "veh": "tank"},
+}
+const RAISE_COST = 25
+const CLS_NAMES = {"rifleman": "Riflemen", "mg": "Machine gunners", "at": "Anti-tank", "medic": "Medics", "engineer": "Engineers",
+	"assault": "Assault", "radio": "Radio operators", "sniper": "Snipers", "spotter": "Spotters", "officer": "Officers"}
 
 static var active = false
 static var data = {}
@@ -45,20 +65,23 @@ static var current = -1          # region being fought over
 static var selected = -1         # army id picked on the map
 
 static func new_campaign() -> void:
-	data = {"version": VERSION, "owner": [], "armies": [], "next_id": 0, "roster": [], "turn": 1,
-		"log": ["The campaign begins. Move your armies one region a turn; cut the enemy's supply lines and take the Capital."],
-		"pool": ["jeep", "jeep", "truck", "halftrack"], "sites": {}, "ruins": {}, "battle": null, "raised": [0, 0]}
+	data = {"version": VERSION, "owner": [], "armies": [], "next_id": 0, "roster": [], "turn": 1, "funds": [24, 24],
+		"log": ["The campaign begins. Move your armies one region a turn, recruit with the war chest, cut the enemy's supply lines and take the Capital."],
+		"pool": [], "sites": {}, "ruins": {}, "battle": null, "raised": [0, 0]}
 	for i in range(REGIONS.size()):
 		data["owner"].append(0 if REGIONS[i]["p"].x < 0.3 else 1)
-	_add_army(0, 0, 10)
-	_add_army(0, 1, 8)
-	_add_army(0, 2, 7)
-	_add_army(1, 4, 8)
-	_add_army(1, 3, 9)
-	_add_army(1, 7, 8)
-	_add_army(1, 11, 10)
+	var a0 = _add_army(0, 0, 12)
+	a0["veh"] = ["jeep", "halftrack"]
+	var a1 = _add_army(0, 1, 10)
+	a1["veh"] = ["jeep"]
+	_add_army(0, 2, 8)
+	_add_army(1, 4, 10)
+	var b1 = _add_army(1, 3, 11)
+	b1["veh"] = ["jeep"]
+	_add_army(1, 7, 10)
+	var b3 = _add_army(1, 11, 12)
+	b3["veh"] = ["armoredcar"]
 	selected = -1
-	_fill_roster()
 	save()
 
 static func _add_army(team: int, region: int, strength: int) -> Dictionary:
@@ -67,26 +90,120 @@ static func _add_army(team: int, region: int, strength: int) -> Dictionary:
 		if a["team"] == team:
 			n += 1
 	var names: Array = ARMY_NAMES[team]
-	var a2 = {"id": data["next_id"], "team": team, "region": region, "str": strength, "moved": false, "name": names[n % names.size()] if n < names.size() else "%s %d" % [names[0], n + 1]}
+	var a2 = {"id": data["next_id"], "team": team, "region": region, "str": 0, "moved": false, "men": [], "veh": [],
+		"name": names[n % names.size()] if n < names.size() else "%s %d" % [names[0], n + 1]}
 	data["next_id"] += 1
 	data["armies"].append(a2)
+	var cls = []
+	for k in range(strength):
+		cls.append(MIX[k % MIX.size()])
+	add_men(a2, cls)
 	return a2
 
-static func _fill_roster() -> void:
+# new men join an army: each gets a name of his own
+static func add_men(a: Dictionary, cls: Array) -> void:
 	var used = {}
-	for r in data["roster"]:
-		used[r["name"]] = true
-	while data["roster"].size() < SQUAD:
-		var n = "%s %s" % [FIRST[randi() % FIRST.size()], LAST[randi() % LAST.size()]]
-		if used.has(n):
-			continue
+	for m in a["men"]:
+		used[m["name"]] = true
+	for c in cls:
+		if a["men"].size() >= MAX_STR:
+			break
+		var n = ""
+		for k in range(20):
+			n = "%s %s" % [FIRST[randi() % FIRST.size()], LAST[randi() % LAST.size()]]
+			if not used.has(n):
+				break
 		used[n] = true
-		data["roster"].append({"name": n, "vet": 0, "kills": 0, "battles": 0})
+		a["men"].append({"name": n, "cls": c, "vet": 0, "kills": 0, "battles": 0})
+	_sync(a)
+
+static func _sync(a: Dictionary) -> void:
+	if not a.has("men"):
+		a["men"] = []
+	if not a.has("veh"):
+		a["veh"] = []
+	a["str"] = a["men"].size()
+
+# how many of each class an army has, for the screen
+static func make_up(a: Dictionary) -> Dictionary:
+	var out = {}
+	for m in a["men"]:
+		out[m["cls"]] = out.get(m["cls"], 0) + 1
+	return out
+
+# ---------------------------------------------------------------- recruiting
+static func can_buy(a: Dictionary, pack: String) -> String:
+	if a == null:
+		return "pick an army first"
+	var P = PACKS[pack]
+	if data["funds"][a["team"]] < P["cost"]:
+		return "not enough in the war chest"
+	if not supplied(a["team"], a["region"]):
+		return "cut off: no recruits can reach it"
+	if P.has("veh"):
+		if a["veh"].size() >= MAX_VEH:
+			return "no room for more vehicles"
+	elif a["men"].size() + P["cls"].size() > MAX_STR:
+		return "the army is at full strength"
+	return ""
+
+static func buy(a: Dictionary, pack: String) -> String:
+	var why = can_buy(a, pack)
+	if why != "":
+		return why
+	var P = PACKS[pack]
+	data["funds"][a["team"]] -= P["cost"]
+	if P.has("veh"):
+		a["veh"].append(P["veh"])
+	else:
+		add_men(a, P["cls"])
+	save()
+	return ""
+
+static func can_raise(team: int) -> String:
+	if data["funds"][team] < RAISE_COST:
+		return "needs %d in the war chest" % RAISE_COST
+	if data["owner"][HQ[team]] != team:
+		return "we've lost our HQ"
+	if army_at(HQ[team], team) != null:
+		return "an army is already at HQ: move it out first"
+	if data["armies"].filter(func(x): return x["team"] == team).size() >= 6:
+		return "six armies is the most we can keep"
+	return ""
+
+static func raise_army(team: int) -> String:
+	var why = can_raise(team)
+	if why != "":
+		return why
+	data["funds"][team] -= RAISE_COST
+	var a = _add_army(team, HQ[team], 8)
+	a["moved"] = true
+	_log(["HQ raises the %s at %s." % [a["name"], REGIONS[HQ[team]]["name"]]] if team == 0 else [])
+	save()
+	return ""
+
+# income each turn: a little from HQ and more for every region held in supply
+static func income(team: int) -> int:
+	var net = supply_net(team)
+	return 4 + net.size()
 
 static func save() -> void:
 	var f = FileAccess.open(PATH, FileAccess.WRITE)
 	if f != null:
 		f.store_var(data)
+
+# armies from an older save get men and vehicles
+static func _upgrade() -> void:
+	for a in data["armies"]:
+		if not a.has("men"):
+			a["men"] = []
+			a["veh"] = []
+			var cls = []
+			for k in range(a.get("str", 8)):
+				cls.append(MIX[k % MIX.size()])
+			add_men(a, cls)
+	if not data.has("funds"):
+		data["funds"] = [20, 20]
 
 static func load_saved() -> bool:
 	if not FileAccess.file_exists(PATH):
@@ -273,23 +390,27 @@ static func _new_turn() -> Array:
 			if a["team"] != t:
 				continue
 			a["moved"] = false
+			_sync(a)
 			if net.has(a["region"]):
-				a["str"] = mini(MAX_STR, a["str"] + 2)
+				if a["men"].size() < 10:
+					add_men(a, ["rifleman"])        # stragglers and the walking wounded come back
 			else:
-				a["str"] -= 1
+				if not a["men"].is_empty():
+					a["men"].pop_back()
+				_sync(a)
 				if t == 0:
 					lines.append("%s is out of supply and losing men (%d left)." % [a["name"], maxi(0, a["str"])])
 		for a in data["armies"].duplicate():
 			if a["str"] <= 0:
 				data["armies"].erase(a)
 				lines.append("%s %s has melted away." % ["Our" if t == 0 else "Bravo's", a["name"]])
-		# every few turns a new army forms at a side's HQ, if it still holds it
-		var n = data["armies"].filter(func(x): return x["team"] == t).size()
-		data["raised"][t] += 1
-		if data["owner"][HQ[t]] == t and n < 4 and data["raised"][t] >= (3 if t == 0 else 2) and army_at(HQ[t], t) == null:
-			data["raised"][t] = 0
-			var na = _add_army(t, HQ[t], 7)
-			lines.append("%s raises a new army at %s." % ["HQ" if t == 0 else "Bravo", REGIONS[HQ[t]]["name"]] if t == 1 else "HQ raises the %s at %s." % [na["name"], REGIONS[HQ[t]]["name"]])
+		# the war chest fills; Bravo spends its on the armies that need it most
+		var inc = income(t)
+		data["funds"][t] += inc
+		if t == 0:
+			lines.append("The war chest grows by %d (now %d)." % [inc, data["funds"][0]])
+		else:
+			_bravo_spends(lines)
 	data["turn"] += 1
 	var ours = data["owner"].count(0)
 	if data["owner"][HQ[1]] == 0:
@@ -297,6 +418,20 @@ static func _new_turn() -> Array:
 	elif data["owner"][HQ[0]] == 1 or ours == 0:
 		lines.append("Westfield is lost. The campaign is lost.")
 	return lines
+
+static func _bravo_spends(lines: Array) -> void:
+	var mine = data["armies"].filter(func(x): return x["team"] == 1)
+	if mine.size() < 4 and can_raise(1) == "" and randf() < 0.6:
+		raise_army(1)
+		lines.append("Bravo raises a new army at %s." % REGIONS[HQ[1]]["name"])
+		return
+	mine.sort_custom(func(x, y): return x["str"] < y["str"])
+	# one purchase a turn, for the weakest army that can take it
+	for a in mine:
+		for pk in (["rifle", "at", "mg"] if a["str"] < 18 else ["tank", "halftrack", "rifle", "snp"]):
+			if can_buy(a, pk) == "":
+				buy(a, pk)
+				return
 
 static func over() -> int:
 	if data.is_empty():
@@ -335,14 +470,20 @@ static func _start_battle() -> void:
 	var theirs = army(b["foe"])
 	var i: int = b["region"]
 	var mode = REGIONS[i]["mode"] if b["attacker"] == 0 else "siege"
+	if ours != null:
+		_sync(ours)
+	if theirs != null:
+		_sync(theirs)
 	var n0 = clampi(ours["str"] if ours != null else 6, 4, MAX_STR)
 	var n1 = clampi(theirs["str"] if theirs != null else 6, 4, MAX_STR)
 	var sup0 = ours != null and supplied(0, ours["region"] if b["attacker"] == 1 else b["from"])
 	var sup1 = theirs != null and supplied(1, theirs["region"] if b["attacker"] == 0 else b["from"])
-	attack(i, mode, maxi(n0, n1), [sup0, sup1], [n0, n1])
+	var cls0 = ours["men"].map(func(m): return m["cls"]) if ours != null else []
+	var cls1 = theirs["men"].map(func(m): return m["cls"]) if theirs != null else []
+	attack(i, mode, maxi(n0, n1), [sup0, sup1], [n0, n1], [cls0, cls1], [ours["veh"] if ours != null else [], theirs["veh"] if theirs != null else []])
 
 # start the battle for region i (also used directly by the tests)
-static func attack(i: int, mode: String = "", size: int = SQUAD, supply: Array = [true, true], sizes: Array = []) -> void:
+static func attack(i: int, mode: String = "", size: int = SQUAD, supply: Array = [true, true], sizes: Array = [], cls: Array = [], vehs: Array = []) -> void:
 	active = true
 	current = i
 	var r = REGIONS[i]
@@ -351,43 +492,52 @@ static func attack(i: int, mode: String = "", size: int = SQUAD, supply: Array =
 	# each side fields its army's real strength; a side out of supply gets no reinforcements
 	data["no_reinf"] = [not supply[0], not supply[1]]
 	G.main.start_game({"map": r["map"], "mode": mode, "size": size, "limit": G.default_limit(mode), "reinforce": true,
-		"reinf_mode": "truck", "armor": "heavy" if data["turn"] > 2 else "light", "teams": 2, "caps": sizes})
+		"reinf_mode": "truck", "armor": "heavy" if data["turn"] > 2 else "light", "teams": 2, "caps": sizes, "cls": cls, "armies_veh": true})
 	if not supply[0]:
 		G.ui.radio(0, "We're cut off: no reinforcements this time")
 	if not supply[1]:
 		G.ui.radio(1, "We're cut off from supply")
-	# our motor pool: whatever survived the last battles
-	if not data.has("pool"):
-		data["pool"] = ["jeep", "jeep", "truck", "halftrack"]
-	var home: Vector3 = G.world.rally_point(0)
-	var face = atan2(G.world.capture.x - home.x, G.world.capture.z - home.z)
-	var side = Vector3(cos(face), 0, -sin(face))
-	var k0 = 0
-	for kind in data["pool"]:
-		var vp = G.main._free_spot(home + side * ((k0 % 4) - 1.5) * 7.0 - Vector3(sin(face), 0, cos(face)) * (8.0 + int(k0 / 4) * 9.0))
-		G.main.spawn_vehicle(kind, 0, vp, face)
-		k0 += 1
+	# each army brings its own vehicles
+	var nveh = 0
+	for t in range(2):
+		var list: Array = vehs[t] if vehs.size() > t else []
+		var home: Vector3 = G.world.rally_point(t)
+		var face = atan2(G.world.capture.x - home.x, G.world.capture.z - home.z)
+		var side = Vector3(cos(face), 0, -sin(face))
+		var k0 = 0
+		for kind in list:
+			var vp = G.main._free_spot(home + side * ((k0 % 4) - 1.5) * 7.0 - Vector3(sin(face), 0, cos(face)) * (8.0 + int(k0 / 4) * 9.0))
+			G.main.spawn_vehicle(Faction.vehicle_kind(t, kind), t, vp, face)
+			k0 += 1
+		if t == 0:
+			nveh = k0
 	# defences and bases either side built here in earlier battles are still standing
 	var kept = 0
 	for sd in data.get("sites", {}).get(i, []):
 		var front = Vector3(0, 0, sd["fs"]) if sd["ax"] else Vector3(sd["fs"], 0, 0)
 		if Build.place(sd["kind"], sd["team"], sd["p"], front, true) != null:
 			kept += 1
-	# our soldiers are the campaign roster, veterans and all
-	var k = 0
+	# our soldiers are the army's own men, by name, veterans and all
+	var b = data.get("battle")
+	var ours = army(b["army"]) if b != null else null
+	var men: Array = ours["men"] if ours != null else []
+	var taken = {}
 	for s in G.soldiers:
-		if s.team == 0 and s.state != "dead" and k < data["roster"].size():
-			var e = data["roster"][k]
-			s.sname = e["name"]
-			s.set_vet(e["vet"])
-			s.set_meta("roster", k)
-			k += 1
+		if s.team != 0 or s.state == "dead" or s.vehicle != null:
+			continue
+		for k in range(men.size()):
+			if not taken.has(k) and men[k]["cls"] == s.cls:
+				taken[k] = true
+				s.sname = men[k]["name"]
+				s.set_vet(men[k]["vet"])
+				s.set_meta("roster", k)
+				break
 	var note = ""
 	if G.world.ruined_at_start > 0:
 		note += " · %d pieces still in ruins" % G.world.ruined_at_start
 	if kept > 0:
 		note += " · %d structures still standing" % kept
-	G.ui.message("Battle for %s · %d vehicles in our motor pool%s" % [r["name"], data["pool"].size(), note])
+	G.ui.message("Battle for %s · %d of our vehicles%s" % [r["name"], nveh, note])
 
 # reinforcements are off for a side that's cut off
 static func reinforce_ok(t: int) -> bool:
@@ -443,6 +593,69 @@ static func _foot(t: int) -> int:
 			n += 1
 	return n
 
+# after a battle: who's left of an army
+static func _survivors(a: Dictionary, lost_it: bool) -> Array:
+	var lines = []
+	var t: int = a["team"]
+	var before: int = a["men"].size()
+	var keep = []
+	var promoted = []
+	var named = {}
+	var extra = []
+	for s in G.soldiers:
+		if s.team != t or s.zombie:
+			continue
+		var alive = s.state != "dead"
+		if t == 0 and s.has_meta("roster"):
+			var k: int = s.get_meta("roster")
+			if k < a["men"].size():
+				named[k] = [alive, s.kills]
+		elif alive and s.vehicle == null:
+			extra.append(s.cls)
+	if t == 0:
+		for k in range(a["men"].size()):
+			var m = a["men"][k]
+			var r = named.get(k, [true, 0])     # men who never made it onto the field are safe
+			if not r[0]:
+				continue
+			m["battles"] += 1
+			m["kills"] += r[1]
+			if m["vet"] < 3 and (r[1] >= 2 or m["battles"] % 2 == 0):
+				m["vet"] += 1
+				promoted.append(m["name"])
+			keep.append(m)
+		a["men"] = keep
+	else:
+		# Bravo's army: what classes are still standing (named or not)
+		a["men"] = []
+		for c in extra:
+			a["men"].append({"name": "", "cls": c, "vet": 0, "kills": 0, "battles": 1})
+	# reinforcements who made it fill the ranks back up, never past what the army brought
+	if t == 0:
+		var fill = []
+		for c in extra:
+			if a["men"].size() + fill.size() < before:
+				fill.append(c)
+		add_men(a, fill)
+	# the side that lost leaves a couple of men behind as it pulls out
+	if lost_it:
+		for k in range(mini(2, a["men"].size() - 1)):
+			a["men"].pop_back()
+	var veh = []
+	for v in G.vehicles:
+		if is_instance_valid(v) and not v.dead and v.team == t and not v.spec.get("air", false) and not v.spec.get("static", false) \
+				and v.kind in ["jeep", "technical", "halftrack", "armoredcar", "tank", "heavytank", "motorbike"] and veh.size() < MAX_VEH:
+			veh.append(v.kind)
+	var lost_v = maxi(0, a["veh"].size() - veh.size())
+	a["veh"] = veh
+	_sync(a)
+	if t == 0:
+		var fell = before - a["men"].size()
+		lines.append("%s: %d men left%s%s." % [a["name"], a["men"].size(), (" (%d fell)" % fell) if fell > 0 else "", (", %d vehicles lost" % lost_v) if lost_v > 0 else ""])
+		if not promoted.is_empty():
+			lines.append("Promoted: " + ", ".join(promoted.slice(0, 6)) + ("…" if promoted.size() > 6 else ""))
+	return lines
+
 static func battle_over(winner: int) -> String:
 	if not active or current < 0:
 		return ""
@@ -452,18 +665,6 @@ static func battle_over(winner: int) -> String:
 	var wrecked = _record_ruins(current)
 	if wrecked > 0:
 		lines.append("%d more pieces of %s lie in ruins (they stay that way)." % [wrecked, r["name"]])
-	# vehicles that made it come along to the next battle; HQ sends one more
-	var pool = []
-	for v in G.vehicles:
-		if is_instance_valid(v) and not v.dead and v.team == 0 and not v.spec.get("air", false) and not v.spec.get("static", false) and v.kind in ["jeep", "truck", "halftrack", "armoredcar", "tank", "motorbike", "ambulance", "radar", "bridger"]:
-			pool.append(v.kind)
-	var lost_v = maxi(0, data.get("pool", []).size() - pool.size())
-	var fresh = "tank" if winner == 0 and data["turn"] % 2 == 0 else ("armoredcar" if winner == 0 else "jeep")
-	pool.append(fresh)
-	if pool.size() > 8:
-		pool = pool.slice(0, 8)
-	data["pool"] = pool
-	lines.append("Motor pool: %d vehicles (%s joins)%s." % [pool.size(), fresh, (", %d lost" % lost_v) if lost_v > 0 else ""])
 	# what's built here stays built
 	var keep_sites = []
 	for st in Build.sites:
@@ -472,28 +673,6 @@ static func battle_over(winner: int) -> String:
 	if not data.has("sites"):
 		data["sites"] = {}
 	data["sites"][current] = keep_sites.slice(0, 40)
-	# survivors carry on; the fallen are struck from the roster
-	var alive_names = {}
-	var kills = {}
-	for s in G.soldiers:
-		if s.team == 0:
-			if s.state != "dead":
-				alive_names[s.sname] = true
-			kills[s.sname] = s.kills
-	var keep = []
-	var promoted = []
-	for e in data["roster"]:
-		if alive_names.has(e["name"]):
-			e["battles"] += 1
-			var k = kills.get(e["name"], 0)
-			e["kills"] += k
-			if e["vet"] < 3 and (k >= 2 or e["battles"] % 2 == 0):
-				e["vet"] += 1
-				promoted.append(e["name"])
-			keep.append(e)
-	var lost = data["roster"].size() - keep.size()
-	data["roster"] = keep
-	_fill_roster()
 	# the armies: strength is whoever's left standing
 	var b = data.get("battle")
 	if b == null:
@@ -506,13 +685,12 @@ static func battle_over(winner: int) -> String:
 	else:
 		var ours = army(b["army"])
 		var theirs = army(b["foe"])
-		# what's left of each army: the men still on their feet (vehicle crews don't count), never more
-		# than it brought, and the loser leaves some behind as it pulls out
-		var caps = G.team_caps if G.team_caps.size() == 2 else [MAX_STR, MAX_STR]
+		# what's left of each army: its men still on their feet (named, with their kills and promotions),
+		# reinforcements who survived filling the gaps up to what it brought, and the vehicles that came through
 		if ours != null:
-			ours["str"] = clampi(_foot(0) - (2 if winner == 1 else 0), 1, caps[0])
+			lines += _survivors(ours, winner != 0)
 		if theirs != null:
-			theirs["str"] = clampi(_foot(1) - (2 if winner == 0 else 0), 0, caps[1])
+			_survivors(theirs, winner != 1)
 		if b["attacker"] == 0:
 			if winner == 0:
 				data["owner"][current] = 0
@@ -546,10 +724,6 @@ static func battle_over(winner: int) -> String:
 		# the rest of Bravo's turn: supply, recovery, new armies
 		if b["attacker"] == 1:
 			lines += _new_turn()
-	if lost > 0:
-		lines.append("%d of our soldiers fell; %d recruits join the 1st Company." % [lost, lost])
-	if not promoted.is_empty():
-		lines.append("Promoted: " + ", ".join(promoted))
 	_log(lines)
 	save()
 	return "\n".join(lines)

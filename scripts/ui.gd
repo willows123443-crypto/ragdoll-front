@@ -81,6 +81,7 @@ var opt_reinf: OptionButton
 var opt_armor: OptionButton
 var opt_teams: OptionButton
 var opt_fac0: OptionButton
+var opt_cmd: OptionButton
 var opt_fac1: OptionButton
 var opt_time: OptionButton
 var seed_edit: LineEdit
@@ -933,6 +934,9 @@ func _build_menu() -> void:
 	_row(v, "Your side (Alpha) plays as", opt_fac0)
 	opt_fac1 = _option(fnames, maxi(0, Faction.LIST.find(G.factions[1])))
 	_row(v, "Against (Bravo)", opt_fac1)
+	opt_cmd = _option(["You command (you build and buy)", "AI commander (watch or help)"], 1 if G.settings.get("ai_side", false) else 0)
+	opt_cmd.item_selected.connect(func(i): G.settings["ai_side"] = i == 1)
+	_row(v, "Who runs your side", opt_cmd)
 	_section(v, "World")
 	opt_time = _option(["Day", "Dusk", "Night", "Dawn till nightfall (time passes)", "Endless day and night cycle"], maxi(0, ["day", "dusk", "night", "dawn", "cycle"].find(G.settings["time"])))
 	opt_time.item_selected.connect(func(i):
@@ -1029,14 +1033,25 @@ func campaign_result(text: String) -> void:
 
 var camp_info: Label = null
 
+var camp_view = -1        # an enemy army being looked at
+var camp_result = ""
+
 func _show_campaign(result: String = "") -> void:
 	if Campaign.data.is_empty() and not Campaign.load_saved():
 		Campaign.new_campaign()
 	if Campaign.data.get("version", 1) != Campaign.VERSION:
 		Campaign.new_campaign()
+	if result != "":
+		camp_result = result
 	if camp_panel == null:
-		camp_panel = _panel(Color(0.1, 0.12, 0.13, 0.98))
-		_place(camp_panel, Control.PRESET_CENTER, -500, -340, 1000, 680)
+		camp_panel = _panel(Color(0.08, 0.095, 0.1, 0.985))
+		var sbp: StyleBoxFlat = camp_panel.get_theme_stylebox("panel")
+		sbp.set_corner_radius_all(8)
+		sbp.set_border_width_all(1)
+		sbp.border_color = Color(0.96, 0.74, 0.27, 0.35)
+		sbp.set_content_margin_all(12)
+		_place(camp_panel, Control.PRESET_CENTER, -620, -352, 1240, 704)
+		camp_panel.z_index = 20
 		camp_box = VBoxContainer.new()
 		camp_box.add_theme_constant_override("separation", 6)
 		camp_panel.add_child(camp_box)
@@ -1044,60 +1059,188 @@ func _show_campaign(result: String = "") -> void:
 	for c in camp_box.get_children():
 		camp_box.remove_child(c)
 		c.queue_free()
+	var D = Campaign.data
+	# the top bar: turn, war chest, ground held, who runs our side in battle
 	var head = HBoxContainer.new()
-	head.add_child(_label("Campaign  ·  turn %d" % Campaign.data["turn"], 24))
+	head.add_theme_constant_override("separation", 18)
+	head.add_child(_label("Campaign  ·  Turn %d" % D["turn"], 24, Color(0.97, 0.93, 0.82)))
+	head.add_child(_label("War chest  %d  (+%d a turn)" % [D["funds"][0], Campaign.income(0)], 16, Color(1.0, 0.85, 0.4)))
+	head.add_child(_label("Regions  %d : %d" % [D["owner"].count(0), D["owner"].count(1)], 16, Color(0.8, 0.85, 0.8)))
 	var sp = Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(sp)
-	head.add_child(_label("■ ours   ■ theirs   ┅ cut off from supply", 13, Color(0.75, 0.78, 0.75)))
+	head.add_child(_label("In battle:", 14, Color(0.75, 0.78, 0.75)))
+	var oc = _option(["You command", "AI commander"], 1 if G.settings.get("ai_side", false) else 0)
+	oc.item_selected.connect(func(i):
+		G.settings["ai_side"] = i == 1
+		G.save_prefs())
+	oc.tooltip_text = "You command: you build and buy for your side in its battles. AI commander: it runs your side and you can watch or help."
+	head.add_child(oc)
 	camp_box.add_child(head)
-	if result != "":
-		var rl = _label(result, 14, Color(1.0, 0.85, 0.45))
-		rl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		rl.custom_minimum_size = Vector2(960, 0)
-		camp_box.add_child(rl)
-	camp_box.add_child(_campaign_map())
+	# the map on the left, the selected army on the right
+	var body = HBoxContainer.new()
+	body.add_theme_constant_override("separation", 12)
+	camp_box.add_child(body)
+	body.add_child(_campaign_map())
+	body.add_child(_campaign_side())
 	camp_info = _label("", 14, Color(0.9, 0.92, 0.88))
 	camp_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	camp_info.custom_minimum_size = Vector2(960, 0)
+	camp_info.custom_minimum_size = Vector2(1200, 0)
 	camp_box.add_child(camp_info)
 	_campaign_info()
-	var vets = []
-	for e in Campaign.data["roster"]:
-		vets.append("%s%s" % [e["name"], " " + "★".repeat(e["vet"]) if e["vet"] > 0 else ""])
-	var rl2 = _label("1st Company: " + ", ".join(vets), 12, Color(0.8, 0.85, 0.8))
-	rl2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	rl2.custom_minimum_size = Vector2(960, 0)
-	camp_box.add_child(rl2)
-	var lg = _label("\n".join(Campaign.data["log"].slice(0, 4)), 12, Color(0.68, 0.7, 0.68))
+	var lg_lines: Array = []
+	for l in camp_result.split("\n"):
+		if l != "" and not (l in D["log"]):
+			lg_lines.append(l)
+	lg_lines += D["log"].slice(0, 3)
+	var lg_txt = "\n".join(lg_lines.slice(0, 3))
+	var lg = _label(lg_txt, 12, Color(0.72, 0.74, 0.7))
 	lg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lg.custom_minimum_size = Vector2(960, 0)
+	lg.custom_minimum_size = Vector2(1200, 0)
 	camp_box.add_child(lg)
 	var h = HBoxContainer.new()
 	h.add_theme_constant_override("separation", 8)
 	var pend = Campaign.pending_battle()
 	var done = Campaign.over()
 	if pend != null:
-		var fb = _button("  Fight the battle  ", func():
+		var fb = _button("  ⚔  Fight the battle  ", func():
 			camp_panel.visible = false
 			menu.visible = false
+			camp_result = ""
 			_close_title()
 			Campaign._start_battle())
 		fb.add_theme_font_size_override("font_size", 18)
 		h.add_child(fb)
 	elif done < 0:
-		var eb = _button("  End turn  ", func():
+		var eb = _button("  End turn  ▶  ", func():
 			Campaign.selected = -1
+			camp_view = -1
 			var lines = Campaign.end_turn()
+			camp_result = ""
 			_show_campaign("\n".join(lines) if not lines.is_empty() else "Bravo holds its ground."))
 		eb.add_theme_font_size_override("font_size", 18)
 		h.add_child(eb)
+	var sp2 = Control.new()
+	sp2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(sp2)
 	h.add_child(_button("New campaign", func():
 		Campaign.new_campaign()
+		camp_result = ""
 		_show_campaign()))
 	h.add_child(_button("Close", func(): camp_panel.visible = false))
 	camp_box.add_child(h)
 	camp_panel.visible = true
+
+# the right-hand panel: the army you've picked (its men, vehicles, roster and what you can buy for it),
+# an enemy army you've clicked, or a list of your armies
+func _campaign_side() -> Control:
+	var D = Campaign.data
+	var outer = PanelContainer.new()
+	var sb = StyleBoxFlat.new()
+	sb.bg_color = Color(0.12, 0.14, 0.15, 1.0)
+	sb.set_corner_radius_all(6)
+	sb.set_content_margin_all(10)
+	outer.add_theme_stylebox_override("panel", sb)
+	outer.custom_minimum_size = Vector2(CAMP_SIDE, CAMP_H)
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 5)
+	outer.add_child(v)
+	var a = Campaign.army(Campaign.selected)
+	if a == null and camp_view >= 0:
+		a = Campaign.army(camp_view)
+	if a == null:
+		v.add_child(_label("Your armies", 18, Color(0.97, 0.93, 0.82)))
+		for x in D["armies"]:
+			if x["team"] != 0:
+				continue
+			var vehs = x["veh"].size()
+			var t = "%s  ·  %s\n%d men%s%s%s" % [x["name"], Campaign.REGIONS[x["region"]]["name"], x["str"], ", %d vehicles" % vehs if vehs > 0 else "",
+				"" if Campaign.supplied(0, x["region"]) else "  · CUT OFF", "  · moved" if x["moved"] else ""]
+			var xid = x["id"]
+			var bt = _button(t, func():
+				Campaign.selected = xid
+				camp_view = -1
+				_show_campaign())
+			bt.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			bt.add_theme_font_size_override("font_size", 13)
+			v.add_child(bt)
+		var why = Campaign.can_raise(0)
+		var rb = _button("Raise a new army at HQ  (%d)" % Campaign.RAISE_COST, func():
+			var r = Campaign.raise_army(0)
+			_show_campaign("The new army is ready at Westfield." if r == "" else ""))
+		rb.disabled = why != ""
+		rb.tooltip_text = "Eight fresh men at HQ" if why == "" else why
+		v.add_child(rb)
+		if why != "":
+			v.add_child(_label("  (" + why + ")", 12, Color(0.65, 0.65, 0.62)))
+		return outer
+	var mine = a["team"] == 0
+	var tc = G.team_color(a["team"])
+	v.add_child(_label(("⚑ " if mine else "✠ ") + a["name"], 19, tc.lerp(Color.WHITE, 0.5)))
+	var sup = Campaign.supplied(a["team"], a["region"])
+	v.add_child(_label("%s  ·  %s%s" % [Campaign.REGIONS[a["region"]]["name"], "in supply" if sup else "CUT OFF from supply", ("  ·  moved this turn" if a["moved"] else "  ·  ready to move") if mine else ""], 13, Color(0.8, 0.83, 0.8) if sup else Color(1.0, 0.5, 0.4)))
+	if not mine:
+		# what our scouts can tell
+		var est = int(round(a["str"] / 5.0)) * 5
+		v.add_child(_label("Scouts report about %d men%s." % [maxi(5, est), (" and %d vehicles" % a["veh"].size()) if a["veh"].size() > 0 else ""], 14))
+		v.add_child(_button("Back", func():
+			camp_view = -1
+			_show_campaign()))
+		return outer
+	# men by class, and the vehicles
+	var mk = Campaign.make_up(a)
+	var parts = []
+	for c in ["rifleman", "mg", "at", "assault", "engineer", "medic", "radio", "sniper", "spotter", "officer"]:
+		if mk.has(c):
+			parts.append("%s %d" % [Campaign.CLS_NAMES.get(c, c), mk[c]])
+	var ml = _label("Men  %d / %d:  %s" % [a["str"], Campaign.MAX_STR, ",  ".join(parts)], 13, Color(0.92, 0.92, 0.88))
+	ml.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ml.custom_minimum_size = Vector2(CAMP_SIDE - 24, 0)
+	v.add_child(ml)
+	var vn = a["veh"].map(func(k): return Vehicle.SPECS[k]["name"] if Vehicle.SPECS.has(k) else k)
+	v.add_child(_label("Vehicles %d / %d:  %s" % [a["veh"].size(), Campaign.MAX_VEH, ", ".join(vn) if not vn.is_empty() else "none"], 13, Color(0.85, 0.88, 0.85)))
+	# the roster: veterans first
+	var sc = ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(CAMP_SIDE - 24, 112)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var rv = VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 0)
+	sc.add_child(rv)
+	var men = a["men"].duplicate()
+	men.sort_custom(func(x, y): return x["vet"] * 100 + x["kills"] > y["vet"] * 100 + y["kills"])
+	for m in men:
+		var line = "%s  %s  —  %s%s" % ["★".repeat(m["vet"]) if m["vet"] > 0 else "·", m["name"], Campaign.CLS_NAMES.get(m["cls"], m["cls"]).trim_suffix("s").trim_suffix("me").replace("Riflemen", "Rifleman"), ("   %d kills, %d battles" % [m["kills"], m["battles"]]) if m["battles"] > 0 else ""]
+		rv.add_child(_label(line, 12, Color(1.0, 0.86, 0.45) if m["vet"] >= 2 else Color(0.82, 0.84, 0.8)))
+	v.add_child(_label("Roster", 14, Color(0.97, 0.93, 0.82)))
+	v.add_child(sc)
+	# recruiting
+	v.add_child(_label("Recruit  (war chest %d)" % D["funds"][0], 14, Color(0.97, 0.93, 0.82)))
+	var grid = GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	var aid = a["id"]
+	for pk in Campaign.PACKS:
+		var P = Campaign.PACKS[pk]
+		var why = Campaign.can_buy(a, pk)
+		var label = "%s  %d" % [P["name"], P["cost"]] + (("  +%d" % P["cls"].size()) if P.has("cls") else "")
+		var key = pk
+		var b = _button(label, func():
+			var r = Campaign.buy(Campaign.army(aid), key)
+			if r != "":
+				message(r)
+			_show_campaign())
+		b.add_theme_font_size_override("font_size", 12)
+		b.custom_minimum_size = Vector2((CAMP_SIDE - 30) / 2.0, 28)
+		b.disabled = why != ""
+		b.tooltip_text = why if why != "" else ("Adds " + ", ".join(P["cls"]) if P.has("cls") else "Adds a " + P["name"].to_lower())
+		grid.add_child(b)
+	v.add_child(grid)
+	v.add_child(_button("All armies", func():
+		Campaign.selected = -1
+		camp_view = -1
+		_show_campaign()))
+	return outer
 
 func _campaign_info() -> void:
 	if camp_info == null:
@@ -1112,14 +1255,17 @@ func _campaign_info() -> void:
 		camp_info.text = Campaign.battle_text() + ". Fight it out to see who holds the region."
 	else:
 		var a = Campaign.army(Campaign.selected)
-		if a != null:
-			camp_info.text = "%s (%d men%s) selected: click a neighbouring region to move there. Into enemy ground with an army in it means a battle; empty enemy ground is taken at once." % [a["name"], a["str"], "" if Campaign.supplied(0, a["region"]) else ", cut off"]
+		if a != null and a["moved"]:
+			camp_info.text = "%s has moved this turn. You can still recruit for it on the right; End turn when you're done." % a["name"]
+		elif a != null:
+			camp_info.text = "%s (%d men%s) selected: click a neighbouring region (gold border) to move there. Enemy ground with an army in it means a battle; empty enemy ground is taken at once. Recruit for it on the right." % [a["name"], a["str"], "" if Campaign.supplied(0, a["region"]) else ", cut off"]
 		else:
 			var left = Campaign.data["armies"].filter(func(x): return x["team"] == 0 and not x["moved"]).size()
-			camp_info.text = "Click one of your armies to give it orders (%d still to move this turn), then End turn. Armies in supply recover strength; cut off, they lose men and get no reinforcements in battle." % left
+			camp_info.text = "Click one of your armies to see its men and recruit for it, and to move it (%d still to move this turn), then End turn. Armies in supply get recruits and fresh men; cut off, they lose men and get no reinforcements in battle." % left
 
-const CAMP_W = 960.0
-const CAMP_H = 400.0
+const CAMP_W = 790.0
+const CAMP_H = 440.0
+const CAMP_SIDE = 398.0
 
 func _campaign_map() -> Control:
 	var m = Panel.new()
@@ -1214,22 +1360,27 @@ func _campaign_army(id: int) -> void:
 	if a == null or Campaign.pending_battle() != null or Campaign.over() >= 0:
 		return
 	if a["team"] != 0:
-		_campaign_click(a["region"])
-		return
-	if a["moved"]:
+		var sel_a = Campaign.army(Campaign.selected)
+		if sel_a != null and Campaign.can_move(sel_a, a["region"]):
+			_campaign_click(a["region"])
+			return
+		camp_view = id
 		Campaign.selected = -1
-	else:
-		Campaign.selected = id if Campaign.selected != id else -1
+		_show_campaign()
+		return
+	camp_view = -1
+	Campaign.selected = id if Campaign.selected != id else -1
 	_show_campaign()
 
 func _campaign_click(i: int) -> void:
 	if Campaign.pending_battle() != null or Campaign.over() >= 0:
 		return
 	var a = Campaign.army(Campaign.selected)
-	if a == null:
+	if a == null or a["moved"]:
 		var mine = Campaign.army_at(i, 0)
-		if mine != null and not mine["moved"]:
+		if mine != null:
 			Campaign.selected = mine["id"]
+			camp_view = -1
 			_show_campaign()
 		return
 	if not Campaign.can_move(a, i):

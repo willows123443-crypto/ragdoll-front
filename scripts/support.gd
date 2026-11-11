@@ -160,7 +160,7 @@ static func step(dt: float) -> void:
 				points[t] += 1
 	# AI sides spend what they have
 	for t in range(points.size()):
-		if t == 0 and (G.player != null or G.mode == "commander" or G.mode == "horde"):
+		if t == 0 and (not G.ai_runs(0) or G.mode == "horde"):
 			continue        # the player's own purse
 		if t == 1 and G.mode == "horde":
 			continue

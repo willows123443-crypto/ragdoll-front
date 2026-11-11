@@ -95,7 +95,7 @@ static func step(dt: float) -> void:
 		for v in fleet[t]:
 			_dispatch(t, v, h)
 		# the AI side keeps its fleet up
-		if t != 0 and count(t) < 2 and Support.points[t] >= Support.COSTS["supplytruck"] + 6:
+		if G.ai_runs(t) and count(t) < 2 and Support.points[t] >= Support.COSTS["supplytruck"] + 6:
 			Support.points[t] -= Support.COSTS["supplytruck"]
 			buy_truck(t)
 	_ammo_trucks()

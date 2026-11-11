@@ -112,6 +112,8 @@ func _ready() -> void:
 			_load_test(a.substr(11))
 		if a == "--recruittest":
 			_recruit_test()
+		if a.begins_with("--camoshot="):
+			_camo_shot(a.substr(11))
 		if a.begins_with("--batchshot="):
 			_batch_shot(a.substr(12))
 		if a == "--ruintest":
@@ -2603,6 +2605,47 @@ func _at_test(dir: String) -> void:
 	get_tree().quit()
 
 # vehicles with their headlights on at night, from the side, from in front and from above
+# camo nets thrown over a few finished structures, from two angles
+func _camo_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.5)
+	start_game({"map": _arg("map", "field"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	G.pc.force_free = true
+	var c: Vector3 = G.world.rally_point(0)
+	var fw = G.flat(G.world.capture - c).normalized()
+	var side = Vector3(fw.z, 0, -fw.x)
+	var made = []
+	var k = 0
+	for kind in ["fob2", "mgnest", "depot", "mortarpit"]:
+		var sp = Build.find_spot(c + side * (k - 1.5) * 13.0 + fw * 8.0, kind, 12.0, 40, true)
+		if sp != null:
+			var st = Build.place(kind, 0, sp, fw, true)
+			if st != null:
+				made.append(st)
+		k += 1
+	await _wait(0.5)
+	for st in made:
+		Build.add_camo(st)
+	print("CAMOSHOT nets ", made.size())
+	await _wait(0.5)
+	await _look(c - fw * 14.0 + Vector3(0, 9.0, 0), c + fw * 8.0)
+	await _wait(0.5)
+	await _snap(dir, "camo_wide")
+	if not made.is_empty():
+		var p: Vector3 = made[0]["p"]
+		await _look(p - fw * 9.0 + side * 6.0 + Vector3(0, 3.5, 0), p)
+		await _wait(0.5)
+		await _snap(dir, "camo_hut")
+	if made.size() > 1:
+		var p2: Vector3 = made[1]["p"]
+		await _look(p2 - fw * 7.0 - side * 5.0 + Vector3(0, 3.0, 0), p2)
+		await _wait(0.5)
+		await _snap(dir, "camo_nest")
+	get_tree().quit()
+
 func _light_shot(dir: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)
 	G.settings["time"] = "night"

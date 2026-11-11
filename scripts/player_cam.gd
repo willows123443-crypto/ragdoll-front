@@ -1782,7 +1782,7 @@ func _update_rings() -> void:
 			G.ui.message("Selected: " + _sel_summary())
 	# a thin glowing ring flat on the ground under each, breathing gently, with a small chevron on its
 	# edge showing which way he's facing
-	var pulse = 0.82 + 0.18 * sin(G.sim_time * 4.0)
+	var pulse = 0.72 + 0.08 * sin(G.sim_time * 3.0)
 	var fl = []
 	for s in selection:
 		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
@@ -1798,7 +1798,7 @@ func _update_rings() -> void:
 			var big = marks[i][1] > 1.0
 			var gy = G.world.surface_y(p.x, p.z, p.y + 0.3) if not big else G.world.ground_y(p.x, p.z)
 			r.global_position = Vector3(p.x, gy + 0.06, p.z)
-			var sc = marks[i][1] * (0.62 if not big else 1.0) * (clampf(1.0 + (rts_dist - 15.0) / 40.0, 1.0, 2.4) if rts else 1.0)
+			var sc = marks[i][1] * (0.45 if not big else 0.9) * (clampf(1.0 + (rts_dist - 15.0) / 60.0, 1.0, 1.6) if rts else 1.0)
 			r.scale = Vector3(sc, 1, sc)
 			var who = fl[i] if i < fl.size() else null
 			var fy = 0.0
@@ -2179,7 +2179,8 @@ func _order_preview_tick() -> void:
 			var tr: MeshInstance3D = g.get_child(2)
 			var from: Vector3 = e[0].pos
 			var L = G.dist2d(from, q)
-			tr.visible = L > 1.5
+			# the trail only shows while you're actually giving the order (right button held)
+			tr.visible = L > 1.5 and (r_drag or fdrag)
 			if tr.visible:
 				var mid = (from + q) * 0.5
 				tr.global_transform = Transform3D(Basis(Vector3.UP, atan2(q.x - from.x, q.z - from.z)).scaled(Vector3(zoom * 0.7, 1, maxf(0.2, L - 0.9 * zoom))), Vector3(mid.x, G.world.ground_y(mid.x, mid.z) + 0.08, mid.z))

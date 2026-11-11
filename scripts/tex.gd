@@ -155,17 +155,17 @@ static func net() -> ImageTexture:
 	var a = _noise(0.06, 3, 61)
 	var b = _noise(0.09, 2, 62)
 	var img = Image.create(SZ, SZ, false, Image.FORMAT_RGBA8)
-	var cols = [Color(0.25, 0.3, 0.17), Color(0.35, 0.33, 0.21), Color(0.18, 0.21, 0.13), Color(0.42, 0.38, 0.26)]
+	var cols = [Color(0.36, 0.42, 0.22), Color(0.5, 0.47, 0.3), Color(0.27, 0.32, 0.17), Color(0.56, 0.5, 0.33)]
 	for y in range(SZ):
 		for x in range(SZ):
 			var g = _v(a, x, y)
 			var c: Color
-			if g > 0.42:
+			if g > 0.47:
 				c = cols[int(_v(b, x, y) * 3.99)]
 				c = c.darkened(randf_range(0.0, 0.12))
 				c.a = 1.0
 			elif x % 8 == 0 or y % 8 == 0:
-				c = Color(0.2, 0.2, 0.14, 1.0)
+				c = Color(0.26, 0.26, 0.18, 1.0)
 			else:
 				c = Color(0, 0, 0, 0)
 			img.set_pixel(x, y, c)

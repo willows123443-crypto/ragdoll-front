@@ -562,33 +562,92 @@ static func add_camo(st: Dictionary) -> void:
 	var net = Node3D.new()
 	st["root"].add_child(net)
 	var h = 3.2 if st["kind"] in ["fob", "fob2", "depot", "hospital", "supply"] else 2.2
-	var w = (sz.x if st["ax"] else sz.y) + 1.0
-	var d = (sz.y if st["ax"] else sz.x) + 1.0
-	# one net draped over poles at the corners, sagging between them
+	# the net is bigger than the structure and is draped over it: it rides over the roof, sags between
+	# the high points, then slopes down to the ground all round where it's pegged, like a real hide
+	var w = (sz.x if st["ax"] else sz.y) + 3.4
+	var d = (sz.y if st["ax"] else sz.x) + 3.4
+	var cx0: float = st["p"].x
+	var cz0: float = st["p"].z
+	var gy0 = G.world.ground_y(cx0, cz0)
+	# what the net has to go over: the structure's own meshes (roofs overhang their walls), leaving out
+	# thin things like masts and flagpoles, which poke through the mesh instead of tenting it up
+	var tops = []
+	var stack = [st["root"]]
+	while not stack.is_empty():
+		var nd = stack.pop_back()
+		for ch in nd.get_children():
+			stack.append(ch)
+		if nd is MeshInstance3D and nd.visible and nd.mesh != null:
+			var bb: AABB = nd.global_transform * nd.get_aabb()
+			if bb.size.x * bb.size.z > 0.5 and bb.end.y < gy0 + h + 2.0:
+				tops.append(bb)
+	for c in st["cols"]:
+		if c.alive and (c.hi.x - c.lo.x) * (c.hi.z - c.lo.z) > 0.5 and c.hi.y < gy0 + h + 2.0:
+			tops.append(AABB(c.lo, c.hi - c.lo))
+	var top_at = func(x: float, z: float) -> float:
+		var t = -1000.0
+		for bb in tops:
+			if x > bb.position.x - 0.5 and x < bb.end.x + 0.5 and z > bb.position.z - 0.5 and z < bb.end.z + 0.5:
+				t = maxf(t, bb.end.y)
+		return t
+	var rng = RandomNumberGenerator.new()
+	rng.seed = int(absf(cx0 * 31.0 + cz0 * 17.0))
+	var N = 16
+	# a ragged edge: each border point pulled in or out a little
+	var edge = []
+	for k in range(N * 4 + 1):
+		edge.append(rng.randf_range(-0.45, 0.25))
+	var verts = []
+	var cols = []
+	for i in range(N + 1):
+		var row = []
+		var crow = []
+		for j in range(N + 1):
+			var u = float(i) / N
+			var v2 = float(j) / N
+			var ex = absf(u * 2.0 - 1.0)
+			var ez = absf(v2 * 2.0 - 1.0)
+			var r = maxf(ex, ez)
+			# which border point this column/row leans on
+			var bi = i if ez >= ex else j
+			var jitter = edge[(bi + (0 if v2 < 0.5 else N) + (0 if u < 0.5 else 2 * N)) % edge.size()] * r * r
+			var x = (u - 0.5) * (w + jitter * 2.0)
+			var z = (v2 - 0.5) * (d + jitter * 2.0)
+			var gx = G.world.ground_y(cx0 + x, cz0 + z)
+			var roof = top_at.call(cx0 + x, cz0 + z)
+			# a gentle ridge over the middle where the spreader poles hold it up
+			var crown = gy0 + h * (1.0 - 0.35 * r * r) - 0.35 * sin(u * PI * 2.0) * sin(v2 * PI * 2.0) * 0.3
+			var y = maxf(crown, roof + 0.4)
+			# the skirt: from 70% out it falls away to the pegs on the ground
+			var skirt = smoothstep(0.62, 1.0, r)
+			y = lerpf(y, gx + 0.05, skirt)
+			y = maxf(y, gx + 0.04)
+			# lumps where the cloth bunches
+			y += 0.09 * sin(u * 19.0 + v2 * 7.0) * sin(v2 * 13.0 - u * 5.0) * (1.0 - skirt * 0.6)
+			row.append(Vector3(cx0 + x, y, cz0 + z))
+			# blotchy colour so it isn't one flat sheet
+			var tint = 0.82 + 0.18 * sin(u * 9.0 + 1.3) * sin(v2 * 7.0 + 0.4) + rng.randf_range(-0.06, 0.06)
+			var dry = clampf(0.5 + 0.5 * sin(u * 5.0 - v2 * 6.0 + 2.0), 0.0, 1.0) * 0.25
+			crow.append(Color(tint + dry * 0.25, tint + dry * 0.1, tint * 0.92))
+		verts.append(row)
+		cols.append(crow)
 	var stt = SurfaceTool.new()
 	stt.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var N = 10
-	var gy0 = G.world.ground_y(st["p"].x, st["p"].z)
 	for i in range(N):
 		for j in range(N):
-			var quad = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j], [i + 1, j + 1], [i, j + 1]]
-			for q in quad:
-				var u = float(q[0]) / N
-				var v2 = float(q[1]) / N
-				var x = -w / 2.0 + u * w
-				var z = -d / 2.0 + v2 * d
-				var sag = 0.55 * sin(u * PI) * sin(v2 * PI) + 0.25 * (sin(u * PI) + sin(v2 * PI)) * 0.5
-				var gx = G.world.ground_y(st["p"].x + x, st["p"].z + z)
-				var y = maxf(gx + 0.6, gy0 + h - sag + 0.08 * sin(u * 23.0 + v2 * 17.0))
-				stt.set_uv(Vector2(u * w * 0.5, v2 * d * 0.5))
-				stt.add_vertex(Vector3(st["p"].x + x, y, st["p"].z + z))
+			for q in [[i, j], [i + 1, j], [i + 1, j + 1], [i, j], [i + 1, j + 1], [i, j + 1]]:
+				var vv: Vector3 = verts[q[0]][q[1]]
+				stt.set_color(cols[q[0]][q[1]])
+				stt.set_uv(Vector2((vv.x - cx0) * 0.45, (vv.z - cz0) * 0.45))
+				stt.add_vertex(vv)
 	stt.generate_normals()
 	var nm = MeshInstance3D.new()
 	nm.mesh = stt.commit()
 	var mat = StandardMaterial3D.new()
 	mat.albedo_texture = Tex.net()
+	mat.vertex_color_use_as_albedo = true
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	mat.alpha_scissor_threshold = 0.5
+	mat.alpha_scissor_threshold = 0.45
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.roughness = 1.0
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
@@ -596,15 +655,45 @@ static func add_camo(st: Dictionary) -> void:
 	nm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	net.add_child(nm)
 	net.top_level = true
-	for cx in [-1.0, 1.0]:
-		for cz in [-1.0, 1.0]:
-			var pole = MeshInstance3D.new()
-			pole.mesh = VModel.cyl_mesh(0.05, h, -1.0, 6)
-			pole.material_override = VModel.mat(WOODC)
-			var px = st["p"].x + cx * w / 2.0
-			var pz = st["p"].z + cz * d / 2.0
-			pole.position = Vector3(px, G.world.ground_y(px, pz) + h / 2.0, pz)
-			net.add_child(pole)
+	# scraps of foliage stuck into the mesh break up the outline
+	var leaf = StandardMaterial3D.new()
+	leaf.albedo_color = Color(0.27, 0.33, 0.16)
+	leaf.roughness = 1.0
+	leaf.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for k in range(int(w * d / 5.0)):
+		var a = rng.randi_range(1, N - 1)
+		var b = rng.randi_range(1, N - 1)
+		var at: Vector3 = verts[a][b]
+		var tuft = MeshInstance3D.new()
+		var qm = QuadMesh.new()
+		qm.size = Vector2(rng.randf_range(0.4, 0.9), rng.randf_range(0.25, 0.5))
+		tuft.mesh = qm
+		var lm = leaf.duplicate()
+		lm.albedo_color = leaf.albedo_color.lerp(Color(0.4, 0.36, 0.22), rng.randf()).darkened(rng.randf_range(0.0, 0.2))
+		tuft.material_override = lm
+		tuft.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		tuft.position = at + Vector3(0, 0.08, 0)
+		tuft.rotation = Vector3(rng.randf_range(-1.2, -0.3), rng.randf() * TAU, rng.randf_range(-0.4, 0.4))
+		net.add_child(tuft)
+	# two spreader poles under the ridge (mostly hidden), and short pegs round the edge
+	for sx in [-0.22, 0.22]:
+		var pole = MeshInstance3D.new()
+		var px = cx0 + sx * w * (1.0 if w >= d else 0.0)
+		var pz = cz0 + sx * d * (0.0 if w >= d else 1.0)
+		var pg = G.world.ground_y(px, pz)
+		var ph = maxf(0.5, gy0 + h - pg - 0.1)
+		pole.mesh = VModel.cyl_mesh(0.045, ph, -1.0, 6)
+		pole.material_override = VModel.mat(WOODC)
+		pole.position = Vector3(px, pg + ph / 2.0, pz)
+		net.add_child(pole)
+	for k in range(0, N + 1, 4):
+		for e in [[k, 0], [k, N], [0, k], [N, k]]:
+			var pv: Vector3 = verts[e[0]][e[1]]
+			var peg = MeshInstance3D.new()
+			peg.mesh = VModel.cyl_mesh(0.03, 0.3, -1.0, 4)
+			peg.material_override = VModel.mat(WOODC)
+			peg.position = pv + Vector3(0, 0.1, 0)
+			net.add_child(peg)
 
 const DESCR = {"hq": "Headquarters: earns supply points; lose it and you lose the battle",
 	"fob": "Forward base: soldiers respawn here", "fob2": "Forward base (hut): soldiers respawn here",

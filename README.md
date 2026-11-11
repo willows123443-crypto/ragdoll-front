@@ -238,6 +238,8 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Headlights:** a soft patch of light on the road ahead instead of a cone
 - **Night falls gradually:** dusk and dawn take longer and the light changes smoothly
 - **Cover behind vehicles:** men kneel behind a vehicle instead of lying with their legs sticking out
+- **Quieter selection:** the ring under selected men is smaller and fainter, and the line from each man to his spot only shows while you're giving the order
+- **Camo nets drape:** the net rides over the roof, sags, and slopes down to pegs on the ground with a ragged edge, blotchy colours and scraps of foliage; masts poke through
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

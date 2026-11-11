@@ -467,9 +467,11 @@ func wreck_smoke(pos: Vector3, parent: Node, c: Color = Color(0.17, 0.16, 0.15, 
 	return p
 
 # a lingering smoke screen; returns the emitter so it can be stopped
-func smoke_screen(pos: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.83), big: float = 1.0) -> CPUParticles3D:
+# (the amount has to be set here, before it starts: changing it afterwards re-creates the particles,
+# and on the web unborn particles show as black discs)
+func smoke_screen(pos: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.83), big: float = 1.0, dens: float = 1.0) -> CPUParticles3D:
 	var p = CPUParticles3D.new()
-	p.amount = int(110 * big)
+	p.amount = int(110 * big * dens)
 	p.lifetime = 8.0
 	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
 	p.emission_sphere_radius = 4.0 * big

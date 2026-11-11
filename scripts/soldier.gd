@@ -1439,10 +1439,7 @@ func lod_glide() -> void:
 	var d = Vector3(vel.x, 0, vel.z) * G.DT
 	if d.length_squared() < 1e-8:
 		return
-	# past a hundred-odd metres nobody can see the difference: save the work
-	var cam = get_viewport().get_camera_3d()
-	if cam != null and cam.global_position.distance_squared_to(pos) > 14400.0:
-		return
+	# (always, however far off: skipping it made men stutter along when the commander view was zoomed out)
 	for b in parts:
 		b.global_position += d
 
@@ -2233,7 +2230,22 @@ func _exc_tick() -> void:
 		for b in parts:
 			b.remove_collision_exception_with(v.body)
 
+var _full_mask = true
+
+# Standing men are moved by their own legs, not shoved about by the physics: their limbs don't collide
+# with vehicles, wrecks or flying debris (that's what flung men into the air beside a burnt-out car or
+# when a lorry nudged them). Once they go down they're ragdolls again and land on all of it properly.
+func _sync_mask() -> void:
+	var full = state != "alive"
+	if full == _full_mask or parts.is_empty():
+		return
+	_full_mask = full
+	for b in parts:
+		if b.collision_layer == G.L_BODY:
+			b.collision_mask = (G.L_WORLD | G.L_BODY | G.L_DEBRIS | G.L_VEH) if full else (G.L_WORLD | G.L_BODY)
+
 func tick() -> void:
+	_sync_mask()
 	_exc_tick()
 	if prone and state == "alive" and vehicle == null:
 		flat_t -= G.DT
@@ -2858,6 +2870,10 @@ func dismount(eject: bool) -> void:
 		else:
 			side *= 1.0 if o.x >= 0.0 else -1.0
 			out = v.pos + side * (v.spec["wid"] * 0.5 + 0.9) + v.forward() * o.z
+		# never out past the edge of the map (the hills there would throw him back in)
+		var bd: Rect2 = G.world.bounds.grow(-3.0)
+		out.x = clampf(out.x, bd.position.x, bd.end.x)
+		out.z = clampf(out.z, bd.position.y, bd.end.y)
 		out = G.world.push_out_circle(out, 0.35)[0]
 		if rear and G.world.inside_any(out.x, out.z, 0.3):
 			out = G.world.push_out_circle(v.pos + side * (v.spec["wid"] * 0.5 + 1.0), 0.35)[0]

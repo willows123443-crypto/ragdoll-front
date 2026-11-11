@@ -207,6 +207,22 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Night:** tracers glow orange with a soft halo, muzzle flashes light the walls and men round them, and flares hang longer under a parachute, drifting and smoking
 - **Damaged walls:** a blast leaves a scorch on a wall that's still standing, and a badly hurt wall gets a hole punched through it with chunks knocked off at its foot
 - **Performance:** far-off soldiers are simplified from 36 men up (not 50), think every third tick when they're not in a fight, and only check for crowding and vehicles now and then
+- **Commander map:** a whole-map minimap in the top right: click it (or drag) to move the camera, right-click to send the selected men there. It shows flags, bases, your squads with an arrow the way they're moving, vehicle icons (tanks with their gun), enemies you can see, fading crosses where enemies were last seen, red rings where your men are under fire, and the box the camera is looking at
+- **Alerts:** "Squad 2 pinned down", "Tank lost", "HQ under fire", "Jeep taking hits" pop up under the map; click one to fly there, or press Space for the latest
+- **Hover:** in the commander view, the mouse over a soldier, vehicle or structure shows its name and a slim health bar
+- **Supply line:** supply in hand and income per minute (with an arrow when it's rising or falling) under the score
+- **Build tabs:** Defences (sandbags, wire, nests, pits, traps...) and Bases (FOBs, hospital, depot, supply dump, radio, observer, watchtower) are separate tabs
+- **Buttons and panels:** buttons glow under the mouse and click when pressed; the unit card and menus fade in
+- **In a soldier's boots:** your magazine and spare rounds sit by the crosshair with a bar of rounds; squadmates show as green ticks on the compass; hold Q for the squad wheel (Follow me, Attack there, Smoke there, Take cover, Hold here, As you were): move the mouse toward one and let go. A quick tap of Q still leans
+- **Fog of war:** enemies in plain sight of any of your men now always show (each man's nearest few look for themselves), with a moment's grace so men ducking in and out of view don't flicker
+- **No more flinging:** standing men's limbs don't collide with vehicles, wrecks or flying debris (only once they go down); troops never get out of a lorry past the edge of the map, and a lorry won't unload out there
+- **Craters:** the rim is small lumps out on the lip, so men lying in the bowl can't get trapped inside it
+- **Built positions:** men standing where a wall goes up are stepped out of the way instead of bounced about; crews man a mortar pit or MG nest from the lip instead of trying to walk through its walls
+- **Smoke:** no more black discs in smoke screens
+- **Zoomed out:** far soldiers move smoothly again instead of stuttering
+- **Walking round vehicles:** men steer round a vehicle's real shape, the short way round toward where they're going
+- **Supply trucks:** a fleet truck whose driver got out gets someone back in (or HQ sends a driver), a truck stuck on its run for a minute starts again, and one you sent somewhere goes back to its runs after a while. The "Convoy in" timer is gone
+- **AI commander building:** fighting positions face where the enemy is now and go where they can see the approach; tank traps go across the road in once enemy armour shows up; AA only once there's something in the air; nothing gets built where the enemy is
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

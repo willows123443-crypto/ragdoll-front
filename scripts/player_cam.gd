@@ -55,7 +55,80 @@ func set_rts(on: bool) -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 var back_to_rts = false
-var amove_next = false      # the next right-click is an attack-move     # took over a man from the commander's view: X puts us back up there
+var amove_next = false      # the next right-click is an attack-move
+
+# ---------------------------------------------------------------- squad command wheel (hold Q in a soldier's boots)
+const WHEEL = [["follow", "Follow me"], ["attack", "Attack there"], ["smoke", "Smoke there"], ["cover", "Take cover"], ["hold", "Hold here"], ["free", "As you were"]]
+var wheel_open = false
+var wheel_hold = 0.0
+var wheel_vec = Vector2.ZERO
+
+func wheel_pick() -> int:
+	if wheel_vec.length() < 25.0:
+		return -1
+	var a = fposmod(atan2(wheel_vec.x, -wheel_vec.y), TAU)
+	return int(round(a / (TAU / WHEEL.size()))) % WHEEL.size()
+
+func _wheel_do(s, i: int) -> void:
+	if i < 0 or s.squad == null:
+		return
+	var id: String = WHEEL[i][0]
+	var men = s.squad["members"].filter(func(m): return is_instance_valid(m) and m != s and m.state == "alive" and not m.is_player)
+	# where he's looking
+	var from = cam.global_position
+	var fwd = -cam.global_transform.basis.z
+	var hit = G.ray(from, from + fwd * 300.0, G.L_WORLD)
+	var at: Vector3 = hit["position"] if not hit.is_empty() else from + fwd * 60.0
+	at.y = G.world.ground_y(at.x, at.z)
+	match id:
+		"follow":
+			if s.squad.get("follow") != s:
+				_toggle_follow(s)
+			return
+		"free":
+			if s.squad.get("follow") == s:
+				_toggle_follow(s)
+			for m in men:
+				m.order = null
+				m.decide_t = 0.0
+			G.fx.callout(s, G.pick(["As you were!", "Carry on!"]))
+		"hold":
+			s.squad["follow"] = null
+			for m in men:
+				m.order = {"mode": "hold", "point": m.pos}
+				AI.stop_move(m)
+			G.fx.callout(s, G.pick(["Hold here!", "Dig in, hold this spot!"]))
+		"cover":
+			s.squad["follow"] = null
+			for m in men:
+				var cp = AI.find_cover(m, at, "hold")
+				if cp != null and G.dist2d(cp.p, m.pos) < 20.0:
+					AI.take_cover(m, cp)
+					m.order = {"mode": "hold", "point": cp.p, "tag": "cover"}
+				else:
+					m.order = {"mode": "hold", "point": m.pos, "tag": "cover"}
+					m.prone_t = true
+			G.fx.callout(s, G.pick(["Take cover!", "Get down!"]))
+		"attack":
+			s.squad["follow"] = null
+			var k = 0
+			for m in men:
+				var off = Vector3((k % 3) - 1.0, 0, int(k / 3)) * 2.5
+				m.order = {"mode": "move", "point": G.main._free_spot(at + off), "attack": true, "tag": "amove"}
+				m.decide_t = 0.0
+				k += 1
+			G.fx.callout(s, G.pick(["Push up there!", "Attack, there!", "Move on that position!"]))
+		"smoke":
+			var thrower = null
+			for m in men:
+				if m.smokes > 0 and (thrower == null or G.dist2d(m.pos, at) < G.dist2d(thrower.pos, at)):
+					thrower = m
+			if thrower == null:
+				G.ui.message("Nobody in the squad has smoke left")
+				return
+			Combat.throw_grenade(thrower, at, "smoke")
+			G.fx.callout(s, "Smoke, there!")
+	G.ui.message("Squad: " + WHEEL[i][1])     # took over a man from the commander's view: X puts us back up there
 
 func possess(s) -> void:
 	if s == null or s.state == "dead":
@@ -139,7 +212,19 @@ func player_update(s) -> void:
 	s.crouch_t = 0.9 if s.p_crouch else 0.0
 	s.prone_t = s.p_prone
 	var lean = 0.0
-	if not sprint and not s.p_prone:
+	# hold Q for the squad command wheel (a tap still leans left)
+	if Input.is_key_pressed(KEY_Q) and s.state == "alive" and s.squad != null:
+		wheel_hold += G.DT
+		if wheel_hold > 0.28 and not wheel_open:
+			wheel_open = true
+			wheel_vec = Vector2.ZERO
+	elif wheel_open:
+		wheel_open = false
+		wheel_hold = 0.0
+		_wheel_do(s, wheel_pick())
+	else:
+		wheel_hold = 0.0
+	if not sprint and not s.p_prone and not wheel_open:
 		lean = (1.0 if Input.is_key_pressed(KEY_E) else 0.0) - (1.0 if Input.is_key_pressed(KEY_Q) else 0.0)
 	s.lean_t = lean
 	# hold U next to a friendly construction site to help build it
@@ -656,7 +741,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseMotion:
 		var k = 0.0024 * G.settings["sens"] * (cam.fov / 65.0)
 		var inv = -1.0 if G.settings["invert_y"] else 1.0
-		if G.player != null and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		if G.player != null and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and wheel_open:
+			wheel_vec = (wheel_vec + ev.relative).limit_length(120.0)
+		elif G.player != null and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			cam_yaw -= ev.relative.x * k
 			cam_pitch = clampf(cam_pitch - ev.relative.y * k * inv, -1.2, 1.2)
 		elif G.player == null and drag_from != null:
@@ -1399,6 +1486,7 @@ func _order_move(screen: Vector2) -> void:
 		# several vehicles: park side by side rather than on the same spot
 		var off2 = Vector3((k % 3) - 1.0, 0, int(k / 3)) * 9.0 if vs.size() > 1 else Vector3.ZERO
 		v.command(p + off2)
+		v.set_meta("player_cmd", G.sim_time)
 		if k > 0 and G.dist2d(vs[0].pos, p) > 40.0 and G.dist2d(v.pos, vs[0].pos) < 45.0:
 			v.convoy = {"lead": vs[0], "k": k}
 		k += 1

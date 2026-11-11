@@ -145,7 +145,40 @@ func _button(text: String, cb: Callable) -> Button:
 	b.text = text
 	b.focus_mode = Control.FOCUS_NONE
 	b.pressed.connect(cb)
+	_juice(b)
 	return b
+
+# buttons that answer you: a soft glow when the mouse is on them and a click when pressed
+func _juice(b: Button) -> void:
+	b.mouse_entered.connect(func():
+		var tw = b.create_tween()
+		tw.tween_property(b, "self_modulate", Color(1.18, 1.14, 1.05), 0.08))
+	b.mouse_exited.connect(func():
+		var tw = b.create_tween()
+		tw.tween_property(b, "self_modulate", Color(1, 1, 1), 0.15))
+	b.button_down.connect(func():
+		if G.audio != null:
+			G.audio.order_tick(true))
+
+func _fade_in(c: Control, t: float = 0.2) -> void:
+	if c == null:
+		return
+	c.modulate.a = 0.0
+	var tw = c.create_tween()
+	tw.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tw.tween_property(c, "modulate:a", 1.0, t)
+
+# a panel coming into view slides up a little and fades in, instead of popping
+func _pop_in(c: Control, dy: float = 12.0) -> void:
+	if c == null:
+		return
+	c.modulate.a = 0.0
+	var tw = c.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(c, "modulate:a", 1.0, 0.18)
+	var y0 = c.position.y
+	c.position.y = y0 + dy
+	tw.tween_property(c, "position:y", y0, 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 # ---------------------------------------------------------------- top scoreboard and feed
 func _build_top() -> void:
@@ -314,6 +347,7 @@ const SB_VEH = [["jeep", "Jeep"], ["truck", "Truck"], ["motorbike", "Motorbike"]
 const BUILD_LIST = [["fob", "FOB"], ["sandbags", "Sandbags"], ["wire", "Barbed wire"], ["traps", "Tank traps"], ["mgnest", "MG nest"],
 	["mortarpit", "Mortar pit"], ["aa", "AA gun"], ["cbgun", "Counter-battery gun"], ["tower", "Watchtower"], ["bunker", "Bunker"], ["hospital", "Field hospital"],
 	["radio", "Radio mast"], ["depot", "Vehicle depot"], ["supply", "Supply dump"], ["observer", "Observer post"]]
+const BASES = ["fob", "hospital", "radio", "depot", "supply", "observer", "tower"]
 const RECRUIT = {
 	"inf": {"name": "Rifle squad", "cost": 16, "cls": ["rifleman", "rifleman", "rifleman", "rifleman", "mg", "at", "medic", "rifleman"],
 		"desc": "Eight men: five riflemen, a machine gunner, an anti-tank man and a medic. The backbone of any attack"},
@@ -340,7 +374,7 @@ const INSTANT = ["plough", "technical", "recon", "atgun", "heavytank", "paradrop
 
 func _tabs() -> Array:
 	if G.mode == "commander":
-		return [["recruit", "Recruit"], ["armour", "Vehicles"], ["logistics", "Supply"], ["support", "Fire support"], ["build", "Build"], ["upgrades", "Upgrades"]]
+		return [["recruit", "Recruit"], ["armour", "Vehicles"], ["logistics", "Supply"], ["support", "Fire support"], ["build", "Defences"], ["bases", "Bases"], ["upgrades", "Upgrades"]]
 	if Rules.free_tools():
 		return [["units", "Units"], ["vehicles", "Vehicles"], ["support", "Call-ins"], ["build", "Build"], ["command", "Command"], ["fun", "Effects"]]
 	# a real battle: you command your own side, with what this mode gives it
@@ -389,14 +423,18 @@ func _cards(t: String) -> Array:
 				return out
 			out.append(["sup:paradrop", "Paratroopers ×6", ("%d pts" % Support.COSTS["paradrop"]) if Support.unlocked(0, "paradrop") else Support.need_text("paradrop")])
 			out.append(["sup:heli", "Heli assault ×6", ("%d pts" % Support.COSTS["heli"]) if Support.unlocked(0, "heli") else Support.need_text("heli")])
-		"build":
+		"build", "bases":
 			var can = Rules.build(G.pc._build_team())
 			for b in BUILD_LIST:
 				if not (b[0] in can):
 					continue
+				# in commander the build cards come in two tabs: fighting positions, and the bases behind them
+				if G.mode == "commander" and ((t == "bases") != (b[0] in BASES)):
+					continue
 				var c = Build.cost(b[0])
 				out.append(["b:" + b[0], b[1], ("%d pts" % c) if c > 0 else "%d s to build" % int(Build.KINDS[b[0]]["work"])])
-			out += [["up", "Upgrade", "click a structure"], ["camo", "Camo net", "click a structure"], ["rep", "Repair", "click a damaged structure"], ["dis", "Dismantle", "click anything built"]]
+			if t == "build" or G.mode != "commander":
+				out += [["up", "Upgrade", "click a structure"], ["camo", "Camo net", "click a structure"], ["rep", "Repair", "click a damaged structure"], ["dis", "Dismantle", "click anything built"]]
 		"command", "orders":
 			out = [["sel", "Select", "click or drag a box"], ["o:hold", "Hold", "selected soldiers"], ["o:charge", "Charge", "selected soldiers"],
 				["o:dismount", "Dismount", "troops out of vehicles"], ["o:free", "Act freely", "selected soldiers"], ["o:clear", "Deselect", ""]]
@@ -517,6 +555,7 @@ func _render_tools() -> void:
 		b2.add_theme_stylebox_override("pressed", _dock_style(Color(0.3, 0.27, 0.15, 1.0), Color(1.0, 0.85, 0.35)))
 		b2.add_theme_color_override("font_color", Color(0.95, 0.95, 0.92) if afford else Color(0.55, 0.5, 0.5))
 		b2.pressed.connect(func(): _card_clicked(id))
+		_juice(b2)
 		# hovering a card says what it is and does, above the dock
 		var ds = _card_desc(id)
 		if ds != "":
@@ -759,12 +798,15 @@ func toggle_nv() -> void:
 	message("Night vision " + ("on" if nv_on else "off") + " (F2)")
 
 var hudx: Control
+var cmdhud: Control
 
 func _build_center() -> void:
 	_build_vignette()
 	_build_nv()
 	hudx = preload("res://scripts/hudx.gd").new()
 	root.add_child(hudx)
+	cmdhud = preload("res://scripts/cmdhud.gd").new()
+	root.add_child(cmdhud)
 	cross = Control.new()
 	cross.set_anchors_preset(Control.PRESET_FULL_RECT)
 	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1777,6 +1819,7 @@ func _fill_title() -> void:
 func _open_setup() -> void:
 	title.visible = false
 	menu.visible = true
+	_fade_in(menu)
 
 func _close_title() -> void:
 	title.visible = false
@@ -1796,6 +1839,7 @@ func _quick(mode: String) -> void:
 func show_menu() -> void:
 	_fill_title()
 	title.visible = true
+	_fade_in(title)
 	menu.visible = false
 	if G.started and not G.over:
 		get_tree().paused = true
@@ -2835,7 +2879,10 @@ func _info_tick(dt: float) -> void:
 		btns.append(["Control him", func():
 			if is_instance_valid(u) and u.state == "alive":
 				G.pc.possess(u)])
-	info.visible = true
+	if not info.visible:
+		info.visible = true
+		info.modulate.a = 0.0
+		info.create_tween().tween_property(info, "modulate:a", 1.0, 0.16)
 	info_title.text = title
 	info_body.text = body
 	if key != info_key:

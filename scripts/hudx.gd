@@ -16,10 +16,15 @@ func _process(_dt: float) -> void:
 
 func _draw() -> void:
 	var vs = get_viewport_rect().size
-	_minimap(Rect2(vs.x - MS - 12.0, vs.y - MS - 12.0, MS, MS))
+	# (the commander view has its own whole-map minimap)
+	if not (G.ui.cmdhud != null and G.ui.cmdhud.active()):
+		_minimap(Rect2(vs.x - MS - 12.0, vs.y - MS - 12.0, MS, MS))
 	if G.player != null and is_instance_valid(G.player):
 		_compass(Vector2(vs.x * 0.5, 128.0), G.pc.cam_yaw)
 		_squad(Vector2(16.0, 280.0), G.player)
+		_mag(vs * 0.5, G.player)
+		if G.pc.wheel_open:
+			_wheel(vs * 0.5)
 
 # ---------------------------------------------------------------- minimap: 160 m around you (or the camera)
 func _minimap(r: Rect2) -> void:
@@ -88,7 +93,7 @@ func _minimap(r: Rect2) -> void:
 func _poly_clip(pts: PackedVector2Array, r: Rect2, col: Color) -> void:
 	var clip = PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
 	for poly in Geometry2D.intersect_polygons(pts, clip):
-		if poly.size() >= 3:
+		if poly.size() >= 3 and not Geometry2D.triangulate_polygon(poly).is_empty():
 			draw_colored_polygon(poly, col)
 
 func _seen(p: Vector3, team: int) -> bool:
@@ -126,6 +131,17 @@ func _compass(c: Vector2, yaw: float) -> void:
 				var x2 = c.x - off2 / 60.0 * (w / 2.0)
 				var col = G.team_color(pt["owner"]) if pt["owner"] >= 0 else Color(0.9, 0.9, 0.9)
 				draw_string(font, Vector2(x2 - 4, r.position.y - 3), pt["name"], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, col)
+	# squadmates: little green ticks along the strip, where they are from you
+	if G.player != null and G.player.squad != null:
+		for m in G.player.squad["members"]:
+			if not is_instance_valid(m) or m == G.player or m.state == "dead":
+				continue
+			var tm = m.pos - G.player.pos
+			var bm = fposmod(rad_to_deg(atan2(tm.x, tm.z)), 360.0)
+			var om = wrapf(bm - heading, -180.0, 180.0)
+			if absf(om) <= 60.0:
+				var xm = c.x - om / 60.0 * (w / 2.0)
+				draw_circle(Vector2(xm, r.position.y + 12), 3.5, Color(1.0, 0.4, 0.35) if m.state == "wounded" else Color(0.55, 1.0, 0.55))
 	draw_colored_polygon(PackedVector2Array([Vector2(c.x, r.end.y - 2), Vector2(c.x - 5, r.end.y + 5), Vector2(c.x + 5, r.end.y + 5)]), Color(1, 0.85, 0.3))
 
 # ---------------------------------------------------------------- squad status
@@ -178,3 +194,50 @@ func _squad(at: Vector2, me) -> void:
 		if st != "":
 			draw_string(font, Vector2(at.x + 216, y + 12), st, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, col)
 		y += 17.0
+
+# ---------------------------------------------------------------- ammo by the crosshair
+func _mag(c: Vector2, me) -> void:
+	if me.state != "alive" or me.W.get("melee", false):
+		return
+	var cap: int = me.W["mag"]
+	var at = c + Vector2(34, 22)
+	var low = me.mag <= maxi(1, cap / 4)
+	var col = Color(1.0, 0.45, 0.35, 0.95) if low else Color(1, 1, 1, 0.85)
+	draw_string(font, at, "%d" % me.mag, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col)
+	draw_string(font, at + Vector2(26, 0), "/ %d" % me.reserve, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, 0.55))
+	# a little bar of rounds under it
+	var n = mini(cap, 30)
+	var w = 2.0
+	for i in range(n):
+		var full = float(i) < float(me.mag) * n / maxf(1.0, cap)
+		draw_rect(Rect2(at + Vector2(i * (w + 1.0), 5), Vector2(w, 6)), col if full else Color(1, 1, 1, 0.18))
+	if me.reload_t > 0.0:
+		draw_string(font, at + Vector2(0, 26), "reloading", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 0.85, 0.4, 0.9))
+
+# ---------------------------------------------------------------- squad command wheel
+func _wheel(c: Vector2) -> void:
+	var items = G.pc.WHEEL
+	var n = items.size()
+	var pick = G.pc.wheel_pick()
+	draw_circle(c, 130.0, Color(0, 0, 0, 0.45))
+	draw_arc(c, 130.0, 0, TAU, 48, Color(1, 1, 1, 0.25), 2.0)
+	draw_circle(c, 34.0, Color(0, 0, 0, 0.55))
+	for i in range(n):
+		var a = i * TAU / n
+		var a0 = a - PI / n
+		var a1 = a + PI / n
+		if i == pick:
+			var pts = PackedVector2Array([c + Vector2(sin(a0), -cos(a0)) * 36.0])
+			for k in range(9):
+				var aa = lerpf(a0, a1, k / 8.0)
+				pts.append(c + Vector2(sin(aa), -cos(aa)) * 128.0)
+			pts.append(c + Vector2(sin(a1), -cos(a1)) * 36.0)
+			draw_colored_polygon(pts, Color(1.0, 0.82, 0.3, 0.35))
+		draw_line(c + Vector2(sin(a0), -cos(a0)) * 36.0, c + Vector2(sin(a0), -cos(a0)) * 128.0, Color(1, 1, 1, 0.2), 1.0)
+		var lp = c + Vector2(sin(a), -cos(a)) * 84.0
+		var t: String = items[i][1]
+		var tw = font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+		draw_string(font, lp - Vector2(tw * 0.5, -5), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.9, 0.55) if i == pick else Color(1, 1, 1, 0.85))
+	draw_string(font, c - Vector2(16, -5), "SQUAD", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, 0.7))
+	var dot = c + G.pc.wheel_vec.limit_length(110.0)
+	draw_circle(dot, 4.0, Color(1, 1, 1, 0.9))

@@ -1512,7 +1512,8 @@ func _ai_drive(dt: float) -> Array:
 				break
 		if aboard:
 			pass_stall = pass_stall + dt if absf(speed) < 0.5 else maxf(0.0, pass_stall - dt * 2.0)
-			if pass_stall > 12.0 or kind in ["radar", "ammotruck", "supplytruck", "ambulance", "bridger"]:
+			# (not while it's still out past the edge of the map coming in: they'd be dropped in the hills)
+			if (pass_stall > 12.0 or kind in ["radar", "ammotruck", "supplytruck", "ambulance", "bridger"]) and G.world.bounds.grow(-6.0).has_point(Vector2(pos.x, pos.z)):
 				unload_riders()
 	var d = driver()
 	var target = null
@@ -1947,7 +1948,11 @@ func _mission_target(dt: float):
 		if m["slow_t"] > 7.0 and G.dist2d(pos, m["drop"]) < 30.0:
 			m["drop"] = pos
 	if m["stage"] == 0:
-		if G.dist2d(pos, m["drop"]) < 6.0:
+		var inb: Rect2 = G.world.bounds.grow(-10.0)
+		if not inb.has_point(Vector2(m["drop"].x, m["drop"].z)):
+			# a drop point out past the edge (stuck coming in): bring it inside the map
+			m["drop"] = G.main._free_spot(Vector3(clampf(m["drop"].x, inb.position.x, inb.end.x), 0, clampf(m["drop"].z, inb.position.y, inb.end.y)))
+		if G.dist2d(pos, m["drop"]) < 6.0 and G.world.bounds.grow(-6.0).has_point(Vector2(pos.x, pos.z)):
 			if absf(speed) > 0.4 and not spec.get("air", false):
 				return null          # roll to a stop before anyone gets out
 			m["stage"] = 1

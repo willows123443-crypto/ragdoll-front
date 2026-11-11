@@ -351,10 +351,10 @@ static func _reveal_cols(st: Dictionary, m: MeshInstance3D) -> void:
 		var mid = (c.lo + c.hi) * 0.5
 		for s in G.soldiers:
 			if s.state == "alive" and s.pos.x > c.lo.x - 0.3 and s.pos.x < c.hi.x + 0.3 and s.pos.z > c.lo.z - 0.3 and s.pos.z < c.hi.z + 0.3 and s.pos.y < c.hi.y:
-				var away = G.flat(s.pos - mid)
-				if away.length_squared() < 0.01:
-					away = Vector3(1, 0, 0)
-				s.push(0, away.normalized() * 2.0 + Vector3(0, 1, 0), 0.2)
+				# stepped out to the nearest side (not thrown: that bounced men about inside new walls)
+				var res: Array = G.world.push_out_circle(s.pos, 0.4)
+				var np: Vector3 = res[0]
+				s.pos = Vector3(np.x, s.pos.y, np.z)
 
 static func _complete(st: Dictionary, quiet: bool) -> void:
 	st["done"] = true
@@ -388,6 +388,8 @@ static func _complete(st: Dictionary, quiet: bool) -> void:
 			var yaw = atan2(_front(st).x, _front(st).z)
 			st["veh"] = G.main.spawn_vehicle({"mgnest": "nest", "mortarpit": "mortar", "aa": "aagun", "pillbox": "nest", "cbgun": "aagun"}[st["kind"]], t, st["p"], yaw, false)
 			VModel.bare = false
+			if st["veh"] != null:
+				st["veh"].set_meta("in_pit", true)
 	if st.get("camo_wanted", false):
 		add_camo(st)
 	if t < no_spawn_said.size():
@@ -988,14 +990,44 @@ static func _ai_plan(t: int) -> void:
 		if st["done"] and not st["dead"] and not st.get("camo", false) and st["kind"] in ["fob", "fob2", "depot", "supply", "mortarpit", "aa"] and randf() < 0.4:
 			add_camo(st)
 			return
+	# what the enemy has: aircraft and armour change what's worth building
+	var foe_air = false
+	var foe_armour = false
+	for v in G.vehicles:
+		if v.team != t and v.team >= 0 and not v.dead:
+			if v.spec.get("air", false):
+				foe_air = true
+			elif v.spec["tracked"] or v.kind == "armoredcar":
+				foe_armour = true
+	var ec = Commander._enemy_center(t)
 	# extras around a finished FOB
 	for f in fl:
 		if not f["done"]:
 			continue
+		# fighting positions face where the enemy actually is now, not where the FOB was pointed when it went up
 		var fw = _front(f)
+		if ec != null and G.dist2d(ec, f["p"]) > 10.0:
+			fw = G.flat(ec - f["p"]).normalized()
 		var side = Vector3(fw.z, 0, -fw.x)
+		# enemy armour about: tank traps across the way in, first of all
+		if foe_armour and "traps" in ok and not f.get("traps_road", false):
+			f["traps_road"] = true
+			var tp = _road_toward(f["p"], fw, 45.0)
+			if tp != null:
+				var sp_t = find_spot(tp, "traps", 4.0, 10, true, t)
+				if sp_t != null:
+					place("traps", t, sp_t, fw)
+					G.ui.radio(t, "Engineers: tank traps across the road at %s" % AI.grid_ref(sp_t))
+					return
 		for item in FOB_PLAN:
 			if not (item[0] in ok):
+				continue
+			# no AA until there's something in the air to shoot at, no tank traps until there are tanks
+			if (item[0] == "aa" and not foe_air) or (item[0] == "traps" and not foe_armour):
+				continue
+			# nobody digs in where the enemy is right now
+			var want0 = f["p"] + side * item[1] + fw * item[2]
+			if _enemy_near(t, want0, 40.0):
 				continue
 			var key = "%s_%d_%d" % [item[0], int(item[1]), int(item[2])]
 			# a few goes at each, not just one: a blocked first try shouldn't rule it out for good
@@ -1025,6 +1057,22 @@ static func _ai_plan(t: int) -> void:
 				place(item[0], t, spot, fw)
 				return
 	_ai_upgrade(t)
+
+# the nearest bit of road out in front of a base (where vehicles will come in), if any
+static func _road_toward(from: Vector3, fw: Vector3, max_d: float):
+	for k in range(4, int(max_d / 3.0)):
+		var p = from + fw * (k * 3.0)
+		for sgn in [0.0, 1.0, -1.0, 2.0, -2.0]:
+			var q = p + Vector3(fw.z, 0, -fw.x) * sgn * 4.0
+			if G.world.on_road(q.x, q.z):
+				return q
+	return null
+
+static func _enemy_near(t: int, p: Vector3, r: float) -> bool:
+	for s in G.soldiers_near(p) if r <= 12.0 else G.soldiers:
+		if s.team != t and s.team >= 0 and s.state == "alive" and G.dist2d(s.pos, p) < r:
+			return true
+	return false
 
 # a supply dump between HQ and the front, at least SUPPLY_MIN from HQ; tries wider each time
 static func _ai_supply(t: int, obj: Vector3) -> bool:
@@ -1137,7 +1185,17 @@ static func find_spot(want: Vector3, kind: String, spread: float, tries: int = 1
 		found += 1
 		# out of the enemy's sight, tucked in among cover, not too far from where it's wanted
 		var sc = G.dist2d(gp, want) * 0.2
-		if not G.blocked(eye + Vector3(0, 1.6, 0), gp + Vector3(0, 1.5, 0)):
+		var seen = not G.blocked(eye + Vector3(0, 1.6, 0), gp + Vector3(0, 1.5, 0))
+		if kind in ["mgnest", "tower", "observer", "pillbox", "bunker"]:
+			# a gun position or a lookout wants a field of view toward the way they'll come: some
+			# open ground in front of it, checked a little way out
+			var tow = G.flat(eye - gp).normalized()
+			var vis = 0
+			for dd in [15.0, 30.0, 45.0]:
+				if not G.blocked(gp + Vector3(0, 1.4, 0), gp + tow * dd + Vector3(0, 1.0, 0)):
+					vis += 1
+			sc -= vis * 2.0
+		elif seen:
 			sc += 6.0 if kind in ["fob", "fob2", "hospital", "depot", "supply", "radio", "aa", "mortarpit"] else 2.0
 		var near = 0
 		for c in G.world.cols_in_rect(gp.x - 12.0, gp.z - 12.0, gp.x + 12.0, gp.z + 12.0):

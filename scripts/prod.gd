@@ -154,5 +154,5 @@ static func status(team: int) -> String:
 	if not research[team].is_empty():
 		var r = research[team][0]
 		parts.append("HQ: %s %d%%" % [UPGRADES[r["what"]]["name"], int(100.0 * r["t"] / r["need"])])
-	parts.append("Convoy in %d s" % int(convoy_t[team]))
+
 	return "  ·  ".join(parts)

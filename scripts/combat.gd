@@ -708,10 +708,8 @@ static func smoke_at(p: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.
 	# a smoke screen proper (not a coloured marker) is thick: a second dense bank hugging the ground
 	# under the main cloud, so it's a solid white wall you can't see a man through
 	if big >= 0.7:
-		var low = G.fx.smoke_screen(p + Vector3(0, 0.3, 0), life - 5.0, tint.lightened(0.05), big * 0.8)
-		low.amount = int(low.amount * 1.4)
-		var under = G.fx.smoke_screen(p + Vector3(0, 1.4, 0), life - 6.0, tint, big * 0.65)
-		under.amount = int(under.amount * 1.2)
+		G.fx.smoke_screen(p + Vector3(0, 0.3, 0), life - 5.0, tint.lightened(0.05), big * 0.8, 1.4)
+		G.fx.smoke_screen(p + Vector3(0, 1.4, 0), life - 6.0, tint, big * 0.65, 1.2)
 	sc.set_meta("max_r", 9.0 * big)
 	G.smoke_clouds.append(sc)
 

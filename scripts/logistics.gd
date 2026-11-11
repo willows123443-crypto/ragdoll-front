@@ -93,6 +93,7 @@ static func step(dt: float) -> void:
 				fleet[t].remove_at(i)
 				G.ui.radio(t, "A supply truck has been destroyed! %d left. Buy another at HQ (%d supply)" % [count(t), Support.COSTS["supplytruck"]])
 		for v in fleet[t]:
+			_keep_running(t, v, h)
 			_dispatch(t, v, h)
 		# the AI side keeps its fleet up
 		if G.ai_runs(t) and count(t) < 2 and Support.points[t] >= Support.COSTS["supplytruck"] + 6:
@@ -100,12 +101,70 @@ static func step(dt: float) -> void:
 			buy_truck(t)
 	_ammo_trucks()
 
+# A fleet truck never just gives up: if its driver got out (to mend a wheel, or bailed when it was hit)
+# someone climbs back in, or HQ sends a driver; and a truck that's made no progress on its run for a
+# minute starts the run afresh.
+static func _keep_running(t: int, v, h) -> void:
+	if not is_instance_valid(v) or v.dead:
+		return
+	if v.driver() == null:
+		var nd = v.get_meta("nodrv_t", 0.0) + 1.0
+		v.set_meta("nodrv_t", nd)
+		if nd > 5.0 and int(nd) % 8 == 6:
+			var best = null
+			var bd = 70.0
+			for s in G.soldiers:
+				if s.team == t and s.state == "alive" and not s.is_player and s.vehicle == null and G.sim_time >= s.no_board_t - 50.0 \
+						and not (s.task in ["board", "medic", "stretcher", "construct", "repair", "fixwheel", "help_walk"]) and s.order == null:
+					var d = G.dist2d(s.pos, v.pos)
+					if d < bd:
+						bd = d
+						best = s
+			if best != null:
+				best.no_board_t = 0.0
+				best.task = "board"
+				best.board_target = v
+				AI.go_to(best, v.pos, 4.5)
+		if nd > 45.0 and int(nd) % 30 == 16:
+			# nobody near: HQ sends a driver out to it
+			var sp: Vector3 = G.main._free_spot(h["p"] + Build._front(h) * 8.0)
+			var drv = G.main.spawn_soldier(t, sp.x, sp.z, "rifle")
+			if drv != null:
+				drv.task = "board"
+				drv.board_target = v
+				AI.go_to(drv, v.pos, 5.0)
+				if t == 0:
+					G.ui.radio(t, "HQ: sending a driver out to the supply truck at %s" % AI.grid_ref(v.pos))
+		return
+	v.set_meta("nodrv_t", 0.0)
+	if v.mission == null:
+		v.remove_meta("prog_p")
+		return
+	if not v.has_meta("prog_p") or G.dist2d(v.pos, v.get_meta("prog_p")) > 6.0:
+		v.set_meta("prog_p", v.pos)
+		v.set_meta("prog_t", G.sim_time)
+	elif G.sim_time - v.get_meta("prog_t") > 60.0 and v.mission.get("stage", 0) != 1:
+		# stuck on the way for a minute: forget this run and start again from where it is
+		var st = v.mission.get("site")
+		if st != null and st.get("convoy") == v:
+			st["convoy"] = null
+		var was_home = v.mission.get("stage", 0) >= 2
+		v.mission = null
+		v.cmd = null
+		v.remove_meta("prog_p")
+		v.remove_meta("parked_at")
+		v._plan_detour()
+		if was_home:
+			arrived_home(v)
+		else:
+			v.set_meta("load_t", 0.0)
+
 # an idle truck back at HQ, loaded: off to whichever dump or FOB needs it most
 static func _dispatch(t: int, v, h) -> void:
 	if v.mission != null or v.driver() == null or G.sim_time < v.get_meta("load_t", 0.0):
 		return
-	if v.cmd != null and G.dist2d(v.pos, v.cmd) > 8.0 and G.dist2d(v.pos, h["p"]) > 30.0:
-		return      # the player's sent it somewhere
+	if v.cmd != null and G.dist2d(v.pos, v.cmd) > 8.0 and G.dist2d(v.pos, h["p"]) > 30.0 and v.has_meta("player_cmd") and G.sim_time - v.get_meta("player_cmd") < 90.0:
+		return      # the player's sent it somewhere (for a while: then it goes back to its runs)
 	var best = null
 	var bs = 1e9
 	for st in Build.sites:

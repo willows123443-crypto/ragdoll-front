@@ -2679,10 +2679,12 @@ func blast_crater(p: Vector3, r: float) -> void:
 		node.add_child(lump)
 	# the thrown-up earth of the rim stops bullets and hides a man lying in the hole (you can still walk over it)
 	var rims = []
-	for k in range(6):
-		var a3 = k * TAU / 6.0
-		var rp = Vector3(p.x + cos(a3) * r * 0.95, 0, p.z + sin(a3) * r * 0.95)
-		var rc = add_col(rp.x, gy, rp.z, r * 0.9, 0.42 + r * 0.04, r * 0.9)
+	# (small lumps out on the lip, clear of the bowl: big boxes reached in over the spots where men lie
+	# and trapped them inside)
+	for k in range(8):
+		var a3 = k * TAU / 8.0
+		var rp = Vector3(p.x + cos(a3) * r * 1.08, 0, p.z + sin(a3) * r * 1.08)
+		var rc = add_col(rp.x, gy, rp.z, r * 0.42, 0.38 + r * 0.04, r * 0.42)
 		rc.no_move = true
 		rc.dest = false
 		rc.vis = []
@@ -2693,7 +2695,7 @@ func blast_crater(p: Vector3, r: float) -> void:
 	for k in range(4):
 		var a2 = k * TAU / 4.0 + randf() * 0.5
 		var d = Vector3(cos(a2), 0, sin(a2))
-		var cp = add_cp(p.x + d.x * r * 0.55, p.z + d.z * r * 0.55, -d, Vector3(-d.z, 0, d.x), "low", null)
+		var cp = add_cp(p.x + d.x * r * 0.45, p.z + d.z * r * 0.45, -d, Vector3(-d.z, 0, d.x), "low", null)
 		if cp != null:
 			cp.set_meta("crater", true)
 			cps.append(cp)

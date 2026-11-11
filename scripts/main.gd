@@ -104,6 +104,8 @@ func _ready() -> void:
 			_light_shot(a.substr(12))
 		if a.begins_with("--helptest"):
 			_help_test(_arg("helpshot", ""))
+		if a == "--jamtest":
+			_jam_test()
 		if a == "--ctltest":
 			_ctl_test()
 		if a.begins_with("--loadtest="):
@@ -2682,6 +2684,42 @@ func _help_test(dir: String) -> void:
 	var r0 = b.reserve
 	await _wait(4.0)
 	print("HELPTEST handoff: receiver reserve %d -> %d" % [r0, b.reserve])
+	get_tree().quit()
+
+# vehicles crossing each other's path in both directions: how many get where they were sent
+func _jam_test() -> void:
+	await _wait(0.5)
+	start_game({"map": _arg("map", "field"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	var a: Vector3 = _free_spot(G.world.rally_point(0))
+	var b: Vector3 = _free_spot(a + G.flat(G.world.capture - a).normalized() * 70.0)
+	var side = G.flat(b - a).normalized()
+	side = Vector3(side.z, 0, -side.x)
+	var kinds = ["truck", "supplytruck", "jeep", "tank", "ammotruck", "halftrack"]
+	var vs = []
+	for k in range(kinds.size()):
+		var from = a if k % 2 == 0 else b
+		var to = b if k % 2 == 0 else a
+		var p0 = _free_spot(from + side * ((k / 2) - 1) * 6.0)
+		var v = spawn_vehicle(kinds[k], 0, p0, atan2(to.x - p0.x, to.z - p0.z))
+		vs.append([v, _free_spot(to + side * ((k / 2) - 1) * 4.0), 0.0])
+	await _wait(1.0)
+	for e in vs:
+		e[0].command(e[1])
+	var t = 0.0
+	while t < float(_arg("secs", "90")):
+		await _wait(1.0)
+		t += 1.0
+		for e in vs:
+			if e[2] == 0.0 and is_instance_valid(e[0]) and G.dist2d(e[0].pos, e[1]) < 12.0:
+				e[2] = t
+		if int(t) % 15 == 0:
+			var st = []
+			for e in vs:
+				st.append("%s %.0fm %s" % [e[0].kind, G.dist2d(e[0].pos, e[1]), e[0].why])
+			print("JAMTEST t%d " % int(t), ", ".join(st))
+	var got = vs.filter(func(e): return e[2] > 0.0)
+	print("JAMTEST arrived %d of %d, times %s" % [got.size(), vs.size(), str(vs.map(func(e): return int(e[2])))])
 	get_tree().quit()
 
 # taking over one man from the commander's view, and handing him back

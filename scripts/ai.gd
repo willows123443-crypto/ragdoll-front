@@ -1779,7 +1779,8 @@ static func update(s) -> void:
 		if v == null or not is_instance_valid(v) or v.dead or v.free_seat() < 0 or s.vis_t != null:
 			s.task = null
 			s.board_target = null
-		elif G.dist2d(v.pos, s.pos) < v.spec["len"] * 0.5 + 1.5:
+		elif G.dist2d(v.pos, s.pos) < v.spec["len"] * 0.5 + (4.5 if v.has_meta("in_pit") else 1.5):
+			# (a gun in a dug pit: he climbs down into it from the lip rather than walking into the wall)
 			var want = "driver" if v.driver() == null else ("gunner" if v.gunner_seat() >= 0 and v.seats[v.gunner_seat()] == null else "pass")
 			if s.mount(v, v.free_seat(want)):
 				return
@@ -2610,43 +2611,55 @@ static func _round_vehicles(s) -> void:
 	if s.vault != null or s.vehicle != null:
 		return
 	for v in G.vehicles:
-		var R = v.spec["len"] * 0.5 + 1.0
+		var R = v.spec["len"] * 0.75 + 2.0
 		if absf(s.pos.x - v.pos.x) > R or absf(s.pos.z - v.pos.z) > R:
-			continue
-		if v.dead and not v.spec.get("static", false) and v.spec.get("air", false):
 			continue
 		if v.spec.get("air", false) and v.alt > 2.0:
 			continue
-		var rel = G.flat(s.pos - v.pos)
-		if rel.length_squared() > R * R:
+		if absf(s.pos.y - v.pos.y) > 2.5:
 			continue
-		var f = v.forward()
-		var r = Vector3(f.z, 0, -f.x)
-		var hl = v.spec["len"] * 0.5 + 0.35
-		var hw = v.spec["wid"] * 0.5 + 0.35
-		var lx = rel.dot(r)
-		var lz = rel.dot(f)
+		# the body as it's really built, in the vehicle's own frame, with a little room round it
+		var ex: Array = VehExt.extents(v)
+		var inv: Transform3D = v.global_transform.affine_inverse()
+		var bas: Basis = v.global_transform.basis
+		var m = 0.4
+		var lo: Vector3 = ex[0] - Vector3(m, 0, m)
+		var hi: Vector3 = ex[1] + Vector3(m, 0, m)
+		var lp: Vector3 = inv * Vector3(s.pos.x, v.pos.y + 0.5, s.pos.z)
 		# standing inside it: out to the nearest edge
-		if absf(lx) < hw and absf(lz) < hl:
-			var ex = hw - absf(lx)
-			var ez = hl - absf(lz)
-			if ex < ez:
-				s.pos += r * signf(lx if lx != 0.0 else 1.0) * minf(ex, 0.08)
-			else:
-				s.pos += f * signf(lz if lz != 0.0 else 1.0) * minf(ez, 0.08)
+		if lp.x > lo.x and lp.x < hi.x and lp.z > lo.z and lp.z < hi.z:
+			var dl = [lp.x - lo.x, hi.x - lp.x, lp.z - lo.z, hi.z - lp.z]
+			var mi = 0
+			for q in range(1, 4):
+				if dl[q] < dl[mi]:
+					mi = q
+			var step = [Vector3(-1, 0, 0), Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 0, 1)][mi] * minf(dl[mi], 0.1)
+			s.pos += bas * step
 			continue
-		# about to walk into it: turn the step along its side
+		# about to walk into it: steer round it, by whichever way round is shorter to where he's going
 		var w: Vector3 = s.want
 		if w.length_squared() < 0.01:
 			continue
-		var ahead = rel + w.normalized() * 0.9
-		var ax = ahead.dot(r)
-		var az = ahead.dot(f)
-		if absf(ax) < hw and absf(az) < hl:
-			var wl = Vector2(w.dot(r), w.dot(f))
-			# go round the short way: along the long side if we're beside it, round the end if we're at an end
-			if absf(lx) >= hw - 0.05:
-				wl = Vector2(0.0, signf(wl.y if absf(wl.y) > 0.05 else (lz if lz != 0.0 else 1.0)) * w.length())
-			else:
-				wl = Vector2(signf(lx if lx != 0.0 else 1.0) * w.length(), 0.0)
-			s.want = r * wl.x + f * wl.y
+		var wl: Vector3 = bas.inverse() * w
+		wl.y = 0.0
+		var ahead = lp + wl.normalized() * 1.5
+		if not (ahead.x > lo.x and ahead.x < hi.x and ahead.z > lo.z and ahead.z < hi.z):
+			continue
+		var goal: Vector3 = s.move_target if s.move_target != null else s.pos + w.normalized() * 10.0
+		var lg: Vector3 = inv * Vector3(goal.x, v.pos.y + 0.5, goal.z)
+		var sp = w.length()
+		var out: Vector3
+		if lp.x <= lo.x or lp.x >= hi.x:
+			# alongside it: run along the side toward whichever end is nearer the goal
+			var e_hi = hi.z + 0.6
+			var e_lo = lo.z - 0.6
+			var to_end = e_hi if absf(lg.z - e_hi) + absf(lp.z - e_hi) < absf(lg.z - e_lo) + absf(lp.z - e_lo) else e_lo
+			out = Vector3(0.15 * signf(lp.x - (lo.x + hi.x) * 0.5), 0, signf(to_end - lp.z))
+		else:
+			# at an end: step out sideways, to the side nearer the goal
+			var s_hi = hi.x + 0.6
+			var s_lo = lo.x - 0.6
+			var to_side = s_hi if absf(lg.x - s_hi) + absf(lp.x - s_hi) < absf(lg.x - s_lo) + absf(lp.x - s_lo) else s_lo
+			out = Vector3(signf(to_side - lp.x), 0, 0.15 * signf(lp.z - (lo.z + hi.z) * 0.5))
+		s.want = (bas * out.normalized()) * sp
+		s.want.y = 0.0

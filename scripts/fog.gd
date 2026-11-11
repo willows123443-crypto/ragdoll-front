@@ -76,6 +76,27 @@ static func step(dt: float) -> void:
 					vis = true
 					break
 		if not vis:
+			# anyone of ours with a clear line to him: the nearest few within eyesight look (the AI's
+			# own sighting reports only cover the men each soldier is paying attention to, so a man in
+			# plain view could stay hidden)
+			var near: Array = []
+			for o in eyes:
+				if o.state == "riding" and o.hidden_in_vehicle:
+					continue
+				var d = G.dist2d(o.pos, s.pos)
+				if d < sight:
+					near.append([d, o])
+			near.sort_custom(func(a, b): return a[0] < b[0])
+			var tgt = s.chest() if s.has_method("chest") else s.pos + Vector3(0, 1.2, 0)
+			for i in range(mini(3, near.size())):
+				if not G.blocked(near[i][1].head_pos(), tgt, true):
+					vis = true
+					break
+		if not vis and G.sim_time - s.get_meta("fog_seen_t", -99.0) < 1.5:
+			vis = true          # a moment's grace so a man ducking in and out of view doesn't flicker
+		if vis:
+			s.set_meta("fog_seen_t", G.sim_time)
+		if not vis:
 			# an observer post's view
 			for st in Build.sites:
 				if st["team"] == 0 and st["kind"] == "observer" and Build.alive(st) and s in st.get("sees", []):

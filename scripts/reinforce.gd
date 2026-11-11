@@ -81,6 +81,11 @@ static func step(dt: float) -> void:
 # behind our own front line: where the team's men are, pulled back toward home and away from known enemies
 static func forward_drop(t: int) -> Vector3:
 	var home: Vector3 = G.world.rally_point(t)
+	# a command post set up nearer the front: the lorries bring the men up to it
+	var cp = VehExt.command_post(t)
+	if cp != null and G.dist2d(cp.pos, G.world.capture) < G.dist2d(home, G.world.capture) - 20.0:
+		var back0 = G.flat(home - cp.pos).normalized()
+		return G.main._free_spot(cp.pos + back0 * 10.0 + Vector3(back0.z, 0, -back0.x) * 6.0)
 	var sum = Vector3.ZERO
 	var n = 0
 	for s in G.soldiers:

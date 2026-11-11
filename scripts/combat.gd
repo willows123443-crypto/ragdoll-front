@@ -185,7 +185,9 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 			if ev.has("veh"):
 				var v = ev["veh"]
 				if is_instance_valid(v):
-					v.take_damage(ev["dmg"] * (0.9 if W["ap"] else v.spec["bullet"]), shooter, ev["p"])
+					# a stray round from our own side mostly just dents the paint
+					var own_side = shooter != null and is_instance_valid(shooter) and "team" in shooter and shooter.team == v.team
+					v.take_damage(ev["dmg"] * (0.9 if W["ap"] else v.spec["bullet"]) * (0.15 if own_side else 1.0), shooter, ev["p"])
 					# rounds that can't get through whine off the armour
 					if not W["ap"] and v.spec["bullet"] < 0.2 and randf() < 0.5:
 						var rd = d.bounce(ev["n"]).normalized()

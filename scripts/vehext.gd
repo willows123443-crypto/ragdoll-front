@@ -813,10 +813,49 @@ static func radar_spot(v) -> Vector3:
 	return home.lerp(r, 0.5) + G.flat(home - Build._objective(v.team)).normalized() * 10.0
 
 # while it's running, the command truck tracks every enemy within a wide radius for the whole team
+# The command truck sets up as a command post whenever it's parked a few seconds: the aerial goes up
+# and turns, and while it's set up
+#  - it spots enemies far around it (only close by while it's driving),
+#  - men within 45 m steady faster under fire and shoot straighter (an officer on the radio),
+#  - reinforcement lorries drop their men by it if it's nearer the front than HQ.
+const CP_R = 45.0
+
+static func command_post(team: int):
+	for v in G.vehicles:
+		if v.kind == "radar" and v.team == team and not v.dead and v.get_meta("deployed", false):
+			return v
+	return null
+
 static func radar_tick(v, dt: float) -> void:
 	v.radar_t += dt
+	var parked = absf(v.speed) < 0.3 and v.driver() != null
+	v.set_meta("park_t", v.get_meta("park_t", 0.0) + dt if parked else 0.0)
+	var dep: bool = v.get_meta("deployed", false)
+	if not dep and v.get_meta("park_t", 0.0) > 4.0:
+		v.set_meta("deployed", true)
+		dep = true
+		G.ui.radio(v.team, "Command post set up at %s: men nearby steady up and shoot straighter, and reinforcements will come up to it" % AI.grid_ref(v.pos))
+		if v.driver() != null:
+			G.fx.callout(v.driver(), "Command post's up!")
+	elif dep and not parked and absf(v.speed) > 1.0:
+		v.set_meta("deployed", false)
+		dep = false
+		G.ui.radio(v.team, "Command post packing up and moving")
 	if v.rotor != null:
-		v.rotor.rotation.y += dt * 1.6
+		# the aerial mast rises when it's set up and comes down to drive
+		v.rotor.rotation.y += dt * (1.6 if dep else 0.0)
+		v.rotor.position.y = move_toward(v.rotor.position.y, v.get_meta("mast_y0", v.rotor.position.y) + (0.9 if dep else 0.0), dt * 0.8)
+		if not v.has_meta("mast_y0"):
+			v.set_meta("mast_y0", v.rotor.position.y)
+	# the steadying hand: men round a command post shake off suppression quicker (checked twice a second)
+	v.set_meta("aura_t", v.get_meta("aura_t", 0.0) + dt)
+	if dep and v.get_meta("aura_t") >= 0.5:
+		var adt: float = v.get_meta("aura_t")
+		v.set_meta("aura_t", 0.0)
+		for s in G.soldiers:
+			if s.team == v.team and s.state == "alive" and absf(s.pos.x - v.pos.x) < CP_R and absf(s.pos.z - v.pos.z) < CP_R and G.dist2d(s.pos, v.pos) < CP_R:
+				s.supp = maxf(0.0, s.supp - 0.35 * adt)
+				s.set_meta("cp_aura_t", G.sim_time)
 	if v.radar_t < 2.0:
 		return
 	v.radar_t = 0.0
@@ -829,8 +868,9 @@ static func radar_tick(v, dt: float) -> void:
 			break
 	if friend == null:
 		return
+	var rng = 170.0 if v.get_meta("deployed", false) else 60.0
 	for o in G.soldiers:
-		if o.team != v.team and o.state != "dead" and G.dist2d(o.pos, v.pos) < 170.0:
+		if o.team != v.team and o.state != "dead" and G.dist2d(o.pos, v.pos) < rng:
 			for f in G.soldiers:
 				if f.team == v.team and f.state == "alive" and f.squad != null and Squad.leader_of(f.squad) == f:
 					AI.add_intel(f, o, o.pos, 4.0, false)

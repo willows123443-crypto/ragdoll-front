@@ -186,11 +186,13 @@ func _cycle_step(dt: float) -> void:
 	else:
 		# long days and short nights: about sixteen minutes of daylight, two and a half of darkness
 		var c = fposmod(clock, 1.0)
-		var night = c < 0.08 or c > 0.72
-		clock += dt / 900.0 * (2.2 if night else 0.6)
+		# the clock speeds up through the night and slows into the day gradually: a sudden change of pace
+		# made the last of dusk collapse into night in a few seconds
+		var nf = maxf(smoothstep(0.64, 0.8, c), 1.0 - smoothstep(0.0, 0.1, c))
+		clock += dt / 900.0 * lerpf(0.6, 2.2, nf)
 	clock_t -= dt
 	if clock_t <= 0.0:
-		clock_t = 1.0
+		clock_t = 0.2      # the light changes in small steps, five times a second
 		apply_time()
 		var n = is_night()
 		if n != was_night and G.started and not G.over:
@@ -617,6 +619,8 @@ func _sim_step() -> void:
 			continue
 		if big and s.lod_frozen and s.state == "alive":
 			# the far ones think every third tick (every other while they're in a fight)
+			# every third tick when they're not in a fight (every other while they are): with their rifles
+			# gliding along with them in between, it doesn't show from the commander view
 			var every = 2 if s.vis_t != null or s.supp > 0.3 else 3
 			if (fr + s.id) % every != 0:
 				s.lod_glide()

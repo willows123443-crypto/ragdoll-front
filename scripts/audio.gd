@@ -339,21 +339,33 @@ func _sweep(f0: float, f1: float, len_s: float, vol: float) -> AudioStreamWAV:
 		out[i] = sin(ph) * vol * (1.0 - k) * minf(1.0, k * 50.0)
 	return _wav(out)
 
-func play(stream: AudioStream, pos: Vector3, vol_db: float = 0.0, pitch: float = 1.0, delay: float = 0.0) -> void:
+func play(stream: AudioStream, pos: Vector3, vol_db: float = 0.0, pitch: float = 1.0, delay: float = 0.0, muffle: bool = false) -> void:
 	if delay > 0.01:
-		get_tree().create_timer(delay, false).timeout.connect(func(): play(stream, pos, vol_db, pitch, 0.0))
+		get_tree().create_timer(delay, false).timeout.connect(func(): play(stream, pos, vol_db, pitch, 0.0, muffle))
 		return
 	var p: AudioStreamPlayer3D = players[pi]
 	pi = (pi + 1) % players.size()
 	p.stream = stream
 	p.global_position = pos
-	p.volume_db = vol_db
+	p.volume_db = vol_db - (5.0 if muffle else 0.0)
+	# through a wall: dull and low, the top end cut away
+	p.attenuation_filter_cutoff_hz = 800.0 if muffle else 5000.0
 	p.pitch_scale = pitch * randf_range(0.93, 1.07)
 	p.play()
 
 func cam_dist(pos: Vector3) -> float:
 	var cam = get_viewport().get_camera_3d()
 	return cam.global_position.distance_to(pos) if cam else 0.0
+
+# is there a wall (or a hill) between the listener and a sound? checked for nearby sounds only
+func occluded(pos: Vector3) -> bool:
+	var cam = get_viewport().get_camera_3d()
+	if cam == null or G.world == null:
+		return false
+	var a = cam.global_position
+	if a.distance_to(pos) > 80.0:
+		return false
+	return G.blocked(a, pos + Vector3(0, 0.8, 0))
 
 func shot(pos: Vector3, w: Dictionary) -> void:
 	var d = cam_dist(pos)
@@ -364,7 +376,12 @@ func shot(pos: Vector3, w: Dictionary) -> void:
 		# far off, a gun is a dull thud rolling across the field
 		play(s_distant, pos, w["snd_vol"] - 4.0, w["snd_pitch"] * 1.3, delay)
 		return
-	play(stream, pos, w["snd_vol"], randf_range(0.96, 1.04), delay)
+	var muf = occluded(pos)
+	# sharp and cracking up close; from 40 m out it loses its edge and a low thud comes in under it
+	var far_k = clampf((d - 40.0) / 70.0, 0.0, 1.0)
+	play(stream, pos, w["snd_vol"] - far_k * 6.0, randf_range(0.96, 1.04) * (1.0 - far_k * 0.12), delay, muf)
+	if far_k > 0.15:
+		play(s_distant, pos, w["snd_vol"] - 10.0 + far_k * 6.0, w["snd_pitch"] * 1.3, delay, muf)
 	# a slap-back echo off walls in town (and a longer one indoors)
 	if d < 90.0 and G.world != null and (indoor > 0.5 or _walls_near(pos)):
 		play(s_slap, pos, w["snd_vol"] - 9.0, 0.85, delay + randf_range(0.09, 0.2) + indoor * 0.08)
@@ -411,7 +428,9 @@ func _crack() -> AudioStreamWAV:
 
 func boom(pos: Vector3) -> void:
 	notice(pos, 0.6)
-	play(s_boom, pos, 6.0, 1.0, minf(cam_dist(pos) / 343.0, 0.5))
+	# a blast is felt even through a wall, just deeper
+	var muf = occluded(pos)
+	play(s_boom, pos, 6.0 + (3.0 if muf else 0.0), 0.85 if muf else 1.0, minf(cam_dist(pos) / 343.0, 0.5), muf)
 
 func rocket(pos: Vector3) -> void:
 	play(s_rocket, pos, 2.0, 0.8)
@@ -626,3 +645,21 @@ func hit_tick(kill: bool) -> void:
 	ui_player.pitch_scale = 0.6 if kill else 1.0
 	ui_player.volume_db = -4.0 if kill else -8.0
 	ui_player.play()
+
+# ---------------------------------------------------------------- radio chatter (commander)
+# short spoken reports over the radio when something happens: a click, then the line in one steady
+# "radio operator" voice. Only one at a time, and never on top of a soldier's shout.
+var radio_t = 0.0
+
+func radio_say(text: String) -> void:
+	if not G.settings.get("voices", true) or not G.started or G.sim_time < radio_t:
+		return
+	radio_click()
+	if not _tts_ready():
+		return
+	if DisplayServer.tts_is_speaking():
+		DisplayServer.tts_stop()
+	radio_t = G.sim_time + 3.5
+	var voice = tts_voices[0]
+	var vol = int(clampf(85.0 * G.settings["volume"], 10.0, 100.0))
+	get_tree().create_timer(0.18, false).timeout.connect(func(): DisplayServer.tts_speak(text, voice, vol, 0.9, 1.15))

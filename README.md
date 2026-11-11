@@ -223,6 +223,21 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Walking round vehicles:** men steer round a vehicle's real shape, the short way round toward where they're going
 - **Supply trucks:** a fleet truck whose driver got out gets someone back in (or HQ sends a driver), a truck stuck on its run for a minute starts again, and one you sent somewhere goes back to its runs after a while. The "Convoy in" timer is gone
 - **AI commander building:** fighting positions face where the enemy is now and go where they can see the approach; tank traps go across the road in once enemy armour shows up; AA only once there's something in the air; nothing gets built where the enemy is
+- **Militia technical:** sloped bonnet, grille and bull bar, wing mirrors, roof rack, spare wheel, jerrycans and a winged gun shield
+- **Friendly fire on vehicles:** men and AT guns hold fire when one of their own vehicles is in the line, and stray rifle rounds barely scratch your own armour
+- **Fighting through buildings:** men inside knock a mousehole through a shared wall to reach the next building instead of running out into the street, and defenders favour upstairs windows
+- **Commander icons:** each squad has an order badge over it (shield = hold, crosshair = attack-move, chevrons = follow, arrow = move); squad cards show a weapon icon and health pips per man
+- **Speech bubbles** with an icon (reloading, grenade, medic, contact…) instead of floating text
+- **Sound:** distant gunfire turns into a muffled thud, and shots behind walls sound muffled
+- **Radio chatter** in commander mode: pinned squads, lost vehicles, sites under fire and armour or aircraft spotted, read out over the radio
+- **Vehicles drive through bushes** and hedges; trucks and tanks flatten small trees
+- **Command truck:** parked for a few seconds it sets up as a command post. Men within 45 m stay steadier and shoot straighter, it spots enemies at long range, and reinforcements can arrive there
+- **No stray flags:** flagpoles and crates no longer appear on roads or in commander mode
+- **Camo nets are built:** ordering a net drops a rolled net, and men have to put it up
+- **Far units in commander:** distant men move their gun with them and skip shadows, so zoomed-out armies look smooth and cost less
+- **Headlights:** a soft patch of light on the road ahead instead of a cone
+- **Night falls gradually:** dusk and dawn take longer and the light changes smoothly
+- **Cover behind vehicles:** men kneel behind a vehicle instead of lying with their legs sticking out
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

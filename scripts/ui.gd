@@ -599,7 +599,7 @@ const SUP_DESC = {
 	"plough": "A tank with a mine plough that clears the road ahead of it",
 	"atgun": "Towed anti-tank gun, set up at the rally point",
 	"ambulance": "Picks up the wounded and takes them to a field hospital",
-	"radar": "Command truck: a radio for call-ins and it spots enemies around it",
+	"radar": "Command truck: park it and it sets up as a command post. Men within 45 m steady faster under fire and shoot straighter, it spots enemies far around, call-ins work through its radio, and reinforcements come up to it",
 	"bridger": "Lays a bridge over a river or a blown bridge",
 	"artillery": "A barrage of shells on the spot you click",
 	"airstrike": "A plane bombs the spot you click",

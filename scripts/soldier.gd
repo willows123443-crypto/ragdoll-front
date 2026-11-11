@@ -1442,12 +1442,28 @@ func lod_glide() -> void:
 	# (always, however far off: skipping it made men stutter along when the commander view was zoomed out)
 	for b in parts:
 		b.global_position += d
+	# and his rifle with him, not left hanging where it was on the last full update
+	if gun_node != null and gun_body == null and vehicle == null:
+		gun_node.global_position += d
+
+# far-off men don't cast shadows (dozens of little shadow casters were a big part of the frame cost)
+func _far_shadows(on: bool) -> void:
+	var mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if on else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for b in parts:
+		for c in b.get_children():
+			if c is GeometryInstance3D:
+				c.cast_shadow = mode
+	if gun_node != null:
+		for c in gun_node.get_children():
+			if c is GeometryInstance3D:
+				c.cast_shadow = mode
 
 # back to a real simulated body (falling, dying, climbing aboard)
 func lod_wake() -> void:
 	if not lod_frozen:
 		return
 	lod_frozen = false
+	_far_shadows(true)
 	for b in parts:
 		b.freeze = false
 		b.linear_velocity = vel
@@ -1494,11 +1510,13 @@ func drive() -> void:
 			for b in parts:
 				b.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
 				b.freeze = true
+			_far_shadows(false)
 		for i in range(parts.size()):
 			parts[i].global_transform = targets[i]
 		return
 	elif lod_frozen:
 		lod_frozen = false
+		_far_shadows(true)
 		if not hidden_in_vehicle:
 			for b in parts:
 				b.freeze = false
@@ -1927,7 +1945,7 @@ func compute_muzzle() -> void:
 		u = Vector3.UP - gun_dir * gun_dir.y
 	u = u.normalized()
 	var want_xf = Transform3D(Basis(u.cross(gun_dir), u, gun_dir), grip)
-	if state == "alive" and not is_player:
+	if state == "alive" and not is_player and not lod_frozen:
 		# AI hands wobble with the ragdoll; ease the gun toward where it should be so it doesn't shake
 		var cur: Transform3D = gun_node.global_transform
 		if cur.origin.distance_to(grip) < 0.6:

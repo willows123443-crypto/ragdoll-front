@@ -746,14 +746,34 @@ static func _build_main(v) -> void:
 			var paint = [Color(0.75, 0.73, 0.68), Color(0.55, 0.2, 0.16), Color(0.25, 0.3, 0.38), Color(0.62, 0.55, 0.38)][v.get_instance_id() % 4]
 			col(v, Vector3(1.9, 0.9, 4.8), Vector3(0, 0.85, 0))
 			box(v, hull, Vector3(1.6, 0.18, 4.7), Vector3(0, 0.48, 0), METAL)
-			box(v, hull, Vector3(1.9, 0.5, 1.6), Vector3(0, 0.88, 1.55), paint, {"b": 0.1})
+			# the bonnet, sloping down to a dark grille, with a bumper and a pipe bull bar
+			box(v, hull, Vector3(1.86, 0.44, 1.5), Vector3(0, 0.9, 1.62), paint, {"b": 0.1})
+			box(v, hull, Vector3(1.7, 0.08, 1.35), Vector3(0, 1.13, 1.58), paint.lightened(0.06), {"b": 0.04, "rot": Vector3(0.06, 0, 0)})
+			box(v, hull, Vector3(1.5, 0.36, 0.06), Vector3(0, 0.92, 2.38), Color(0.1, 0.1, 0.1), {"b": 0.01})
+			for gx in range(5):
+				box(v, hull, Vector3(0.05, 0.3, 0.02), Vector3(-0.5 + gx * 0.25, 0.92, 2.42), METAL.lightened(0.3), {"b": 0.0})
+			box(v, hull, Vector3(1.96, 0.14, 0.16), Vector3(0, 0.6, 2.46), METAL.darkened(0.2), {"b": 0.03})
+			for bx in [-0.55, 0.55]:
+				cyl(hull, 0.035, 0.55, Vector3(bx, 0.92, 2.62), METAL.darkened(0.35), "y", {"seg": 6})
+			cyl(hull, 0.035, 1.3, Vector3(0, 1.18, 2.62), METAL.darkened(0.35), "x", {"seg": 6})
+			# mud and wear: the lower panels darker, black wheel arches
+			for mx in [0.95, -0.95]:
+				box(v, hull, Vector3(0.02, 0.18, 4.4), Vector3(mx, 0.62, 0.0), paint.darkened(0.55).lerp(Color(0.32, 0.26, 0.18), 0.5), {"b": 0.0})
+				for wz in [1.45, -1.55]:
+					box(v, hull, Vector3(0.22, 0.12, 1.0), Vector3(mx * 0.96, 0.92, wz), Color(0.08, 0.08, 0.08), {"b": 0.04})
+				# wing mirrors
+				box(v, hull, Vector3(0.05, 0.16, 0.12), Vector3(mx * 1.08, 1.55, 0.98), Color(0.12, 0.12, 0.12), {"b": 0.01})
 			# an open cab you can see into: floor, back wall, roof on pillars, doors that open, a bench seat and a wheel
 			var trim = Color(0.14, 0.14, 0.14)
 			var seatc = [Color(0.35, 0.28, 0.2), Color(0.2, 0.2, 0.22), Color(0.42, 0.38, 0.3)][v.get_instance_id() % 3]
 			box(v, hull, Vector3(1.8, 0.08, 1.4), Vector3(0, 0.66, 0.35), paint.darkened(0.5), {"b": 0.01})
 			box(v, hull, Vector3(1.86, 1.36, 0.07), Vector3(0, 1.32, -0.36), paint, {"b": 0.02})
 			box(v, hull, Vector3(1.0, 0.32, 0.02), Vector3(0, 1.6, -0.4), Color.WHITE, {"m": glass(), "b": 0.0})
-			box(v, hull, Vector3(1.92, 0.07, 1.5), Vector3(0, 2.02, 0.37), paint, {"b": 0.03})
+			box(v, hull, Vector3(1.78, 0.08, 1.42), Vector3(0, 2.02, 0.37), paint, {"b": 0.04})
+			# a roof rack with a couple of bundles strapped on
+			for rz in [-0.15, 0.85]:
+				box(v, hull, Vector3(1.6, 0.04, 0.05), Vector3(0, 2.1, rz), Color(0.1, 0.1, 0.1), {"b": 0.0})
+			box(v, hull, Vector3(0.6, 0.18, 0.5), Vector3(-0.35, 2.2, 0.3), Color(0.36, 0.33, 0.24), {"b": 0.06})
 			box(v, hull, Vector3(1.7, 0.7, 0.03), Vector3(0, 1.64, 1.06), Color.WHITE, {"m": glass(), "b": 0.0, "rot": Vector3(-0.35, 0, 0)})
 			box(v, hull, Vector3(1.75, 0.22, 0.32), Vector3(0, 1.25, 0.92), trim, {"b": 0.04})
 			box(v, hull, Vector3(0.5, 0.1, 0.02), Vector3(0.45, 1.3, 0.755), Color(0.3, 0.32, 0.3), {"b": 0.0})
@@ -777,7 +797,16 @@ static func _build_main(v) -> void:
 			box(v, hull, Vector3(1.6, 0.3, 0.1), Vector3(0, 0.7, 2.38), METAL, {"b": 0.03})
 			# welded shield and the gun post
 			box(v, hull, Vector3(1.0, 0.45, 0.05), Vector3(0, 2.25, -0.68), METAL.lightened(0.15), {"b": 0.01})
+			for sx in [-1.0, 1.0]:
+				box(v, hull, Vector3(0.35, 0.42, 0.05), Vector3(sx * 0.63, 2.24, -0.78), METAL.lightened(0.1), {"b": 0.01, "rot": Vector3(0, sx * 0.6, 0)})
 			box(v, hull, Vector3(0.36, 0.42, 0.28), Vector3(0.6, 0.95, -2.0), Color(0.3, 0.3, 0.22), {"b": 0.03})
+			# a spare wheel, jerrycans and an ammo box in the bed; side rails along the top of the bed
+			cyl(hull, 0.36, 0.22, Vector3(-0.45, 0.9, -2.0), Color(0.08, 0.08, 0.08), "y", {"seg": 14})
+			cyl(hull, 0.18, 0.23, Vector3(-0.45, 0.9, -2.0), METAL.lightened(0.15), "y", {"seg": 10})
+			for jz in [-0.7, -0.95]:
+				box(v, hull, Vector3(0.16, 0.42, 0.3), Vector3(0.72, 0.98, jz), Color(0.24, 0.3, 0.18), {"b": 0.03})
+			for rx in [0.93, -0.93]:
+				box(v, hull, Vector3(0.06, 0.05, 2.0), Vector3(rx, 1.27, -1.35), METAL.darkened(0.25), {"b": 0.0})
 			for z in [1.45, -1.55]:
 				for x in [0.92, -0.92]:
 					wheel(v, Vector3(x, 0.4, z), 0.4, 0.28, METAL.lightened(0.2))

@@ -861,8 +861,10 @@ func callout(s, text: String) -> void:
 	l.font_size = 22
 	l.outline_size = 8
 	l.modulate = Color(0.75, 0.85, 1.0) if s.team == 0 else Color(1.0, 0.75, 0.75)
+	# (the words are drawn as a speech bubble on the HUD: see Hudx._bubbles; the label only keeps time)
+	l.visible = false
 	add_child(l)
-	callouts.append({"l": l, "s": s, "t": 1.8})
+	callouts.append({"l": l, "s": s, "t": 1.8, "text": text, "icon": bubble_icon(text)})
 	G.audio.bark(s, text)
 
 # a few words that float up from a spot and fade (+1 over a man who got a kill)
@@ -883,6 +885,18 @@ func float_text(p: Vector3, text: String, col: Color) -> void:
 	tw.tween_property(l, "global_position", p + Vector3(0, 1.4, 0), 1.2).set_ease(Tween.EASE_OUT)
 	tw.tween_property(l, "modulate:a", 0.0, 1.2).set_delay(0.4)
 	tw.chain().tween_callback(l.queue_free)
+
+# a little picture for the bubble, from what's being shouted
+func bubble_icon(text: String) -> String:
+	var t = text.to_lower()
+	for k in [["grenade", "blast"], ["frag", "blast"], ["fire in the hole", "blast"], ["charge", "blast"], ["satchel", "blast"], ["hole", "blast"],
+			["medic", "medic"], ["doc", "medic"], ["hit", "bleed"], ["bleeding", "bleed"], ["wounded", "bleed"],
+			["reload", "rifle"], ["belt", "mg"], ["mag", "rifle"], ["ammo", "rifle"], ["out!", "rifle"],
+			["tank", "vehicle"], ["armour", "vehicle"], ["vehicle", "vehicle"], ["truck", "vehicle"],
+			["sniper", "sniper"], ["smoke", "blast"], ["rocket", "at"], ["rpg", "at"], ["contact", "head"], ["enemy", "head"], ["movement", "head"]]:
+		if t.find(k[0]) >= 0:
+			return k[1]
+	return ""
 
 func update_callouts(dt: float) -> void:
 	for i in range(callouts.size() - 1, -1, -1):

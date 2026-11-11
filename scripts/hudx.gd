@@ -16,6 +16,7 @@ func _process(_dt: float) -> void:
 
 func _draw() -> void:
 	var vs = get_viewport_rect().size
+	_bubbles()
 	# (the commander view has its own whole-map minimap)
 	if not (G.ui.cmdhud != null and G.ui.cmdhud.active()):
 		_minimap(Rect2(vs.x - MS - 12.0, vs.y - MS - 12.0, MS, MS))
@@ -241,3 +242,46 @@ func _wheel(c: Vector2) -> void:
 	draw_string(font, c - Vector2(16, -5), "SQUAD", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, 0.7))
 	var dot = c + G.pc.wheel_vec.limit_length(110.0)
 	draw_circle(dot, 4.0, Color(1, 1, 1, 0.9))
+
+# ---------------------------------------------------------------- speech bubbles
+# what soldiers shout, in a small rounded bubble over the man with a picture for what it's about
+# (a grenade, a medic's cross, a tank...); they fade out, and only the nearest few show (see Fx.callout)
+var bubble_sb: StyleBoxFlat
+
+func _bubbles() -> void:
+	if G.fx == null:
+		return
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	if bubble_sb == null:
+		bubble_sb = StyleBoxFlat.new()
+		bubble_sb.set_corner_radius_all(7)
+		bubble_sb.set_border_width_all(1)
+	for c in G.fx.callouts:
+		var s = c["s"]
+		if not is_instance_valid(s) or not c.has("text") or s.parts.size() < 3:
+			continue
+		var top: Vector3 = s.parts[2].global_position + Vector3(0, 0.5, 0)
+		if cam.is_position_behind(top):
+			continue
+		var p = cam.unproject_position(top)
+		var a = clampf(c["t"] * 2.0, 0.0, 1.0)
+		var text: String = c["text"]
+		var fs = 12
+		var tw = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		var icon: String = c["icon"]
+		var iw = 20.0 if icon != "" else 0.0
+		var w = tw + iw + 14.0
+		var r = Rect2(p.x - w * 0.5, p.y - 30.0, w, 21.0)
+		var tc = G.team_color(s.team)
+		bubble_sb.bg_color = Color(0.97, 0.96, 0.92, 0.9 * a)
+		bubble_sb.border_color = Color(tc.r, tc.g, tc.b, 0.9 * a)
+		draw_style_box(bubble_sb, r)
+		# the little tail down to the speaker
+		draw_colored_polygon(PackedVector2Array([Vector2(p.x - 5, r.end.y - 1), Vector2(p.x + 5, r.end.y - 1), Vector2(p.x, r.end.y + 6)]), Color(0.97, 0.96, 0.92, 0.9 * a))
+		var x = r.position.x + 7.0
+		if icon != "":
+			draw_texture_rect(Icons.get_icon(icon), Rect2(x, r.position.y + 6.0, 17.0, 7.0), false, Color(0.15, 0.15, 0.15, a))
+			x += iw
+		draw_string(font, Vector2(x, r.position.y + 15.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.1, 0.1, 0.1, a))

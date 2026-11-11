@@ -310,6 +310,9 @@ static func find_cover(s, threat: Vector3, mode: String):
 					sc -= 9.0 if hide else 7.0
 				elif mode != "retreat":
 					sc -= 3.5
+		# an upstairs window: the best view over the street, for a man holding a house
+		if cp.tower != null and (mode == "hold" or mode == "defend") and not hide and de > 15.0 and cp.p.y - G.world.ground_y(cp.p.x, cp.p.z) > 2.0:
+			sc -= 5.0
 		sc += absf(de - ideal) * 0.12
 		sc += Tactics.danger_at(cp.p, s.team) * 4.0      # not where our men keep getting killed
 		sc += float((i * 7919 + s.id * 31) % 100) / 50.0
@@ -1685,6 +1688,72 @@ static func _ammo_handoff(s) -> bool:
 			return true
 	return false
 
+# Fighting through a town: a man inside one house heading for the next one along doesn't go out of the
+# door into the street. He sets a small charge on the wall between, steps back, and goes through the hole.
+static func _mousehole(s) -> bool:
+	if s.is_player or s.state != "alive" or s.vehicle != null:
+		return false
+	if s.has_meta("mh"):
+		var m: Dictionary = s.get_meta("mh")
+		s.want = Vector3.ZERO
+		s.ready_ = false
+		var t = G.sim_time - m["t0"]
+		if t < 1.2:
+			# kneeling at the wall, fixing the charge
+			s.crouch_t = 0.9
+			Medical.work_hands(s, m["p"], "wrap")
+			return true
+		if t < 2.4:
+			# back off and turn away
+			var back = G.flat(s.pos - m["p"])
+			s.want = (back.normalized() if back.length() > 0.01 else Vector3(1, 0, 0)) * 2.5 if back.length() < 3.0 else Vector3.ZERO
+			s.crouch_t = 1.0
+			return true
+		var c = m["c"]
+		s.remove_meta("mh")
+		if c != null and c.alive:
+			G.fx.explosion(m["p"], 0.5)
+			G.audio.boom(m["p"])
+			G.world.destroy_col(c)
+			G.fx.callout(s, G.pick(["Through the wall!", "We're through, go!", "Hole's open!"]))
+		s.decide_t = 0.0
+		return false
+	if s.move_target == null or s.vis_t != null or G.sim_time < s.get_meta("mh_chk", 0.0):
+		return false
+	s.set_meta("mh_chk", G.sim_time + 1.5)
+	if not (s.cls in ["engineer", "assault", "rifleman"]) or s.satchels + s.grenades <= 0 and s.cls != "engineer":
+		return false
+	var here = Squad._building_at(s.pos)
+	var there = Squad._building_at(s.move_target)
+	if here == null or there == null or here == there or upstairs(s):
+		return false
+	# a wall right in front of him on the way, close by, with the other house just behind it
+	var to = G.flat(s.move_target - s.pos)
+	if to.length() > 25.0:
+		return false
+	var eye = s.pos + Vector3(0, 1.0, 0)
+	var hit = G.ray(eye, eye + to.normalized() * 3.0, G.L_WORLD)
+	if hit.is_empty() or not hit.collider.has_meta("col"):
+		return false
+	var c = hit.collider.get_meta("col")
+	if not c.alive or not c.dest or c.hi.y - c.lo.y < 1.5:
+		return false
+	var beyond: Vector3 = hit.position + to.normalized() * 1.6
+	if Squad._building_at(beyond) == null and Squad._building_at(beyond + to.normalized() * 2.5) != there:
+		return false
+	# only worth it when the way round by the doors is a good deal longer
+	var dd = G.dist2d(s.pos, s.move_target)
+	if s.route != null and s.route.size() > 0 and s.route.size() < 4 and dd > 8.0:
+		return false
+	if s.cls != "engineer":
+		if s.satchels > 0:
+			s.satchels -= 1
+		else:
+			s.grenades -= 1
+	s.set_meta("mh", {"t0": G.sim_time, "p": hit.position, "c": c})
+	G.fx.callout(s, G.pick(["Making a hole!", "Charge on the wall!", "Going through!"]))
+	return true
+
 # blown up onto a roof: walk to the nearest edge and drop off it, rather than standing about up there
 static func _off_the_roof(s) -> bool:
 	if s.vehicle != null or s.state != "alive" or G.world.roof_cols.is_empty():
@@ -1715,6 +1784,8 @@ static func update(s) -> void:
 		Modes.zombie_tick(s)
 		return
 	if _off_the_roof(s):
+		return
+	if _mousehole(s):
 		return
 	if _help_walk(s):
 		return
@@ -2132,6 +2203,8 @@ static func aim_and_fire(s) -> void:
 						if s.cls == "sniper" and s.partner != null and is_instance_valid(s.partner) and s.partner.state == "alive" and G.dist2d(s.partner.pos, s.pos) < 10.0:
 							spread *= 0.55
 						spread *= 1.0 - 0.12 * s.vet
+						if G.sim_time - s.get_meta("cp_aura_t", -9.0) < 3.0:
+							spread *= 0.85      # an officer on the radio close by
 						spread += 0.006       # nobody's a perfect shot under fire
 						if Faction.militia(s.team):
 							spread += 0.008   # irregulars: less training, worn-out rifles
@@ -2252,9 +2325,12 @@ static func stance(s) -> void:
 		elif cp.type == "low":
 			# only as high as it takes to see over the top: eyes just clear of the wall to fire, and below it
 			# (flat on the ground if the wall is a low one) while the rounds are coming in
-			var h = 1.0
+			# (no wall of the map behind it: a vehicle, or a bank: tall enough to hide behind crouching)
+			var h = 1.6
 			if cp.col != null:
 				h = clampf(cp.col.hi.y - cp.col.gy, 0.4, 2.0)
+			elif cp.has_meta("crater"):
+				h = 0.6
 			if peek:
 				s.prone_t = false
 				s.crouch_t = clampf((1.53 - h) / 0.42, 0.0, 1.0)
@@ -2512,6 +2588,21 @@ static func friendly_in_line(s, from: Vector3, dir: Vector3, L: float):
 		var perp = (v - dir * t).length()
 		if perp < 0.75 + t * 0.03:
 			return o
+	# our own vehicles in the way (or, for a rocket, near where it'll burst)
+	var own = s.vehicle if s.vehicle != null and is_instance_valid(s.vehicle) else null
+	for fv in G.vehicles:
+		if fv == own or fv.team != s.team or fv.dead or (fv.spec.get("air", false) and fv.alt > 3.0):
+			continue
+		var cv: Vector3 = fv.center()
+		if rocket and cv.distance_to(end) < 9.0:
+			return fv
+		var v2 = cv - from
+		var t2 = v2.dot(dir)
+		if t2 < 0.0 or t2 > L + 3.0:
+			continue
+		var perp2 = (v2 - dir * t2).length()
+		if perp2 < maxf(fv.spec["len"], fv.spec["wid"]) * 0.5 + 0.4:
+			return fv
 	return null
 
 static func grid_ref(p: Vector3) -> String:

@@ -2803,17 +2803,20 @@ func base(sx: float, dist: float = 96.0) -> void:
 		var tz = -22.0 + i * 22.0
 		if not near_road(bx + sx * 7.0, tz, 4.5):
 			ridge_tent(bx + sx * 7.0, tz, Color(0.33, 0.38, 0.24) if sx < 0 else Color(0.42, 0.39, 0.28))
-	add_box(bx + sx * 3.0, 0.0, 0.0, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
-	add_box(bx + sx * 3.9, 5.6, 0.0, 1.6, 1.0, 0.05, G.team_color(0 if sx < 0 else 1), {"collide": false, "no_shadow": true})
-	ammo_crate(bx + sx * 1.5, -5.0, 0 if sx < 0 else 1, true)
-	ammo_crate(bx + sx * 1.5, 5.0, 0 if sx < 0 else 1, true)
+	# (in commander mode the HQ is the base: no stray flagpole and crates left standing about)
+	if G.mode != "commander":
+		add_box(bx + sx * 3.0, 0.0, 0.0, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
+		add_box(bx + sx * 3.9, 5.6, 0.0, 1.6, 1.0, 0.05, G.team_color(0 if sx < 0 else 1), {"collide": false, "no_shadow": true})
+		ammo_crate(bx + sx * 1.5, -5.0, 0 if sx < 0 else 1, true)
+		ammo_crate(bx + sx * 1.5, 5.0, 0 if sx < 0 else 1, true)
 
 # a small camp: flagpole and two ammo crates
 func camp(t: int, p: Vector3) -> void:
-	add_box(p.x, 0.0, p.z, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
-	add_box(p.x + 0.9, 5.6, p.z, 1.6, 1.0, 0.05, G.team_color(t), {"collide": false, "no_shadow": true})
-	ammo_crate(p.x - 4.0, p.z, t, true)
-	ammo_crate(p.x + 4.0, p.z, t, true)
+	if G.mode != "commander" and not on_road(p.x, p.z):
+		add_box(p.x, 0.0, p.z, 0.15, 7.0, 0.15, Color(0.27, 0.27, 0.27), {"collide": false})
+		add_box(p.x + 0.9, 5.6, p.z, 1.6, 1.0, 0.05, G.team_color(t), {"collide": false, "no_shadow": true})
+		ammo_crate(p.x - 4.0, p.z, t, true)
+		ammo_crate(p.x + 4.0, p.z, t, true)
 	# tents and a sandbag ring facing the middle of the map
 	var hut = G.TEAM_UNI[t].lerp(Color(0.4, 0.4, 0.33), 0.5) if t < G.TEAM_UNI.size() else Color(0.4, 0.4, 0.33)
 	var inward = -signf(p.z) if absf(p.z) > absf(p.x) else 0.0

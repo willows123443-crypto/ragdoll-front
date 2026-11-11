@@ -55,7 +55,8 @@ static func crew_vehicle(q: Dictionary):
 static func kind_of(q: Dictionary) -> String:
 	var cv = crew_vehicle(q)
 	if cv != null:
-		return cv.spec["name"]
+		var nm: String = cv.spec["name"]
+		return nm.replace("Command truck", "Cmd truck").replace("Supply truck", "Supply")
 	var roles = {}
 	var n = 0
 	for m in q["members"]:
@@ -148,7 +149,7 @@ func _card(i: int) -> Dictionary:
 	while cards.size() <= i:
 		var k = cards.size()
 		var b = Button.new()
-		b.custom_minimum_size = Vector2(CW, 24)
+		b.custom_minimum_size = Vector2(CW, 38)
 		b.focus_mode = Control.FOCUS_NONE
 		var sb = StyleBoxFlat.new()
 		sb.bg_color = Color(0.07, 0.08, 0.09, 0.72)
@@ -165,7 +166,7 @@ func _card(i: int) -> Dictionary:
 		h.set_anchors_preset(Control.PRESET_FULL_RECT)
 		h.offset_left = 5
 		h.offset_right = -5
-		h.offset_bottom = -3
+		h.offset_bottom = -17
 		h.add_theme_constant_override("separation", 5)
 		var num = G.ui._label(str(k + 1), 14, Color(1.0, 0.86, 0.4))
 		num.custom_minimum_size = Vector2(10, 0)
@@ -184,6 +185,15 @@ func _card(i: int) -> Dictionary:
 		act.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		h.add_child(act)
 		b.add_child(h)
+		# a row of the men in it: each one's weapon, and a pip for how he's doing
+		var men = Control.new()
+		men.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		men.set_anchors_preset(Control.PRESET_FULL_RECT)
+		men.offset_top = 21
+		men.offset_left = 18
+		men.offset_bottom = -4
+		men.draw.connect(func(): _draw_men(men))
+		b.add_child(men)
 		var bar = ColorRect.new()
 		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		bar.anchor_top = 1.0
@@ -195,7 +205,7 @@ func _card(i: int) -> Dictionary:
 			G.pc.select_squad(k)
 			G.pc.select_squad(k))     # twice: select it and look at it
 		add_child(b)
-		cards.append({"b": b, "sb": sb, "ic": ic, "top": top, "bar": bar, "act": act})
+		cards.append({"b": b, "sb": sb, "ic": ic, "top": top, "bar": bar, "act": act, "men": men})
 	return cards[i]
 
 func _process(dt: float) -> void:
@@ -236,6 +246,42 @@ func _process(dt: float) -> void:
 		c["act"].text = d[0]
 		c["act"].add_theme_color_override("font_color", d[1])
 		c["sb"].border_color = Color(1.0, 0.86, 0.3, 0.95 if sel else 0.0)
+		c["men"].set_meta("q", q)
+		c["men"].queue_redraw()
 		c["b"].tooltip_text = "Squad %d: click to select it and look at it (or press %d)" % [i + 1, i + 1]
 	for i in range(n, cards.size()):
 		cards[i]["b"].visible = false
+
+func _draw_men(c: Control) -> void:
+	var q = c.get_meta("q", null)
+	if q == null:
+		return
+	var x = 0.0
+	var n = 0
+	for m in q["members"]:
+		if not is_instance_valid(m):
+			continue
+		if x + 16.0 > c.size.x:
+			break
+		var col = Color(0.92, 0.92, 0.88)
+		var pip = Color(0.45, 0.9, 0.4)
+		if m.state == "dead":
+			col = Color(0.45, 0.45, 0.45, 0.6)
+			pip = Color(0.3, 0.3, 0.3)
+		elif m.state == "wounded":
+			col = Color(1.0, 0.45, 0.4)
+			pip = Color(1.0, 0.3, 0.25)
+		elif m.hp < 35.0:
+			pip = Color(1.0, 0.35, 0.3)
+		elif m.hp < 70.0:
+			pip = Color(1.0, 0.8, 0.3)
+		var wid: String = m.wid if "wid" in m else "rifle"
+		if m.cls == "medic":
+			wid = "medic"
+		var tex = Icons.get_icon(wid)
+		c.draw_texture_rect(tex, Rect2(x, 0, 15, 6), false, col)
+		c.draw_rect(Rect2(x + 1, 8, 13, 3), Color(0, 0, 0, 0.5))
+		if m.state != "dead":
+			c.draw_rect(Rect2(x + 1, 8, 13.0 * clampf(m.hp / 100.0, 0.05, 1.0), 3), pip)
+		x += 16.5
+		n += 1

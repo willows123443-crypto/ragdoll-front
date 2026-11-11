@@ -480,9 +480,12 @@ func step(dt: float) -> void:
 			thr = player_inputs["thr"]
 			steer = player_inputs["steer"]
 		else:
-			var r = _ai_drive(dt)
-			thr = r[0]
-			steer = r[1]
+			# the AI driver thinks every other tick (twice the time step when it does): a big saving with
+			# a lot of vehicles about, and nobody can tell
+			if _drive_cache.is_empty() or (Engine.get_physics_frames() + get_instance_id()) % 2 == 0:
+				_drive_cache = _ai_drive(dt * (1.0 if _drive_cache.is_empty() else 2.0))
+			thr = _drive_cache[0]
+			steer = _drive_cache[1]
 	_trail_tick()
 	thr = VehExt.fuel_tick(self, dt, thr)
 	if tracks_broken:
@@ -516,7 +519,7 @@ func step(dt: float) -> void:
 			# tanks flatten crates and flimsy walls; anything fast smashes crates
 			# hedges and bushes: anything with wheels or tracks pushes straight through and flattens them
 			var hedge = col.prop == 2 and not col.has_meta("tree") and not spec.get("boat", false)
-			if col.dest and (spec["tracked"] or hedge or (col.prop == 1 and absf(speed) > 3.0 and not col.has_meta("tree"))):
+			if col.dest and (spec["tracked"] or hedge or _drives_through(col) or (col.prop == 1 and absf(speed) > 3.0 and not col.has_meta("tree"))):
 				if col.has_meta("tree"):
 					col.set_meta("fall", f * signf(speed if speed != 0.0 else 1.0))
 				G.world.destroy_col(col)
@@ -790,6 +793,8 @@ func _atgun(g, dt: float, want, shoot: bool) -> void:
 	_apply_turret()
 	if not shoot or absf(speed) > 0.3 or cannon_cd > 0.0 or atload_t > 0.0 or absf(wrapf(ty - turret_yaw, -PI, PI)) > 0.05:
 		return
+	if not g.is_player and AI.friendly_in_line(g, muzzle(), (want - muzzle()).normalized(), muzzle().distance_to(want)) != null:
+		return      # one of ours in the way
 	set_meta("fire_t", G.sim_time)
 	# the breech opens, the case is thrown out, and the next round has to be fetched and rammed home
 	atload_t = 2.3
@@ -1468,6 +1473,18 @@ func unload_riders() -> void:
 var pass_stall = 0.0
 
 var idle_empty = 0.0
+var _drive_cache: Array = []
+
+# what this vehicle simply pushes over rather than steering round: hedges and bushes, fences and loose
+# props, and (for anything bigger than a jeep) young trees
+func _drives_through(c) -> bool:
+	if not c.dest or spec.get("boat", false) or spec.get("air", false):
+		return false
+	if c.prop == 2:
+		return true
+	if c.has_meta("tree"):
+		return spec["tracked"] or (spec["len"] >= 4.5 and float(c.get_meta("tree")) < 5.5)
+	return c.prop == 1 and spec["len"] >= 3.5
 
 # parked near enough: once a lorry has stopped at its spot it stays put until the spot itself moves well
 # away, instead of creeping at a spot it can't quite reach and sawing back and forth for minutes
@@ -1711,12 +1728,20 @@ func _ai_drive(dt: float) -> Array:
 			var a = yaw + side * 0.45
 			var wd = Vector3(sin(a), 0, cos(a))
 			var off = Vector3(f0.z, 0, -f0.x) * side * -spec["wid"] * 0.45
-			if not G.ray(front + off, front + off + wd * (4.0 + absf(speed) * 0.6), G.L_WORLD).is_empty():
+			var wh = G.ray(front + off, front + off + wd * (4.0 + absf(speed) * 0.6), G.L_WORLD)
+			if not wh.is_empty():
+				# hedges, bushes, fences and saplings it'll just drive through: no swerving for those
+				var wc = wh.collider.get_meta("col") if wh.collider.has_meta("col") else null
+				if wc != null and _drives_through(wc):
+					continue
 				r[1] -= side * 0.8
 		r[1] = clampf(r[1], -1.0, 1.0)
 	# don't drive over friends
 	var f = forward()
+	var reach_f = spec["len"] + 6.0
 	for s in G.soldiers:
+		if absf(s.pos.x - pos.x) > reach_f or absf(s.pos.z - pos.z) > reach_f:
+			continue
 		if s.team == team and s.state == "alive" and s.vehicle == null:
 			var rel = G.flat(s.pos - pos)
 			var a = rel.dot(f) * signf(r[0] if r[0] != 0.0 else 1.0)

@@ -196,7 +196,7 @@ static func work(s) -> void:
 		"construct":
 			var st = s.build_site
 			var close_enemy = s.vis_t != null and is_instance_valid(s.vis_t) and G.dist2d(s.vis_t.pos, s.pos) < 45.0
-			if st == null or st["done"] or st["dead"] or not Build.sites.has(st) or close_enemy or s.supp > 1.5:
+			if st == null or (st["done"] and not Build.camo_pending(st)) or st["dead"] or not Build.sites.has(st) or close_enemy or s.supp > 1.5:
 				s.task = null
 				s.build_site = null
 				s.decide_t = 0.0
@@ -207,7 +207,7 @@ static func work(s) -> void:
 					var q: Array = s.get_meta("build_queue", [])
 					while not q.is_empty():
 						var nx = q.pop_front()
-						if Build.sites.has(nx) and not nx["dead"] and (not nx["done"] or Build.needs_repair(nx)):
+						if Build.sites.has(nx) and not nx["dead"] and (not nx["done"] or Build.needs_repair(nx) or Build.camo_pending(nx)):
 							s.set_meta("build_queue", q)
 							_start_construct(s, nx)
 							s.order = {"mode": "hold", "point": Build.work_spot(nx, s)}

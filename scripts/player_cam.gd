@@ -1171,9 +1171,12 @@ func use_tool(screen: Vector2) -> void:
 			if Build.upgrade(st) == null:
 				G.ui.message("Nothing to upgrade (sandbags, MG nests and FOBs can be upgraded once finished)")
 		elif tool == "camo":
-			if st["done"]:
-				Build.add_camo(st)
-				G.ui.message("Camouflage net over the %s" % st["name"])
+			if st.get("camo", false):
+				G.ui.message("The %s is already under a net" % st["name"])
+			elif st["done"] and Build.order_camo(st):
+				G.ui.message("Camouflage net dropped off at the %s: send men (engineers are quickest) to put it up" % st["name"])
+			elif not st["done"]:
+				G.ui.message("Finish building it first")
 		elif Build.needs_repair(st):
 			Build.rebuild(st)
 			G.ui.message("Engineers will rebuild the %s" % st["name"])

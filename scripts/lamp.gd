@@ -93,6 +93,11 @@ static func make(parent: Node3D, reach: float, spread: float, lens: float, warm:
 	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	beam.name = "beam"
 	n.add_child(beam)
+	# a vehicle's headlamp: no solid cone hanging in the air (that only shows in fog or smoke), just the
+	# lens, its glare, and a long soft wash of light along the road ahead
+	if warm:
+		beam.visible = false
+		n.set_meta("road", true)
 	# the pool of light where it lands (kept in world space)
 	var pool = MeshInstance3D.new()
 	var pq = QuadMesh.new()
@@ -132,6 +137,9 @@ static func update(n: Node3D, cam: Camera3D) -> void:
 	if cd > 0:
 		return
 	n.set_meta("cd", 3)
+	if n.get_meta("road", false):
+		_road_wash(n, o, fwd)
+		return
 	var reach: float = n.get_meta("reach")
 	var hit = G.ray(o + fwd * 0.1, o + fwd * reach, n.get_meta("mask", G.L_WORLD | G.L_VEH))
 	var pool: MeshInstance3D = n.get_node("pool")
@@ -155,3 +163,25 @@ static func update(n: Node3D, cam: Camera3D) -> void:
 	pool.global_transform = Transform3D(Basis(side * r * 2.0, along * r * 2.0 / glance, up), hit.position + nrm * 0.04)
 	var m: StandardMaterial3D = pool.material_override
 	m.albedo_color.a = clampf(0.75 * (1.0 - d / reach) + 0.15, 0.1, 0.8) * (0.75 + 0.25 * glance)
+
+# a headlamp's light on the ground: starting a couple of metres in front of the bumper, widening and
+# fading out down the road, lying on the ground
+static func _road_wash(n: Node3D, o: Vector3, fwd: Vector3) -> void:
+	var pool: MeshInstance3D = n.get_node("pool")
+	var f = Vector3(fwd.x, 0, fwd.z)
+	if f.length_squared() < 0.01:
+		pool.visible = false
+		return
+	f = f.normalized()
+	var L = 18.0
+	# shortened by a wall or a vehicle in the way
+	var hit = G.ray(o + fwd * 0.1, o + f * L + Vector3(0, -0.6, 0), n.get_meta("mask", G.L_WORLD | G.L_VEH))
+	if not hit.is_empty():
+		L = maxf(3.0, o.distance_to(hit.position))
+	var mid = o + f * (2.0 + L * 0.45)
+	var gy = G.world.ground_y(mid.x, mid.z) if G.world != null else mid.y - 1.0
+	var side = Vector3(f.z, 0, -f.x)
+	pool.visible = true
+	pool.global_transform = Transform3D(Basis(side * (2.2 + L * 0.14), f * L * 1.05, Vector3.UP), Vector3(mid.x, gy + 0.06, mid.z))
+	var m: StandardMaterial3D = pool.material_override
+	m.albedo_color.a = 0.3

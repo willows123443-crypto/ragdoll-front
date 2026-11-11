@@ -304,7 +304,49 @@ static func _scaffold(st: Dictionary) -> void:
 	st["label"] = lb
 
 # adds building effort; returns true while there's still work to do
+# A camouflage net is a job, not a click: the net is dropped off rolled up at the structure, and men
+# have to stretch it over (engineers quickest) before it does anything.
+const CAMO_WORK = 12.0
+
+static func order_camo(st: Dictionary) -> bool:
+	if st.get("camo", false) or st.has("camo_work") or not st["done"] or st["dead"] or not is_instance_valid(st["root"]):
+		return false
+	st["camo_work"] = 0.0
+	# the rolled-up net and its poles, waiting by the structure
+	var roll = Node3D.new()
+	st["root"].add_child(roll)
+	var w = _wv(st, 0.0, KINDS[st["kind"]]["size"].y * 0.5 + 1.2)
+	roll.position = Vector3(w.x, G.world.ground_y(w.x, w.z) + 0.2, w.z) - st["root"].global_position if st["root"].is_inside_tree() else Vector3.ZERO
+	var rm = MeshInstance3D.new()
+	rm.mesh = VModel.cyl_mesh(0.22, 1.6, -1.0, 10)
+	rm.material_override = VModel.mat(Color(0.33, 0.37, 0.24))
+	rm.rotation.z = PI / 2.0
+	roll.add_child(rm)
+	for k in range(3):
+		var pm = MeshInstance3D.new()
+		pm.mesh = VModel.cyl_mesh(0.035, 2.2, -1.0, 5)
+		pm.material_override = VModel.mat(WOODC)
+		pm.rotation.z = PI / 2.0
+		pm.position = Vector3(0, 0.3 + k * 0.06, 0.35 + k * 0.08)
+		roll.add_child(pm)
+	st["camo_roll"] = roll
+	return true
+
+static func camo_pending(st: Dictionary) -> bool:
+	return st.has("camo_work") and not st.get("camo", false) and not st["dead"]
+
 static func add_work(st: Dictionary, amt: float) -> bool:
+	if camo_pending(st) and st["done"]:
+		st["camo_work"] += amt
+		if st["camo_work"] >= CAMO_WORK:
+			st.erase("camo_work")
+			if is_instance_valid(st.get("camo_roll")):
+				st["camo_roll"].queue_free()
+			add_camo(st)
+			if st["team"] == 0:
+				G.ui.radio(0, "Camouflage net is up over the %s" % st["name"])
+			return false
+		return true
 	if st["done"] or st["dead"]:
 		return false
 	if Prod.has(st["team"], "engineers"):
@@ -391,7 +433,7 @@ static func _complete(st: Dictionary, quiet: bool) -> void:
 			if st["veh"] != null:
 				st["veh"].set_meta("in_pit", true)
 	if st.get("camo_wanted", false):
-		add_camo(st)
+		order_camo(st)
 	if t < no_spawn_said.size():
 		no_spawn_said[t] = false
 	if not quiet:
@@ -643,7 +685,7 @@ static func work_site(team: int, from: Vector3, max_d: float):
 	var best = null
 	var bd = max_d
 	for st in sites:
-		if st["team"] == team and not st["done"] and not st["dead"]:
+		if st["team"] == team and ((not st["done"]) or camo_pending(st)) and not st["dead"]:
 			var d = G.dist2d(st["p"], from) * (0.6 if is_fob(st) else 1.0)
 			if d < bd:
 				bd = d
@@ -775,7 +817,7 @@ static func step(dt: float) -> void:
 	tick = 0.0
 	for st in sites.duplicate():
 		_check_alive(st)
-		if not st["done"] and not st["dead"]:
+		if (not st["done"] or camo_pending(st)) and not st["dead"]:
 			_passive_work(st, tdt)
 		elif alive(st):
 			_effect(st, tdt)
@@ -987,8 +1029,8 @@ static func _ai_plan(t: int) -> void:
 			G.ui.radio(t, "Engineers: rebuilding the %s at %s" % [st["name"], AI.grid_ref(st["p"])])
 			return
 	for st in mine:
-		if st["done"] and not st["dead"] and not st.get("camo", false) and st["kind"] in ["fob", "fob2", "depot", "supply", "mortarpit", "aa"] and randf() < 0.4:
-			add_camo(st)
+		if st["done"] and not st["dead"] and not st.get("camo", false) and not st.has("camo_work") and st["kind"] in ["fob", "fob2", "depot", "supply", "mortarpit", "aa"] and randf() < 0.4:
+			order_camo(st)
 			return
 	# what the enemy has: aircraft and armour change what's worth building
 	var foe_air = false

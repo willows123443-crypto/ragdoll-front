@@ -17,6 +17,7 @@ var mm_rect = Rect2()
 var hp_seen = {}                # site/vehicle -> hp last tick (for "under fire")
 var tick_t = 0.0
 const MMS = 250.0
+const ORD = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth"]
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -77,10 +78,12 @@ func _input(ev: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 # ---------------------------------------------------------------- what to warn about
-func alert(key: String, text: String, p: Vector3, cd: float = 25.0, col: Color = Color(1.0, 0.55, 0.4)) -> void:
+func alert(key: String, text: String, p: Vector3, cd: float = 25.0, col: Color = Color(1.0, 0.55, 0.4), say: String = "") -> void:
 	if G.sim_time < alert_cd.get(key, 0.0):
 		return
 	alert_cd[key] = G.sim_time + cd
+	# and over the radio, in so many words
+	G.audio.radio_say(say if say != "" else text)
 	var b = Button.new()
 	b.focus_mode = Control.FOCUS_NONE
 	b.text = "  " + text
@@ -127,7 +130,8 @@ func _watch() -> void:
 			continue
 		var pinned = men.filter(func(m): return m.supp > 1.2).size()
 		if pinned * 2 >= men.size():
-			alert("pin%d" % q["id"], "Squad %d pinned down" % (q["id"] + 1), men[0].pos, 40.0)
+			alert("pin%d" % q["id"], "Squad %d pinned down" % (q["id"] + 1), men[0].pos, 40.0, Color(1.0, 0.55, 0.4),
+				G.pick(["%s squad pinned! We need support!", "%s squad, we're pinned down!", "This is %s squad, taking heavy fire!"]) % ORD[mini(q["id"], ORD.size() - 1)])
 	# men under fire: pings on the map
 	for s in G.soldiers:
 		if s.team == 0 and s.state == "alive" and s.supp > 1.1 and G.sim_time > ping_cd.get(s, 0.0):
@@ -149,7 +153,8 @@ func _watch() -> void:
 		var was = hp_seen.get(st, hp)
 		hp_seen[st] = hp
 		if hp > was + 0.02:
-			alert("st" + str(st["p"]), "%s under fire" % st["name"], st["p"], 30.0, Color(1.0, 0.3, 0.3) if st["kind"] == "hq" else Color(1.0, 0.6, 0.35))
+			alert("st" + str(st["p"]), "%s under fire" % st["name"], st["p"], 30.0, Color(1.0, 0.3, 0.3) if st["kind"] == "hq" else Color(1.0, 0.6, 0.35),
+				"%s under fire!" % ("HQ is" if st["kind"] == "hq" else "The " + st["name"].to_lower() + " is"))
 	for v in G.vehicles:
 		if v.team != 0:
 			continue
@@ -157,9 +162,18 @@ func _watch() -> void:
 		hp_seen[v] = v.hp
 		if v.dead and not v.has_meta("lost_said"):
 			v.set_meta("lost_said", true)
-			alert("vl" + str(v.get_instance_id()), "%s lost" % v.spec["name"], v.pos, 1.0, Color(1.0, 0.25, 0.25))
+			alert("vl" + str(v.get_instance_id()), "%s lost" % v.spec["name"], v.pos, 1.0, Color(1.0, 0.25, 0.25),
+				"We've lost a %s, grid %s" % [v.spec["name"].to_lower(), AI.grid_ref(v.pos)])
 		elif not v.dead and v.hp < was2 - 40.0:
 			alert("vh" + str(v.get_instance_id()), "%s taking hits" % v.spec["name"], v.pos, 25.0)
+	# enemy armour or aircraft coming into view: called out over the radio
+	for v in G.vehicles:
+		if v.team == 0 or v.dead or not v.visible or v.has_meta("spotted_said"):
+			continue
+		if v.spec["tracked"] or v.kind in ["armoredcar", "halftrack"] or v.spec.get("air", false):
+			v.set_meta("spotted_said", true)
+			var what = "Aircraft" if v.spec.get("air", false) else ("Armour" if v.spec["tracked"] else "Enemy %s" % v.spec["name"].to_lower())
+			alert("sp" + str(v.get_instance_id()), "%s spotted" % what, v.pos, 1.0, Color(1.0, 0.75, 0.3), "%s spotted, grid %s!" % [what, AI.grid_ref(v.pos)])
 	# enemies we've seen, remembered where they were last seen
 	for s in G.soldiers:
 		if s.team == 0 or s.state == "dead":
@@ -179,6 +193,7 @@ func _watch() -> void:
 func _draw() -> void:
 	if not active():
 		return
+	_order_icons()
 	_minimap(mm_rect)
 	_hover_bar()
 	_income()
@@ -275,6 +290,11 @@ func _minimap(r: Rect2) -> void:
 		if v.turret != null and v.spec["tracked"]:
 			var gy = v.yaw + v.turret_yaw
 			draw_line(p5, p5 + Vector2(sin(gy), cos(gy)) * 7.0, Color(0, 0, 0, 0.9), 1.5)
+	# a command post's reach
+	var cpv = VehExt.command_post(0)
+	if cpv != null:
+		var pcp = _w2m(cpv.pos, r, b)
+		draw_arc(pcp, VehExt.CP_R / b.size.x * r.size.x, 0, TAU, 24, Color(0.6, 0.85, 1.0, 0.6), 1.0)
 	# under fire: expanding red rings
 	for pg in pings:
 		var age2 = G.sim_time - pg[1]
@@ -378,3 +398,61 @@ func _income() -> void:
 	draw_string(font, at, t, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.88, 0.5))
 	if trend == "▼":
 		draw_string(font, at + Vector2(tw - 10, 0), "▼", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.35, 0.3))
+
+# ---------------------------------------------------------------- what each squad's been told to do
+# a small badge over each of your squads: a shield (holding / in cover), an arrow (moving, charging,
+# falling back), a crosshair (attack-move), chevrons (following); readable when zoomed right out
+func _order_icons() -> void:
+	var cam: Camera3D = G.pc.cam
+	for q in G.squads:
+		if q["team"] != 0:
+			continue
+		var men = q["members"].filter(func(m): return is_instance_valid(m) and m.state == "alive" and m.vehicle == null)
+		if men.is_empty():
+			continue
+		var tally = {}
+		var c = Vector3.ZERO
+		for m in men:
+			c += m.pos
+			var o = m.order
+			var tg = "free" if o == null else str(o.get("tag", o.get("mode", "")))
+			tally[tg] = tally.get(tg, 0) + 1
+		c /= men.size()
+		var tag = ""
+		for k in tally:
+			if tag == "" or tally[k] > tally[tag]:
+				tag = k
+		if tag == "free" or tag == "":
+			continue
+		var top = c + Vector3(0, 3.0, 0)
+		if cam.is_position_behind(top):
+			continue
+		var p = cam.unproject_position(top)
+		var col = {"hold": Color(0.45, 0.75, 1.0), "cover": Color(0.45, 1.0, 0.55), "charge": Color(1.0, 0.45, 0.3), "fallback": Color(1.0, 0.8, 0.3),
+			"amove": Color(1.0, 0.55, 0.25), "move": Color(0.9, 0.9, 0.9), "follow": Color(0.8, 0.7, 1.0)}.get(tag, Color(0.9, 0.9, 0.9))
+		draw_circle(p, 11.0, Color(0, 0, 0, 0.6))
+		draw_arc(p, 11.0, 0, TAU, 20, col, 1.5)
+		match tag:
+			"hold", "cover":
+				var sh = PackedVector2Array([p + Vector2(-6, -6), p + Vector2(6, -6), p + Vector2(6, 0), p + Vector2(0, 7), p + Vector2(-6, 0)])
+				draw_colored_polygon(sh, col)
+				if tag == "cover":
+					draw_line(p + Vector2(-3, -1), p + Vector2(3, -1), Color(0, 0, 0, 0.8), 1.5)
+			"amove":
+				draw_arc(p, 5.5, 0, TAU, 16, col, 1.5)
+				for d in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
+					draw_line(p + d * 3.0, p + d * 8.5, col, 1.5)
+			"follow":
+				for k in range(2):
+					var y = -3.0 + k * 5.0
+					draw_polyline(PackedVector2Array([p + Vector2(-5, y + 3), p + Vector2(0, y - 1), p + Vector2(5, y + 3)]), col, 2.0)
+			_:
+				# an arrow the way the squad is heading (back toward home for a fallback)
+				var dest: Vector3 = men[0].order.get("point", c) if men[0].order != null and men[0].order.get("point") != null else c + Vector3(0, 0, 1)
+				var sd = cam.unproject_position(Vector3(dest.x, top.y, dest.z)) - p
+				var dir = sd.normalized() if sd.length() > 1.0 else Vector2(0, -1)
+				var tipp = p + dir * 7.0
+				var sidev = Vector2(-dir.y, dir.x)
+				draw_line(p - dir * 6.0, tipp - dir * 2.0, col, 2.5)
+				draw_colored_polygon(PackedVector2Array([tipp + dir * 2.0, tipp - dir * 4.0 + sidev * 4.5, tipp - dir * 4.0 - sidev * 4.5]), col)
+		draw_string(font, p + Vector2(-3, 22), str(q["id"] + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.8))

@@ -1290,6 +1290,18 @@ static func decide(s) -> void:
 		if G.dist2d(s.pos, goal) > 5.0 or absf(goal.y - s.pos.y) > 1.6:
 			if s.in_cover and s.supp > 1.1:
 				return
+			# attack-move: an enemy in sight on the way, so get into cover near here and fight it out;
+			# once it's been quiet for a few seconds, carry on to the point
+			if s.order != null and s.order.get("attack", false) and s.has_seen and G.sim_time - s.seen_t < 4.0 and G.dist2d(s.last_seen, s.pos) < 80.0:
+				if s.cover == null or s.cover_bad >= 2:
+					var ca = find_cover(s, s.last_seen, "hold")
+					if ca != null and G.dist2d(ca.p, s.pos) < 14.0:
+						take_cover(s, ca)
+					else:
+						stop_move(s)
+						s.kneel = true
+				s.task = "hold"
+				return
 			if s.cover != null:
 				release_cover(s)
 			s.task = "move"
@@ -1533,6 +1545,146 @@ static func _watchdog(s) -> void:
 	go_to(s, goal + Vector3(cos(a), 0, sin(a)) * randf_range(2.0, 6.0), 4.6)
 	s.decide_t = 3.0
 
+# A man hit in the leg puts an arm over a mate's shoulder and the two of them make their way back to a
+# medic (or the hospital, or the rear): the helper walks him there with an arm round his waist.
+static func _help_walk(s) -> bool:
+	if s.is_player or s.state != "alive" or s.vehicle != null:
+		return false
+	# the one helping
+	if s.task == "help_walk":
+		var w = s.get_meta("helping", null)
+		var done = w == null or not is_instance_valid(w) or w.state != "alive" or not w.has_meta("leg_wound") or w.vehicle != null
+		var dest: Vector3 = s.get_meta("help_to", s.pos)
+		if not done and (G.dist2d(s.pos, dest) < 3.0 or G.sim_time > s.get_meta("help_until", 0.0) or s.supp > 1.4):
+			done = true
+			if w != null and is_instance_valid(w) and w.state == "alive":
+				w.order = {"mode": "hold", "point": w.pos}
+				w.prone_t = false
+				w.crouch_t = 0.8
+				G.fx.callout(s, G.pick(["Medic! Got one for you!", "Sit tight, doc's coming.", "Here, rest that leg."]))
+		if done:
+			s.task = null
+			s.remove_meta("helping")
+			if w != null and is_instance_valid(w):
+				w.remove_meta("helper")
+			s.decide_t = 0.0
+			return false
+		s.ready_ = false
+		s.prone_t = false
+		if s.move_target == null or G.dist2d(s.move_target, dest) > 2.0:
+			go_to(s, dest, 2.0)
+		# his arm round the wounded man's waist
+		s.hand_t = w.parts[0].global_position + Vector3(0, 0.12, 0) if not w.parts.is_empty() else w.pos + Vector3(0, 1.0, 0)
+		s.set_meta("work_hands_t", G.sim_time)
+		s.hands_t = [s.hand_t, s.chest() + Vector3(0, -0.2, 0)]
+		return true
+	if not s.has_meta("leg_wound") or s.task in ["medic", "stretcher"]:
+		return false
+	var h = s.get_meta("helper", null)
+	if h != null and is_instance_valid(h) and h.state == "alive" and h.task == "help_walk":
+		# beside him, his arm over the helper's shoulders
+		var hr = Vector3(-cos(h.body_yaw), 0, sin(h.body_yaw))
+		var side_p: Vector3 = h.pos + hr * 0.52
+		s.want = G.flat(side_p - s.pos) * 5.0
+		if s.want.length() > 3.0:
+			s.want = s.want.normalized() * 3.0
+		s.body_yaw = G.turn_to(s.body_yaw, h.body_yaw, 6.0 * G.DT)
+		s.aim_yaw = s.body_yaw
+		s.ready_ = false
+		s.prone_t = false
+		s.crouch_t = 0.25
+		var sh: Vector3 = h.parts[1].global_position + Vector3(0, 0.22, 0) if not h.parts.is_empty() else h.pos + Vector3(0, 1.4, 0)
+		s.hand_t = sh
+		s.hands_t = [sh - hr * 0.15, s.chest() + Vector3(0, -0.15, 0)]
+		s.set_meta("work_hands_t", G.sim_time)
+		return true
+	if h != null:
+		s.remove_meta("helper")
+	# ask a mate for a hand now and then, when it's quiet enough to move
+	if G.sim_time < s.get_meta("help_ask_t", 0.0) or s.supp > 0.9 or s.vis_t != null:
+		return false
+	s.set_meta("help_ask_t", G.sim_time + 6.0)
+	var best = null
+	var bd = 16.0
+	for o in G.soldiers_near(s.pos):
+		if o != s and o.team == s.team and o.state == "alive" and not o.is_player and o.vehicle == null and not o.has_meta("leg_wound") \
+				and not (o.task in ["medic", "stretcher", "construct", "repair", "build", "fixwheel", "help_walk", "board", "flee", "rout", "charge", "sweep", "mine", "patch", "salvage", "drag"]) \
+				and o.cls != "medic" and o.supp < 0.6 and o.order == null and o.dragging == null and not o.has_meta("helping"):
+			var d = G.dist2d(o.pos, s.pos)
+			if d < bd:
+				bd = d
+				best = o
+	if best == null:
+		return false
+	# where to: a medic close by, the field hospital, or back toward the rally point
+	var to = null
+	var md = 90.0
+	for o in G.soldiers:
+		if o.team == s.team and o.state == "alive" and o.cls == "medic" and o.vehicle == null and G.dist2d(o.pos, s.pos) < md:
+			md = G.dist2d(o.pos, s.pos)
+			to = o.pos
+	if to == null:
+		var hosp = Medical.hospital_near(s.team, s.pos, 120.0)
+		if hosp != null:
+			to = hosp["p"]
+	if to == null:
+		var back = G.flat(G.world.rally_point(s.team) - s.pos)
+		to = s.pos + (back.normalized() * minf(30.0, back.length()) if back.length() > 1.0 else Vector3.ZERO)
+	release_cover(best)
+	release_cover(s)
+	best.task = "help_walk"
+	best.set_meta("helping", s)
+	best.set_meta("help_to", G.main._free_spot(to))
+	best.set_meta("help_until", G.sim_time + 40.0)
+	s.set_meta("helper", best)
+	stop_move(s)
+	G.fx.callout(best, G.pick(["I've got you, lean on me.", "Arm over my shoulder, come on.", "Let's get you to the doc."]))
+	return true
+
+# Out of magazines next to a mate who has plenty: he passes a couple over, hand to hand.
+static func _ammo_handoff(s) -> bool:
+	if s.is_player or s.state != "alive" or s.vehicle != null:
+		return false
+	if s.has_meta("handoff"):
+		var h: Dictionary = s.get_meta("handoff")
+		var o = h["with"]
+		if not is_instance_valid(o) or o.state != "alive" or G.sim_time > h["t"] or G.dist2d(o.pos, s.pos) > 3.0:
+			s.remove_meta("handoff")
+			return false
+		var mid = (s.chest() + o.chest()) * 0.5 + Vector3(0, -0.15, 0)
+		s.want = Vector3.ZERO
+		s.ready_ = false
+		s.body_yaw = G.turn_to(s.body_yaw, atan2(o.pos.x - s.pos.x, o.pos.z - s.pos.z), 6.0 * G.DT)
+		s.aim_yaw = s.body_yaw
+		s.hand_t = mid
+		s.hands_t = [mid + Vector3(0, 0.04, 0), s.chest() + Vector3(0, -0.2, 0)]
+		s.set_meta("work_hands_t", G.sim_time)
+		# the moment it changes hands
+		if h["giver"] and not h.get("given", false) and G.sim_time > h["t"] - 0.45:
+			h["given"] = true
+			var n = mini(2 * o.W["mag"], int(s.reserve / 3))
+			s.reserve -= n
+			o.reserve += maxi(n, o.W["mag"])
+			G.fx.callout(o, G.pick(["Cheers!", "Got it, thanks.", "Back in it!"]))
+		return true
+	if G.sim_time < s.get_meta("handoff_chk", 0.0):
+		return false
+	s.set_meta("handoff_chk", G.sim_time + 2.0)
+	# I'm the one with plenty: anyone dry right beside me?
+	if s.reserve < s.W["mag"] * 3 or s.supp > 1.0 or s.W["rocket"]:
+		return false
+	for o in G.soldiers_near(s.pos):
+		if o != s and o.team == s.team and o.state == "alive" and not o.is_player and o.vehicle == null and o.reserve <= 0 \
+				and o.mag < o.W["mag"] * 0.5 and not o.W["rocket"] and G.dist2d(o.pos, s.pos) < 2.6 and not o.has_meta("handoff"):
+			s.set_meta("handoff", {"with": o, "t": G.sim_time + 1.2, "giver": true})
+			o.set_meta("handoff", {"with": s, "t": G.sim_time + 1.2, "giver": false})
+			stop_move(s)
+			stop_move(o)
+			G.fx.callout(o, G.pick(["I'm out! Mags!", "Need ammo!", "Anyone got a mag?"]))
+			G.fx.callout(s, G.pick(["Here, take these.", "Catch!", "Two mags, make 'em count."]))
+			return true
+	return false
+
 # blown up onto a roof: walk to the nearest edge and drop off it, rather than standing about up there
 static func _off_the_roof(s) -> bool:
 	if s.vehicle != null or s.state != "alive" or G.world.roof_cols.is_empty():
@@ -1563,6 +1715,10 @@ static func update(s) -> void:
 		Modes.zombie_tick(s)
 		return
 	if _off_the_roof(s):
+		return
+	if _help_walk(s):
+		return
+	if _ammo_handoff(s):
 		return
 	if (s.bleed > 0.0 or s.bandage_t > 0.0 or s.think <= 0.05) and Medical.ai_tick(s):
 		stance(s)
@@ -1738,9 +1894,13 @@ static func update(s) -> void:
 					s.task = null
 	if (Engine.get_physics_frames() + s.id) % 15 == 0:
 		_turret_check(s)
-	_keep_apart(s)
+	# far off and simplified: elbow room and walking round vehicles only now and then (nobody can see it)
+	var far_s = s.lod_frozen and (Engine.get_physics_frames() + s.id) % 4 != 0
+	if not far_s:
+		_keep_apart(s)
+	if not far_s:
+		_round_vehicles(s)
 	_keep_from_zombies(s)
-	_round_vehicles(s)
 	aim_and_fire(s)
 	stance(s)
 	if s.vis_t == null and s.move_target == null:
@@ -1925,6 +2085,10 @@ static func aim_and_fire(s) -> void:
 	elif s.task == "raze" and s.has_meta("raze_p") and s.move_target == null:
 		point = s.get_meta("raze_p")
 		extra = 0.01
+	# no spraying blind into a smoke screen: only if he saw them go into it a moment ago
+	if point != null and tgt == null and not G.smoke_clouds.is_empty() and G.blocked(s.head_pos(), point, true) and not G.blocked(s.head_pos(), point, false):
+		if G.sim_time - s.seen_t > 4.0:
+			point = null
 	if point != null:
 		s.ready_ = true
 		var err = aim_at(s, point, 5.5)
@@ -2041,6 +2205,11 @@ static func aim_and_fire(s) -> void:
 
 static func stance(s) -> void:
 	s.lean_t = 0.0
+	# a grenade just thrown: heads down until it's gone off
+	if G.sim_time < s.get_meta("duck_after_t", 0.0):
+		s.crouch_t = 1.0
+		s.prone_t = false
+		return
 	if s.dragging != null:
 		s.crouch_t = 0.5
 		s.prone_t = false
@@ -2441,12 +2610,14 @@ static func _round_vehicles(s) -> void:
 	if s.vault != null or s.vehicle != null:
 		return
 	for v in G.vehicles:
+		var R = v.spec["len"] * 0.5 + 1.0
+		if absf(s.pos.x - v.pos.x) > R or absf(s.pos.z - v.pos.z) > R:
+			continue
 		if v.dead and not v.spec.get("static", false) and v.spec.get("air", false):
 			continue
 		if v.spec.get("air", false) and v.alt > 2.0:
 			continue
 		var rel = G.flat(s.pos - v.pos)
-		var R = v.spec["len"] * 0.5 + 1.0
 		if rel.length_squared() > R * R:
 			continue
 		var f = v.forward()

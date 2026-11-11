@@ -62,6 +62,7 @@ var orders = [{"mode": "free", "point": null}, {"mode": "free", "point": null}, 
 var squads: Array = []
 var grenades: Array = []
 var smoke_clouds: Array = []
+var prof2 = {}
 var sgrid = {}             # soldiers bucketed by 2 m cell, rebuilt every tick
 
 func rebuild_sgrid() -> void:

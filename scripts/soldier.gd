@@ -532,21 +532,41 @@ func drop_helmet() -> void:
 	G.fx.debris_list.append({"b": rb, "t": 150.0})
 
 func _helmet_parts(head: Node3D, helm: Material, band: Material, cloth: Material) -> void:
+	# The heads are boxes, so the helmets are shells shaped to fit them: a rounded-off square crown sitting
+	# down over the top of the head, just clear of the brows, with each side's own brim or skirt.
+	var by = 0.075
+	var bs = 0.306
 	match team % 4:
-		0:  # round dome with a narrow rim
-			_hpart(head, "dome", Vector3(0.33, 0.5, 0.35), Vector3(0, 0.07, 0), helm)
-			_hpart(head, "cyl", Vector3(0.37, 0.025, 0.39), Vector3(0, 0.07, 0), helm)
-		1:  # high rounded helmet with a short skirt down over the back of the neck; the front stays clear of the eyes
-			_hpart(head, "dome", Vector3(0.31, 0.54, 0.33), Vector3(0, 0.085, 0.005), helm)
-			_hpart(head, "cyl", Vector3(0.33, 0.02, 0.35), Vector3(0, 0.085, 0.005), helm)
-			_mesh(head, Vector3(0.24, 0.075, 0.035), Vector3(0, 0.055, 0.152), helm)
-		2:  # shallow bowl with a wide flat brim
-			_hpart(head, "dome", Vector3(0.28, 0.38, 0.3), Vector3(0, 0.08, 0), helm)
-			_hpart(head, "cyl", Vector3(0.44, 0.022, 0.46), Vector3(0, 0.075, 0), helm)
-		_:  # soft field cap with a brim
-			_hpart(head, "cyl", Vector3(0.29, 0.13, 0.3), Vector3(0, 0.13, 0), cloth)
-			_hpart(head, "cyl", Vector3(0.4, 0.02, 0.42), Vector3(0, 0.075, 0), cloth)
-	_hpart(head, "cyl", Vector3(0.335, 0.035, 0.355), Vector3(0, 0.09, 0), band)
+		0:  # a deep, rounded crown with a narrow rolled rim all the way round
+			_hbox(head, Vector3(0.3, 0.13, 0.3), Vector3(0, 0.106, 0.004), helm, 0.052)
+			_hbox(head, Vector3(0.326, 0.018, 0.326), Vector3(0, 0.045, 0.004), helm, 0.008)
+		1:  # a higher crown, a short peak over the eyes, and a skirt flaring out over the ears and the back of the neck
+			_hbox(head, Vector3(0.29, 0.145, 0.3), Vector3(0, 0.112, 0.01), helm, 0.055)
+			_hbox(head, Vector3(0.26, 0.016, 0.05), Vector3(0, 0.05, -0.15), helm, 0.006, Vector3(0.28, 0, 0))
+			_hbox(head, Vector3(0.27, 0.08, 0.018), Vector3(0, 0.03, 0.163), helm, 0.006, Vector3(-0.38, 0, 0))
+			for e in [-1.0, 1.0]:
+				_hbox(head, Vector3(0.018, 0.075, 0.22), Vector3(e * 0.152, 0.032, 0.035), helm, 0.006, Vector3(0, 0, e * 0.36))
+		2:  # a shallow bowl on top of the head with a wide flat brim
+			_hbox(head, Vector3(0.27, 0.085, 0.27), Vector3(0, 0.16, 0.0), helm, 0.038)
+			_hbox(head, Vector3(0.42, 0.014, 0.42), Vector3(0, 0.122, 0.0), helm, 0.007)
+			by = 0.135
+			bs = 0.276
+		_:  # a soft field cap with a peak
+			_hbox(head, Vector3(0.268, 0.09, 0.268), Vector3(0, 0.15, 0.0), cloth, 0.03)
+			_hbox(head, Vector3(0.2, 0.014, 0.085), Vector3(0, 0.112, -0.165), cloth, 0.006, Vector3(0.12, 0, 0))
+			by = 0.125
+			bs = 0.274
+	_hbox(head, Vector3(bs, 0.028, bs), Vector3(0, by, 0.004 if team % 4 < 2 else 0.0), band, 0.01)
+
+# a bevelled box (rounded edges), for helmets and the like
+func _hbox(parent: Node3D, size: Vector3, at: Vector3, mat: Material, bevel: float, rot: Vector3 = Vector3.ZERO) -> void:
+	var mi = MeshInstance3D.new()
+	mi.mesh = VModel.bevel_mesh(size, bevel)
+	mi.position = at
+	mi.rotation = rot
+	mi.material_override = mat
+	mi.layers = 2
+	parent.add_child(mi)
 
 func _build_body() -> void:
 	_compute_targets()
@@ -764,14 +784,14 @@ func tool_at(kind: String, grip: Vector3, head: Vector3) -> void:
 		tool_node.set_meta("k", kind)
 		var pole = MeshInstance3D.new()
 		var bm = BoxMesh.new()
-		bm.size = Vector3(0.035, 1.0, 0.035)
+		bm.size = Vector3(0.035, 1.0, 0.035) if kind != "wrench" else Vector3(0.03, 1.0, 0.015)
 		pole.mesh = bm
-		pole.material_override = _mat("toolwood", Color(0.45, 0.33, 0.2), false)
+		pole.material_override = _mat("toolwood", Color(0.45, 0.33, 0.2), false) if kind != "wrench" else _mat("toolsteel", Color(0.3, 0.3, 0.3), false)
 		pole.name = "pole"
 		tool_node.add_child(pole)
 		var hd = MeshInstance3D.new()
 		var hm = BoxMesh.new()
-		hm.size = Vector3(0.22, 0.03, 0.26) if kind == "shovel" else Vector3(0.06, 0.06, 0.16)
+		hm.size = Vector3(0.22, 0.03, 0.26) if kind == "shovel" else (Vector3(0.07, 0.025, 0.07) if kind == "wrench" else Vector3(0.06, 0.06, 0.16))
 		hd.mesh = hm
 		hd.material_override = _mat("toolsteel", Color(0.3, 0.3, 0.3), false)
 		hd.name = "head"
@@ -1023,12 +1043,28 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 		rh = rsh + reach - ur * (0.08 + 0.22 * maxf(0.0, -sw))
 		lh = lsh + reach + ur * (0.08 + 0.22 * maxf(0.0, -sw))
 	elif throw_t > 0.0:
-		var k = 1.0 - throw_t / 0.55
-		if k < 0.45:
-			rh = rsh - uf * 0.32 + ur * 0.1 + Vector3(0, 0.2, 0)
+		var TT: float = get_meta("throw_T", 0.55)
+		var k = 1.0 - throw_t / TT
+		if TT > 0.9:
+			# pin out at the chest, arm right back and up, over the top, and the follow-through
+			var rel = 1.0 - Combat.THROW_AT / TT
+			if k < 0.28:
+				rh = (rsh + lsh) * 0.5 + uf * 0.3 + Vector3(0, -0.22, 0)
+				lh = rh + ur * 0.09 + Vector3(0, 0.03 * sin(k * 40.0), 0)
+			elif k < rel:
+				var w = (k - 0.28) / (rel - 0.28)
+				rh = rsh + (-uf * 0.4 + ur * 0.12 + Vector3(0, 0.32, 0)) * minf(1.0, w * 1.6)
+				lh = lsh + uf * (0.3 + 0.15 * w) + Vector3(0, 0.05 * w, 0)
+			else:
+				var w2 = (k - rel) / (1.0 - rel)
+				rh = rsh + uf * lerpf(0.5, 0.35, w2) + Vector3(0, lerpf(0.3, -0.35, w2), 0) - ur * 0.15 * w2
+				lh = lsh + uf * 0.2 + Vector3(0, -0.3, 0)
 		else:
-			rh = rsh + uf * 0.45 + Vector3(0, 0.25 * (1.0 - k), 0)
-		lh = lsh + uf * 0.22 + Vector3(0, -0.32, 0)
+			if k < 0.45:
+				rh = rsh - uf * 0.32 + ur * 0.1 + Vector3(0, 0.2, 0)
+			else:
+				rh = rsh + uf * 0.45 + Vector3(0, 0.25 * (1.0 - k), 0)
+			lh = lsh + uf * 0.22 + Vector3(0, -0.32, 0)
 		g = (uf * 0.6 + ur * 0.5 + Vector3(0, -0.4, 0)).normalized()
 		anchor_l = true
 	elif hand_t != null and tool_mode == "hammer":
@@ -1390,7 +1426,7 @@ func kick(dir: Vector3) -> void:
 # far from the camera in a big battle, a healthy soldier's body just follows its pose
 # instead of being simulated: the physics only runs for the people you can actually see
 func _lod_far() -> bool:
-	if G.soldiers.size() < 50 or is_player or state != "alive" or vault != null or dragging != null:
+	if G.soldiers.size() < 36 or is_player or state != "alive" or vault != null or dragging != null:
 		return false
 	var cam = get_viewport().get_camera_3d()
 	var ld: float = G.settings["lod_dist"]
@@ -2548,7 +2584,13 @@ func _tick_alive() -> void:
 	supp = maxf(0.0, supp - 0.3 * G.DT)
 	radio_cd = maxf(0.0, radio_cd - G.DT) if is_player else radio_cd
 	stun = maxf(0.0, stun - G.DT)
+	var thr_before = throw_t
 	throw_t = maxf(0.0, throw_t - G.DT)
+	if has_meta("throw_pending") and thr_before > Combat.THROW_AT and throw_t <= Combat.THROW_AT:
+		Combat.release_throw(self)
+		# and down for a moment while it goes off
+		if not is_player:
+			set_meta("duck_after_t", G.sim_time + 1.2)
 	for r in range(5):
 		limb[r] = minf(1.0, limb[r] + 1.1 * G.DT)
 	if is_player:
@@ -2566,6 +2608,9 @@ func _tick_alive() -> void:
 	if is_player:
 		_ladder_check()
 	var sm: float = W["speed"] * (0.3 if prone else 1.0)
+	if has_meta("leg_wound"):
+		# hobbling on the good leg; leaning on a mate he goes a little better
+		sm *= 0.6 if has_meta("helper") else 0.38
 	# water: wading slows you down the deeper it gets; past chest height you swim, rifle slung
 	var was_swim = swim
 	swim = false
@@ -2608,8 +2653,9 @@ func _tick_alive() -> void:
 		pos.z += vel.z * G.DT
 		# a man lying still isn't shoved along the ground by his mates (that slid prone men about)
 		var still_flat = prone and want.length_squared() < 0.04
-		for o in G.soldiers_near(pos):
-			if still_flat or o == self or o.state != "alive" or absf(o.pos.y - pos.y) > 1.0:
+		var skip_crowd = still_flat or (lod_frozen and (Engine.get_physics_frames() + id) % 4 != 0)
+		for o in ([] if skip_crowd else G.soldiers_near(pos)):
+			if o == self or o.state != "alive" or absf(o.pos.y - pos.y) > 1.0:
 				continue
 			var dx: float = pos.x - o.pos.x
 			var dz: float = pos.z - o.pos.z
@@ -2625,7 +2671,7 @@ func _tick_alive() -> void:
 		if hit != null and not prone and vy == 0.0 and dragging == null and G.world.vaultable(hit):
 			start_vault(hit)
 		# keep clear of vehicles
-		for v in G.vehicles:
+		for v in ([] if skip_crowd and not still_flat else G.vehicles):
 			if absf(pos.x - v.pos.x) > 9.0 or absf(pos.z - v.pos.z) > 9.0:
 				continue
 			# the body as it's really built (a bonnet sticking out past the spec length, say), plus a margin
@@ -2915,6 +2961,11 @@ func _tick_riding() -> void:
 		strength = 0.5
 		drive()
 		return
+	if spose == "push" and v.kind == "atgun" and v.atload_t > 0.0 and absf(v.speed) < 0.3:
+		_atgun_feed(v)
+		strength = 0.5
+		drive()
+		return
 	if spose == "push":
 		# leaning into the gun's trail handles, walking it forward
 		ready_ = false
@@ -3009,37 +3060,89 @@ func _atgun_drill(v) -> void:
 	var behind = breech - gd * 0.45 + Vector3(0, 0.05, 0)
 	var grip: Vector3 = v.turret.global_position + gd * 0.25 + Vector3(0, 0.15, 0)
 	var box: Vector3 = pos + ur * 0.42 - uf * 0.1 + Vector3(0, 0.28, 0)
+	# with a man at the trail he passes the round up; on his own the gunner fetches it from the box
+	var feeder = v.driver() != null and v.driver() != self
+	var take: Vector3 = v.gun_pivot.global_position - gd * 0.95 + Vector3(0, -0.05, 0)
 	var held = Vector3.ZERO
-	if k < 0.12:
-		crouch = lerpf(0.2, 0.85, k / 0.12)
-	elif k < 0.3:
-		crouch = 0.85
-		held = box
-	elif k < 0.6:
-		crouch = lerpf(0.85, 0.3, (k - 0.3) / 0.3)
-		held = box.lerp(behind, (k - 0.3) / 0.3)
-	elif k < 0.8:
+	var reach = Vector3.ZERO        # one hand out for something, the other on the gun
+	var t0 = 0.45 if feeder else 0.3      # when the round is in his hands
+	if feeder:
+		if k < 0.3:
+			crouch = 0.2
+		elif k < 0.45:
+			crouch = 0.25
+			reach = grip.lerp(take, (k - 0.3) / 0.15)
+		elif k < 0.6:
+			crouch = 0.25
+			held = take.lerp(behind, (k - 0.45) / 0.15)
+	else:
+		if k < 0.12:
+			crouch = lerpf(0.2, 0.85, k / 0.12)
+			reach = box
+		elif k < 0.3:
+			crouch = 0.85
+			held = box
+		elif k < 0.6:
+			crouch = lerpf(0.85, 0.3, (k - 0.3) / 0.3)
+			held = box.lerp(behind, (k - 0.3) / 0.3)
+	if k >= 0.6 and k < 0.8:
 		crouch = 0.3
 		held = behind.lerp(breech + gd * 0.1, (k - 0.6) / 0.2)
-	else:
+	elif k >= 0.8:
 		crouch = 0.25
 	stand_pose()
 	if held != Vector3.ZERO:
 		hand_t = held
-		hands_t = [held - gd * 0.2 + Vector3(0, -0.04, 0), held + gd * 0.12 + Vector3(0, 0.02, 0)] if k >= 0.3 else [held - ur * 0.08, held + ur * 0.08]
+		var along = k >= t0
+		hands_t = [held - gd * 0.2 + Vector3(0, -0.04, 0), held + gd * 0.12 + Vector3(0, 0.02, 0)] if along else [held - ur * 0.08, held + ur * 0.08]
 		if v.round_mesh != null:
 			v.round_mesh.visible = true
 			v.round_mesh.global_position = held
 			# lying along the barrel once it's lifted, upright while it comes out of the box
-			if k >= 0.3:
-				v.round_mesh.global_basis = Basis.looking_at(gd, Vector3.UP) * Basis(Vector3(1, 0, 0), PI / 2.0)
-			else:
-				v.round_mesh.global_basis = Basis()
+			v.round_mesh.global_basis = Basis.looking_at(gd, Vector3.UP) * Basis(Vector3(1, 0, 0), PI / 2.0) if along else Basis()
 	else:
-		if v.round_mesh != null:
+		if v.round_mesh != null and (not feeder or k >= 0.6):
 			v.round_mesh.visible = false
 		hand_t = grip
-		hands_t = [box, box + ur * 0.1] if k < 0.12 else null
+		hands_t = [reach, grip] if reach != Vector3.ZERO else null
+	_arms_and_gun(0.0, false, uf, ur, uf)
+	hand_t = null
+	hands_t = null
+
+# the man at the trail feeds the gun: bends to the shell box at his feet, lifts a round and holds it
+# out to the gunner, who takes it at the breech (see _atgun_drill)
+func _atgun_feed(v) -> void:
+	ready_ = false
+	var k = 1.0 - v.atload_t / 2.3
+	var vf: Vector3 = v.forward()
+	var vr = Vector3(vf.z, 0, -vf.x)
+	aim_yaw = atan2(vf.x, vf.z)
+	body_yaw = G.turn_to(body_yaw, aim_yaw, 6.0 * G.DT)
+	var uf = Vector3(sin(aim_yaw), 0, cos(aim_yaw))
+	var ur = Vector3(-cos(aim_yaw), 0, sin(aim_yaw))
+	var box: Vector3 = pos - vr * 0.5 + Vector3(0, 0.25, 0)
+	var hand_over: Vector3 = v.gun_pivot.global_position - v._gun_dir() * 0.95 + Vector3(0, -0.05, 0)
+	var held = Vector3.ZERO
+	if k < 0.15:
+		crouch = lerpf(0.3, 0.9, k / 0.15)
+	elif k < 0.3:
+		crouch = 0.9
+		held = box
+	elif k < 0.45:
+		crouch = lerpf(0.9, 0.2, (k - 0.3) / 0.15)
+		held = box.lerp(hand_over, (k - 0.3) / 0.15)
+	else:
+		crouch = 0.3
+	stand_pose()
+	if held != Vector3.ZERO:
+		hand_t = held
+		hands_t = [held - ur * 0.09, held + ur * 0.09]
+		if v.round_mesh != null:
+			v.round_mesh.visible = true
+			v.round_mesh.global_position = held
+			v.round_mesh.global_basis = Basis(Vector3.UP, aim_yaw) * Basis(Vector3(1, 0, 0), PI / 2.0)
+	else:
+		hand_t = pos + uf * 0.45 + Vector3(0, 0.62, 0) if k >= 0.45 else box
 	_arms_and_gun(0.0, false, uf, ur, uf)
 	hand_t = null
 	hands_t = null

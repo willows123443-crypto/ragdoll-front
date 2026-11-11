@@ -2505,6 +2505,7 @@ func _order_card_tick() -> void:
 			if vs.any(func(x): return x.seats.size() > 1 or x.spec.get("static", false)):
 				items.append(["dismount", "Leave the gun" if guns else "Dismount"])
 		if not on_foot.is_empty():
+			items.append(["amove", "Attack-move"])
 			items.append(["free", "Free"])
 			if on_foot.any(func(x): return x.cls == "engineer") or G.mode != "commander":
 				items.append(["build", "Build…"])
@@ -2520,7 +2521,7 @@ func _order_card_tick() -> void:
 			b.add_theme_font_size_override("font_size", 12)
 			b.tooltip_text = {"hold": "Hold here", "cover": "Take cover nearby", "charge": "Charge!", "fallback": "Fall back", "smoke": "Throw a smoke screen",
 				"vstop": "Stop where they are", "vback": "Back to the rally point", "vfree": "Drive freely", "vsmoke": "Pop smoke", "dismount": "Get out",
-				"free": "Act freely", "build": "Pick something to build", "clear": "Deselect"}.get(id, it[1])
+				"free": "Act freely", "build": "Pick something to build", "clear": "Deselect", "amove": "Move, but stop and fight anything on the way (or Ctrl + right-click)"}.get(id, it[1])
 			var acc = id == active
 			b.add_theme_stylebox_override("normal", _dock_style(Color(0.16, 0.18, 0.2, 0.96), Color(0.95, 0.75, 0.25) if acc else Color(0.3, 0.33, 0.36)))
 			b.add_theme_stylebox_override("hover", _dock_style(Color(0.26, 0.29, 0.32, 1.0), Color(1.0, 0.85, 0.35)))
@@ -2535,6 +2536,9 @@ func _order_card_tick() -> void:
 					message("Pick a structure, place it, then right-click it with soldiers selected (Shift to queue more)")
 				elif id.begins_with("f:"):
 					G.pc.set_formation(id.substr(2))
+				elif id == "amove":
+					G.pc.amove_next = true
+					message("Attack-move: right-click where to go (or hold Ctrl when you right-click)")
 				else:
 					G.pc.order_selected(id))
 			order_grid.add_child(b)

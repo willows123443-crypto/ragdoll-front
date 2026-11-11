@@ -7,6 +7,8 @@ var tracers: Array = []
 var flash_lights: Array = []
 var flash_i = 0
 var flash_boost = 1.0
+var tracer_mat: StandardMaterial3D = null
+var night_now = false
 var dust_pool: Array = []
 var blood_pool: Array = []
 var spark_pool: Array = []
@@ -31,6 +33,15 @@ func _ready() -> void:
 	tm.albedo_color = Color(1.0, 0.9, 0.6)
 	tm.emission_enabled = true
 	tm.emission = Color(1.0, 0.85, 0.5)
+	tracer_mat = tm
+	# at night each tracer gets a soft glowing streak round its core
+	var gm = StandardMaterial3D.new()
+	gm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	gm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	gm.albedo_color = Color(1.0, 0.45, 0.15, 0.35)
+	var gbm = BoxMesh.new()
+	gbm.size = Vector3(0.11, 0.11, 1.0)
 	var bm = BoxMesh.new()
 	bm.size = Vector3(0.025, 0.025, 1.0)
 	for i in range(140):
@@ -40,8 +51,15 @@ func _ready() -> void:
 		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		m.visible = false
 		add_child(m)
+		var gl = MeshInstance3D.new()
+		gl.mesh = gbm
+		gl.material_override = gm
+		gl.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		gl.name = "glow"
+		gl.visible = false
+		m.add_child(gl)
 		tracer_pool.append(m)
-	for i in range(5):
+	for i in range(10):
 		var l = OmniLight3D.new()
 		l.light_color = Color(1.0, 0.7, 0.35)
 		l.light_energy = 0.0
@@ -238,7 +256,9 @@ func muzzle(pos: Vector3, big: bool) -> void:
 	var f = flash_lights[flash_i]
 	flash_i = (flash_i + 1) % flash_lights.size()
 	f["l"].global_position = pos
-	f["l"].light_energy = (3.0 if big else 1.6) * flash_boost
+	# at night a flash lights up the walls and the men round it
+	f["l"].light_energy = (3.0 if big else 1.6) * flash_boost * (2.2 if night_now else 1.0)
+	f["l"].omni_range = 13.0 if night_now else 9.0
 	f["t"] = 0.05
 	var p = _one_shot_smoke(pos, Color(1.0, 0.8, 0.4, 1.0), 3, 0.06, 0.25, 0.5, true)
 	p.initial_velocity_max = 0.5
@@ -639,6 +659,11 @@ func step(dt: float) -> void:
 	if grass_t <= 0.0 and G.world != null:
 		grass_t = 0.5
 		G.world.grass_recover()
+	var nn = G.main.is_night()
+	if nn != night_now:
+		night_now = nn
+		if tracer_mat != null:
+			tracer_mat.albedo_color = Color(1.0, 0.62, 0.3) if nn else Color(1.0, 0.9, 0.6)
 	if G.main.is_night() or not torch_lights.is_empty():
 		_torches()
 	_step_casings(dt)
@@ -661,6 +686,7 @@ func step(dt: float) -> void:
 			var mid: Vector3 = t["o"] + t["dir"] * ((a + b) / 2.0)
 			var up = Vector3.UP if absf(t["dir"].y) < 0.95 else Vector3.RIGHT
 			m.global_transform = Transform3D(Basis.looking_at(t["dir"], up).scaled(Vector3(1, 1, maxf(0.01, b - a))), mid)
+			(m.get_child(0) as Node3D).visible = night_now
 	for f in flash_lights:
 		if f["t"] > 0.0:
 			f["t"] -= dt

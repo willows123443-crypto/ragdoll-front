@@ -257,6 +257,9 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 	s.hp -= dmg * mult * (0.35 if s == Modes.pilot else 1.0)     # the pilot has a flak vest (and the game is no fun if he drops at once)
 	if kind == "torso" or kind == "leg" or kind == "arm":
 		s.wound_part = part
+	# a round through the leg: he can still move, but only at a hobble until a medic sees to it
+	if kind == "leg" and s.state == "alive" and dmg * mult > 8.0 and not s.zombie:
+		s.set_meta("leg_wound", true)
 	Stats.hit(attacker, s, dmg * mult)
 	Morale.shock(s, 10.0)
 	s.last_attacker = attacker
@@ -507,10 +510,14 @@ static func step_flares() -> void:
 				f["t"] = 0.0
 				G.audio.whistle(p)
 		else:
-			n.global_position += Vector3(0.4, -1.6, 0.2) * G.DT
+			# under its little parachute it sways and sinks slowly, lighting the ground for the best part of a minute
 			var life = f["t"]
-			f["light"].light_energy = clampf(life * 4.0, 0.0, 1.0) * clampf((26.0 - life) / 4.0, 0.0, 1.0) * (9.0 if G.main.is_night() else 2.0) * (0.85 + randf() * 0.3)
-			if life > 26.0 or n.global_position.y < G.world.ground_y(n.global_position.x, n.global_position.z) + 1.0:
+			n.global_position += Vector3(0.4 + 0.5 * sin(life * 0.9), -0.75, 0.2 + 0.4 * cos(life * 0.7)) * G.DT
+			f["light"].light_energy = clampf(life * 4.0, 0.0, 1.0) * clampf((40.0 - life) / 5.0, 0.0, 1.0) * (11.0 if G.main.is_night() else 2.0) * (0.85 + randf() * 0.3)
+			f["light"].omni_range = 95.0
+			if int(life * 6.0) != int((life - G.DT) * 6.0):
+				G.fx.exhaust(n.global_position + Vector3(0, -0.3, 0), Vector3(0, -1, 0), 0.25, false)
+			if life > 40.0 or n.global_position.y < G.world.ground_y(n.global_position.x, n.global_position.z) + 1.0:
 				n.queue_free()
 				flares.remove_at(i)
 
@@ -585,10 +592,37 @@ static func step_strikes() -> void:
 			strikes.remove_at(i)
 
 # ---------------------------------------------------------------- grenades and smoke
+const THROW_T = 1.05      # an AI throw from start to finish: pull the pin, wind back, let go, follow through
+const THROW_AT = 0.42     # throw_t left when the grenade leaves his hand
+
+# AI men go through the motions first (see Soldier, throw_t): the grenade only leaves the hand part way through
 static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -> void:
+	if not s.is_player and s.state == "alive":
+		if s.has_meta("throw_pending") and s.throw_t > 0.0:
+			return          # one in the hand already
+		# (a throw cut short when he was knocked down leaves nothing behind)
+		s.set_meta("throw_pending", [target, type, cook])
+		s.throw_t = THROW_T
+		s.set_meta("throw_T", THROW_T)
+		s.burst = 0
+		return
+	_throw_now(s, target, type, cook)
+
+# the moment of release, from the throw animation (or at once for the player)
+static func release_throw(s) -> void:
+	if not s.has_meta("throw_pending"):
+		return
+	var pend: Array = s.get_meta("throw_pending")
+	s.remove_meta("throw_pending")
+	if s.state != "alive":
+		return
+	_throw_now(s, pend[0], pend[1], pend[2])
+	s.throw_t = THROW_AT          # keep the follow-through going
+
+static func _throw_now(s, target: Vector3, type: String, cook: float = 0.0) -> void:
 	if type == "frag" and Faction.militia(s.team) and randf() < 0.6:
 		type = "molotov"
-	var start = s.head_pos() + Vector3(0, 0.1, 0)
+	var start = (s.parts[6].global_position + Vector3(0, 0.15, 0)) if s.parts.size() > 6 and not s.is_player else s.head_pos() + Vector3(0, 0.1, 0)
 	var dist = G.dist2d(target, start)
 	var T = clampf(0.6 + dist * 0.035, 0.7, 1.6)
 	var v = Vector3((target.x - start.x) / T, (target.y + 0.2 - start.y) / T - 0.5 * G.GRAV * T, (target.z - start.z) / T)
@@ -638,7 +672,9 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 		s.stickies -= 1
 	else:
 		s.grenades -= 1
-	s.throw_t = 0.55
+	if s.is_player:
+		s.throw_t = 0.55
+		s.set_meta("throw_T", 0.55)
 	G.fx.callout(s, {"smoke": "Popping smoke!", "satchel": "Satchel charge! Get back!", "sticky": "Sticky bomb!", "marker": "Marking the target!", "molotov": "Burn them out!"}.get(type, "Grenade out!"))
 
 # a wall coming down: a thick cloud of brick dust that rolls out, drifts and blocks sight for a while

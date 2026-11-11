@@ -102,6 +102,8 @@ func _ready() -> void:
 			_at_test(a.substr(9))
 		if a.begins_with("--lightshot="):
 			_light_shot(a.substr(12))
+		if a.begins_with("--helptest"):
+			_help_test(_arg("helpshot", ""))
 		if a == "--ctltest":
 			_ctl_test()
 		if a.begins_with("--loadtest="):
@@ -606,16 +608,18 @@ func _sim_step() -> void:
 	var tb = Time.get_ticks_usec()
 	G.rebuild_sgrid()
 	# performance: frozen far-away soldiers think and move every other tick, with a double time step
-	var big = G.soldiers.size() >= 50
+	var big = G.soldiers.size() >= 36
 	var fr = Engine.get_physics_frames()
 	for s in G.soldiers.duplicate():
 		if not is_instance_valid(s):
 			continue
 		if big and s.lod_frozen and s.state == "alive":
-			if (fr + s.id) % 2 != 0:
+			# the far ones think every third tick (every other while they're in a fight)
+			var every = 2 if s.vis_t != null or s.supp > 0.3 else 3
+			if (fr + s.id) % every != 0:
 				s.lod_glide()
 				continue
-			G.DT = 2.0 / 60.0
+			G.DT = float(every) / 60.0
 			s.tick()
 			G.DT = 1.0 / 60.0
 		else:
@@ -671,6 +675,8 @@ func on_kill(_s, _attacker) -> void:
 func end_game(t: int) -> void:
 	if G.over:
 		return
+	if OS.get_cmdline_user_args().has("--enddbg"):
+		print("ENDGAME team ", t, " at ", G.sim_time, " ", get_stack())
 	G.over = true
 	if G.player != null:
 		G.pc.leave_soldier()
@@ -1809,6 +1815,7 @@ func _big_test() -> void:
 				frozen += 1
 		print("BIGTEST %ds soldiers %d frozen %d sim %.2f ms/tick  veh %.2f soldiers %.2f" % [(k + 1) * 8, G.soldiers.size(), frozen,
 			(tick_us / 1000.0) / maxi(tick_n, 1), prof[0] / 1000.0 / maxi(tick_n, 1), prof[1] / 1000.0 / maxi(tick_n, 1)])
+
 	get_tree().quit()
 
 # campaign: what gets wrecked in a region stays wrecked next time
@@ -2581,12 +2588,12 @@ func _at_test(dir: String) -> void:
 			var ph = 1.0 - ag.atload_t / 2.3
 			if (shots == 0 and ph > 0.2) or (shots == 1 and ph > 0.45) or (shots == 2 and ph > 0.7) or (shots == 3 and ph > 0.9):
 				var gp: Vector3 = ag.gunner().pos if ag.gunner() != null else ag.pos
-				await _look(gp + side * 2.4 - fw * 1.8 + Vector3(0, 1.8, 0), gp + fw * 0.6 + Vector3(0, 0.9, 0))
+				await _look(ag.pos + side * 4.2 - fw * 1.2 + Vector3(0, 2.2, 0), ag.pos - fw * 0.8 + Vector3(0, 0.8, 0))
 				await _snap(dir, "atgun_%d" % shots)
 				shots += 1
 		if shots >= 4 and fired >= 2:
 			break
-	print("ATTEST shots fired %d, pictures %d, tank hp %.0f" % [fired, shots, tk.hp if is_instance_valid(tk) else -1.0])
+	print("ATTEST shots fired %d, pictures %d, tank hp %.0f, driver %s gunner %s" % [fired, shots, tk.hp if is_instance_valid(tk) else -1.0, str(ag.driver() != null), str(ag.gunner() != null)])
 	get_tree().quit()
 
 # vehicles with their headlights on at night, from the side, from in front and from above
@@ -2618,6 +2625,63 @@ func _light_shot(dir: String) -> void:
 	await _look(c + side * 16.0 + fw * 6.0 + Vector3(0, 3.0, 0), c + fw * 6.0)
 	await _wait(0.5)
 	await _snap(dir, "lights_side")
+	get_tree().quit()
+
+# a man shot in the leg gets walked back by a mate; a grenade thrown with the full wind-up; a mag handed over
+func _help_test(dir: String) -> void:
+	if dir != "":
+		DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	G.pc.force_free = true
+	var c: Vector3 = _free_spot(G.world.capture + Vector3(-40, 0, 0))
+	var men = []
+	for k in range(3):
+		men.append(spawn_soldier(0, c.x + k * 1.5, c.z, "rifle"))
+	force_cls = ["medic"]
+	var med = spawn_soldier(0, c.x - 30.0, c.z + 4.0, "")
+	force_cls = []
+	await _wait(1.0)
+	var w = men[0]
+	w.hp = 55.0
+	w.set_meta("leg_wound", true)
+	var p0 = w.pos
+	var helped = false
+	for k in range(12):
+		await _wait(1.0)
+		if w.has_meta("helper"):
+			helped = true
+			if dir != "" and k == 4:
+				var h = w.get_meta("helper")
+				await _look(w.pos + Vector3(3.5, 1.6, 3.0), (w.pos + h.pos) * 0.5 + Vector3(0, 1.0, 0))
+				await _snap(dir, "helpwalk")
+	print("HELPTEST tasks ", men.map(func(x): return str(x.task)))
+	print("HELPTEST helped %s moved %.1f m toward medic (dist now %.1f) helper task %s" % [str(helped), G.dist2d(w.pos, p0), G.dist2d(w.pos, med.pos), str(w.get_meta("helper").task) if w.has_meta("helper") and is_instance_valid(w.get_meta("helper")) else "-"])
+	# a throw
+	var t = men[2]
+	var g0 = G.grenades.size()
+	t.grenades = 1
+	Combat.throw_grenade(t, t.pos + Vector3(20, 0, 0), "frag")
+	await _wait(0.3)
+	var mid = G.grenades.size()
+	if dir != "":
+		await _look(t.pos + Vector3(0.5, 1.6, 4.0), t.pos + Vector3(0, 1.2, 0))
+		await _snap(dir, "throw_windup")
+	await _wait(0.7)
+	print("HELPTEST grenade: in the air after 0.3 s %d, after 1.0 s %d" % [mid - g0, G.grenades.size() - g0])
+	# a hand-off
+	var a = men[1]
+	var b = spawn_soldier(0, a.pos.x + 1.2, a.pos.z, "rifle")
+	await _wait(0.3)
+	b.reserve = 0
+	b.mag = 2
+	a.reserve = a.W["mag"] * 5
+	var r0 = b.reserve
+	await _wait(4.0)
+	print("HELPTEST handoff: receiver reserve %d -> %d" % [r0, b.reserve])
 	get_tree().quit()
 
 # taking over one man from the commander's view, and handing him back

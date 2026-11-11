@@ -53,6 +53,8 @@ static func bandage_tick(s) -> void:
 		w.bleed = 0.0
 		w.hp = minf(100.0, w.hp + (20.0 if s.cls == "medic" else 6.0))
 		show_dressing(w)
+		if s.cls == "medic" and w.has_meta("leg_wound"):
+			w.remove_meta("leg_wound")
 		if w != s:
 			G.fx.callout(w, G.pick(["Thanks.", "Cheers, mate.", "That'll hold."]))
 		elif s.is_player:

@@ -11,6 +11,8 @@ const RADIUS = 10.0
 
 static var points: Array = []      # {"p", "name", "owner", "prog", "contested", "n": [per team]}
 static var tickets: Array = []
+const ALL_HOLD = 60.0
+static var all_t = [0.0, 0.0]
 static var bleed_t = 0.0
 static var wave = 0
 static var wave_t = 0.0
@@ -23,7 +25,7 @@ const MODE_INFO = {
 	"sandbox": "Free play with no way to win or lose. Drop in soldiers, vehicles and buildings and watch what happens.",
 	"deathmatch": "First side to reach the kill limit wins. Reinforcements arrive at your HQ or FOBs.",
 	"capture": "Three or more flags across the middle of the map. Every flag you hold earns points each second; first side to the points limit wins.",
-	"frontline": "A chain of flags across a big map. Take them one after another; whoever holds more drains the other side's tickets. Run out of tickets or lose every flag and you lose.",
+	"frontline": "A chain of flags across a big map. Take them one after another; whoever holds more drains the other side's tickets. Run out of tickets, or let them hold every flag for a full minute, and you lose.",
 	"assault": "Alpha attacks a chain of flags held by Bravo, with limited tickets. Bravo digs in with bunkers, wire and MG nests.",
 	"laststand": "Alpha holds one flag against bigger and bigger enemy waves. Survive as long as you can.",
 	"destroy": "Each side has an HQ and builds FOBs. Blow up an enemy's HQ and all its FOBs to knock it out; the last side with a base wins.",
@@ -71,6 +73,21 @@ static func reset() -> void:
 	for o in src:
 		points.append({"p": Vector3(o["p"].x, G.world.ground_y(o["p"].x, o["p"].z), o["p"].z), "name": o["name"],
 			"owner": -1, "prog": 0.0, "contested": false, "n": _zeros(), "amt": 0.0, "ct": -1})
+	if G.mode == "frontline" and points.size() >= 2:
+		# each side starts holding the flags on its own side of the line; the middle one (if any) is open.
+		# (with every flag neutral, whoever got to them first in the opening minute won outright)
+		var axis = G.flat(G.world.spawn[1] - G.world.spawn[0]).normalized()
+		var order = points.duplicate()
+		order.sort_custom(func(a, b): return a["p"].dot(axis) < b["p"].dot(axis))
+		var half = order.size() / 2
+		for i in range(half):
+			order[i]["owner"] = 0
+			order[i]["prog"] = 1.0
+			order[order.size() - 1 - i]["owner"] = 1
+			order[order.size() - 1 - i]["prog"] = -1.0
+	all_t = [0.0, 0.0]
+	if G.mode == "frontline" and OS.get_cmdline_user_args().has("--enddbg"):
+		print("FRONTLINE flags ", points.map(func(pt): return [pt["name"], pt["owner"]]))
 	if G.mode == "assault":
 		for pt in points:
 			pt["owner"] = 1
@@ -358,12 +375,15 @@ static func _score(dt: float) -> void:
 			for pt in points:
 				if pt["owner"] >= 0:
 					held[pt["owner"]] += 1
-			if held[0] == points.size():
-				G.main.end_game(0)
-				return
-			if held[1] == points.size():
-				G.main.end_game(1)
-				return
+			# every flag has to be held for a while, not just touched, before it's over
+			for t in range(2):
+				# (and never in the opening minutes, while both sides are still coming up to the line)
+				all_t[t] = all_t[t] + dt if held[t] == points.size() and (points.size() >= 3 or G.sim_time > 240.0) and G.sim_time > 120.0 else 0.0
+				if all_t[t] >= ALL_HOLD:
+					G.main.end_game(t)
+					return
+				if held[t] == points.size() and all_t[t] < dt * 1.5:
+					G.ui.radio(1 - t, "They hold every flag! Retake one within %d seconds or we've lost" % int(ALL_HOLD))
 			bleed_t += dt
 			if bleed_t >= 6.0:
 				bleed_t = 0.0

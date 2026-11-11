@@ -193,6 +193,20 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Roofs:** a man blown up onto a roof walks to the edge and drops off it
 - **Truck reinforcements:** the radio gives the real time until they arrive instead of "two minutes"
 - **AI-run Alpha (commander):** gets reinforcement waves and plans attacks like the enemy commander does; AI mortars fire again (they'd been stuck re-checking for targets)
+- **Frontline:** each side starts holding the flags on its own side of the line; a side has to hold every flag for a full minute to win that way (and not in the opening minutes), so battles no longer end in under a minute
+- **Helmets:** shaped to fit the square heads, a rounded-off crown sitting down over the head with each side's own rim, skirt, brim or cap
+- **Lorries:** once parked they stay parked instead of creeping at a spot they can't quite reach; three-point turns are carried through instead of rocking on the spot; a lorry backing into something pulls forward on full lock instead
+- **AT gun crew:** the man at the trail takes a shell from the box and passes it up, the gunner rams it home, and the spent case flies out of the breech after every shot
+- **Tools in hand:** a shovel for men digging in, a spanner worked round for repairs, the mine detector swept side to side, and men kneel to scrape a hole and bury a mine
+- **Wounded helped back:** a man shot in the leg hobbles; a mate puts an arm round him and walks him back to a medic, the hospital or the rear, with the wounded man's arm over his shoulders
+- **Grenade throws:** AI men pull the pin, wind back, throw over the top and follow through, then keep their heads down until it's gone off
+- **Ammo hand-offs:** a man who's run dry next to a mate with plenty is handed a couple of magazines
+- **Tank fights:** armour is thickest at the front (side hits do more, rear hits much more); tanks holding a position swing their hull to face enemy armour, and back off a few metres after a shot at armour before coming forward again
+- **Smoke:** nobody sprays into a smoke screen at where they last saw someone, unless they saw them go in a moment ago
+- **Attack-move:** the Attack-move button (or Ctrl + right-click) sends men somewhere but has them stop, take cover and fight anything they run into, then carry on
+- **Night:** tracers glow orange with a soft halo, muzzle flashes light the walls and men round them, and flares hang longer under a parachute, drifting and smoking
+- **Damaged walls:** a blast leaves a scorch on a wall that's still standing, and a badly hurt wall gets a hole punched through it with chunks knocked off at its foot
+- **Performance:** far-off soldiers are simplified from 36 men up (not 50), think every third tick when they're not in a fight, and only check for crowding and vehicles now and then
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

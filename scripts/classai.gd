@@ -166,9 +166,22 @@ static func work(s) -> void:
 		return
 	match s.task:
 		"build":
-			s.crouch_t = 1.0
+			# digging in: shovelling earth up into a parapet in front of him
+			s.crouch_t = 0.35
 			s.want = Vector3.ZERO
-			s.hand_t = s.pos + G.flat(s.board_target - s.pos).normalized() * 0.6 + Vector3(0, 0.3, 0)
+			s.ready_ = false
+			var f3 = G.flat(s.board_target - s.pos).normalized()
+			var ph3 = sin(G.sim_time * 2.8 + s.seed_)
+			var dig3 = maxf(0.0, ph3)
+			var grip3 = s.pos + f3 * (0.35 + 0.15 * dig3) + Vector3(0, 0.95 - 0.3 * dig3, 0)
+			var blade3 = s.pos + f3 * (1.1 + 0.1 * dig3) + Vector3(0, 0.05 + 0.45 * maxf(0.0, -ph3), 0)
+			var sh3 = (blade3 - grip3).normalized()
+			s.hand_t = grip3
+			s.hands_t = [grip3 + sh3 * 0.42, grip3]
+			s.tool_at("shovel", grip3 - sh3 * 0.15, blade3)
+			s.set_meta("work_hands_t", G.sim_time)
+			if ph3 > 0.97 and randf() < 0.3:
+				G.fx.dust_cloud(blade3, 0.4)
 			s.build_t -= G.DT
 			if s.build_t <= 0.0:
 				var dir = G.flat(s.board_target - s.pos).normalized()
@@ -231,6 +244,21 @@ static func work(s) -> void:
 				AI.go_to(s, mn["p"], 3.2)
 		"mine":
 			if s.move_target == null:
+				# on his knees scraping a hole and pressing the mine into it, before he leaves it
+				var mp: Vector3 = s.pos + G.flat(s.board_target - s.pos).normalized() * 0.6
+				mp.y = G.world.ground_y(mp.x, mp.z) + 0.05
+				s.want = Vector3.ZERO
+				s.crouch_t = 1.0
+				s.ready_ = false
+				s.aim_yaw = G.turn_to(s.aim_yaw, atan2(mp.x - s.pos.x, mp.z - s.pos.z), 5.0 * G.DT)
+				Medical.work_hands(s, mp, "rummage")
+				var mt = s.get_meta("mine_t", 0.0) + G.DT
+				s.set_meta("mine_t", mt)
+				if mt > 0.6 and int(mt * 3.0) != int((mt - G.DT) * 3.0):
+					G.fx.dust_cloud(mp, 0.25)
+				if mt < 2.4:
+					return
+				s.remove_meta("mine_t")
 				Combat.place_mine(s, s.pos + G.flat(s.board_target - s.pos) * 0.2, "ap")
 				s.mines -= 1
 				s.task = null
@@ -247,7 +275,16 @@ static func work(s) -> void:
 			if G.dist2d(v.pos, s.pos) < v.spec["len"] * 0.5 + 1.8:
 				AI.stop_move(s)
 				s.crouch_t = 0.6
-				s.hand_t = v.center()
+				s.ready_ = false
+				# a spanner on the hull where he's standing, worked round in short turns
+				var hull_p: Vector3 = v.center() + G.flat(s.pos - v.center()).normalized() * (v.spec["wid"] * 0.42) + Vector3(0, -0.2, 0)
+				var tw = G.sim_time * 5.0 + s.seed_
+				var arm = G.flat(s.pos - hull_p).normalized()
+				var grip_w = hull_p + arm * 0.32 + Vector3(0, 0.08 * sin(tw), 0) + Vector3(arm.z, 0, -arm.x) * 0.08 * cos(tw)
+				s.hand_t = grip_w
+				s.hands_t = [hull_p + arm * 0.12 + Vector3(0, 0.15, 0), grip_w]
+				s.tool_at("wrench", grip_w, hull_p)
+				s.set_meta("work_hands_t", G.sim_time)
 				if v.burning:
 					# drag the crew out and smother the fire
 					for k in range(v.seats.size()):
@@ -314,6 +351,8 @@ static func work(s) -> void:
 				w.want = Vector3.ZERO
 				if w.hp + 25.0 * G.DT >= 95.0:
 					Medical.show_dressing(w)
+					if w.has_meta("leg_wound"):
+						w.remove_meta("leg_wound")
 				w.bleed = 0.0
 				w.hp = minf(100.0, w.hp + 25.0 * G.DT)
 				if w.hp >= 95.0:

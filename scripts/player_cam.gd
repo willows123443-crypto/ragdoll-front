@@ -54,7 +54,8 @@ func set_rts(on: bool) -> void:
 	G.ui._render_tools()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
-var back_to_rts = false     # took over a man from the commander's view: X puts us back up there
+var back_to_rts = false
+var amove_next = false      # the next right-click is an attack-move     # took over a man from the commander's view: X puts us back up there
 
 func possess(s) -> void:
 	if s == null or s.state == "dead":
@@ -1383,7 +1384,14 @@ func _order_move(screen: Vector2) -> void:
 			G.audio.order_tick(true)
 			continue
 		s.order = {"mode": "move", "point": p + off}
+		# Ctrl (or the Attack-move button): fight anything met on the way rather than walk past it
+		if amove_next or Input.is_key_pressed(KEY_CTRL):
+			s.order["attack"] = true
+			s.order["tag"] = "amove"
 		_obey(s, p + off)
+	if amove_next or Input.is_key_pressed(KEY_CTRL):
+		G.ui.message("Attack-move: they'll stop and fight anything they run into on the way")
+	amove_next = false
 	var k = 0
 	# several vehicles going a fair way: they drive in a column behind the biggest one
 	vs.sort_custom(func(a, b): return a.rank() > b.rank())

@@ -1479,6 +1479,9 @@ func ruin_col(c) -> void:
 	_remove_grid(c)
 	if is_instance_valid(c.body):
 		c.body.queue_free()
+	for mk in c.get_meta("marks", []):
+		if is_instance_valid(mk):
+			mk.queue_free()
 	_drop_resting_on(c)
 	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
 	for r in c.vis:
@@ -1638,6 +1641,60 @@ func knock_over(c, dir: Vector3) -> void:
 	update_nav_area(mid.x - 2.0, mid.z - 2.0, mid.x + 2.0, mid.z + 2.0)
 	G.audio.kick(mid)
 
+var wall_marks: Array = []
+
+func wall_mark(c, cp: Vector3, from: Vector3, hole: bool) -> void:
+	if G.fx == null or G.fx.scorch_tex == null:
+		return
+	# which face of the box the blast came at
+	var ctr = (c.lo + c.hi) * 0.5
+	var ext = (c.hi - c.lo) * 0.5
+	var rel = from - ctr
+	var n: Vector3
+	if absf(rel.x) / maxf(ext.x, 0.05) > absf(rel.z) / maxf(ext.z, 0.05):
+		n = Vector3(signf(rel.x), 0, 0)
+	else:
+		n = Vector3(0, 0, signf(rel.z))
+	var on_face = cp
+	on_face.y = clampf(from.y, c.lo.y + 0.5, c.hi.y - 0.4)
+	var faces = [n]
+	if hole:
+		faces.append(-n)      # right through: it shows on the far side too
+	for fn in faces:
+		var p = on_face
+		if fn.x != 0.0:
+			p.x = (c.hi.x if fn.x > 0 else c.lo.x) + fn.x * 0.02
+		else:
+			p.z = (c.hi.z if fn.z > 0 else c.lo.z) + fn.z * 0.02
+		var q = MeshInstance3D.new()
+		var qm = QuadMesh.new()
+		var sz = randf_range(0.9, 1.3) if hole else randf_range(1.1, 1.8)
+		qm.size = Vector2(sz, sz * randf_range(0.7, 1.0))
+		q.mesh = qm
+		var mt = StandardMaterial3D.new()
+		mt.albedo_texture = G.fx.scorch_tex
+		mt.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mt.albedo_color = Color(0.05, 0.04, 0.04, 1.0) if hole else Color(0.25, 0.22, 0.2, 0.85)
+		mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED if hole else BaseMaterial3D.SHADING_MODE_PER_PIXEL
+		q.material_override = mt
+		q.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(q)
+		q.global_position = p
+		q.look_at(p + fn, Vector3.UP if absf(fn.y) < 0.9 else Vector3.RIGHT)
+		q.rotate_object_local(Vector3(0, 1, 0), PI)
+		q.rotate_object_local(Vector3(0, 0, 1), randf() * TAU)
+		var marks: Array = c.get_meta("marks", [])
+		marks.append(q)
+		c.set_meta("marks", marks)
+		wall_marks.append(q)
+	if hole:
+		for k in range(5):
+			G.fx.debris(on_face + n * 0.4 + Vector3(0, randf_range(-0.3, 0.3), 0), n * randf_range(1.5, 3.5) + Vector3(randf_range(-1, 1), randf_range(0.5, 2.0), randf_range(-1, 1)), 0.18, c.color)
+	while wall_marks.size() > 160:
+		var old = wall_marks.pop_front()
+		if is_instance_valid(old):
+			old.queue_free()
+
 func damage_area(pos: Vector3, R: float, power: float) -> void:
 	# in commander mode the HQ is dug in too deep for shells: it has to be taken on the ground
 	var hq_safe = Combat.arty and G.mode == "commander"
@@ -1649,9 +1706,14 @@ func damage_area(pos: Vector3, R: float, power: float) -> void:
 		var cp = Vector3(clampf(pos.x, c.lo.x, c.hi.x), clampf(pos.y, c.lo.y, c.hi.y), clampf(pos.z, c.lo.z, c.hi.z))
 		var d = pos.distance_to(cp)
 		if d < R:
+			var hp0 = c.hp
 			c.hp -= 260.0 * power * (1.0 - d / R)
 			if c.hp <= 0.0:
 				destroy_col(c)
+			elif c.lo.y - c.gy < 0.5 and c.hi.y - c.lo.y > 1.2 and not c.has_meta("furn") and not c.has_meta("tip"):
+				# a wall that's still standing shows it: a scorch where it was hit, and once it's badly hurt
+				# a hole punched through, with chunks knocked off at its foot
+				wall_mark(c, cp, pos, c.hp < 55.0 and hp0 >= 55.0)
 			elif c.has_meta("tip") and d < R * 0.85:
 				var push = G.flat(cp - pos)
 				knock_over(c, push.normalized() if push.length_squared() > 0.01 else Vector3(randf() - 0.5, 0, randf() - 0.5).normalized())
@@ -3704,7 +3766,7 @@ func begin_edit(m: Dictionary) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
+	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; wall_marks = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]
 	paint = m.get("paint", PackedByteArray())
@@ -4498,7 +4560,7 @@ func load_map(id: String) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
+	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; wall_marks = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	paint = PackedByteArray()
 	if id == "random":
 		var rs = RandomNumberGenerator.new()

@@ -727,6 +727,10 @@ func _weapons(dt: float) -> void:
 			G.fx.muzzle(muzzle(), true)
 			G.audio.boom(muzzle())
 			Combat.shake = maxf(Combat.shake, 0.3 if controller.is_player else 0.0)
+			# shoot and scoot: after a shot at armour an AI tank backs off a few metres out of the
+			# spot it gave away, then comes forward again
+			if not controller.is_player and spec["tracked"] and _armour_near(110.0) != null and driver() != null and not driver().is_player and cmd == null:
+				set_meta("scoot_until", G.sim_time + 2.6)
 	else:
 		if not controller.is_player:
 			if burst <= 0:
@@ -790,6 +794,9 @@ func _atgun(g, dt: float, want, shoot: bool) -> void:
 	# the breech opens, the case is thrown out, and the next round has to be fetched and rammed home
 	atload_t = 2.3
 	_make_round()
+	var gdir = _gun_dir()
+	var side = Vector3(gdir.z, 0, -gdir.x)
+	G.fx.debris(gun_pivot.global_position - gdir * 0.6 + Vector3(0, 0.05, 0), -gdir * 3.5 + side * randf_range(-0.6, 0.6) + Vector3(0, 1.6, 0), 0.06, Color(0.78, 0.62, 0.3), Vector3(0.07, 0.07, 0.42))
 	var ap = _at_target_is_vehicle
 	cannon_cd = (3.6 if ap else 6.5) if not g.is_player else 2.5
 	if ap:
@@ -805,6 +812,18 @@ func _atgun(g, dt: float, want, shoot: bool) -> void:
 		G.fx.callout(g, G.pick(["On the way!", "Fire!", "Reload, AP!", "Shot!"]) if ap else G.pick(["HE out!", "Fire!"]))
 
 var _at_target_is_vehicle = false
+
+# the nearest enemy armour (tanks, armoured cars, AT guns) this side knows about, within r
+func _armour_near(r: float):
+	var best = null
+	var bd = r
+	for o in G.vehicles:
+		if o.team != team and o.team >= 0 and not o.dead and (o.spec["tracked"] or o.kind in ["armoredcar", "atgun"]) and not o.spec.get("air", false):
+			var d = G.dist2d(o.pos, pos)
+			if d < bd and not G.blocked(center() + Vector3(0, 1.0, 0), o.center() + Vector3(0, 0.6, 0)):
+				bd = d
+				best = o
+	return best
 
 # where an anti-tank gun sets up: behind the team's own line, picked once and moved only after a long quiet spell
 func _at_post():
@@ -1051,6 +1070,18 @@ func take_damage(amount: float, attacker, at: Vector3) -> void:
 		return
 	if Prod.has(team, "armour"):
 		amount *= 0.67
+	# armour is thickest at the front: a heavy round into the side goes through more easily, into the
+	# back easier still
+	if amount >= 60.0 and (spec["tracked"] or kind in ["armoredcar", "halftrack"]):
+		var lpa = global_transform.affine_inverse() * at
+		var fz = lpa.z / maxf(0.5, spec["len"] * 0.5)
+		var sx = absf(lpa.x) / maxf(0.5, spec["wid"] * 0.5)
+		if fz > 0.55 and sx < 0.85:
+			amount *= 0.6
+		elif fz < -0.55:
+			amount *= 1.5
+		else:
+			amount *= 1.15
 	# vehicles are tougher than a run of hits suggests: rifle fire and near misses chip at them, and it
 	# takes a proper anti-tank weapon (or a lot of everything else) to finish one
 	if amount < 900.0:
@@ -1233,6 +1264,8 @@ func command(p: Vector3) -> void:
 	if mission != null:
 		mission = null
 	cmd = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
+	if has_meta("parked_at"):
+		remove_meta("parked_at")
 	convoy = null
 	path_t = 0.0
 	stuck_t = 0.0
@@ -1380,11 +1413,25 @@ func _steer_to(target: Vector3, dt: float) -> Array:
 		# wheels can't turn tighter than about 5 m: a mark off to the side or behind that's closer than that
 		# gets a three-point turn (back up on opposite lock), never a circle round it
 		var tight = 5.5 + spec["len"] * 0.3
-		if absf(ang) > 1.1 and L < tight * 2.2:
-			thr = -0.7
+		# each leg of the turn is carried through for a moment: flicking between forward and reverse
+		# every frame left lorries rocking on the spot for half a minute
+		var leg_t: float = get_meta("leg_t", 0.0)
+		var leg: int = get_meta("leg", 0)
+		if G.sim_time < leg_t and leg != 0 and not (leg < 0 and absf(ang) < 0.5):
+			thr = 0.75 * leg
+			steer = -steer if leg < 0 else steer
+		elif absf(ang) > 1.1 and L < tight * 2.2:
+			thr = -0.75
 			steer = -steer
+			set_meta("leg", -1)
+			set_meta("leg_t", G.sim_time + 1.8)
 		elif absf(ang) > 1.2:
-			thr = 0.5
+			thr = 0.55
+			if leg < 0:
+				set_meta("leg", 1)
+				set_meta("leg_t", G.sim_time + 1.5)
+		else:
+			set_meta("leg", 0)
 		# ease off for a sharp bend close by so the turn is tight
 		if absf(ang) > 0.5 and L < 14.0 and thr > 0.0:
 			thr = minf(thr, 0.45)
@@ -1421,6 +1468,22 @@ func unload_riders() -> void:
 var pass_stall = 0.0
 
 var idle_empty = 0.0
+
+# parked near enough: once a lorry has stopped at its spot it stays put until the spot itself moves well
+# away, instead of creeping at a spot it can't quite reach and sawing back and forth for minutes
+func _parked(target: Vector3, r: float) -> bool:
+	if has_meta("parked_at"):
+		var pa: Vector3 = get_meta("parked_at")
+		if G.dist2d(target, pa) < 14.0 and G.dist2d(pos, pa) < 3.0:
+			return true
+		remove_meta("parked_at")
+	# close enough, or close-ish and it's been trying for a while without getting any closer
+	var d = G.dist2d(target, pos)
+	if d < r or (d < r + 10.0 and stuck_n >= 1):
+		set_meta("parked_at", pos)
+		stuck_n = 0
+		return true
+	return false
 
 func _ai_drive(dt: float) -> Array:
 	why = "drive"
@@ -1482,7 +1545,9 @@ func _ai_drive(dt: float) -> Array:
 			cmd_near_t += dt
 		else:
 			cmd_near_t = 0.0
-		if dc < 4.5 + spec["len"] * 0.35 or cmd_near_t > 7.0:
+		if _parked(cmd, 4.5 + spec["len"] * 0.35) or cmd_near_t > 7.0:
+			if cmd_near_t > 7.0 and not has_meta("parked_at"):
+				set_meta("parked_at", pos)
 			why = "w2"
 			return [0.0, 0.0]
 	elif kind == "ambulance":
@@ -1497,12 +1562,12 @@ func _ai_drive(dt: float) -> Array:
 			set_meta("park_c", want_c)
 			G.world.park_spot(want_c, self, G.world.rally_point(team))
 		target = get_meta("park")
-		if G.dist2d(target, pos) < 4.5:
+		if _parked(target, 4.5):
 			why = "w4"
 			return [0.0, 0.0]
 	elif kind == "radar":
 		target = VehExt.radar_spot(self)
-		if G.dist2d(target, pos) < 6.0:
+		if _parked(target, 6.0):
 			why = "w4"
 			return [0.0, 0.0]
 	elif fuel < 0.15 and VehExt.fuel_stop(self) != null and G.dist2d(VehExt.fuel_stop(self), pos) > 12.0:
@@ -1559,6 +1624,15 @@ func _ai_drive(dt: float) -> Array:
 			elif de < stand * (1.15 if hold_mode == "hold" else 1.0):
 				hold_mode = "hold"
 				why = "w9"
+				var armour = _armour_near(stand * 1.6) if spec["tracked"] else null
+				if armour != null:
+					if G.sim_time < get_meta("scoot_until", 0.0):
+						return [-0.6, 0.0]
+					# thick front plate toward the enemy tank: swing the hull to face it
+					var to_a = G.flat(armour.pos - pos)
+					var da = wrapf(atan2(to_a.x, to_a.z) - yaw, -PI, PI)
+					if absf(da) > 0.22:
+						return [0.0, clampf(da * 1.8, -1.0, 1.0)]
 				return [0.0, 0.0]        # in a good firing position: hold
 			else:
 				hold_mode = ""
@@ -1705,7 +1779,13 @@ func _ai_drive(dt: float) -> Array:
 		if stuck_t > 1.6:
 			stuck_t = 0.0
 			stuck_n += 1
-			_jam_sort(f, lv, dsg)
+			if r[0] < 0.0:
+				# backing into something: pull forward on full lock instead and try the turn the other way
+				set_meta("leg", 1)
+				set_meta("leg_t", G.sim_time + 2.5)
+				reverse_t = 0.0
+			else:
+				_jam_sort(f, lv, dsg)
 	else:
 		stuck_t = 0.0
 	# really wedged (or off the map): slide to the nearest open ground and carry on

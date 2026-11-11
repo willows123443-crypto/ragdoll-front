@@ -203,6 +203,8 @@ var wake_t = 0.0
 var burn_t = 0.0
 var lamps: Node3D = null
 var exh_t = 0.0
+var cmd_near_t = 0.0
+var squeal_t = 0.0
 var mark_d = 0.0
 var burning = false
 var burn_fx = 0.0
@@ -569,7 +571,12 @@ func step(dt: float) -> void:
 	engine_t -= dt
 	if engine_t <= 0.0 and driver() != null:
 		engine_t = 0.35
-		G.audio.engine(pos, absf(speed) / spec["speed"], kind == "tank")
+		G.audio.engine(pos, absf(speed) / spec["speed"], spec["tracked"])
+	if spec["tracked"] and absf(steer) > 0.55 and absf(speed) > 0.8:
+		squeal_t -= dt
+		if squeal_t <= 0.0:
+			squeal_t = randf_range(1.2, 2.4)
+			G.audio.squeal(pos)
 
 func _hit_people(f: Vector3) -> void:
 	var l = Vector3(cos(yaw), 0, -sin(yaw))
@@ -1128,11 +1135,26 @@ func _steer_to(target: Vector3, dt: float) -> Array:
 	var ang = wrapf(atan2(to.x, to.z) - yaw, -PI, PI)
 	var steer = clampf(ang * 2.0, -1.0, 1.0)
 	var thr = 1.0 if absf(ang) < 0.9 else 0.35
-	if absf(ang) > 2.4 and to.length() < 14.0:
-		thr = -1.0
-		steer = -steer
-	if not spec["tracked"] and absf(ang) > 1.2:
-		thr = 0.5
+	var L = to.length()
+	if spec["tracked"]:
+		# tracks turn on the spot: pivot first, then drive
+		if absf(ang) > 0.9 and L < 30.0:
+			thr = 0.12
+		if absf(ang) > 2.4 and L < 14.0:
+			thr = -1.0
+			steer = -steer
+	else:
+		# wheels can't turn tighter than about 5 m: a mark off to the side or behind that's closer than that
+		# gets a three-point turn (back up on opposite lock), never a circle round it
+		var tight = 5.5 + spec["len"] * 0.3
+		if absf(ang) > 1.1 and L < tight * 2.2:
+			thr = -0.7
+			steer = -steer
+		elif absf(ang) > 1.2:
+			thr = 0.5
+		# ease off for a sharp bend close by so the turn is tight
+		if absf(ang) > 0.5 and L < 14.0 and thr > 0.0:
+			thr = minf(thr, 0.45)
 	return [thr, steer]
 
 func _ai_drive(dt: float) -> Array:
@@ -1151,7 +1173,12 @@ func _ai_drive(dt: float) -> Array:
 		target = detour
 	elif cmd != null:
 		target = cmd
-		if G.dist2d(cmd, pos) < 4.0 + spec["len"] * 0.25:
+		var dc = G.dist2d(cmd, pos)
+		if dc < 16.0:
+			cmd_near_t += dt
+		else:
+			cmd_near_t = 0.0
+		if dc < 4.5 + spec["len"] * 0.35 or cmd_near_t > 7.0:
 			why = "w2"
 			return [0.0, 0.0]
 	elif kind == "ambulance":
@@ -1419,6 +1446,13 @@ func _mission_target(dt: float):
 			m["slow_t"] = maxf(0.0, m.get("slow_t", 0.0) - dt * 0.5)
 		if (m["slow_t"] > 6.0 and m["go_t"] > 8.0) or m["go_t"] > 110.0:
 			m["drop"] = pos
+	if m["stage"] == 0 and m.get("type", "") == "supply":
+		if absf(speed) < 0.5:
+			m["slow_t"] = m.get("slow_t", 0.0) + dt
+		else:
+			m["slow_t"] = maxf(0.0, m.get("slow_t", 0.0) - dt * 0.5)
+		if m["slow_t"] > 7.0 and G.dist2d(pos, m["drop"]) < 30.0:
+			m["drop"] = pos
 	if m["stage"] == 0:
 		if G.dist2d(pos, m["drop"]) < 6.0:
 			if absf(speed) > 0.4 and not spec.get("air", false):
@@ -1469,13 +1503,21 @@ func _mission_target(dt: float):
 	# gone once it's off the edge of the map; if it's stuck on the way, only once nobody's watching
 	var cam = get_viewport().get_camera_3d()
 	var unseen = cam == null or cam.global_position.distance_to(pos) > 150.0 or (-cam.global_transform.basis.z).dot((pos - cam.global_position).normalized()) < 0.2
-	if Reinforce.outside_map(pos, 6.0) or G.dist2d(pos, m["exit"]) < 6.0 or ((m["exit_t"] > 60.0 or m["xslow"] > 8.0) and unseen):
+	var bb: Rect2 = G.world.bounds
+	var ex: Vector3 = m["exit"]
+	var edge_in = Vector3(clampf(ex.x, bb.position.x + 4.0, bb.end.x - 4.0), ex.y, clampf(ex.z, bb.position.y + 4.0, bb.end.y - 4.0))
+	var edge_d = minf(minf(pos.x - bb.position.x, bb.end.x - pos.x), minf(pos.z - bb.position.y, bb.end.y - pos.z))
+	var at_edge = edge_d < 14.0
+	if Reinforce.outside_map(pos, 6.0) or G.dist2d(pos, m["exit"]) < 6.0 or ((m["exit_t"] > 60.0 or m["xslow"] > 8.0) and unseen) or (at_edge and m["xslow"] > 4.0) or m["exit_t"] > 150.0:
 		var d = driver()
 		remove()
 		if d != null and is_instance_valid(d):
 			G.soldiers.erase(d)
 			d.queue_free()
 		return null
+	# out to the edge by the way the map allows, then straight off it
+	if G.dist2d(pos, edge_in) > 10.0 and not at_edge:
+		return edge_in
 	return m["exit"]
 
 # ---------------------------------------------------------------- engine fires and bailing out

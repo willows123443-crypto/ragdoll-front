@@ -552,8 +552,9 @@ func _process(dt: float) -> void:
 				if Input.is_key_pressed(KEY_S): rts_focus -= fw * spd
 				if Input.is_key_pressed(KEY_D): rts_focus += rt * spd
 				if Input.is_key_pressed(KEY_A): rts_focus -= rt * spd
-				if Input.is_key_pressed(KEY_Q): rts_yaw += 1.4 * dt
-				if Input.is_key_pressed(KEY_E): rts_yaw -= 1.4 * dt
+				var turning_bp = G.ui.tool.begins_with("b:")
+				if Input.is_key_pressed(KEY_Q) and not turning_bp: rts_yaw += 1.4 * dt
+				if Input.is_key_pressed(KEY_E) and not turning_bp: rts_yaw -= 1.4 * dt
 			var bb: Rect2 = G.world.bounds
 			rts_focus.x = clampf(rts_focus.x, bb.position.x, bb.end.x)
 			rts_focus.z = clampf(rts_focus.z, bb.position.y, bb.end.y)
@@ -572,8 +573,9 @@ func _process(dt: float) -> void:
 			if Input.is_key_pressed(KEY_S): free_pos -= d * sp
 			if Input.is_key_pressed(KEY_D): free_pos += r * sp
 			if Input.is_key_pressed(KEY_A): free_pos -= r * sp
-			if Input.is_key_pressed(KEY_E) or Input.is_key_pressed(KEY_SPACE): free_pos.y += sp
-			if Input.is_key_pressed(KEY_Q) or Input.is_key_pressed(KEY_C) or Input.is_key_pressed(KEY_CTRL): free_pos.y -= sp
+			var bp = G.ui.tool.begins_with("b:")
+			if (Input.is_key_pressed(KEY_E) and not bp) or Input.is_key_pressed(KEY_SPACE): free_pos.y += sp
+			if (Input.is_key_pressed(KEY_Q) and not bp) or Input.is_key_pressed(KEY_C) or Input.is_key_pressed(KEY_CTRL): free_pos.y -= sp
 		free_pos.y = clampf(free_pos.y, G.world.ground_y(free_pos.x, free_pos.z) + 0.6, 240.0 if rts else 140.0)
 		cam.global_position = free_pos
 		cam.look_at(free_pos + d, Vector3.UP)
@@ -721,8 +723,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 		_key(ev.keycode)
 
 func _key(k: int) -> void:
-	if k == KEY_R and G.player == null and G.ui.tool.begins_with("b:"):
-		rotate_place(1)
+	# a blueprint in hand: R, E or Q turn it (instead of turning the camera)
+	if (k == KEY_R or k == KEY_E or k == KEY_Q) and G.player == null and G.ui.tool.begins_with("b:"):
+		rotate_place(-1 if k == KEY_Q else 1)
 		return
 	if k == KEY_T and G.player == null:
 		Engine.time_scale = 0.25 if Engine.time_scale > 0.5 else 1.0
@@ -1258,8 +1261,11 @@ func _finish_select(add: bool) -> void:
 							s = c
 		if s != null and s.state != "dead" and _sel_team_ok(s):
 			G.ui.hide_info()
-			if rts and s.squad != null:
-				# commander view: a click takes the men of that squad who are on foot nearby
+			var dbl = s == click_s and Time.get_ticks_msec() - click_ms < 400
+			click_s = s
+			click_ms = Time.get_ticks_msec()
+			if dbl and s.squad != null:
+				# double-click: the men of his squad who are on foot nearby
 				for m in s.squad["members"]:
 					if is_instance_valid(m) and m.state != "dead" and m.state != "riding" and G.dist2d(m.pos, s.pos) < 40.0 and not (m in selection):
 						selection.append(m)
@@ -1283,7 +1289,10 @@ func _finish_select(add: bool) -> void:
 			if r.has_point(cam.unproject_position(s.chest())) and not (s in selection):
 				selection.append(s)
 	if not selection.is_empty():
-		G.ui.message("%d selected. Right-click the ground to send them there" % selection.size())
+		G.ui.message("%d selected. Right-click the ground to send them there%s" % [selection.size(), " · double-click a man for his whole squad" if selection.size() == 1 else ""])
+
+var click_s = null
+var click_ms = 0
 
 func _order_move(screen: Vector2) -> void:
 	var o = cam.project_ray_origin(screen)
@@ -1419,9 +1428,34 @@ func _order_build(st, queue: bool = false) -> bool:
 		G.ui.message("%d soldier%s sent to %s the %s (Shift+right-click to queue more)" % [n, "" if n == 1 else "s", "build" if not st["done"] else "repair", st["name"].to_lower()])
 	return true
 
+# the vehicles the selected men are riding in
+func sel_vehicles() -> Array:
+	var vs = []
+	for s in selection:
+		if is_instance_valid(s) and s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle) and not s.vehicle.dead and not (s.vehicle in vs):
+			vs.append(s.vehicle)
+	return vs
+
 func order_selected(mode: String) -> void:
 	if mode == "dismount":
 		dismount_selected(true)
+		return
+	if mode in ["vstop", "vback", "vsmoke", "vfree"]:
+		for v in sel_vehicles():
+			if v.spec.get("static", false):
+				continue
+			match mode:
+				"vstop":
+					v.command(v.pos)
+				"vback":
+					v.command(G.main._free_spot(G.world.rally_point(v.team)))
+				"vfree":
+					v.cmd = null
+				"vsmoke":
+					if G.sim_time > v.smoke_cd:
+						VehExt.pop_smoke(v, _sel_threat(v.pos))
+		G.audio.radio_click()
+		G.ui.message({"vstop": "Vehicles stop where they are", "vback": "Vehicles heading back to the rally point", "vfree": "Vehicles act on their own", "vsmoke": "Smoke!"}[mode])
 		return
 	if mode in ["fallback", "smoke", "cover"]:
 		_special_order(mode)

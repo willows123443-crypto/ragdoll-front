@@ -2154,6 +2154,8 @@ func tick() -> void:
 				_death_motion()
 			dead_t += G.DT
 			_settle()
+			if settled and (int(dead_t * 60.0) + id) % 120 == 0:
+				_check_support()
 			if not pooled and dead_t > 1.2:
 				pooled = true
 				G.fx.decal(parts[0].global_position, randf_range(1.0, 1.6), false)
@@ -2250,6 +2252,23 @@ func _settle() -> void:
 		for b in parts:
 			b.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
 			b.freeze = true
+			# the dead are out of everyone's way: nobody trips over or drives into a body that's lying still
+			b.collision_layer = CORPSE_LAYER
+			b.collision_mask = G.L_WORLD
+
+const CORPSE_LAYER = 64
+
+# a body left hanging in the air (what it lay on was blown away or drove off) drops to the ground
+func _check_support() -> void:
+	if not settled or parts.is_empty() or dragger != null or carried_by != null:
+		return
+	var p: Vector3 = parts[0].global_position
+	var sy = G.world.surface_y(p.x, p.z, p.y)
+	if p.y - sy > 0.55 and G.ray(p, p - Vector3(0, 0.75, 0), G.L_WORLD | G.L_VEH).is_empty():
+		unsettle()
+		for b in parts:
+			b.collision_layer = CORPSE_LAYER
+			b.collision_mask = G.L_WORLD
 
 func unsettle() -> void:
 	if not settled:

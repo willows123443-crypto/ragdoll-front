@@ -1110,7 +1110,7 @@ static func status_text() -> String:
 
 # ---------------------------------------------------------------- the daily challenge
 const DAILY_MAPS = ["town", "field", "trenches", "forest", "city", "factory", "valley", "river", "pass", "front", "random"]
-const DAILY_MODES = ["capture", "frontline", "laststand", "destroy", "escort", "rescue", "koth", "horde", "breakthrough", "siege", "general"]
+const DAILY_MODES = ["capture", "frontline", "escort", "rescue", "horde", "breakthrough", "siege", "general"]
 const DAILY_PATH = "user://daily.dat"
 
 static func today() -> String:

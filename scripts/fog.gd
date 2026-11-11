@@ -49,6 +49,12 @@ static func step(dt: float) -> void:
 				if k != null and k["seen"] and G.sim_time - k["t"] < 1.2:
 					vis = true
 					break
+		if not vis:
+			# an observer post's view
+			for st in Build.sites:
+				if st["team"] == 0 and st["kind"] == "observer" and Build.alive(st) and s in st.get("sees", []):
+					vis = true
+					break
 		_show(s, vis)
 	for v in G.vehicles:
 		if v.team == 0:

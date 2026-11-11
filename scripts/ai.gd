@@ -140,6 +140,13 @@ static func objective_for(s) -> Vector3:
 			var a = float(s.id) * 2.39
 			return Obj.points[i]["p"] + Vector3(cos(a), 0, sin(a)) * (2.5 + float(s.id % 4) * 1.2)
 	var c = team_intel_center(s.team)
+	# commander mode: the war is won at the enemy HQ, so that's where everyone's heading in the end
+	if G.mode == "commander" and G.team_count() == 2:
+		var eh = Build.hq((s.team + 1) % 2)
+		# (old sightings don't hold them back: with nothing seen for a while they push on for the HQ)
+		if eh != null and Build.alive(eh) and (c == null or G.dist2d(c, s.pos) > 70.0 or G.sim_time - s.seen_t > 25.0):
+			var a3 = float(s.id) * 2.39
+			return eh["p"] + Vector3(cos(a3), 0, sin(a3)) * (16.0 + float(s.id % 5) * 3.0)
 	if c != null:
 		return c
 	return G.world.capture if G.dist2d(s.pos, G.world.capture) > 18.0 else G.world.rally_point((s.team + 1) % G.team_count())
@@ -189,6 +196,7 @@ static func release_cover(s) -> void:
 	s.force_peek = false
 
 static func take_cover(s, cp) -> void:
+	_cover_me(s, cp.p)
 	release_cover(s)
 	cp.owner_s = s
 	s.cover = cp
@@ -197,6 +205,26 @@ static func take_cover(s, cp) -> void:
 	s.cover_bad = 0
 	s.prone_t = false
 	go_to(s, cp.p, 4.8)
+
+# about to dash across open ground under fire: "Cover me!", and the mates nearby open up on the enemy
+static func _cover_me(s, to: Vector3) -> void:
+	if s.is_player or s.squad == null or s.zombie or G.sim_time - s.seen_t > 6.0 or G.dist2d(to, s.pos) < 8.0:
+		return
+	if G.sim_time < s.get_meta("cover_me_t", -99.0):
+		return
+	s.set_meta("cover_me_t", G.sim_time + 14.0)
+	var n = 0
+	for m in s.squad["members"]:
+		if m == s or not is_instance_valid(m) or m.state != "alive" or m.vehicle != null or m.is_player:
+			continue
+		if G.dist2d(m.pos, s.pos) < 24.0 and m.move_target == null and m.ammo_frac() > 0.25:
+			m.set_meta("cover_fire_t", G.sim_time + 3.5)
+			m.last_seen = s.last_seen
+			m.seen_t = maxf(m.seen_t, s.seen_t)
+			n += 1
+	if n > 0:
+		G.fx.callout(s, G.pick(["Cover me!", "Moving! Cover me!", "Cover me, I'm going!"]))
+		Squad.events["suppress"] += 1
 
 static func cover_safe(cp, threat: Vector3) -> bool:
 	return G.blocked(Vector3(threat.x, threat.y + 1.5, threat.z), Vector3(cp.p.x, cp.p.y + 1.0, cp.p.z))
@@ -302,6 +330,97 @@ static func find_cover(s, threat: Vector3, mode: String):
 			bs = sc2
 			best = cp
 	return best
+
+# how badly we outnumber them round here: our men within 40 m against the enemies we know of near the threat
+static func odds(s, threat: Vector3) -> float:
+	var f = 0
+	for o in G.soldiers:
+		if o.team == s.team and o.state == "alive" and o.vehicle == null and G.dist2d(o.pos, s.pos) < 40.0:
+			f += 1
+	var e = 0
+	for k in s.intel:
+		var r = s.intel[k]
+		if is_instance_valid(k) and k.state != "dead" and G.sim_time - r["t"] < 20.0 and G.dist2d(r["p"], threat) < 50.0:
+			e += 1
+	return float(f) / float(maxi(1, e))
+
+# the next bit of cover on the way to a point: a real bound forward (8 to 25 m), not a shuffle
+static func hop_cover(s, goal: Vector3):
+	var dg = G.dist2d(s.pos, goal)
+	var best = null
+	var bs = 1e9
+	for cp in G.world.cover_near(s.pos, 28.0):
+		if cp.upper or not cover_free(cp, s) or cp.ban > G.sim_time:
+			continue
+		var dm = G.dist2d(cp.p, s.pos)
+		var de = G.dist2d(cp.p, goal)
+		if dm < 6.0 or de > dg - 7.0:
+			continue
+		var sc = absf(dm - 15.0) + de * 0.15 + Tactics.danger_at(cp.p, s.team) * 4.0 + float((cp.get_instance_id() + s.id) % 7) * 0.4
+		if sc < bs:
+			bs = sc
+			best = cp
+	return best
+
+# commander mode: men who've fought their way up to the enemy HQ and see nobody to shoot set about
+# destroying it: satchels and grenades if they have them, rockets, and everyone else shoots it to pieces
+static func raze_tick(s) -> bool:
+	if G.mode != "commander" or s.vehicle != null or s.is_player or s.zombie or s.task in ["medic", "stretcher", "construct", "get_radio", "salvage"]:
+		return false
+	if s.vis_t != null or G.sim_time - s.seen_t < 4.0 or ClassAI.busy(s):
+		if s.task == "raze":
+			s.task = null
+		return false
+	var o = order_of(s)
+	if o["mode"] == "move" and not o.get("arrived", false):
+		return false
+	var hq = Build.hq((s.team + 1) % 2)
+	if hq == null or not Build.alive(hq):
+		return false
+	var hp: Vector3 = hq["p"]
+	var d = G.dist2d(s.pos, hp)
+	if d > 48.0:
+		if s.task == "raze":
+			s.task = null
+		return false
+	# aim at what's left of it
+	var aim = hp + Vector3(0, 1.2, 0)
+	var bd = 1e9
+	for c in hq["cols"]:
+		if c.alive and c.lo.y - c.gy < 1.0:
+			var cc = (c.lo + c.hi) * 0.5
+			var dd = G.dist2d(cc, s.pos)
+			if dd < bd:
+				bd = dd
+				aim = Vector3(cc.x, c.lo.y + minf(1.3, (c.hi.y - c.lo.y) * 0.6), cc.z)
+	s.set_meta("raze_p", aim)
+	s.set_meta("raze_st", hq)
+	s.decide_t = randf_range(1.5, 2.5)
+	if s.task != "raze":
+		s.task = "raze"
+		G.fx.callout(s, G.pick(["That's their HQ! Bring it down!", "Hit the HQ!", "Blow it up!"]))
+	if s.satchels > 0:
+		if ClassAI._satchel_site(s, 42.0) >= 0:
+			s.task = "raze"
+			return true
+	if s.grenades > 0 and d < 22.0 and s.throw_t <= 0.0 and randf() < 0.4 and not G.blocked(s.head_pos(), aim):
+		Combat.throw_grenade(s, aim, "frag")
+		return true
+	# get within easy range, behind something if there's cover about
+	var want = 26.0 if not s.W["rocket"] else 34.0
+	if d > want + 6.0 or G.blocked(s.head_pos(), aim):
+		var c2 = find_cover(s, aim, "advance")
+		if c2 != null and G.dist2d(c2.p, hp) < d - 3.0:
+			take_cover(s, c2)
+		else:
+			release_cover(s)
+			go_to(s, hp + G.flat(s.pos - hp).normalized() * want + Vector3(randf_range(-3, 3), 0, randf_range(-3, 3)), 4.4)
+		s.task = "raze"
+		return true
+	stop_move(s)
+	s.kneel = true
+	s.aim_yaw = atan2(aim.x - s.pos.x, aim.z - s.pos.z)
+	return true
 
 # the free spots inside buildings near a point that look out towards the threat, a window if there is one
 static func garrison_cover(s, center: Vector3, threat: Vector3, rad: float):
@@ -869,6 +988,8 @@ static func decide(s) -> void:
 				go_to(s, fp, 5.8)
 				s.decide_t = 0.7
 				return
+	if raze_tick(s):
+		return
 	# routed: keep running to the rear, then cower in cover until morale comes back
 	if s.broken:
 		var home: Vector3 = G.world.fallback_point(s.team, s.pos)
@@ -1073,7 +1194,8 @@ static func decide(s) -> void:
 					G.fx.callout(s, G.pick(["Nothing here. Moving up.", "All quiet, rejoining the push.", "Position's clear, let's go."]))
 		return
 	# capture mode: keep pushing onto the objective when nobody is in sight
-	if Obj.uses_points() and not Obj.points.is_empty() and s.vis_t == null and s.supp < 0.7 and s.task != "post" and G.dist2d(s.pos, objective_for(s)) < 60.0:
+	var holding_house = s.task == "garrison" and s.cover != null and G.dist2d(s.cover.p, objective_for(s)) < 26.0
+	if Obj.uses_points() and not Obj.points.is_empty() and s.vis_t == null and s.supp < 0.7 and s.task != "post" and not holding_house and G.dist2d(s.pos, objective_for(s)) < 60.0:
 		var C: Vector3 = objective_for(s)
 		var dc = G.dist2d(s.pos, C)
 		var q = s.squad
@@ -1104,8 +1226,8 @@ static func decide(s) -> void:
 			return
 	# marksmen and some gunners head for upstairs windows
 	# marksmen, some gunners and the odd rifleman go up high where they can see a long way
-	if s.cover == null and known and (W["id"] == "sniper" or (W["id"] == "lmg" and s.id % 3 == 0) or (W["id"] == "rifle" and s.id % 7 == 0)):
-		var post = find_post(s, threat)
+	if s.cover == null and (known or W["id"] == "sniper") and (W["id"] == "sniper" or (W["id"] == "lmg" and s.id % 3 == 0) or (W["id"] == "rifle" and s.id % 7 == 0)):
+		var post = find_post(s, threat if known else objective_for(s))
 		if post != null:
 			take_post(s, post)
 			return
@@ -1131,8 +1253,11 @@ static func decide(s) -> void:
 			# men holding a house by the objective stay in it while the enemy is in range
 			if s.task == "garrison" and dT < W["range"][1] * 1.5:
 				return
-			if can_move2 and Squad.may_bound(s) and s.morale >= Morale.SHAKEN and (s.supp < 0.5 or (too_far and s.supp < 0.9)) and ((s.vis_t == null and s.cover_time > 5.0) or too_far):
-				var ca = find_cover(s, threat, "flank" if s.role == "flanker" else "advance")
+			# commander mode: no settling into a long-range firefight, keep pushing cover to cover
+			var push = G.mode == "commander" and s.order == null and s.cover_time > 10.0 + float(s.id % 5) and dT > 22.0 and (s.supp < 0.4 or (s.supp < 1.0 and odds(s, threat) >= 3.0))
+			if can_move2 and Squad.may_bound(s) and s.morale >= Morale.SHAKEN and (s.supp < 0.5 or (too_far and s.supp < 0.9) or push) and ((s.vis_t == null and s.cover_time > 5.0) or too_far or push):
+				# nothing seen lately: the next cover is towards where we're going, not where the last enemy was
+				var ca = find_cover(s, threat, "flank" if s.role == "flanker" else "advance") if known else hop_cover(s, objective_for(s))
 				if ca != null:
 					take_cover(s, ca)
 					s.task = "advance"
@@ -1165,6 +1290,17 @@ static func decide(s) -> void:
 						s.board_target = v
 						go_to(s, v.pos, 5.0)
 						return
+		# commander mode, in the enemy's half with no orders: up from cover to cover, a pause in each
+		if G.mode == "commander" and s.order == null and G.dist2d(s.pos, obj) > 14.0 and G.team_count() == 2 and G.sim_time - s.seen_t < 90.0:
+			var own: Vector3 = G.world.spawn[s.team]
+			var foe: Vector3 = G.world.spawn[(s.team + 1) % 2]
+			if G.dist2d(s.pos, foe) < G.dist2d(own, foe) * 0.62:
+				var hc = hop_cover(s, obj)
+				if hc != null:
+					take_cover(s, hc)
+					s.set_meta("hop_t", G.sim_time)
+					s.task = "advance"
+					return
 		var fs = Squad.slot(s)
 		var in_form = false
 		if fs != null and G.dist2d(s.pos, obj) > 12.0:
@@ -1191,10 +1327,11 @@ static func decide(s) -> void:
 		if G.dist2d(s.pos, goal2) < 5.0 or (s.task == "garrison" and s.cover != null):
 			var foe_side: Vector3 = G.world.spawn[(s.team + 1) % G.team_count()]
 			# a house by the point: go in and take a window facing the way the enemy will come
-			if s.task != "garrison" and (s.id + int(G.sim_time / 30.0)) % 3 != 0:
+			if s.task != "garrison" and s.id % 3 != 0 and G.sim_time - s.get_meta("garrison_t", -999.0) > 60.0:
 				var gc = garrison_cover(s, obj, foe_side, 24.0)
 				if gc != null:
 					take_cover(s, gc)
+					s.set_meta("garrison_t", G.sim_time)
 					s.task = "garrison"
 					return
 			if s.task == "garrison" and s.cover != null:
@@ -1278,6 +1415,7 @@ static func update(s) -> void:
 		s.morale_t = 0.5
 		Morale.tick(s, 0.5)
 		supply_tick(s, 0.5)
+		pass_ammo(s)
 	if s.think <= 0.0:
 		perceive(s)
 	_watchdog(s)
@@ -1607,6 +1745,13 @@ static func aim_and_fire(s) -> void:
 	elif s.in_cover and not s.broken and W["auto"] and G.sim_time - s.seen_t < 6.0 and s.squad != null and squad_movers(s.squad) > 0 and s.task != "medic":
 		point = s.last_seen + Vector3(0, 1.0, 0)
 		extra = 0.045
+	elif G.sim_time < s.get_meta("cover_fire_t", -99.0) and not s.broken and s.task != "medic" and G.sim_time - s.seen_t < 12.0:
+		# covering a mate's dash: fire at where the enemy is
+		point = s.last_seen + Vector3(0, 1.0, 0)
+		extra = 0.05
+	elif s.task == "raze" and s.has_meta("raze_p") and s.move_target == null:
+		point = s.get_meta("raze_p")
+		extra = 0.01
 	if point != null:
 		s.ready_ = true
 		var err = aim_at(s, point, 5.5)
@@ -1653,6 +1798,8 @@ static func aim_and_fire(s) -> void:
 						if Faction.militia(s.team):
 							spread += 0.008   # irregulars: less training, worn-out rifles
 						Combat.fire_weapon(s, s.muzzle, dir, spread)
+						if tgt == null and veh_t == null and s.task == "raze" and s.has_meta("raze_st") and not W["rocket"]:
+							Build.raze_damage(s.get_meta("raze_st"), W["dmg"] * 0.5 * W["pellets"])
 						s.burst -= 1
 						s.mag -= 1
 						s.fire_cd = W["rof"]
@@ -1668,7 +1815,7 @@ static func aim_and_fire(s) -> void:
 				s.burst_cd -= G.DT
 				if s.burst_cd <= 0.0:
 					var far = W["id"] != "sniper" and s.pos.distance_to(point) > W["range"][1] * 1.4
-					if W["rocket"] and tgt == null and veh_t == null:
+					if W["rocket"] and tgt == null and veh_t == null and s.task != "raze":
 						s.burst = 0
 					elif far:
 						s.burst = randi_range(1, 3) if randf() < 0.35 else 0
@@ -1680,7 +1827,7 @@ static func aim_and_fire(s) -> void:
 						s.burst = mini(s.burst, maxi(1, W["burst"][0]))
 						if tgt == null:
 							s.burst = 0
-					elif af < 0.6 and tgt == null and randf() < 0.5:
+					elif af < 0.6 and tgt == null and randf() < 0.5 and s.task != "raze":
 						s.burst = 0
 					s.burst_cd = (randf_range(0.35, 1.1) if W["auto"] else randf_range(0.2, 0.6)) * (1.0 + s.supp) * (3.0 if far else 1.0)
 	else:
@@ -1737,10 +1884,10 @@ static func stance(s) -> void:
 		if dp > 1.3 and dp < 9.0:
 			s.prone_t = true
 	# a machine gunner out in the open with a target goes down behind the gun and gets the bipod on the ground
-	if (s.wid == "lmg" or s.wid == "atrifle") and s.vis_t != null and not s.in_cover and s.want.length_squared() < 0.1 and s.vault == null and s.dragging == null:
+	if (s.wid == "lmg" or s.wid == "atrifle") and s.vis_t != null and not s.in_cover and s.want.length_squared() < 0.1 and s.vault == null and s.dragging == null and not ClassAI.busy(s):
 		s.prone_t = true
 	# pinned down in the open: flat on the ground, crawling for cover
-	if s.supp > 1.1 and not s.in_cover and s.task != "flank_move" and s.task != "medic" and s.dragging == null and s.vault == null and not s.zombie:
+	if s.supp > 1.1 and not s.in_cover and s.task != "flank_move" and s.task != "medic" and s.dragging == null and s.vault == null and not s.zombie and not ClassAI.busy(s):
 		s.prone_t = true
 	if s.in_cover and s.cover != null:
 		var cp = s.cover
@@ -1748,9 +1895,13 @@ static func stance(s) -> void:
 		s.peek_hold -= G.DT
 		if peek_now != s.peek_on and s.peek_hold <= 0.0:
 			s.peek_on = peek_now
-			s.peek_hold = 1.1 if peek_now else 0.7
+			s.peek_hold = (1.1 if peek_now else 0.7) * (2.0 if cp.upper else 1.0)
 		var peek = s.peek_on
-		if cp.type == "low":
+		if cp.type == "low" and cp.upper:
+			# at a window or parapet upstairs: a steady kneel, rising a little to fire, never bobbing up and down
+			s.prone_t = false
+			s.crouch_t = 0.35 if peek else 0.7
+		elif cp.type == "low":
 			s.crouch_t = 0.0 if peek else 1.0
 		elif cp.type == "corner" or (cp.type == "wall" and cp.side != 0.0):
 			var ldir: Vector3 = cp.t if cp.type == "corner" else wall_lean_dir(cp)
@@ -1871,6 +2022,33 @@ static func fetch_tick(s) -> void:
 		s.supply_target = null
 	elif s.move_target == null:
 		go_to(s, a["p"], 5.2)
+
+# a man running dry shouts for a mag, and the nearest mate with plenty and the same gun tosses him one
+static func pass_ammo(s) -> void:
+	if s.state != "alive" or s.vehicle != null or s.zombie or s.is_player or s.reserve > 0 or s.W["rocket"] or s.W["flame"]:
+		return
+	if G.sim_time < s.get_meta("mag_ask_t", -99.0):
+		return
+	s.set_meta("mag_ask_t", G.sim_time + 12.0)
+	var best = null
+	var bd = 9.0
+	for o in G.soldiers:
+		if o == s or o.team != s.team or o.state != "alive" or o.vehicle != null or o.zombie or o.wid != s.wid:
+			continue
+		if o.reserve < o.W["mag"] * 2:
+			continue
+		var d = G.dist2d(o.pos, s.pos)
+		if d < bd:
+			bd = d
+			best = o
+	G.fx.callout(s, G.pick(["Mag! Anyone got a mag?", "I'm dry, throw me one!", "Need ammo here!"]))
+	if best == null:
+		return
+	var n = mini(best.W["mag"] * 2, best.reserve - best.W["mag"])
+	best.reserve -= n
+	s.reserve += n
+	G.fx.callout(best, G.pick(["Catch!", "Here, two mags!", "Heads up!"]))
+	G.fx.toss_mag(best.chest(), s.chest())
 
 # standing at a crate (or over a body) restocks you
 static func supply_tick(s, dt: float) -> void:

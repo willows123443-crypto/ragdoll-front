@@ -80,6 +80,11 @@ static var missions: Array = []
 static func fire_mission(team: int, target: Vector3, caller, shells: int, spread: float, power: float) -> void:
 	var a = randf() * TAU
 	var err = Vector3(cos(a), 0, sin(a)) * randf_range(28.0, 45.0)
+	var op = Build.observer_for(team, target)
+	if op != null:
+		spread *= 0.5
+		err *= 0.35
+		G.ui.radio(team, "Observer post has eyes on the target: corrections will be quick")
 	missions.append({"team": team, "target": target, "caller": caller, "shells": shells, "spread": spread, "power": power,
 		"stage": 0, "t": 1.5, "err": err, "from": caller.pos if caller != null and is_instance_valid(caller) else G.world.spawn[team]})
 	G.ui.radio(team, "Fire mission, grid %s. Ranging round on the way" % AI.grid_ref(target))
@@ -245,7 +250,7 @@ static func call_in(team: int, what: String, target: Vector3, relay: bool = fals
 	if what == "supplytruck":
 		if not Logistics.can_buy_truck(team):
 			if team == 0:
-				G.ui.message("You already have %d supply trucks (the most you can run)" % Logistics.FLEET_MAX if Prod.active() else "Supply trucks are for commander battles")
+				G.ui.message(("Build a supply dump or a FOB first: the trucks need somewhere to go" if not Logistics.has_stop(0) else "You already have %d supply trucks (the most you can run)" % Logistics.FLEET_MAX) if Prod.active() else "Supply trucks are for commander battles")
 			return false
 		points[team] -= COSTS[what]
 		return Logistics.buy_truck(team)
@@ -255,7 +260,7 @@ static func call_in(team: int, what: String, target: Vector3, relay: bool = fals
 	points[team] -= COSTS[what]
 	if what == "ammotruck":
 		var dest: Vector3 = G.world.rally_point(team)
-		Reinforce.drive_in(team, "ammotruck", dest)
+		Reinforce.drive_in(team, "ammotruck", dest, true, false)
 		G.ui.radio(team, "Ammo truck on its way%s" % (": park it near the front and the men will come to it" if team == 0 else ""))
 		return true
 	# commander mode: vehicles are built at the depot, one after another
@@ -300,7 +305,7 @@ static func deliver(team: int, what: String) -> void:
 		G.ui.radio(team, "Anti-tank gun set up at the rally point")
 		return
 	var r: Vector3 = G.world.rally_point(team)
-	Reinforce.drive_in(team, what, r)
+	Reinforce.drive_in(team, what, r, true, false)
 	G.ui.radio(team, "%s inbound from the rear" % NAMES[what])
 
 # a spotter plane circles over the enemy's side for thirty seconds: everything it sees goes on our map,
@@ -399,8 +404,10 @@ static func _ai_recruit(t: int) -> bool:
 		k = "eng"
 	elif enemy_armour and randf() < 0.4:
 		k = "atk"
-	elif randf() < 0.2:
-		k = G.pick(["asl", "snp", "med"])
+	elif randf() < 0.25:
+		k = G.pick(["asl", "snp", "med", "mgt", "rad"])
+	elif points[t] >= R["plt"]["cost"] + 10 and randf() < 0.3:
+		k = "plt"
 	# short-handed: spend on men before anything else; otherwise only now and then
 	var short = mine.size() < G.team_size
 	if not short and randf() < 0.45:
@@ -408,9 +415,7 @@ static func _ai_recruit(t: int) -> bool:
 	if points[t] < R[k]["cost"]:
 		return false
 	points[t] -= R[k]["cost"]
-	G.main.force_cls = R[k]["cls"].duplicate()
-	Reinforce.truck(t, R[k]["cls"].size())
-	G.main.force_cls = []
+	Reinforce.truck_cls(t, R[k]["cls"])
 	return true
 
 static func _ai_aa(t: int) -> bool:

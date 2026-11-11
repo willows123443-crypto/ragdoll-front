@@ -24,12 +24,13 @@ const KINDS = {
 	"pillbox": {"name": "Pillbox", "work": 40.0, "size": Vector2(4.6, 4.6)},
 	"fob2": {"name": "FOB (hut)", "work": 60.0, "size": Vector2(11, 10)},
 	"supply": {"name": "Supply dump", "work": 25.6, "size": Vector2(6.5, 5.5)},
+	"observer": {"name": "Observer post", "work": 26.0, "size": Vector2(4.4, 4.4)},
 }
-const ORDER = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "tower", "bunker", "hospital", "radio", "depot", "supply"]
+const ORDER = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "tower", "bunker", "hospital", "radio", "depot", "supply", "observer"]
 # what an AI team adds around a finished FOB, in order: [kind, sideways, forward]
 const FOB_PLAN = [["mgnest", 0.0, 13.0], ["sandbags", -6.0, 10.0], ["sandbags", 6.0, 10.0], ["hospital", -11.0, -6.0],
 	["supply", 11.0, -5.0], ["radio", -12.0, 5.0], ["mortarpit", 6.0, -12.0], ["tower", 12.0, 7.0], ["wire", 0.0, 20.0],
-	["traps", -12.0, 19.0], ["bunker", 0.0, 0.0], ["aa", -8.0, -16.0], ["depot", 0.0, -22.0]]
+	["traps", -12.0, 19.0], ["observer", -5.0, 24.0], ["bunker", 0.0, 0.0], ["aa", -8.0, -16.0], ["depot", 0.0, -22.0]]
 
 # what each structure can be upgraded into
 const UPGRADES = {"sandbags": "concrete", "mgnest": "pillbox", "fob": "fob2"}
@@ -65,7 +66,7 @@ static func reset() -> void:
 
 # what a structure costs in commander mode (supply points)
 const COSTS = {"fob": 24, "sandbags": 2, "wire": 2, "traps": 3, "mgnest": 8, "mortarpit": 10, "aa": 10, "tower": 6, "bunker": 14,
-	"hospital": 12, "radio": 10, "depot": 16, "supply": 8}
+	"hospital": 12, "radio": 10, "depot": 16, "supply": 8, "observer": 9}
 
 static func cost(kind: String) -> int:
 	return COSTS.get(kind, 0) if G.mode in ["commander", "horde"] else 0
@@ -100,6 +101,7 @@ static func ghost(kind: String, p: Vector3, front: Vector3) -> Node3D:
 		"radio": _geo_radio(st)
 		"depot": _geo_depot(st)
 		"supply": _geo_supply(st)
+		"observer": _geo_observer(st)
 		"aa": _geo_aa(st)
 	G.world.edit_node = null
 	G.world.piece = keep_piece
@@ -195,6 +197,7 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 		"radio": _geo_radio(st)
 		"depot": _geo_depot(st)
 		"supply": _geo_supply(st)
+		"observer": _geo_observer(st)
 		"aa": _geo_aa(st)
 		"concrete": _geo_concrete(st)
 		"pillbox": _geo_pillbox(st)
@@ -391,6 +394,19 @@ static func _complete(st: Dictionary, quiet: bool) -> void:
 	if not quiet:
 		G.ui.radio(t, "%s built at %s" % [st["name"], AI.grid_ref(st["p"])])
 
+# small arms chipping away at a structure (commander mode: men shooting up the enemy HQ)
+static func raze_damage(st: Dictionary, amount: float) -> void:
+	if st["dead"]:
+		return
+	var live = st["cols"].filter(func(c): return c.alive)
+	if live.is_empty():
+		return
+	var c = live[randi() % live.size()]
+	c.hp -= amount
+	if c.hp <= 0.0:
+		G.world.destroy_col(c)
+		_check_alive(st)
+
 static func alive(st: Dictionary) -> bool:
 	return st["done"] and not st["dead"]
 
@@ -552,7 +568,7 @@ const DESCR = {"hq": "Headquarters: earns supply points; lose it and you lose th
 	"pillbox": "Concrete machine-gun position", "mortarpit": "Shells enemies your side has spotted",
 	"tower": "Lookout: spots the enemy from far off", "bunker": "Shelter from artillery",
 	"hospital": "Treats the wounded and gives blood", "radio": "Keeps your radio net up for call-ins",
-	"depot": "Unlocks vehicles", "aa": "Shoots down aircraft", "supply": "Earns supply points when the trucks get through, and restocks ammo. Must be 70 m or more from HQ"}
+	"depot": "Unlocks vehicles", "aa": "Shoots down aircraft", "observer": "Forward observer post: sees a long way round it (through the fog of war) and makes artillery called near it far more accurate", "supply": "Earns supply points when the trucks get through, and restocks ammo. Must be 70 m or more from HQ"}
 
 # how badly knocked about a finished structure is (0 = as new, 1 = gone)
 static func damage(st: Dictionary) -> float:
@@ -781,6 +797,8 @@ static func _effect(st: Dictionary, dt: float) -> void:
 	var t: int = st["team"]
 	st["t"] += dt
 	match st["kind"]:
+		"observer":
+			_observe(st)
 		"hospital":
 			# each aid station keeps an ambulance running (the player commander buys his own)
 			if G.sim_time - st.get("amb_t", -999.0) > 45.0 and not (G.mode == "commander" and t == 0) and Rules.callin_ok(t, "ambulance"):
@@ -1484,6 +1502,64 @@ static func _geo_radio(st: Dictionary) -> void:
 	_roof(st, -1.2, 1.9, -1.6, 2.3, 0.5, 1.9, Color(0.3, 0.3, 0.27))
 	_b(st, 1.5, 0.0, -1.5, 1.0, 0.7, 0.7, Color(0.33, 0.36, 0.25), {"hp": 80.0})
 	_cyl(st, 1.5, 0.7, -1.5, 0.05, 0.6, METALC)
+
+# a forward observer post: a raised, sandbagged lookout under a camouflage net, with a scissor periscope
+# on a tripod, a field telephone and its wire running back, and a short whip aerial
+static func _geo_observer(st: Dictionary) -> void:
+	var earth = Color(0.42, 0.36, 0.26)
+	_b(st, 0.0, 0.0, 0.0, 3.2, 0.7, 3.2, earth, {"hp": 220.0})
+	_sandbags(st, 0.0, 1.55, 3.2, true, 1.0)
+	_sandbags(st, -1.55, 0.0, 2.6, false, 1.0)
+	_sandbags(st, 1.55, 0.0, 2.6, false, 1.0)
+	# the periscope: a tripod with the twin tubes up top
+	for k in range(3):
+		var a = k * TAU / 3.0
+		_b(st, cos(a) * 0.28, 0.7, sin(a) * 0.28 + 0.6, 0.04, 1.1, 0.04, Color(0.2, 0.2, 0.18), {"collide": false, "rx": sin(a) * 0.25, "rz": -cos(a) * 0.25})
+	_b(st, -0.12, 1.75, 0.6, 0.07, 0.55, 0.07, Color(0.25, 0.28, 0.2), {"collide": false, "rz": 0.35})
+	_b(st, 0.12, 1.75, 0.6, 0.07, 0.55, 0.07, Color(0.25, 0.28, 0.2), {"collide": false, "rz": -0.35})
+	_b(st, 0.0, 1.62, 0.6, 0.2, 0.12, 0.16, Color(0.2, 0.22, 0.17), {"collide": false})
+	# field telephone, map board and wire reel
+	_b(st, -0.8, 0.7, -0.6, 0.35, 0.25, 0.25, Color(0.3, 0.27, 0.2), {"collide": false})
+	_b(st, 0.7, 0.7, -0.7, 0.8, 0.6, 0.05, Color(0.75, 0.72, 0.6), {"collide": false, "rx": -0.3})
+	_cyl(st, -1.2, 0.0, -2.2, 0.25, 0.3, Color(0.22, 0.2, 0.16))
+	_b(st, -1.2, 0.02, -4.0, 0.03, 0.02, 3.4, Color(0.1, 0.1, 0.1), {"collide": false})
+	# aerial and camo net on poles
+	_cyl(st, 1.3, 0.7, 0.9, 0.015, 3.2, METALC)
+	for x in [-1.6, 1.6]:
+		for z in [-1.6, 1.6]:
+			_cyl(st, x, 0.7, z, 0.04, 1.6, WOODC)
+	_b(st, 0.0, 2.3, 0.0, 3.8, 0.35, 3.8, Color(0.3, 0.35, 0.22), {"collide": false, "shape": "blob", "bare": true})
+
+# the observer post's eyes: who it can see from up on its platform; they go on the map (through the fog)
+# and to every friendly soldier round about
+const OBS_RANGE = 130.0
+
+static func _observe(st: Dictionary) -> void:
+	var t: int = st["team"]
+	var eye: Vector3 = st["p"] + Vector3(0, 2.4, 0)
+	var r = OBS_RANGE * (0.45 if G.main.is_night() else 1.0)
+	var sees = []
+	for e in G.soldiers:
+		if e.team == t or e.state == "dead" or e.zombie:
+			continue
+		if G.dist2d(e.pos, eye) > r or G.blocked(eye, e.head_pos()):
+			continue
+		sees.append(e)
+	st["sees"] = sees
+	if sees.is_empty():
+		return
+	for f in G.soldiers:
+		if f.team == t and f.state == "alive" and G.dist2d(f.pos, eye) < 160.0:
+			for e in sees.slice(0, 6):
+				AI.add_intel(f, e, e.pos, 2.0, false)
+
+# an observer post of this side that can see the spot (for artillery)
+static func observer_for(team: int, target: Vector3):
+	for st in sites:
+		if st["team"] == team and st["kind"] == "observer" and alive(st) and G.dist2d(st["p"], target) < OBS_RANGE * 1.2:
+			if not G.blocked(st["p"] + Vector3(0, 2.4, 0), target + Vector3(0, 1.0, 0)):
+				return st
+	return null
 
 static func _geo_depot(st: Dictionary) -> void:
 	var post = WOODC

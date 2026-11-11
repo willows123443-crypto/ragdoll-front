@@ -26,8 +26,15 @@ static func reset() -> void:
 static func count(team: int) -> int:
 	return fleet[team].filter(func(v): return is_instance_valid(v) and not v.dead).size() if team < fleet.size() else 0
 
+# somewhere for the trucks to go: a supply dump or a FOB that's finished
+static func has_stop(team: int) -> bool:
+	for st in Build.sites:
+		if st["team"] == team and Build.alive(st) and st["kind"] in ["supply", "fob", "fob2"]:
+			return true
+	return false
+
 static func can_buy_truck(team: int) -> bool:
-	return Prod.active() and count(team) < FLEET_MAX and Build.hq_alive(team)
+	return Prod.active() and count(team) < FLEET_MAX and Build.hq_alive(team) and has_stop(team)
 
 # a new supply truck drives in from the edge of the map behind HQ and joins the fleet
 static func buy_truck(team: int) -> bool:
@@ -68,16 +75,17 @@ static func step(dt: float) -> void:
 		var h = Build.hq(t)
 		if h == null or not Build.alive(h):
 			continue
-		if not started[t]:
+		# the first trucks turn up once there's a supply dump or a FOB for them to run to
+		if not started[t] and has_stop(t):
 			started[t] = true
 			for k in range(FLEET_START):
 				var p = G.main._free_spot(h["p"] + Build._front(h) * 12.0 + _park_off(t))
-				var v = G.main.spawn_vehicle("supplytruck", t, p, atan2(Build._front(h).x, Build._front(h).z), false)
-				var drv = G.main.spawn_soldier(t, p.x, p.z, "rifle")
-				if drv != null:
-					drv.mount(v, 0)
+				var v = Reinforce.drive_in(t, "supplytruck", p, true, false)
+				if v == null:
+					continue
 				v.command(p)
 				_join(t, v)
+			G.ui.radio(t, "HQ: %d supply trucks are on their way to run supplies" % FLEET_START)
 		# trucks lost on the road
 		for i in range(fleet[t].size() - 1, -1, -1):
 			var v = fleet[t][i]

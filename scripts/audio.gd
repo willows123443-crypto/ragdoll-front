@@ -12,6 +12,8 @@ var s_splash: AudioStreamWAV
 var s_hit: AudioStreamWAV
 var s_rocket: AudioStreamWAV
 var s_engine: AudioStreamWAV
+var s_rumble: AudioStreamWAV
+var s_squeal: AudioStreamWAV
 var s_hammer: AudioStreamWAV
 var s_kick: AudioStreamWAV
 var s_guns = {}             # a report for each kind of gun
@@ -49,6 +51,8 @@ func _ready() -> void:
 	s_hit = _sweep(1400.0, 1200.0, 0.05, 0.25)
 	s_rocket = _noise(0.7, 0.25, 0.3, 1.0)
 	s_engine = _engine_loop()
+	s_rumble = _rumble()
+	s_squeal = _squeal()
 	s_hammer = _noise(0.09, 0.025, 0.55, 3.0, 30.0)
 	s_kick = _noise(0.35, 0.07, 0.12, 2.4, 70.0)
 	s_glass = _glass_sound()
@@ -534,8 +538,53 @@ func splash(pos: Vector3, deep: bool) -> void:
 
 # engines: short rumbles re-triggered while driving, pitched up with speed
 func engine(pos: Vector3, load_: float, heavy: bool) -> void:
-	if cam_dist(pos) < 90.0:
+	var d = cam_dist(pos)
+	if d < 90.0:
 		play(s_engine, pos, -6.0 if heavy else -9.0, (0.55 if heavy else 0.8) + load_ * 0.5)
+	elif heavy and d < 340.0:
+		# armour you can't see yet: a deep rumble and the clatter of tracks carrying from far off,
+		# heard from its direction (placed nearer so it isn't lost, and quieter the further it is)
+		var cam = get_viewport().get_camera_3d()
+		if cam != null:
+			var dir = (pos - cam.global_position).normalized()
+			play(s_rumble, cam.global_position + dir * 30.0, -10.0 - (d - 90.0) / 16.0, 0.8 + load_ * 0.3)
+
+# tracks squealing as a tank turns
+func squeal(pos: Vector3) -> void:
+	var d = cam_dist(pos)
+	if d < 180.0:
+		play(s_squeal, pos, -8.0 - d / 30.0, randf_range(0.85, 1.15))
+
+func _rumble() -> AudioStreamWAV:
+	var n = int(0.45 * RATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var lp = 0.0
+	var lp2 = 0.0
+	for i in range(n):
+		var t = float(i) / RATE
+		var env = minf(1.0, t * 12.0) * minf(1.0, (0.45 - t) * 12.0)
+		lp += (randf() * 2.0 - 1.0 - lp) * 0.02
+		lp2 += (randf() * 2.0 - 1.0 - lp2) * 0.15
+		# a low growl, with the tracks' links clacking faintly over it
+		var clack = (1.0 if fmod(t * 11.0, 1.0) < 0.06 else 0.0) * lp2 * 0.5
+		var v = sin(TAU * 28.0 * t) * 0.4 + sin(TAU * 37.0 * t) * 0.25 + lp * 1.6 + clack
+		out[i] = v * env * 0.7
+	return _wav(out)
+
+func _squeal() -> AudioStreamWAV:
+	var n = int(0.7 * RATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var ph = 0.0
+	for i in range(n):
+		var t = float(i) / RATE
+		var env = minf(1.0, t * 20.0) * pow(maxf(0.0, 1.0 - t / 0.7), 1.4)
+		var f = 1500.0 + 380.0 * sin(TAU * 7.0 * t) + 160.0 * sin(TAU * 23.0 * t)
+		ph += TAU * f / RATE
+		var v = sin(ph) * 0.45 + sin(ph * 1.51) * 0.2 + (randf() * 2.0 - 1.0) * 0.12
+		out[i] = v * env * 0.35
+	return _wav(out)
 
 func _engine_loop() -> AudioStreamWAV:
 	var n = int(0.42 * RATE)

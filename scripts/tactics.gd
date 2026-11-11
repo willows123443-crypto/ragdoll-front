@@ -239,6 +239,8 @@ static func _stack_up(q, L) -> void:
 	if men.is_empty():
 		return
 	q["stack"] = {"men": men, "at": at, "in": door["c"] - door["n"] * 2.5, "t": G.sim_time + 12.0}
+	q["breach_door"] = door
+	q["breach_b"] = bi
 	events["stack"] += 1
 	G.fx.callout(L, G.pick(["Stack up on the door!", "On the door, get ready!", "Stack up, we're going in!"]))
 

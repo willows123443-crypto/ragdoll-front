@@ -937,3 +937,21 @@ func exhaust(p: Vector3, back: Vector3, k: float, diesel: bool) -> void:
 	e.gravity = Vector3(0, 0.6, 0)
 	e.damping_min = 0.8
 	e.damping_max = 1.4
+
+# a magazine lobbed from one man to another
+func toss_mag(from: Vector3, to: Vector3) -> void:
+	var m = MeshInstance3D.new()
+	var bm = BoxMesh.new()
+	bm.size = Vector3(0.05, 0.16, 0.08)
+	m.mesh = bm
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.18, 0.18, 0.17)
+	m.material_override = mat
+	add_child(m)
+	m.global_position = from
+	var tw = m.create_tween()
+	tw.tween_method(func(k: float):
+		if is_instance_valid(m):
+			m.global_position = from.lerp(to, k) + Vector3(0, sin(k * PI) * 1.2, 0)
+			m.rotation = Vector3(k * 9.0, k * 4.0, 0), 0.0, 1.0, 0.55)
+	tw.tween_callback(m.queue_free)

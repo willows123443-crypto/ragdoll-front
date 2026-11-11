@@ -212,6 +212,22 @@ static func clear_entry(t: int) -> Vector3:
 			return Vector3(q.x, G.world.ground_y(q.x, q.z), q.z)
 	return e
 
+# men of these classes, up to eight to a truck; returns how many trucks
+static func truck_cls(t: int, cls: Array, dest = null) -> int:
+	var n = 0
+	var i = 0
+	while i < cls.size():
+		var part = cls.slice(i, mini(i + 8, cls.size()))
+		G.main.force_cls = part.duplicate()
+		var d2 = dest
+		if dest != null and n > 0:
+			d2 = dest + Vector3(randf_range(-6.0, 6.0), 0, randf_range(-6.0, 6.0))
+		truck(t, part.size(), d2)
+		G.main.force_cls = []
+		i += 8
+		n += 1
+	return n
+
 static func truck(t: int, n: int, dest = null) -> void:
 	if G.map_id == "beach" and t == 0:
 		boat(t, n)

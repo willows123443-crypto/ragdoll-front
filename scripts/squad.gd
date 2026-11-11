@@ -245,6 +245,59 @@ static func _building_at(p: Vector3):
 			return T
 	return null
 
+# inside: once nobody's left in sight in the room, "Clear!", and on to the next room of a big house
+static func _clear_rooms(q) -> void:
+	var bi = q.get("breach_b", -1)
+	if bi < 0 or G.sim_time < q.get("clear_check", 1e9) or bi >= G.world.buildings.size():
+		return
+	var b = G.world.buildings[bi]
+	var inside = []
+	for m in q["members"]:
+		if is_instance_valid(m) and m.state == "alive" and m.task == "clear" and Doors.building_at(m.pos) == bi:
+			inside.append(m)
+	var contact = false
+	for m in q["members"]:
+		if is_instance_valid(m) and m.vis_t != null and is_instance_valid(m.vis_t) and m.vis_t.state == "alive" and Doors.building_at(m.vis_t.pos) == bi:
+			contact = true
+	if contact:
+		q["clear_check"] = G.sim_time + 3.0
+		return
+	if inside.is_empty():
+		q["breach_b"] = -1
+		return
+	G.fx.callout(inside[0], G.pick(["Clear!", "Room clear!", "Clear left!"]))
+	if inside.size() > 1:
+		G.fx.callout(inside[1], G.pick(["Clear right!", "Clear!", "All clear here."]))
+	var big = maxf(b["w"], b["d"]) > 11.0 and q.get("clear_room", 0) == 0
+	if big:
+		# the far room: across the house from the door they came in by
+		var door = q.get("breach_door")
+		var far = Vector3(b["x"], 0, b["z"])
+		if door != null:
+			var off = Vector3(b["x"], 0, b["z"]) - G.flat(door["c"])
+			off.y = 0.0
+			far = Vector3(b["x"], 0, b["z"]) + (Vector3(off.x, 0, 0) if b["w"] >= b["d"] else Vector3(0, 0, off.z)) * 0.0
+			var ax = Vector3(1, 0, 0) if b["w"] >= b["d"] else Vector3(0, 0, 1)
+			var sgn = -signf(G.flat(door["c"] - Vector3(b["x"], 0, b["z"])).dot(ax))
+			if sgn == 0.0:
+				sgn = 1.0
+			far = Vector3(b["x"], 0, b["z"]) + ax * sgn * maxf(b["w"], b["d"]) * 0.28
+		var k = 0
+		for m in inside:
+			var to = far + Vector3(randf_range(-1.2, 1.2), 0, randf_range(-1.2, 1.2))
+			to.y = G.world.ground_y(to.x, to.z)
+			AI.go_to(m, to, 4.6)
+			k += 1
+		G.fx.callout(inside[0], G.pick(["Next room!", "Moving through!", "On me, next room!"]))
+		q["clear_room"] = 1
+		q["clear_check"] = G.sim_time + 5.0
+		return
+	# done: carry on as normal
+	for m in inside:
+		m.task = null
+		m.decide_t = 0.0
+	q["breach_b"] = -1
+
 static func _breach(q) -> void:
 	var now = G.sim_time
 	if now < q.get("breach_go", -1.0):
@@ -254,16 +307,35 @@ static func _breach(q) -> void:
 		q["breach_rushed"] = true
 		var p: Vector3 = q["breach_p"]
 		var said = false
+		var door = q.get("breach_door")
+		var k = 0
 		for m in q["members"]:
 			if not m.is_player and m.state == "alive" and m.vehicle == null and G.dist2d(m.pos, p) < 30.0:
 				AI.release_cover(m)
 				m.task = "clear"
-				AI.go_to(m, p + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5)), 5.6)
+				var to = p + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5))
+				if door != null:
+					# through the door in pairs: the first man buttonhooks left, the second goes right, the rest follow
+					var nin: Vector3 = -door["n"]
+					var al: Vector3 = door["along"]
+					if k == 0:
+						to = door["c"] + nin * 2.0 + al * 2.0
+					elif k == 1:
+						to = door["c"] + nin * 2.0 - al * 2.0
+					else:
+						to = door["c"] + nin * (1.2 + 0.6 * (k / 2)) + al * (0.7 if k % 2 == 0 else -0.7)
+					to.y = G.world.ground_y(to.x, to.z)
+				AI.go_to(m, to, 5.6)
+				k += 1
 				if not said:
 					Voice.say(m, "breach")
 					said = true
 		q["breach_cd"] = now + 25.0
+		if q.get("breach_b", -1) >= 0:
+			q["clear_check"] = now + 4.5
+			q["clear_room"] = 0
 		return
+	_clear_rooms(q)
 	if now < q.get("breach_cd", 0.0):
 		return
 	var L = leader_of(q)

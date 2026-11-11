@@ -9,10 +9,14 @@ extends RefCounted
 const TIME = {"jeep": 18.0, "technical": 16.0, "motorbike": 12.0, "halftrack": 30.0, "armoredcar": 38.0, "tank": 55.0,
 	"heavytank": 75.0, "plough": 60.0, "atgun": 22.0, "ambulance": 18.0, "radar": 32.0, "bridger": 32.0}
 const UPGRADES = {
-	"armour": {"name": "Heavier armour", "cost": 30, "time": 60.0, "desc": "vehicles take a third less damage"},
-	"engineers": {"name": "Field engineering", "cost": 20, "time": 45.0, "desc": "engineers build twice as fast"},
-	"artillery": {"name": "Heavy artillery", "cost": 30, "time": 60.0, "desc": "barrages fire more and bigger shells"},
-	"logistics": {"name": "Logistics", "cost": 20, "time": 45.0, "desc": "supply convoys carry half as much again"},
+	"armour": {"name": "Heavier armour", "cost": 30, "time": 60.0, "desc": "vehicles take a third less damage",
+		"long": "every vehicle you have and buy afterwards takes a third less damage from bullets, rockets and shells"},
+	"engineers": {"name": "Field engineering", "cost": 20, "time": 45.0, "desc": "engineers build twice as fast",
+		"long": "engineers put up structures and repair them twice as fast (other soldiers who help build are unchanged)"},
+	"artillery": {"name": "Heavy artillery", "cost": 30, "time": 60.0, "desc": "barrages fire more and bigger shells",
+		"long": "artillery barrages fire twelve heavier shells instead of eight, so they hit harder and cover more ground"},
+	"logistics": {"name": "Logistics", "cost": 20, "time": 45.0, "desc": "supply convoys carry half as much again",
+		"long": "each supply truck run to a dump brings in half as many points again (12 instead of 8)"},
 }
 const CONVOY_EVERY = 45.0
 const CONVOY_LOAD = 8
@@ -99,7 +103,7 @@ static func _roll_out(team: int, what: String) -> void:
 			break
 	if dep != null:
 		var p = dep["p"] + Build._front(dep) * 8.0
-		Reinforce.drive_in(team, what, p)
+		Reinforce.drive_in(team, what, p, true, false)
 		G.ui.radio(team, "Depot: %s on its way in" % Support.NAMES[what].split(" (")[0].to_lower())
 	else:
 		Support.deliver(team, what)

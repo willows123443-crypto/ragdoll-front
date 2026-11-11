@@ -23,6 +23,8 @@ static func jobs(s, known: bool, threat: Vector3) -> bool:
 			return _engineer(s, known, threat)
 		"medic":
 			return _medic(s, known)
+		"spotter":
+			return _spotter(s)
 		"at":
 			return _anti_tank(s)
 	return false
@@ -152,6 +154,10 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 
 # called every tick while an engineer is on a job
 static func work(s) -> void:
+	# nobody builds, digs or mends lying flat: up on their feet (or a knee) for the work
+	if s.task in ["build", "construct", "repair", "fixwheel", "salvage", "sweep", "defuse"]:
+		s.prone_t = false
+		s.prone = false
 	match s.task:
 		"build":
 			s.crouch_t = 1.0
@@ -189,6 +195,10 @@ static func work(s) -> void:
 							G.fx.callout(s, G.pick(["Done here, on to the next one.", "Next job!", "Moving to the next build."]))
 							return
 					s.set_meta("build_queue", [])
+				return
+			# nobody builds lying down: up on his feet first
+			if s.prone or s.prone_t:
+				s.prone_t = false
 				return
 			_build_work(s, st)
 		"defuse":
@@ -361,7 +371,7 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 	if best == null:
 		# a known enemy FOB or HQ is worth a few shells too
 		for st in Build.sites:
-			if st["team"] == team or st["dead"] or not st["done"] or not (st["kind"] in ["fob", "fob2", "hq", "bunker", "mgnest", "pillbox", "mortarpit", "depot", "radio", "aa"]):
+			if st["team"] == team or st["dead"] or not st["done"] or not (st["kind"] in ["fob", "fob2", "hq", "bunker", "mgnest", "pillbox", "mortarpit", "depot", "radio", "aa", "observer"]):
 				continue
 			if G.dist2d(st["p"], from) < min_d or not Build.spotted(st, team) or (st["kind"] != "hq" and G.near_spawn(st["p"])):
 				continue
@@ -683,3 +693,53 @@ static func _pile(st) -> Vector3:
 	n.rotation.y = atan2(f.x, f.z)
 	st["pile_node"] = n
 	return p
+
+# ---------------------------------------------------------------- the sniper's spotter
+# he goes where his sniper goes (up on the same roof or tower), and with his binoculars finds targets
+# further off than the sniper can pick out himself, calling them out and passing them over
+static func _spotter(s) -> bool:
+	var sn = s.partner
+	if sn == null or not is_instance_valid(sn) or sn.state != "alive":
+		return false
+	# up on the same roof as the sniper, at the post next to his
+	if sn.task == "post" and sn.tower != null and s.tower != sn.tower and s.task != "post":
+		var best = null
+		var bd = 1e9
+		for cp in sn.tower["cps"]:
+			if cp == sn.cover or not AI.cover_free(cp, s) or cp.ban > G.sim_time:
+				continue
+			var d = cp.p.distance_to(sn.cover.p if sn.cover != null else sn.pos)
+			if d < bd:
+				bd = d
+				best = cp
+		if best != null:
+			AI.take_post(s, best)
+			G.fx.callout(s, G.pick(["Going up with you.", "I'll spot from the roof.", "Right behind you."]))
+			return true
+	# spotting: anyone he can see out to a long way goes to the sniper, the nearest first
+	s.job_cd -= 2.0
+	if s.job_cd > 0.0:
+		return false
+	s.job_cd = 3.0
+	var eye = s.head_pos()
+	var best_e = null
+	var be = 320.0
+	for e in G.soldiers:
+		if e.team == s.team or e.state != "alive" or e.zombie:
+			continue
+		var d2 = G.dist2d(e.pos, s.pos)
+		if d2 > be or d2 < 15.0:
+			continue
+		if G.blocked(eye, e.head_pos()):
+			continue
+		be = d2
+		best_e = e
+	if best_e != null:
+		AI.add_intel(sn, best_e, best_e.pos, 1.0, true)
+		if sn.vis_t == null:
+			sn.target = best_e
+			sn.threat = best_e.pos
+			sn.has_threat = true
+		if randf() < 0.5:
+			G.fx.callout(s, G.pick(["Target, %s, %d metres." % [AI.bearing_text(s.pos, best_e.pos), int(round(be / 10.0)) * 10], "Contact %s, %d out. Your shot." % [AI.bearing_text(s.pos, best_e.pos), int(round(be / 10.0)) * 10], "Wind's light. Send it."]))
+	return false

@@ -6,9 +6,9 @@ extends RefCounted
 const FIRE = ["artillery", "airstrike", "recon"]
 const TROOPS = ["paradrop", "heli"]
 const AIR = ["gunship", "fighter", "bomber"]
-const LIGHT = ["jeep", "motorbike", "technical", "ambulance"]
+const LIGHT = ["jeep", "motorbike", "technical", "ambulance", "ammotruck"]
 const ARMOUR = ["halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "bridger", "radar"]
-const BASE = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "tower", "bunker", "hospital", "radio", "depot", "supply"]
+const BASE = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "tower", "bunker", "hospital", "radio", "depot", "supply", "observer"]
 const DIG_IN = ["sandbags", "wire", "traps", "mgnest", "bunker", "tower"]
 
 # what side t may build (the AI side builds from this list, and so does the player)
@@ -60,7 +60,7 @@ static func callins(t: int, mode: String = "") -> Array:
 	var veh = [] if G.armor == "none" else LIGHT + (ARMOUR if G.armor == "heavy" or m in ["commander", "destroy", "sandbox"] else ["halftrack", "armoredcar", "atgun"])
 	# in commander mode the vehicles setting is only what each side starts with: the depot can always build
 	if m == "commander":
-		veh = LIGHT + ARMOUR
+		veh = LIGHT + ARMOUR + ["supplytruck"]
 	# extra troops are only bought in sandbox and commander mode: everywhere else reinforcements come free
 	match m:
 		"sandbox", "commander":

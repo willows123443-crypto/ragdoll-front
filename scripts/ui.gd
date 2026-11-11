@@ -71,8 +71,10 @@ var mode_info: Label
 var mode_title: Label
 var mode_rules: Label
 var size_lbl: Label
-const MODE_IDS = ["sandbox", "deathmatch", "capture", "frontline", "assault", "laststand", "destroy", "breakthrough", "sabotage", "siege",
-	"escort", "rescue", "koth", "commander", "horde", "general"]
+# (assault, last stand, destroy base and king of the hill were too close to frontline/breakthrough, siege,
+# commander and capture; they live on in the campaign but aren't offered on their own)
+const MODE_IDS = ["sandbox", "deathmatch", "capture", "frontline", "breakthrough", "sabotage", "siege",
+	"escort", "rescue", "commander", "horde", "general"]
 var opt_size: OptionButton
 var opt_limit: OptionButton
 var opt_reinf: OptionButton
@@ -276,22 +278,34 @@ const SB_VEH = [["jeep", "Jeep"], ["truck", "Truck"], ["motorbike", "Motorbike"]
 	["fighter", "Fighter"], ["bomber", "Dive bomber"], ["nest", "MG nest"], ["mortar", "Mortar"], ["artillery", "Field gun"], ["aagun", "AA gun"], ["atgun", "AT gun"], ["dinghy", "Assault boat"]]
 const BUILD_LIST = [["fob", "FOB"], ["sandbags", "Sandbags"], ["wire", "Barbed wire"], ["traps", "Tank traps"], ["mgnest", "MG nest"],
 	["mortarpit", "Mortar pit"], ["aa", "AA gun"], ["tower", "Watchtower"], ["bunker", "Bunker"], ["hospital", "Field hospital"],
-	["radio", "Radio mast"], ["depot", "Vehicle depot"], ["supply", "Supply dump"]]
+	["radio", "Radio mast"], ["depot", "Vehicle depot"], ["supply", "Supply dump"], ["observer", "Observer post"]]
 const RECRUIT = {
-	"inf": {"name": "Rifle squad", "cost": 14, "cls": ["rifleman", "rifleman", "rifleman", "mg", "at", "medic"]},
-	"eng": {"name": "Engineers", "cost": 10, "cls": ["engineer", "engineer", "engineer"]},
-	"atk": {"name": "Anti-tank team", "cost": 12, "cls": ["at", "at", "rifleman"]},
-	"asl": {"name": "Assault team", "cost": 13, "cls": ["assault", "assault", "assault", "assault"]},
-	"snp": {"name": "Sniper team", "cost": 8, "cls": ["sniper", "spotter"]},
-	"med": {"name": "Medics", "cost": 6, "cls": ["medic", "medic"]},
-	"rad": {"name": "Radio operator", "cost": 5, "cls": ["radio"]},
+	"inf": {"name": "Rifle squad", "cost": 16, "cls": ["rifleman", "rifleman", "rifleman", "rifleman", "mg", "at", "medic", "rifleman"],
+		"desc": "Eight men: five riflemen, a machine gunner, an anti-tank man and a medic. The backbone of any attack"},
+	"plt": {"name": "Rifle platoon", "cost": 30, "cls": ["rifleman", "rifleman", "rifleman", "rifleman", "mg", "at", "medic", "rifleman",
+		"rifleman", "rifleman", "rifleman", "mg", "at", "medic", "radio", "rifleman"],
+		"desc": "Sixteen men in two trucks, with a radio operator. Cheaper than two squads"},
+	"eng": {"name": "Engineers", "cost": 12, "cls": ["engineer", "engineer", "engineer", "engineer"],
+		"desc": "Four engineers: they build and repair, lay mines, sweep for them and blow things up with satchels"},
+	"atk": {"name": "Anti-tank team", "cost": 14, "cls": ["at", "at", "at", "rifleman"],
+		"desc": "Three rocket men and a rifleman to cover them. They hunt tanks and blast structures"},
+	"mgt": {"name": "MG team", "cost": 12, "cls": ["mg", "mg", "rifleman", "rifleman"],
+		"desc": "Two machine guns that pin the enemy down while others move"},
+	"asl": {"name": "Assault team", "cost": 16, "cls": ["assault", "assault", "assault", "assault", "assault", "assault"],
+		"desc": "Six men with SMGs, shotguns and a flamethrower: for clearing buildings and close fighting"},
+	"snp": {"name": "Sniper team", "cost": 8, "cls": ["sniper", "spotter"],
+		"desc": "A sniper and his spotter: they climb up high, and the spotter finds targets for him"},
+	"med": {"name": "Medics", "cost": 6, "cls": ["medic", "medic"],
+		"desc": "Two medics who patch up and drag in the wounded, and carry stretchers"},
+	"rad": {"name": "Radio team", "cost": 8, "cls": ["radio", "rifleman", "rifleman"],
+		"desc": "A radio operator with two riflemen to guard him. Only a man with a radio can call artillery"},
 }
 # call-ins that happen as soon as you pay (no map click needed)
 const INSTANT = ["plough", "technical", "recon", "atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance", "supplytruck", "ammotruck"]
 
 func _tabs() -> Array:
 	if G.mode == "commander":
-		return [["recruit", "Recruit"], ["armour", "Vehicles"], ["support", "Fire support"], ["build", "Build"], ["upgrades", "Upgrades"]]
+		return [["recruit", "Recruit"], ["armour", "Vehicles"], ["logistics", "Supply"], ["support", "Fire support"], ["build", "Build"], ["upgrades", "Upgrades"]]
 	if Rules.free_tools():
 		return [["units", "Units"], ["vehicles", "Vehicles"], ["support", "Call-ins"], ["build", "Build"], ["command", "Command"], ["fun", "Effects"]]
 	# a real battle: you command your own side, with what this mode gives it
@@ -325,12 +339,14 @@ func _cards(t: String) -> Array:
 				else:
 					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], "%d pts" % Support.COSTS[k] + ("" if k in INSTANT else " · click the map")])
 		"armour":
-			for k in ["supplytruck", "ammotruck", "jeep", "technical", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "ambulance", "radar", "bridger"]:
-				if k == "supplytruck" and G.mode != "commander":
-					continue
+			for k in ["jeep", "technical", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "ambulance", "radar", "bridger"]:
 				if not Faction.support_ok(0, k) or not Rules.callin_ok(0, k):
 					continue
 				out.append(["sup:" + k, Support.NAMES[k], ("%d pts" % Support.COSTS[k]) if Support.unlocked(0, k) else Support.need_text(k)])
+		"logistics":
+			# supply trucks earn the points (at most three); the ammo truck restocks the men where you park it
+			out.append(["sup:supplytruck", "Supply truck  %d/%d" % [Logistics.count(0), Logistics.FLEET_MAX], ("%d pts · runs supplies from HQ" % Support.COSTS["supplytruck"]) if Logistics.can_buy_truck(0) else ("fleet full" if Logistics.count(0) >= Logistics.FLEET_MAX else ("build a supply dump or FOB first" if not Logistics.has_stop(0) else "needs your HQ"))])
+			out.append(["sup:ammotruck", "Ammo truck", "%d pts · park it behind the line" % Support.COSTS["ammotruck"]])
 		"recruit":
 			for k in RECRUIT:
 				out.append(["r:" + k, "%s ×%d" % [RECRUIT[k]["name"], RECRUIT[k]["cls"].size()], "%d pts · click where" % RECRUIT[k]["cost"]])
@@ -466,6 +482,16 @@ func _render_tools() -> void:
 		b2.add_theme_stylebox_override("pressed", _dock_style(Color(0.3, 0.27, 0.15, 1.0), Color(1.0, 0.85, 0.35)))
 		b2.add_theme_color_override("font_color", Color(0.95, 0.95, 0.92) if afford else Color(0.55, 0.5, 0.5))
 		b2.pressed.connect(func(): _card_clicked(id))
+		# hovering a card says what it is and does, above the dock
+		var ds = _card_desc(id)
+		if ds != "":
+			b2.tooltip_text = ds
+			b2.mouse_entered.connect(func():
+				if tip != null:
+					tip.text = ds)
+			b2.mouse_exited.connect(func():
+				if tip != null:
+					tip.text = TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.SHOP[tool.substr(2)]["tip"])
 		dock_cards.add_child(b2)
 		dock_cards_list.append([id, b2])
 		i += 1
@@ -485,6 +511,50 @@ func _render_tools() -> void:
 	tip.offset_top = -h - 34.0
 	tip.offset_bottom = -h - 14.0
 	tip.text = TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.SHOP[tool.substr(2)]["tip"]
+
+const SUP_DESC = {
+	"supplytruck": "Runs supplies from HQ to your supply dumps and FOBs. Points only come in when it gets there. Up to three; lose one and you buy another",
+	"ammotruck": "Park it behind the line: men nearby run to its tailgate to restock. Drive it back to HQ or a supply dump to refill it",
+	"jeep": "Fast, with a mounted machine gun. Good for scouting and harassing infantry",
+	"technical": "A pickup with a heavy machine gun on the back",
+	"motorbike": "Very fast and fragile: for getting a man somewhere quickly",
+	"halftrack": "Armoured troop carrier with a machine gun; carries a squad up to the fight",
+	"armoredcar": "Fast armoured car with a cannon; tough against infantry, vulnerable to rockets",
+	"tank": "Main battle tank: a big gun and thick armour. Infantry ride on the back",
+	"heavytank": "Slower, tougher and harder-hitting than the tank",
+	"plough": "A tank with a mine plough that clears the road ahead of it",
+	"atgun": "Towed anti-tank gun, set up at the rally point",
+	"ambulance": "Picks up the wounded and takes them to a field hospital",
+	"radar": "Command truck: a radio for call-ins and it spots enemies around it",
+	"bridger": "Lays a bridge over a river or a blown bridge",
+	"artillery": "A barrage of shells on the spot you click",
+	"airstrike": "A plane bombs the spot you click",
+	"recon": "A spotter plane circles the enemy's side for thirty seconds and shows everything it sees",
+	"gunship": "A helicopter gunship hunts the enemy for seventy seconds",
+	"fighter": "A fighter that hunts enemy aircraft for ninety seconds",
+	"bomber": "A dive bomber that goes after armour and structures for ninety seconds",
+	"paradrop": "Six paratroopers dropped in", "heli": "Six men flown in by helicopter",
+}
+
+# what a dock card does, for its hover text
+func _card_desc(id: String) -> String:
+	if id.begins_with("u:"):
+		var k = id.substr(2)
+		var u = Prod.UPGRADES[k]
+		var st = "Done." if Prod.done[0].has(k) else ("Being researched at HQ." if not Prod.can_research(0, k) else "%d pts, %d s of research at HQ." % [u["cost"], int(u["time"])])
+		return "%s: %s. %s" % [u["name"], u.get("long", u["desc"]), st]
+	if id.begins_with("r:"):
+		var r = RECRUIT[id.substr(2)]
+		return "%s (%d pts): %s. Click where you want them dropped off." % [r["name"], r["cost"], r.get("desc", "")]
+	if id.begins_with("sup:"):
+		var k2 = id.substr(4)
+		var d = SUP_DESC.get(k2, "")
+		if d != "" and not Support.unlocked(0, k2):
+			d += ". Needs " + Support.need_text(k2)
+		return d
+	if id.begins_with("b:"):
+		return Build.DESCR.get(id.substr(2), "")
+	return ""
 
 func _pts() -> int:
 	var t = 0 if G.mode == "commander" else (mini(build_team, G.team_count() - 1) if tab != "support" else 0)
@@ -564,6 +634,10 @@ func _card_clicked(id: String) -> void:
 		var team = 0
 		if Support.call_in(team, what, G.world.capture):
 			message("%s on the way (-%d pts)" % [Support.NAMES[what], Support.COSTS[what]])
+			if tab == "logistics":
+				_render_tools()
+		elif Support.points[team] >= Support.COSTS[what]:
+			pass        # it said why itself (a full fleet, say)
 		else:
 			message("Not enough supply points: %s costs %d, you have %d" % [Support.NAMES[what], Support.COSTS[what], Support.points[team]])
 		_dock_points()
@@ -577,10 +651,8 @@ func _recruit(k: String, dest = null) -> void:
 		message("Not enough supply points: %s costs %d, you have %d" % [r["name"], r["cost"], Support.points[0]])
 		return
 	Support.points[0] -= r["cost"]
-	G.main.force_cls = r["cls"].duplicate()
-	Reinforce.truck(0, r["cls"].size(), dest)
-	G.main.force_cls = []
-	message("%s on the way by truck%s (-%d pts)" % [r["name"], " to the marked spot" if dest != null else "", r["cost"]])
+	var n = Reinforce.truck_cls(0, r["cls"], dest)
+	message("%s on the way by %s%s (-%d pts)" % [r["name"], "truck" if n == 1 else "%d trucks" % n, " to the marked spot" if dest != null else "", r["cost"]])
 	if dest != null:
 		G.fx.order_marker(dest)
 	_dock_points()
@@ -826,9 +898,9 @@ func _build_menu() -> void:
 			_select_map(i))
 	refresh_maps()
 	_row(v, "Map", opt_map)
-	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the points", "Frontline — push across the map", "Assault — Alpha attacks", "Last stand — survive the waves",
-		"Destroy base", "Breakthrough — break the line", "Sabotage — night raid", "Siege — hold the town",
-		"Escort — get the convoy through", "Rescue — bring the pilot home", "King of the hill — it moves", "Commander — top-down RTS", "Horde — the dead walk", "Kill the general"], 0)
+	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the points", "Frontline — push across the map",
+		"Breakthrough — break the line", "Sabotage — night raid", "Siege — hold the town",
+		"Escort — get the convoy through", "Rescue — bring the pilot home", "Commander — top-down RTS", "Horde — the dead walk", "Kill the general"], 0)
 	_row(v, "Mode", opt_mode)
 	mode_info = _label("", 13, Color(0.8, 0.82, 0.78))
 	mode_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1693,6 +1765,8 @@ func update_hud(dt: float) -> void:
 		var sig2 = ""
 		if tab == "upgrades" and Prod.active():
 			sig2 = str(Prod.done[0].keys()) + str(Prod.research[0].size())
+		elif tab == "logistics":
+			sig2 = "L%d%s" % [Logistics.count(0), Logistics.has_stop(0)]
 		elif tab in ["armour", "support", "recruit"] and G.mode == "commander":
 			# a depot, radio mast or hospital just finished (or was lost): the cards change
 			for k in ["jeep", "artillery", "airstrike", "ambulance"]:
@@ -2144,19 +2218,39 @@ func _order_card_tick() -> void:
 		order_sig = ""
 		return
 	var riding = sel.any(func(x): return x.state == "riding")
-	var smokes = sel.any(func(x): return x.smokes > 0)
-	var sig = str(sel.size()) + str(riding) + str(smokes) + G.pc._sel_summary()
+	var on_foot = sel.filter(func(x): return x.state != "riding")
+	var smokes = on_foot.any(func(x): return x.smokes > 0)
+	var sig = str(sel.size()) + str(riding) + str(smokes) + str(on_foot.size()) + G.pc._sel_summary()
 	if sig != order_sig:
 		order_sig = sig
 		order_title.text = "ORDERS  ·  " + G.pc._sel_summary()
 		for c in order_grid.get_children():
 			c.queue_free()
-		var items = [["hold", "Hold here"], ["cover", "Take cover"], ["charge", "Charge!"], ["fallback", "Fall back"]]
-		if smokes:
-			items.append(["smoke", "Smoke screen"])
+		# only the orders that make sense for what's selected
+		var items = []
+		if not on_foot.is_empty():
+			items += [["hold", "Hold here"], ["cover", "Take cover"]]
+			if not on_foot.all(func(x): return x.cls in ["sniper", "spotter", "medic"]):
+				items.append(["charge", "Charge!"])
+			items.append(["fallback", "Fall back"])
+			if smokes:
+				items.append(["smoke", "Smoke screen"])
 		if riding:
-			items.append(["dismount", "Dismount"])
-		items += [["free", "Act freely"], ["build", "Build…"], ["f:wedge", "Wedge"], ["f:line", "Line"], ["f:column", "Column"], ["clear", "Deselect"]]
+			var vs = G.pc.sel_vehicles()
+			var guns = vs.all(func(x): return x.spec.get("static", false))
+			if not guns:
+				items += [["vstop", "Stop"], ["vback", "Back to rally"], ["vfree", "Drive freely"]]
+				if vs.any(func(x): return (x.spec["tracked"] or x.kind in ["armoredcar", "halftrack"]) and G.sim_time > x.smoke_cd):
+					items.append(["vsmoke", "Pop smoke"])
+			if vs.any(func(x): return x.seats.size() > 1 or x.spec.get("static", false)):
+				items.append(["dismount", "Leave the gun" if guns else "Dismount"])
+		if not on_foot.is_empty():
+			items.append(["free", "Act freely"])
+			if on_foot.any(func(x): return x.cls == "engineer") or G.mode != "commander":
+				items.append(["build", "Build…"])
+			if on_foot.size() >= 3:
+				items += [["f:wedge", "Wedge"], ["f:line", "Line"], ["f:column", "Column"]]
+		items.append(["clear", "Deselect"])
 		for it in items:
 			var id: String = it[0]
 			var b = Button.new()
@@ -2186,7 +2280,8 @@ func _order_card_tick() -> void:
 	order_card.offset_left = -w / 2.0
 	order_card.offset_right = w / 2.0
 	order_card.offset_bottom = dock.offset_top - 6.0
-	order_card.offset_top = order_card.offset_bottom - 112.0
+	var rows = ceili(order_grid.get_child_count() / 6.0)
+	order_card.offset_top = order_card.offset_bottom - (40.0 + 36.0 * maxi(1, rows))
 
 # ---------------------------------------------------------------- command panel
 var cmd_panel: PanelContainer = null

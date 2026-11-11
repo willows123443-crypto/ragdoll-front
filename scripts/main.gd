@@ -74,6 +74,8 @@ func _ready() -> void:
 			_dis_test()
 		if a == "--rtstest":
 			_rts_test()
+		if a == "--crouchtest":
+			_crouch_test()
 		if a == "--vfeattest":
 			_vfeat_test()
 		if a.begins_with("--uishot="):
@@ -152,9 +154,12 @@ func _cycle_step(dt: float) -> void:
 	if tm == "dawn":
 		# one long day: first light to full dark over about eighteen minutes, then it stays night
 		if clock < 0.8:
-			clock = minf(0.8, clock + dt * 0.72 / 1080.0)
+			clock = minf(0.8, clock + dt * 0.72 / 1500.0)     # first light to dark in about twenty-five minutes
 	else:
-		clock += dt / 900.0          # a full day in fifteen minutes
+		# long days and short nights: about sixteen minutes of daylight, two and a half of darkness
+		var c = fposmod(clock, 1.0)
+		var night = c < 0.08 or c > 0.72
+		clock += dt / 900.0 * (2.2 if night else 0.6)
 	clock_t -= dt
 	if clock_t <= 0.0:
 		clock_t = 1.0
@@ -1053,6 +1058,25 @@ func _shot_mode(dir: String) -> void:
 		await _snap(dir, "nightvision")
 		G.ui.toggle_nv()
 		await _snap(dir, "night_plain")
+	if _arg("postshot", "") != "":
+		# men climbing up to their posts on upper floors and crouching there
+		var men = []
+		for T in G.world.towers:
+			if T.get("ladder", false) or T["cps"].is_empty() or men.size() >= 2:
+				continue
+			var sb: Vector3 = T["stair_bottom"]
+			var m = spawn_soldier(0, sb.x, sb.z, "rifle")
+			AI.take_post(m, T["cps"][0])
+			men.append(m)
+		await _wait(float(_arg("postshot", "25")))
+		var i3 = 0
+		for m in men:
+			for k in range(3):
+				await _look(m.pos + Vector3(-2.2, 1.4, -2.2), m.pos + Vector3(0, 0.5, 0))
+				await _snap(dir, "post%d_%d" % [i3, k])
+				print("POSTSHOT %d y %.2f fl %.2f crouch %.2f peek %s state %s task %s" % [i3, m.pos.y, m.pos.y - G.world.ground_y(m.pos.x, m.pos.z), m.crouch, m.want_peek, m.state, m.task])
+				await _wait(0.4)
+			i3 += 1
 	if _arg("bldshot", "") != "":
 		# a big farmhouse from outside, then looking down into it with the roof lifted off, then after a blast inside
 		var bi = -1
@@ -1122,6 +1146,12 @@ func _shot_mode(dir: String) -> void:
 		await _snap(dir, "trucks_rear")
 		await _look(tp + Vector3(9.0, 3.5, 10.0), tp + Vector3(3.0, 1.2, 0.0))
 		await _snap(dir, "trucks_front")
+		var opp = _free_spot(pc + Vector3(-12, 0, 10))
+		Build.place("observer", 0, opp, Vector3(0, 0, 1), true)
+		var ow = spawn_soldier(0, opp.x + 0.6, opp.z, "rifle")
+		await _wait(0.8)
+		await _look(opp + Vector3(-5.5, 3.2, -6.0), opp + Vector3(0, 1.0, 0))
+		await _snap(dir, "observer")
 	if _arg("polishshot", "") != "":
 		# a tank with riders, a mine plough, a jeep, builders at work, and a machine gunner with the bipod down
 		var c2: Vector3 = _free_spot(G.world.capture + Vector3(-95, 0, 25))
@@ -1800,8 +1830,47 @@ func _mode_test(mode: String) -> void:
 								print("   blocker %s task %s order %s mt %s" % [so.sname, so.task, so.order, so.move_target])
 					print("DBG truck drv %s spd %.1f stage %d go %.0f pos %s path %d/%d rev %.1f why %s wait %.1f hp %.0f" % [v.driver() != null, v.speed, v.mission["stage"], v.mission["go_t"], v.pos, v.path_i, v.path.size(), v.reverse_t, v.mission.get("why", "?"), v.mission.get("wait_esc", 0.0), v.hp])
 					break
+	var hist = {}
 	for k in range(int(_arg("secs", "48")) / 8):
-		await _wait(8.0)
+		for q4 in range(4):
+			await _wait(2.0)
+			for s in G.soldiers:
+				if s.state != "alive" or s.vehicle != null or s.zombie:
+					continue
+				var hh: Array = hist.get(s.get_instance_id(), [])
+				hh.append([s.pos, s.vis_t != null or G.sim_time - s.seen_t < 4.0, s.task])
+				if hh.size() > 20:
+					hh.pop_front()
+				hist[s.get_instance_id()] = hh
+		# going round in circles: plenty of walking over the last 40 s, nothing to show for it, no fighting
+		var loops = []
+		for s in G.soldiers:
+			var hh2: Array = hist.get(s.get_instance_id(), [])
+			if s.state != "alive" or hh2.size() < 20:
+				continue
+			var walked = 0.0
+			var fought = false
+			for j in range(1, hh2.size()):
+				walked += G.dist2d(hh2[j][0], hh2[j - 1][0])
+				fought = fought or hh2[j][1]
+			if walked > 22.0 and G.dist2d(hh2[0][0], hh2[-1][0]) < 10.0 and (not fought or _arg("loops", "") == "2"):
+				loops.append(s)
+		if _arg("hqdbg", "") != "" and Build.hq(0) != null:
+			var hp0: Vector3 = Build.hq(0)["p"]
+			var near = []
+			for s in G.soldiers:
+				if s.team == 1 and s.state == "alive":
+					var ob = AI.objective_for(s)
+					near.append("%d:%s/%s/%s%s o%d/%d mt%s cmd%s" % [int(G.dist2d(s.pos, hp0)), s.task, AI.order_of(s)["mode"], "v" if s.vis_t != null else "", "s%d" % int(G.sim_time - s.seen_t), int(G.dist2d(ob, hp0)), int(G.dist2d(ob, s.pos)), s.move_target != null, Commander.target_for(s) != null])
+			print("HQDBG ", " ".join(near))
+		if _arg("loops", "") != "":
+			var lt = []
+			for s in loops.slice(0, 4):
+				var tasks = {}
+				for e in hist[s.get_instance_id()]:
+					tasks[str(e[2])] = true
+				lt.append("%s[%s ord %s bld %d cov %s up %.1f]" % [s.cls, ",".join(tasks.keys()), AI.order_of(s)["mode"], G.world.building_index(s.pos, 3.0), s.cover != null, s.pos.y - G.world.ground_y(s.pos.x, s.pos.z)])
+			print("LOOPS %d %s" % [loops.size(), " ".join(lt)])
 		var z = 0
 		for s in G.soldiers:
 			if s.zombie and s.state != "dead":
@@ -1879,7 +1948,7 @@ func _mode_test(mode: String) -> void:
 		for v in G.vehicles:
 			if v.kind == "atgun":
 				pz += " at[%s %.1f]" % ["dead" if v.dead else ("crew" if v.gunner() != null else "nocrew"), G.sim_time - v.get_meta("fire_t", -99.0)]
-		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()]])
+		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " raze %d hq %s" % [G.soldiers.filter(func(x): return x.state == "alive" and x.task == "raze").size(), str(Build.sites.filter(func(x): return x["kind"] == "hq").map(func(x): return "%d/%d%s" % [x["cols"].filter(func(c): return c.alive).size(), x["cols"].size(), "X" if x["dead"] else ""]))] + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()]])
 		if G.over:
 			break
 	get_tree().quit()
@@ -2149,6 +2218,14 @@ func _dis_test() -> void:
 		for m in men:
 			line += " (%.2f,%.2f) v%.1f %s %s |" % [m.pos.x - c.x, m.pos.z - c.z, G.flat(m.vel).length(), str(m.task), "V" if m.vault != null else ""]
 		print(line)
+	if _arg("cshot", "") != "":
+		var i2 = 0
+		for s in G.soldiers:
+			await _look(s.pos + Vector3(-2.5, 1.6, -2.5), s.pos + Vector3(0, 0.6, 0))
+			await _snap(_arg("cshot", "/tmp"), "crouch%d" % i2)
+			await _look(s.pos + Vector3(3.5, -1.0, 3.5) + Vector3(0, 0, 0), s.pos + Vector3(0, 0.6, 0))
+			await _snap(_arg("cshot", "/tmp"), "crouch%d_out" % i2)
+			i2 += 1
 	get_tree().quit()
 
 # dogfight: two fighters a side meet over the field; count hits, smoke trails, kills and parachutes
@@ -2410,4 +2487,34 @@ func _map_test() -> void:
 		print("MAPTEST %s size %dx%d load %d ms | alive %d v %d | points %d | wading %d | vehicles %d | sim %.2f ms" % [m, G.world.TW, G.world.TH_, load_ms, G.alive_count(0), G.alive_count(1), Obj.points.size(), wet, G.vehicles.size(), (tick_us / 1000.0) / maxi(tick_n, 1)])
 		tick_us = 0
 		tick_n = 0
+	get_tree().quit()
+
+# a man crouching at a post on an upper floor: does he stay put or bob about?
+func _crouch_test() -> void:
+	if _arg("cshot", "") != "":
+		G.ui.visible = false
+		G.pc.force_free = true
+	await _wait(0.5)
+	start_game({"map": _arg("map", "town"), "mode": "sandbox", "size": 1, "limit": 100, "reinforce": false, "armor": "none", "reinf_mode": "instant", "teams": 2})
+	await _wait(1.0)
+	for s in G.soldiers.duplicate():
+		s.queue_free()
+	G.soldiers.clear()
+	var n = 0
+	for T in G.world.towers:
+		if T.get("ladder", false) or T["cps"].is_empty() or n >= 3:
+			continue
+		var cp = T["cps"][0]
+		var sb: Vector3 = T["stair_bottom"]
+		var s = spawn_soldier(0, sb.x, sb.z, "rifle")
+		AI.take_post(s, cp)
+		n += 1
+	await _wait(float(_arg("crouchwait", "25")))
+	for k in range(24):
+		await _wait(0.25)
+		var line = "CROUCH t%.2f" % (k * 0.25)
+		for s in G.soldiers:
+			var chest_rel = s.parts[1].global_position.y - s.pos.y
+			line += " | y%.2f fl%.2f cr%.2f ct%.2f kn%s pr%s chest%.2f st%s in%s" % [s.pos.y, s.pos.y - G.world.ground_y(s.pos.x, s.pos.z), s.crouch, s.crouch_t, s.kneel, s.prone, chest_rel, s.state, s.in_cover]
+		print(line)
 	get_tree().quit()

@@ -460,6 +460,7 @@ func step(dt: float) -> void:
 			var r = _ai_drive(dt)
 			thr = r[0]
 			steer = r[1]
+	_trail_tick()
 	thr = VehExt.fuel_tick(self, dt, thr)
 	if tracks_broken:
 		thr = 0.0
@@ -1112,6 +1113,7 @@ func command(p: Vector3) -> void:
 	if mission != null:
 		mission = null
 	cmd = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
+	convoy = null
 	path_t = 0.0
 	stuck_t = 0.0
 	if driver() != null and not driver().is_player:
@@ -1120,10 +1122,121 @@ func command(p: Vector3) -> void:
 func _set_goal(p: Vector3) -> void:
 	if p.distance_to(goal) < 4.0 and path_t > 0.0 and not path.is_empty():
 		return
+	var same = p.distance_to(goal) < 4.0 and not path.is_empty()
 	goal = p
-	path = G.world.find_vpath(pos, _leg(p)) if not spec.get("boat", false) else G.world.find_path(pos, _leg(p))
-	path_i = 0
 	path_t = 4.0
+	var np = _plan(p)
+	if same and not _better(np):
+		return          # nearly the same way as before: keep to it rather than dither between the two
+	path = np
+	path_i = 0
+
+func _plan(p: Vector3) -> Array:
+	if spec.get("boat", false):
+		return G.world.find_path(pos, _leg(p))
+	return G.world.find_vpath(pos, _leg(p), spec["tracked"], self)
+
+func _path_left() -> float:
+	var L = 0.0
+	var prev = pos
+	for i in range(path_i, path.size()):
+		L += G.dist2d(prev, path[i])
+		prev = path[i]
+	return L
+
+# switch to a new route only if the old one is blocked now or the new one is clearly shorter
+func _better(np: Array) -> bool:
+	if np.is_empty():
+		return false
+	if path_i >= path.size():
+		return true
+	var prev = pos
+	for i in range(path_i, mini(path.size(), path_i + 4)):
+		if not G.world.vseg_clear(prev, path[i]):
+			return true
+		prev = path[i]
+	var L = 0.0
+	prev = pos
+	for q in np:
+		L += G.dist2d(prev, q)
+		prev = q
+	return L < _path_left() * 0.85 - 4.0
+
+# where to aim along the path: a point a little way ahead on it, so corners get rounded off
+# into a curve instead of driven to and turned on the spot
+func _pursuit() -> Vector3:
+	var look = 5.0 + absf(speed) * (0.55 if spec["tracked"] else 0.8)
+	var prev = pos
+	var acc = 0.0
+	for i in range(path_i, path.size()):
+		var q: Vector3 = path[i]
+		var seg = G.dist2d(prev, q)
+		if acc + seg >= look:
+			var k = (look - acc) / maxf(seg, 0.01)
+			return prev.lerp(q, k)
+		acc += seg
+		prev = q
+	return path[path.size() - 1]
+
+# how sharp the next bend is and how far off: slow for it so the turn can be made
+func _bend_speed() -> float:
+	if path_i >= path.size() - 1:
+		return 1.0
+	var a: Vector3 = path[path_i]
+	var b: Vector3 = path[path_i + 1]
+	var d_in = G.flat(a - pos)
+	var d_out = G.flat(b - a)
+	if d_in.length_squared() < 0.5 or d_out.length_squared() < 0.5:
+		return 1.0
+	var turn = d_in.normalized().angle_to(d_out.normalized())
+	var dist = d_in.length()
+	if turn < 0.5 or dist > 22.0:
+		return 1.0
+	var k = clampf(1.0 - (turn - 0.5) * 0.5, 0.35, 1.0)
+	return lerpf(k, 1.0, clampf((dist - 6.0) / 16.0, 0.0, 1.0))
+
+# who gives way when two meet: the bigger one goes first
+func rank() -> int:
+	if kind == "tank":
+		return 5
+	if spec["tracked"]:
+		return 4
+	if kind in ["armoredcar", "apc"]:
+		return 3
+	if kind in ["truck", "supplytruck", "ammotruck", "ambulance", "radar", "bridger"]:
+		return 2
+	return 1
+
+# breadcrumbs: where this vehicle has been, for a convoy following it
+var trail: Array = []
+var convoy = null          # {"lead": vehicle, "k": place in the column}
+var yield_t = 0.0
+
+func _trail_tick() -> void:
+	if trail.is_empty() or G.dist2d(trail[trail.size() - 1], pos) > 3.0:
+		trail.append(pos)
+		if trail.size() > 50:
+			trail.pop_front()
+
+# the spot in the column for a follower: k gaps back along the leader's track
+func _convoy_spot():
+	var L = convoy["lead"]
+	if L == null or not is_instance_valid(L) or L.dead or L.driver() == null or L.cmd == null:
+		convoy = null
+		return null
+	if G.dist2d(L.pos, L.cmd) < 22.0:
+		convoy = null          # leader's there: everyone to their own spot
+		return null
+	var want = 13.0 * convoy["k"]
+	var acc = 0.0
+	var prev: Vector3 = L.pos
+	for i in range(L.trail.size() - 1, -1, -1):
+		var q: Vector3 = L.trail[i]
+		acc += G.dist2d(prev, q)
+		prev = q
+		if acc >= want:
+			return q
+	return prev
 
 func _leg(p: Vector3) -> Vector3:
 	if G.dist2d(p, pos) > 90.0:
@@ -1171,6 +1284,19 @@ func _ai_drive(dt: float) -> Array:
 			return _steer_to(target, dt)
 	elif detour != null and G.sim_time < detour_t and G.dist2d(detour, pos) > 6.0:
 		target = detour
+	elif cmd != null and convoy != null and _convoy_spot() != null:
+		# in a column: keep station behind the vehicle in front, at its pace
+		target = _convoy_spot()
+		var gap = G.dist2d(target, pos)
+		var CL = convoy["lead"]
+		if gap < 4.0 or (G.dist2d(CL.pos, pos) < 9.0 + 4.0 * convoy["k"] and absf(CL.speed) < 1.0):
+			why = "convoy"
+			return [0.0, 0.0]
+		if gap < 30.0 and G.world.vseg_clear(pos, target):
+			var rr = _steer_to(target, dt)
+			if gap < 9.0:
+				rr[0] = minf(rr[0], 0.35)
+			return rr
 	elif cmd != null:
 		target = cmd
 		var dc = G.dist2d(cmd, pos)
@@ -1187,8 +1313,13 @@ func _ai_drive(dt: float) -> Array:
 			why = "w3"
 			return [0.0, 0.0]
 	elif kind == "ammotruck" or kind == "supplytruck":
-		target = VehExt.ammo_spot(self) if kind == "ammotruck" else G.world.rally_point(team)
-		if G.dist2d(target, pos) < 7.0:
+		var want_c = VehExt.ammo_spot(self) if kind == "ammotruck" else G.world.rally_point(team)
+		# park in a free bay near the spot rather than on top of it
+		if not has_meta("park_c") or G.dist2d(get_meta("park_c"), want_c) > 6.0 or not has_meta("park"):
+			set_meta("park_c", want_c)
+			G.world.park_spot(want_c, self, G.world.rally_point(team))
+		target = get_meta("park")
+		if G.dist2d(target, pos) < 4.5:
 			why = "w4"
 			return [0.0, 0.0]
 	elif kind == "radar":
@@ -1274,17 +1405,21 @@ func _ai_drive(dt: float) -> Array:
 			why = "w12"
 			return [0.0, 0.0]
 	_set_goal(target)
-	# follow the path with some look-ahead
+	# follow the path, aiming a little way ahead on it
 	var aim: Vector3 = target
-	while path_i < path.size() and G.dist2d(path[path_i], pos) < 5.0:
+	while path_i < path.size() and G.dist2d(path[path_i], pos) < 4.0:
 		path_i += 1
 	if path_i < path.size():
-		aim = path[path_i]
+		aim = _pursuit()
 	if path_t <= 0.0:
 		path_t = 4.0
-		path = G.world.find_vpath(pos, _leg(goal)) if not spec.get("boat", false) else G.world.find_path(pos, _leg(goal))
-		path_i = 0
+		var np = _plan(goal)
+		if _better(np):
+			path = np
+			path_i = 0
 	var r = _steer_to(aim, dt)
+	if r[0] > 0.0:
+		r[0] *= _bend_speed()
 	# whiskers: veer away from walls just ahead
 	if r[0] > 0.0:
 		var f0 = forward()
@@ -1327,8 +1462,17 @@ func _ai_drive(dt: float) -> Array:
 		if a2 > 0.0 and a2 < reach and absf(lat) < half:
 			r[1] = clampf(r[1] - signf(lat if lat != 0.0 else 1.0) * 0.9 * dsg, -1.0, 1.0)
 			var close = a2 < (spec["len"] + o.spec["len"]) * 0.5 + 1.0
-			if close and not o.dead and o.team == team and get_instance_id() > o.get_instance_id() and absf(o.speed) > 0.2:
-				r[0] = minf(absf(r[0]), 0.15) * dsg       # let the other one through first
+			if close and not o.dead and o.team == team and absf(o.speed) > 0.2:
+				var mine = rank()
+				var theirs = o.rank()
+				if theirs > mine or (theirs == mine and get_instance_id() > o.get_instance_id()):
+					# the smaller one gives way: nose to nose it backs off a little, either way it waits
+					if f.dot(o.forward()) < -0.4 and reverse_t <= 0.0 and yield_t <= 0.0:
+						reverse_t = 1.1
+					yield_t = 2.5
+					r[0] = minf(absf(r[0]), 0.1) * dsg
+	if yield_t > 0.0:
+		yield_t -= dt
 	# unstick: if we want to move but aren't, back up for a moment
 	if reverse_t > 0.0:
 		reverse_t -= dt
@@ -1340,7 +1484,7 @@ func _ai_drive(dt: float) -> Array:
 					reverse_t = 0.0
 					return [0.0, r[1]]
 		return [-1.0, -r[1]]
-	if absf(r[0]) > 0.3 and absf(speed) < 0.6:
+	if absf(r[0]) > 0.3 and absf(speed) < 0.6 and yield_t <= 0.0:
 		stuck_t += dt
 		if stuck_t > 1.6:
 			stuck_t = 0.0

@@ -34,6 +34,20 @@ static func note_death(s) -> void:
 	if list.size() > 40:
 		list.pop_front()
 
+# pinned under fire: not as bad as a death, but enough that men route round it next time
+static func note_fire(s) -> void:
+	if s.zombie or s.team < 0 or s.team >= danger.size():
+		return
+	var list: Array = danger[s.team]
+	for d in list:
+		if G.dist2d(d["p"], s.pos) < 8.0:
+			d["w"] = minf(d["w"] + 0.25, 6.0)
+			d["t"] = G.sim_time
+			return
+	list.append({"p": s.pos, "w": 0.35, "t": G.sim_time})
+	if list.size() > 40:
+		list.pop_front()
+
 # how dangerous a place is for a team (0 = nothing known)
 static func danger_at(p: Vector3, team: int) -> float:
 	if team < 0 or team >= danger.size():

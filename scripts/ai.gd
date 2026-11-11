@@ -521,18 +521,52 @@ static func stop_move(s) -> void:
 	s.need_path = false
 
 static func follow_path(s) -> String:
+	if s.scramble != null:
+		var sc = s.scramble
+		sc["k"] += G.DT / sc["dur"]
+		var k = clampf(sc["k"], 0.0, 1.0)
+		var hop = sin(k * PI) * 0.35
+		s.pos = sc["a"].lerp(sc["b"], k) + Vector3(0, hop, 0)
+		s.vel = Vector3.ZERO
+		s.want = Vector3.ZERO
+		s.crouch = maxf(s.crouch, 0.6)
+		if k >= 1.0:
+			s.scramble = null
+			s.need_path = true
+		return "moving"
 	if s.move_target == null:
 		s.want = Vector3.ZERO
 		return "idle"
 	if s.need_path:
-		if G.path_budget <= 0:
+		# men the player just ordered don't queue behind everyone else's planning
+		if G.path_budget <= 0 and not s.path_prio:
 			s.want = Vector3.ZERO
 			return "wait"
 		G.path_budget -= 1
+		s.path_prio = false
 		s.need_path = false
 		var tgt: Vector3 = s.move_target
 		s.partial = false
-		if G.dist2d(s.pos, tgt) > 70.0:
+		var far = G.dist2d(s.pos, tgt)
+		if far > 22.0 and not upstairs(s) and absf(tgt.y - G.world.ground_y(tgt.x, tgt.z)) < 1.5:
+			# know the whole way first, then walk it a leg at a time
+			var r: Array = G.world.find_route(s.pos, tgt, s.team)
+			if r.size() > 1:
+				var acc = 0.0
+				var prev = s.pos
+				var leg = r[0]
+				for w in r:
+					acc += G.dist2d(prev, w)
+					if acc > 45.0 and w != r[0]:
+						break
+					leg = w
+					prev = w
+				if leg != r[r.size() - 1]:
+					if G.dist2d(s.pos, leg) > 58.0:
+						leg = s.pos + G.flat(leg - s.pos).normalized() * 55.0
+					tgt = leg
+					s.partial = true
+		if not s.partial and far > 70.0:
 			# long trips are planned in legs so path searches stay cheap on large maps
 			tgt = s.pos + G.flat(tgt - s.pos).normalized() * 55.0
 			s.partial = true
@@ -616,8 +650,15 @@ static func unwedge(s) -> void:
 	if best == null:
 		best = W.nav_pos(W._nearest_free(W.nav_cell(s.pos.x, s.pos.z)))
 	if G.dist2d(best, s.pos) < 8.0:
-		s.pos = Vector3(best.x, W.surface_y(best.x, best.z, s.pos.y + 0.5), best.z)
-		s.vel = Vector3.ZERO
+		var to = Vector3(best.x, W.surface_y(best.x, best.z, s.pos.y + 0.5), best.z)
+		var cam = G.main.get_viewport().get_camera_3d()
+		var seen = cam != null and cam.is_position_in_frustum(s.pos) and cam.global_position.distance_to(s.pos) < 90.0
+		if not seen:
+			s.pos = to
+			s.vel = Vector3.ZERO
+		else:
+			# in view: clamber out over a moment instead of popping across
+			s.scramble = {"a": s.pos, "b": to, "k": 0.0, "dur": clampf(G.dist2d(s.pos, to) * 0.28, 0.5, 1.6)}
 		s.need_path = true
 
 static func follow_route(s) -> void:
@@ -1175,6 +1216,20 @@ static func decide(s) -> void:
 			s.prone_t = false
 			go_to(s, goal, 4.4)
 			return
+		# more waypoints queued with Shift: on to the next one
+		if s.order != null and not s.order.get("queue", []).is_empty():
+			s.order["point"] = s.order["queue"].pop_front()
+			s.order.erase("arrived")
+			s.path_prio = true
+			go_to(s, s.order["point"], 4.4)
+			return
+		# told which way to face (a dragged line): look that way while it's quiet, and pick cover facing it
+		var quiet_now = not s.has_seen or G.sim_time - s.seen_t > 6.0
+		if s.order != null and s.order.has("face") and quiet_now:
+			var fy: float = s.order["face"]
+			threat = goal + Vector3(sin(fy), 0, cos(fy)) * 30.0
+			s.threat = threat
+			s.has_threat = true
 		if s.cover == null or s.cover_bad >= 2:
 			var c2 = find_cover(s, threat, "hold")
 			if c2 != null:
@@ -1574,6 +1629,7 @@ static func update(s) -> void:
 				if s.task == "flee":
 					s.flee = null
 					s.task = null
+	_keep_apart(s)
 	_keep_from_zombies(s)
 	_round_vehicles(s)
 	aim_and_fire(s)
@@ -2150,6 +2206,54 @@ static func grid_ref(p: Vector3) -> String:
 # vehicles aren't on the walking map, so a man heading past one walks round it instead of through it:
 # if his next steps would take him into a vehicle's footprint, he slides along its side; if he's already
 # inside it (just climbed out, or it rolled up to him) he steps out to the nearer side
+# men step round each other instead of shoving, and take turns at a doorway
+static func _keep_apart(s) -> void:
+	if s.vault != null or s.vehicle != null or s.climb != null or s.scramble != null or s.dragging != null:
+		return
+	var moving = s.want.length_squared() > 0.04
+	var push = Vector3.ZERO
+	var passer = false
+	for o in G.soldiers_near(s.pos):
+		if o == s or o.state != "alive" or o.vehicle != null or absf(o.pos.y - s.pos.y) > 1.0:
+			continue
+		var rel = G.flat(s.pos - o.pos)
+		var d2 = rel.length_squared()
+		if d2 > 0.5 or d2 < 0.0001:
+			continue
+		var d = sqrt(d2)
+		push += rel / d * (0.71 - d) / 0.71
+		if o.want.length_squared() > 0.04:
+			passer = true
+	if push != Vector3.ZERO:
+		if moving:
+			var sp = s.want.length()
+			s.want = (s.want + push * sp * 1.4).limit_length(sp * 1.1)
+		elif passer and not s.prone and s.order == null and not s.in_cover:
+			# someone squeezing past: shuffle aside
+			s.want = push * 1.2
+	# a doorway: one at a time, whoever is in it first goes first
+	if s.door_wait > 0.0:
+		s.door_wait -= G.DT
+		if moving:
+			s.want *= 0.1
+		return
+	if not moving or (Engine.get_physics_frames() + s.id) % 4 != 0:
+		return
+	var dr = Doors.door_near(s.pos, 1.7)
+	if dr == null or absf(s.pos.y + 1.1 - dr["c"].y) > 1.4:
+		return
+	var dc: Vector3 = dr["c"]
+	var my = G.dist2d(s.pos, dc)
+	if my < 0.75 or G.flat(dc - s.pos).dot(s.want) <= 0.0:
+		return
+	for o in G.soldiers_near(dc):
+		if o == s or o.state != "alive" or absf(o.pos.y - s.pos.y) > 1.0:
+			continue
+		if G.dist2d(o.pos, dc) < 0.7 and o.want.length_squared() > 0.04:
+			s.door_wait = 0.45
+			s.want *= 0.1
+			return
+
 static func _round_vehicles(s) -> void:
 	if s.vault != null or s.vehicle != null:
 		return

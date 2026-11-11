@@ -119,7 +119,7 @@ static func _send_convoys(team: int) -> void:
 			continue        # the last one hasn't got there yet
 		n += 1
 		var start = Reinforce.offmap(Reinforce.clear_entry(team))
-		var drop = G.main._free_spot(st["p"] + Build._front(st) * -8.0)
+		var drop = G.world.park_spot(st["p"], null, start)
 		var v = Vehicle.make("truck", team, start, atan2(drop.x - start.x, drop.z - start.z))
 		var load = int(CONVOY_LOAD * (1.5 if has(team, "logistics") else 1.0))
 		v.mission = {"type": "supply", "drop": drop, "exit": start, "stage": 0, "wait": 0.0, "site": st, "pts": load}

@@ -143,14 +143,24 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Who runs your side:** in every mode except sandbox your side no longer builds, buys or plans on its own; pick "AI commander" in the setup screen (or on the campaign screen) to have an AI run it while you watch or help
 - **Looks:** barbed wire at HQs is proper coiled wire (no more grey lumps), bunkers and FOBs have sandbags laid over their roofs, camouflage nets are tied to the tops of their poles, and tents are canvas ridge tents with guy ropes and door flaps
 - **Map backgrounds:** a patchwork of fields, hedgerows along them, round-crowned trees among the firs, and smoke rising from fighting somewhere beyond the hills
+- **Smarter routes on foot:** long walks are planned whole on a coarse map first, so men go round a block or a river instead of walking into dead ends; places where their side keeps getting pinned or killed cost more, open ground most of all, so they route behind buildings, hedges and walls; men step round each other and take turns at doorways; a man wedged in plain view clambers out instead of popping across; men you order plan their route ahead of everyone else's
+- **Smarter driving:** vehicles aim a little way ahead along their route so corners become curves, and slow for sharp bends; they keep their route unless a new one is clearly better (no more dithering between two); parked and jammed vehicles count as obstacles when planning; when two meet, the smaller gives way (backing off if nose to nose); trucks keep to roads, tanks go cross-country; supply and ammo trucks park in free bays instead of on top of each other; several vehicles sent a long way drive in a column behind the biggest
+- **Path debug view (F9):** every man's and vehicle's planned route, where each vehicle is aiming, who's giving way, parking bays, and each side's danger spots
+- **Orders you can see:** with men selected, faint figures show where each will stand (green and crouched where there's cover); right-drag in the commander view draws a line for them to form up on, facing away from where they are now (middle-drag turns the camera); Shift + right-click queues more stops, shown as numbered flags
+- **Kill feed with icons:** a weapon silhouette between the names (rifle, SMG, machine gun, scoped rifle, shotgun, pistol, flamethrower, rocket, knife, blast, tank, bleeding out) and a mark for headshots; in the commander view a +1 pops up over whoever on your side got the kill
+- **Squad cards:** a column of cards for your squads in the commander view, each with its kind, men left, a health bar and what it's doing (moving, in combat, pinned down, building, in cover, mounted); click one to select the squad and look at it
+- **Battle prep (campaign):** a minute before each campaign battle to place your men, build and dig in; nobody advances, nothing is called in and the clock doesn't run; Space or the button starts it early
+- **Campaign events:** most turns something happens: a storm (rain, grey light, shorter sight and no aircraft in that turn's battles), partisans ambushing an enemy army or handing a region over, a captured enemy dump for the war chest, or one of your convoys ambushed
+- **Wall dust:** a wall or a building coming down throws up a cloud of brick dust that drifts off and blocks sight for several seconds
+- **Heads turn:** men snap their heads round toward a near miss or an explosion before their bodies follow
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
-**Command tab:** click a soldier (double-click for his squad) or drag a box to select, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it.
+**Command tab:** click a soldier (double-click for his squad) or drag a box to select, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it. In the commander view right-drag draws a line for them to form up on (middle-drag turns the camera), and Shift + right-click adds stops to their route.
 **Controlling a soldier:** mouse aim, left-click fire, right mouse aim down sights, Q/E lean, Shift sprint, C crouch, Z prone, R reload, G grenade, V smoke, L flare, 1–5 weapons, Y first person, O squad follows you, F pick up a fallen soldier's gun or get into a vehicle, hold U to help build a friendly site, I to dismantle what you aim at, X leave the soldier.
 **In a vehicle:** WASD drive, mouse aims the turret, left-click fire, 1–4 change seat, F get out.
 **Controlling a soldier (more):** walk into a ladder to climb it, 0 for a panzerfaust.
-**Anywhere:** M or Esc menu, H help (dresses your wound while controlling a bleeding soldier), J battle report, P pause, T slow motion, F2 night vision.
+**Anywhere:** M or Esc menu, H help (dresses your wound while controlling a bleeding soldier), J battle report, P pause, T slow motion, F2 night vision, F9 path debug view, Space ends campaign battle prep.
 
 ## I couldn't run this, so please report problems
 I couldn't run Godot where I wrote this. I checked the scripts with a static checker, but the first run will probably surface a few errors. When something breaks, send me:
@@ -175,3 +185,7 @@ I couldn't run Godot where I wrote this. I checked the scripts with a static che
 | `scripts/audio.gd` | Generated sounds and the 3D audio pool |
 | `scripts/player_cam.gd` | Camera, input, controlling a soldier, tools |
 | `scripts/ui.gd` | HUD, scoreboard, kill feed, tool bar, menus |
+| `scripts/squadcards.gd` | Commander view squad cards |
+| `scripts/icons.gd` | Weapon and status icons drawn at start-up |
+| `scripts/navviz.gd` | Path debug view (F9) |
+| `scripts/prep.gd` | Campaign battle prep phase |

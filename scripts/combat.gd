@@ -148,6 +148,13 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 			if shooter.team != s.team:
 				AI.add_intel(s, shooter, shooter.pos, 5.0, false)
 				Morale.shock(s, add * 9.0)
+				# a crack overhead: heads snap round toward where it came from
+				s.look_p = shooter.pos
+				s.look_t = 1.4
+				# ground under heavy fire is remembered as a bad place to cross
+				if s.supp > 0.9 and G.sim_time > s.danger_note_t:
+					s.danger_note_t = G.sim_time + 4.0
+					Tactics.note_fire(s)
 	var cam = G.main.get_viewport().get_camera_3d()
 	if shooter != G.player and cam:
 		var tc = (cam.global_position - o).dot(d)
@@ -291,6 +298,8 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 		if s.state == "down":
 			s.down_t = maxf(s.down_t, 1.0)
 
+static var cause = ""          # what the next kill was done with, for the kill feed ("" = the attacker's gun)
+
 static func kill(s, attacker, head: bool) -> void:
 	if s.state == "dead":
 		return
@@ -317,7 +326,8 @@ static func kill(s, attacker, head: bool) -> void:
 		G.score[attacker.team] += 1
 		Support.earn(attacker.team, 2)
 	G.main.on_kill(s, attacker)
-	G.ui.feed(attacker, s, head)
+	G.ui.feed(attacker, s, head, "", cause)
+	cause = ""
 	Medical.try_save(s)
 	G.fx.decal(s.parts[0].global_position, randf_range(0.6, 1.0), false)
 	if attacker != null and attacker.team != s.team and attacker.state == "alive" and randf() < 0.3:
@@ -347,6 +357,7 @@ static func knife(s, t) -> void:
 	G.audio.play(G.audio.s_hit, t.chest(), -10.0, 0.6)
 	if from_behind:
 		t.hp = 0.0
+		cause = "knife"
 		kill(t, s, false)
 	else:
 		hit_soldier(t, 1, t.chest(), G.flat(t.pos - s.pos).normalized(), 110.0, s, 1.5)
@@ -585,6 +596,24 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 	s.throw_t = 0.55
 	G.fx.callout(s, {"smoke": "Popping smoke!", "satchel": "Satchel charge! Get back!", "sticky": "Sticky bomb!", "marker": "Marking the target!", "molotov": "Burn them out!"}.get(type, "Grenade out!"))
 
+# a wall coming down: a thick cloud of brick dust that rolls out, drifts and blocks sight for a while
+static func dust_at(p: Vector3, size: float) -> void:
+	var big = clampf(size / 5.0, 0.45, 1.0)
+	var sc = SmokeCloud.new()
+	sc.p = p + Vector3(0, 0.6, 0)
+	sc.r = 1.5
+	sc.t = 9.0 + 4.0 * big
+	sc.node = G.fx.smoke_screen(Vector3(p.x, G.world.ground_y(p.x, p.z) + 1.2, p.z), sc.t - 3.0, Color(0.56, 0.49, 0.4), big * 1.25)
+	sc.node.scale = Vector3(0.65, 0.65, 0.65)      # it bursts out, rather than growing from nothing like a smoke grenade
+	# and a thick burst rolling out along the ground first
+	for k in range(4):
+		var a2 = k * TAU / 4.0 + randf() * 0.6
+		G.fx.dust_cloud(p + Vector3(cos(a2), 0, sin(a2)) * 2.2 * big + Vector3(0, -0.5, 0), 3.0)
+	sc.set_meta("max_r", 6.5 * big)
+	var a = randf() * TAU
+	sc.set_meta("drift", Vector3(0.7 + cos(a) * 0.3, 0, 0.25 + sin(a) * 0.3))
+	G.smoke_clouds.append(sc)
+
 static func smoke_at(p: Vector3, life: float, tint: Color = Color(0.85, 0.85, 0.83), big: float = 1.0) -> void:
 	var sc = SmokeCloud.new()
 	sc.p = p + Vector3(0, 1.0, 0)
@@ -635,6 +664,12 @@ static func step_grenades() -> void:
 		var c = G.smoke_clouds[i]
 		c.t -= G.DT
 		c.r = minf(c.get_meta("max_r", 9.0), c.r + G.DT * 2.6)
+		# dust from a fallen wall drifts off on the breeze, thinning as it goes
+		if c.has_meta("drift"):
+			var dv: Vector3 = c.get_meta("drift")
+			c.p += dv * G.DT
+			if is_instance_valid(c.node):
+				c.node.global_position += dv * G.DT
 		if c.t < 4.0:
 			c.r = maxf(0.0, c.r - G.DT * 1.3)
 		if c.t <= 0.0:
@@ -768,6 +803,13 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 	G.world.damage_area(pos, R * 0.75, power)
 	if power >= 1.0:
 		G.world.blast_crater(pos, clampf(1.2 * power, 1.0, 3.2))
+	# everyone in earshot looks round at the bang
+	for sl in G.soldiers:
+		if sl.state == "alive" and not sl.is_player and sl.look_t < 0.6:
+			var dl = G.dist2d(sl.pos, pos)
+			if dl > R and dl < 55.0:
+				sl.look_p = pos
+				sl.look_t = 1.3
 	for v in G.vehicles.duplicate():
 		var dv = v.center().distance_to(pos)
 		if dv < R * 1.2:
@@ -791,6 +833,7 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 				if s == G.player:
 					G.ui.damage_indicator(pos)
 			if s.hp <= 0.0:
+				cause = "blast"
 				kill(s, owner_s if owner_s != s else null, false)
 			elif f > 0.3:
 				s.fall(randf_range(1.8, 3.0))

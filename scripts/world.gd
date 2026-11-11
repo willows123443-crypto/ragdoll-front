@@ -864,6 +864,7 @@ func build_nav() -> void:
 	for c in cols:
 		_nav_mark(c)
 	_build_vnav()
+	_build_cnav()
 	for w in water:
 		var ix0 = maxi(0, int((w[0] - NX0) / NCS))
 		var ix1 = mini(NW - 1, int((w[1] - NX0) / NCS))
@@ -894,30 +895,209 @@ func update_nav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 			var pz = NZ0 + (iz + 0.5) * NCS
 			if not water.is_empty() and in_water(px, pz) and not astar.is_point_solid(Vector2i(ix, iz)):
 				astar.set_point_weight_scale(Vector2i(ix, iz), 12.0)
+	if CW > 0:
+		var ca = Vector2i(a.x / CCS, a.y / CCS)
+		var cb = Vector2i(mini(b.x / CCS, CW - 1), mini(b.y / CCS, CH - 1))
+		for cz in range(maxi(0, ca.y), cb.y + 1):
+			for cx in range(maxi(0, ca.x), cb.x + 1):
+				_cnav_cell(cx, cz)
+
+# ---------------------------------------------------------------- whole-trip route planning
+# Long walks are planned on a coarse 4 m grid first, so a man knows the way round a block or a river
+# before he sets off instead of walking a straight line into a dead end. Places where his side keeps
+# getting shot or killed cost more on that grid, the open ones most of all, so men go round behind
+# buildings, hedges and walls when there's a better way.
+const CCS = 8                     # fine cells per coarse cell
+var cnav = AStarGrid2D.new()
+var CW = 0
+var CH = 0
+var cbase = PackedFloat32Array()
+var cexposed = PackedByteArray()  # 1: no cover anywhere in the cell
+var cexp_done = false
+var route_stats = {"routes": 0, "detours": 0}
+
+func _build_cnav() -> void:
+	CW = maxi(1, int(ceil(float(NW) / CCS)))
+	CH = maxi(1, int(ceil(float(NH) / CCS)))
+	cnav = AStarGrid2D.new()
+	cnav.region = Rect2i(0, 0, CW, CH)
+	cnav.cell_size = Vector2(1, 1)
+	cnav.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	cnav.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	cnav.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	cnav.update()
+	cbase = PackedFloat32Array()
+	cbase.resize(CW * CH)
+	cexposed = PackedByteArray()
+	cexposed.resize(CW * CH)
+	cexp_done = false
+	for cz in range(CH):
+		for cx in range(CW):
+			_cnav_cell(cx, cz)
+
+func _cnav_cell(cx: int, cz: int) -> void:
+	var free = 0
+	var tot = 0
+	var wet = 0
+	for fz in range(cz * CCS, mini(NH, (cz + 1) * CCS), 2):
+		for fx in range(cx * CCS, mini(NW, (cx + 1) * CCS), 2):
+			tot += 1
+			var p = Vector2i(fx, fz)
+			if not astar.is_point_solid(p):
+				free += 1
+				if astar.get_point_weight_scale(p) > 10.0:
+					wet += 1
+	var c = Vector2i(cx, cz)
+	var solid = tot == 0 or free * 8 < tot
+	cnav.set_point_solid(c, solid)
+	# cluttered cells cost a bit more (the fine path has to weave), water a lot more
+	var w = 1.0 + (1.0 - float(free) / maxf(1.0, tot)) * 1.2
+	if wet * 2 > free:
+		w = 8.0
+	cbase[cz * CW + cx] = w
+	if not solid:
+		cnav.set_point_weight_scale(c, w)
+
+func _cnav_exposure() -> void:
+	cexp_done = true
+	for cz in range(CH):
+		for cx in range(CW):
+			var x = NX0 + (cx + 0.5) * CCS * NCS
+			var z = NZ0 + (cz + 0.5) * CCS * NCS
+			var any = false
+			for cp in cover_near(Vector3(x, 0, z), 3.0):
+				if absf(cp.p.x - x) < 2.6 and absf(cp.p.z - z) < 2.6:
+					any = true
+					break
+			cexposed[cz * CW + cx] = 0 if any else 1
+
+func ccell(x: float, z: float) -> Vector2i:
+	return Vector2i(clampi(int(floor((x - NX0) / (NCS * CCS))), 0, CW - 1), clampi(int(floor((z - NZ0) / (NCS * CCS))), 0, CH - 1))
+
+func cpos(c: Vector2i) -> Vector3:
+	var x = NX0 + (c.x + 0.5) * CCS * NCS
+	var z = NZ0 + (c.y + 0.5) * CCS * NCS
+	return Vector3(x, ground_y(x, z), z)
+
+func _cnear_free(c: Vector2i) -> Vector2i:
+	if not cnav.is_point_solid(c):
+		return c
+	for r in range(1, 4):
+		for dz in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				var p = Vector2i(c.x + dx, c.y + dz)
+				if cnav.is_in_boundsv(p) and not cnav.is_point_solid(p):
+					return p
+	return Vector2i(-1, -1)
+
+# the way a man of this team should go, as a few waypoints, or [] when there's no better plan
+# than walking straight there
+func find_route(from: Vector3, to: Vector3, team: int) -> Array:
+	if CW <= 0:
+		return []
+	if not cexp_done:
+		_cnav_exposure()
+	var s = _cnear_free(ccell(from.x, from.z))
+	var t = _cnear_free(ccell(to.x, to.z))
+	if s.x < 0 or t.x < 0:
+		return []
+	# this side's bad places: costlier for the length of this search only
+	var touched = {}
+	if team >= 0 and team < Tactics.danger.size():
+		for d in Tactics.danger[team]:
+			var age = G.sim_time - d["t"]
+			if age > Tactics.DANGER_LIFE:
+				continue
+			var fade = 1.0 - age / Tactics.DANGER_LIFE
+			var dc = ccell(d["p"].x, d["p"].z)
+			for dz in range(-3, 4):
+				for dx in range(-3, 4):
+					var c = Vector2i(dc.x + dx, dc.y + dz)
+					if not cnav.is_in_boundsv(c) or cnav.is_point_solid(c):
+						continue
+					var fall = 1.0 - Vector2(dx, dz).length() / 3.6
+					if fall <= 0.0:
+						continue
+					var i = c.y * CW + c.x
+					var add = minf(3.0, d["w"]) * fall * fade * (2.2 if cexposed[i] == 1 else 0.8)
+					touched[c] = touched.get(c, 0.0) + add
+		for c in touched:
+			cnav.set_point_weight_scale(c, cbase[c.y * CW + c.x] + minf(9.0, touched[c]))
+	var ids: Array = cnav.get_id_path(s, t, true)
+	for c in touched:
+		cnav.set_point_weight_scale(c, cbase[c.y * CW + c.x])
+	if ids.size() < 2:
+		return []
+	route_stats["routes"] += 1
+	# pull the string tight, but never across a cell costlier than the way we were going
+	var out: Array = []
+	var i = 0
+	var bent = false
+	while i < ids.size() - 1:
+		var j = mini(ids.size() - 1, i + 14)
+		while j > i + 1 and not _cline_ok(ids, i, j, touched):
+			j -= 1
+		if j < ids.size() - 1:
+			bent = true
+		out.append(cpos(ids[j]))
+		i = j
+	if bent and not touched.is_empty():
+		route_stats["detours"] += 1
+	out[out.size() - 1] = Vector3(to.x, ground_y(to.x, to.z), to.z)
+	return out
+
+func _ccost(c: Vector2i, touched: Dictionary) -> float:
+	return cbase[c.y * CW + c.x] + touched.get(c, 0.0)
+
+func _cline_ok(ids: Array, i: int, j: int, touched: Dictionary) -> bool:
+	var top = 0.0
+	for k in range(i, j + 1):
+		top = maxf(top, _ccost(ids[k], touched))
+	var a: Vector2i = ids[i]
+	var d = Vector2(ids[j] - a)
+	var n = int(ceil(d.length() * 2.0))
+	for k in range(1, n):
+		var t = float(k) / n
+		var c = Vector2i(roundi(a.x + d.x * t), roundi(a.y + d.y * t))
+		if cnav.is_point_solid(c) or _ccost(c, touched) > top + 0.05:
+			return false
+	return true
 
 # ---------------------------------------------------------------- vehicle navigation
+# Two grids: wheels keep to the roads (open ground costs a lot more), tracks hardly care.
+var tastar = AStarGrid2D.new()
+
+func _new_vgrid() -> AStarGrid2D:
+	var g = AStarGrid2D.new()
+	g.region = Rect2i(0, 0, VW, VH)
+	g.cell_size = Vector2(1, 1)
+	g.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	g.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	g.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	g.update()
+	return g
+
 func _build_vnav() -> void:
 	VW = maxi(1, int(ceil(TW / VCS)))
 	VH = maxi(1, int(ceil(TH_ / VCS)))
-	vastar = AStarGrid2D.new()
-	vastar.region = Rect2i(0, 0, VW, VH)
-	vastar.cell_size = Vector2(1, 1)
-	vastar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
-	vastar.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
-	vastar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
-	vastar.update()
-	# drivers keep to the roads where they can: open ground costs a little more
+	vastar = _new_vgrid()
+	tastar = _new_vgrid()
 	for iz in range(VH):
 		for ix in range(VW):
-			vastar.set_point_weight_scale(Vector2i(ix, iz), _vbase_w(ix, iz))
+			var r = _vroad(ix, iz)
+			vastar.set_point_weight_scale(Vector2i(ix, iz), 1.0 if r else 2.4)
+			tastar.set_point_weight_scale(Vector2i(ix, iz), 1.0 if r else 1.15)
 	for c in cols:
 		_vnav_mark(c)
 	_vnav_water(0, 0, VW - 1, VH - 1)
 
-func _vbase_w(ix: int, iz: int) -> float:
-	var x = TX0 + (ix + 0.5) * VCS
-	var z = TZ0 + (iz + 0.5) * VCS
-	return 1.0 if on_road(x, z) else 1.5
+func _vroad(ix: int, iz: int) -> bool:
+	return on_road(TX0 + (ix + 0.5) * VCS, TZ0 + (iz + 0.5) * VCS)
+
+func _vbase_w(ix: int, iz: int, tracked: bool = false) -> float:
+	if _vroad(ix, iz):
+		return 1.0
+	return 1.15 if tracked else 2.4
 
 func vnav_cell(x: float, z: float) -> Vector2i:
 	return Vector2i(clampi(int(floor((x - TX0) / VCS)), 0, VW - 1), clampi(int(floor((z - TZ0) / VCS)), 0, VH - 1))
@@ -938,10 +1118,13 @@ func _vnav_mark(c) -> void:
 		iz1 = mini(VH - 1, int(floor((c.hi.z - TZ0) / VCS)))
 	for iz in range(iz0, iz1 + 1):
 		for ix in range(ix0, ix1 + 1):
+			var p = Vector2i(ix, iz)
 			if soft:
-				vastar.set_point_weight_scale(Vector2i(ix, iz), 4.0)
+				vastar.set_point_weight_scale(p, 4.0)
+				tastar.set_point_weight_scale(p, 3.0)
 			else:
-				vastar.set_point_solid(Vector2i(ix, iz), true)
+				vastar.set_point_solid(p, true)
+				tastar.set_point_solid(p, true)
 
 func _vnav_water(ix0: int, iz0: int, ix1: int, iz1: int) -> void:
 	if water.is_empty():
@@ -952,6 +1135,7 @@ func _vnav_water(ix0: int, iz0: int, ix1: int, iz1: int) -> void:
 			var z = TZ0 + (iz + 0.5) * VCS
 			if in_water(x, z):
 				vastar.set_point_solid(Vector2i(ix, iz), true)
+				tastar.set_point_solid(Vector2i(ix, iz), true)
 
 func _vnav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 	if vastar.region.size.x != VW:
@@ -960,15 +1144,18 @@ func _vnav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 	var b = vnav_cell(x1 + VCLEAR + 2.0, z1 + VCLEAR + 2.0)
 	for iz in range(a.y, b.y + 1):
 		for ix in range(a.x, b.x + 1):
-			vastar.set_point_solid(Vector2i(ix, iz), false)
-			vastar.set_point_weight_scale(Vector2i(ix, iz), _vbase_w(ix, iz))
+			var p = Vector2i(ix, iz)
+			vastar.set_point_solid(p, false)
+			tastar.set_point_solid(p, false)
+			vastar.set_point_weight_scale(p, _vbase_w(ix, iz, false))
+			tastar.set_point_weight_scale(p, _vbase_w(ix, iz, true))
 	var m = VCLEAR + VCS * 2.0
 	for c in cols_in_rect(TX0 + a.x * VCS - m, TZ0 + a.y * VCS - m, TX0 + (b.x + 1) * VCS + m, TZ0 + (b.y + 1) * VCS + m):
 		_vnav_mark(c)
 	_vnav_water(a.x, a.y, b.x, b.y)
 
-func _vnearest_free(c: Vector2i) -> Vector2i:
-	if not vastar.is_point_solid(c):
+func _vnearest_free(c: Vector2i, g: AStarGrid2D) -> Vector2i:
+	if not g.is_point_solid(c):
 		return c
 	for r in range(1, 7):
 		for dz in range(-r, r + 1):
@@ -976,35 +1163,64 @@ func _vnearest_free(c: Vector2i) -> Vector2i:
 				if absi(dx) != r and absi(dz) != r:
 					continue
 				var p = Vector2i(c.x + dx, c.y + dz)
-				if vastar.is_in_boundsv(p) and not vastar.is_point_solid(p):
+				if g.is_in_boundsv(p) and not g.is_point_solid(p):
 					return p
 	return Vector2i(-1, -1)
 
-func _vwalk_line(a: Vector2i, b: Vector2i) -> bool:
+func _vwalk_line(a: Vector2i, b: Vector2i, g: AStarGrid2D = null) -> bool:
+	if g == null:
+		g = vastar
 	var d = Vector2(b - a)
 	var n = int(ceil(d.length() * 2.0))
 	for i in range(1, n + 1):
 		var t = float(i) / n
-		if vastar.is_point_solid(Vector2i(roundi(a.x + d.x * t), roundi(a.y + d.y * t))):
+		if g.is_point_solid(Vector2i(roundi(a.x + d.x * t), roundi(a.y + d.y * t))):
 			return false
 	return true
 
-# a path a vehicle fits along (clear of walls, wrecks and everything built), or [] if there is none
-func find_vpath(from: Vector3, to: Vector3) -> Array:
+# can a vehicle drive straight from a to b (nothing built or wrecked in the way)?
+func vseg_clear(a: Vector3, b: Vector3) -> bool:
+	if vastar.region.size.x != VW:
+		return true
+	return _vwalk_line(vnav_cell(a.x, a.z), vnav_cell(b.x, b.z), tastar)
+
+# a path a vehicle fits along (clear of walls, wrecks and everything built), or [] if there is none.
+# Other vehicles standing still are in the way too, for this search only, so traffic plans round a
+# parked truck or a jam instead of driving into it.
+func find_vpath(from: Vector3, to: Vector3, tracked: bool = false, me = null) -> Array:
 	if vastar.region.size.x != VW:
 		return find_path(from, to)
-	var s = _vnearest_free(vnav_cell(from.x, from.z))
-	var t = _vnearest_free(vnav_cell(to.x, to.z))
+	var g: AStarGrid2D = tastar if tracked else vastar
+	var s = _vnearest_free(vnav_cell(from.x, from.z), g)
+	var t = _vnearest_free(vnav_cell(to.x, to.z), g)
 	if s.x < 0 or t.x < 0:
 		return find_path(from, to)
-	var ids: Array = vastar.get_id_path(s, t, true)
+	var shut: Array = []
+	if me != null:
+		for o in G.vehicles:
+			if o == me or (o.dead and o.spec.get("static", false)) or o.spec.get("air", false) or o.spec.get("boat", false) or absf(o.speed) > 0.6:
+				continue
+			if G.dist2d(o.pos, from) > 140.0 or G.dist2d(o.pos, to) < 8.0 or G.dist2d(o.pos, from) < 4.0:
+				continue
+			var R = o.spec["len"] * 0.5 + 0.8
+			var c0 = vnav_cell(o.pos.x - R, o.pos.z - R)
+			var c1 = vnav_cell(o.pos.x + R, o.pos.z + R)
+			for iz in range(c0.y, c1.y + 1):
+				for ix in range(c0.x, c1.x + 1):
+					var p = Vector2i(ix, iz)
+					if p != s and p != t and not g.is_point_solid(p):
+						g.set_point_solid(p, true)
+						shut.append(p)
+	var ids: Array = g.get_id_path(s, t, true)
+	for p in shut:
+		g.set_point_solid(p, false)
 	if ids.is_empty():
 		return find_path(from, to)
 	var out: Array = []
 	var i = 0
 	while i < ids.size() - 1:
 		var j = mini(ids.size() - 1, i + 20)
-		while j > i + 1 and not _vwalk_line(ids[i], ids[j]):
+		while j > i + 1 and not _vwalk_line(ids[i], ids[j], g):
 			j -= 1
 		var x = TX0 + (ids[j].x + 0.5) * VCS
 		var z = TZ0 + (ids[j].y + 0.5) * VCS
@@ -1015,6 +1231,52 @@ func find_vpath(from: Vector3, to: Vector3) -> Array:
 	elif ids[ids.size() - 1] == vnav_cell(to.x, to.z):
 		out[out.size() - 1] = Vector3(to.x, ground_y(to.x, to.z), to.z)
 	return out
+
+# a free bay for a vehicle near a place: open ground it fits on, nobody else parked or heading
+# there, on the side it comes in from so it can pull out the same way
+func park_spot(c: Vector3, v, from: Vector3) -> Vector3:
+	var best = null
+	var bs = 1e9
+	for ring in [7.0, 10.0, 13.0, 17.0]:
+		for k in range(12):
+			var a = k * TAU / 12.0
+			var q = c + Vector3(cos(a), 0, sin(a)) * ring
+			if not _bay_free(q, v):
+				continue
+			var sc = G.dist2d(q, from) + ring * 0.6
+			if sc < bs:
+				bs = sc
+				best = q
+		if best != null:
+			break
+	if best == null:
+		return G.main._free_spot(c)
+	best = Vector3(best.x, ground_y(best.x, best.z), best.z)
+	if v != null:
+		v.set_meta("park", best)
+	return best
+
+func _bay_free(q: Vector3, v) -> bool:
+	var b = bounds
+	if q.x < b.position.x + 6.0 or q.x > b.end.x - 6.0 or q.z < b.position.y + 6.0 or q.z > b.end.y - 6.0:
+		return false
+	if in_water(q.x, q.z) or inside_any(q.x, q.z, 2.4):
+		return false
+	if vastar.region.size.x == VW:
+		var c = vnav_cell(q.x, q.z)
+		for dz in [-1, 0, 1]:
+			for dx in [-1, 0, 1]:
+				var p = Vector2i(c.x + dx, c.y + dz)
+				if not tastar.is_in_boundsv(p) or tastar.is_point_solid(p):
+					return false
+	for o in G.vehicles:
+		if o == v or o.dead or o.spec.get("air", false):
+			continue
+		if G.dist2d(o.pos, q) < 6.5:
+			return false
+		if o.has_meta("park") and G.dist2d(o.get_meta("park"), q) < 6.5:
+			return false
+	return true
 
 # colliders overlapping a rectangle, found through the spatial grid
 func cols_in_rect(x0: float, z0: float, x1: float, z1: float) -> Array:
@@ -1212,6 +1474,8 @@ func ruin_col(c) -> void:
 		for k in range(2):
 			add_box(cx + rnd(-0.6, 0.6), 0.0, cz + rnd(-0.6, 0.6), rnd(0.4, 0.9), rnd(0.2, 0.4), rnd(0.4, 0.9), c.color.darkened(0.2), {"collide": false, "ry": rnd(0, 3)})
 
+var last_dust_ms = 0
+
 func destroy_col(c, depth: int = 0) -> void:
 	if not c.alive:
 		return
@@ -1242,6 +1506,10 @@ func destroy_col(c, depth: int = 0) -> void:
 		var p = Vector3(randf_range(c.lo.x, c.hi.x), randf_range(c.lo.y, c.hi.y), randf_range(c.lo.z, c.hi.z))
 		G.fx.debris(p, Vector3(randf_range(-3, 3), randf_range(1, 5), randf_range(-3, 3)), randf_range(0.15, 0.5), c.color)
 	G.fx.dust_cloud((c.lo + c.hi) / 2.0, maxf(size.x, size.z))
+	# a real wall (not a crate, hedge or sandbag) throws up a cloud you can't see through
+	if not c.has_meta("tree") and c.prop == 0 and size.y > 0.8 and maxf(size.x, size.z) * size.y > 2.4 and c.hi.y - c.gy > 1.4 and Time.get_ticks_msec() - last_dust_ms > 700 and G.started:
+		last_dust_ms = Time.get_ticks_msec()
+		Combat.dust_at((c.lo + c.hi) / 2.0, maxf(size.x, size.z) * size.y / 2.0)
 	if c.has_meta("cps"):
 		for cp in c.get_meta("cps"):
 			if cp.owner_s != null and is_instance_valid(cp.owner_s):
@@ -1966,6 +2234,7 @@ func _collapse_check(c) -> void:
 		if upper or stage == 2:
 			destroy_col(o, 3)
 	G.fx.dust_cloud(mid + Vector3(0, 2, 0), maxf(bld["w"], bld["d"]))
+	Combat.dust_at(mid, maxf(bld["w"], bld["d"]) * 1.4)
 	G.audio.boom(mid)
 	Combat.shake = maxf(Combat.shake, 0.4)
 	for sd in G.soldiers:

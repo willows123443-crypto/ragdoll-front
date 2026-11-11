@@ -482,6 +482,7 @@ func _process(dt: float) -> void:
 	_update_rings()
 	_rts_overlay()
 	_ghost_tick()
+	_order_preview_tick()
 	bloom = maxf(0.0, bloom - dt * 0.08)
 	kick = maxf(0.0, kick - dt * 1.6)
 	var fov_t = 65.0
@@ -655,7 +656,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 				rotate_place(1 if rot_acc > 0.0 else -1)
 				rot_acc = 0.0
 				rot_moved = true
-		elif G.player == null and r_drag and rts:
+		elif G.player == null and r_drag and rts and fdrag_a != null:
+			if ev.position.distance_to(r_press) > 6.0:
+				r_moved = true
+				var gb = _ground_at(ev.position)
+				if gb != null and G.dist2d(gb, fdrag_a) > 2.5:
+					fdrag = true
+					fdrag_b = gb
+		elif G.player == null and (r_drag or m_drag) and rts:
 			if ev.position.distance_to(r_press) > 6.0:
 				r_moved = true
 			rts_yaw -= ev.relative.x * 0.004 * G.settings["sens"]
@@ -685,7 +693,17 @@ func _unhandled_input(ev: InputEvent) -> void:
 				if ev.pressed:
 					r_press = ev.position
 					r_moved = false
+					fdrag = false
+					fdrag_b = null
+					# with men selected, a right-drag in the commander view draws the line they form up on
+					fdrag_a = _ground_at(ev.position) if rts and not _foot_men().is_empty() and not ev.alt_pressed else null
+				elif fdrag and fdrag_a != null and fdrag_b != null:
+					_order_line(fdrag_a, fdrag_b, ev.shift_pressed)
+					fdrag = false
+					fdrag_a = null
 				elif not r_moved and not selection.is_empty():
+					fdrag = false
+					fdrag_a = null
 					_order_move(ev.position)
 		elif ev.button_index == MOUSE_BUTTON_LEFT:
 			if ev.pressed:
@@ -705,6 +723,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 					_finish_select(ev.shift_pressed)
 					drag_from = null
 					G.ui.sel_box_changed()
+		elif ev.button_index == MOUSE_BUTTON_MIDDLE and G.player == null:
+			# middle-drag turns the commander camera (right-drag draws lines when men are selected)
+			m_drag = ev.pressed
+			if ev.pressed:
+				r_press = ev.position
 		elif ev.button_index == MOUSE_BUTTON_MIDDLE and ev.pressed and G.player != null and G.player.state == "alive":
 			var ps = G.player
 			if ps.rgren > 0 and ps.wid == "rifle":
@@ -1330,14 +1353,25 @@ func _order_move(screen: Vector2) -> void:
 			continue
 		# spread them out a little around the point, and get going at once
 		var off = Vector3((n % 4) - 1.5, 0, int(n / 4) - 1.0) * 2.0
+		n += 1
+		if Input.is_key_pressed(KEY_SHIFT) and s.order != null and s.order.get("mode", "") == "move" and s.order.get("point") != null and not s.order.has("arrived"):
+			# Shift: one more stop on the way, after the ones already given
+			if not s.order.has("queue"):
+				s.order["queue"] = []
+			if s.order["queue"].size() < 8:
+				s.order["queue"].append(p + off)
+			continue
 		s.order = {"mode": "move", "point": p + off}
 		_obey(s, p + off)
-		n += 1
 	var k = 0
+	# several vehicles going a fair way: they drive in a column behind the biggest one
+	vs.sort_custom(func(a, b): return a.rank() > b.rank())
 	for v in vs:
 		# several vehicles: park side by side rather than on the same spot
 		var off2 = Vector3((k % 3) - 1.0, 0, int(k / 3)) * 9.0 if vs.size() > 1 else Vector3.ZERO
 		v.command(p + off2)
+		if k > 0 and G.dist2d(vs[0].pos, p) > 40.0 and G.dist2d(v.pos, vs[0].pos) < 45.0:
+			v.convoy = {"lead": vs[0], "k": k}
 		k += 1
 	G.fx.order_marker(p)
 	G.audio.radio_click()
@@ -1366,6 +1400,7 @@ func _obey(s, to: Vector3) -> void:
 	s.build_site = null if s.task != "construct" else s.build_site
 	s.prone_t = false
 	AI.go_to(s, G.main._free_spot(to) if G.world.inside_any(to.x, to.z, 0.4) else to, 5.0)
+	s.path_prio = true
 	s.decide_t = 1.2
 	s.think = 0.0
 	s.set_meta("obey_t", G.sim_time)
@@ -1762,3 +1797,293 @@ func set_formation(form: String) -> void:
 		if form != "auto":
 			q["form"] = form
 	G.ui.message("Formation: %s (%d squad%s)" % [form, qs.size(), "" if qs.size() == 1 else "s"])
+
+# ---------------------------------------------------------------- order previews, dragged lines, waypoints
+# Hovering with men selected shows faint figures where each would end up (green and crouched where
+# there's cover to take). Right-drag draws the line they form up on, facing away from where they are now.
+# Shift + right-click adds a waypoint to the end of the route instead of replacing it.
+var fdrag = false
+var fdrag_a = null
+var fdrag_b = null
+var m_drag = false
+var pghosts: Array = []
+var pg_mats: Array = []
+var wp_flags: Array = []
+
+func _ground_at(screen: Vector2):
+	var o = cam.project_ray_origin(screen)
+	var d = cam.project_ray_normal(screen)
+	var hit = G.ray(o, o + d * 500.0, G.L_WORLD)
+	if hit.is_empty():
+		return null
+	return hit.position
+
+func _foot_men() -> Array:
+	return selection.filter(func(x): return is_instance_valid(x) and x.state == "alive" and x.vehicle == null and not x.is_player)
+
+# where each man goes for a plain right-click on p (same spread as _order_move)
+func _click_spots(p: Vector3, men: Array) -> Array:
+	var out = []
+	var n = 0
+	for s in men:
+		var off = Vector3((n % 4) - 1.5, 0, int(n / 4) - 1.0) * 2.0
+		out.append([s, p + off])
+		n += 1
+	return out
+
+# men along a dragged line, in the order they stand now so nobody crosses over; a second rank
+# behind if the line's too short for them all
+func _line_spots(a: Vector3, b: Vector3, men: Array) -> Dictionary:
+	var L = G.flat(b - a)
+	var ln = maxf(L.length(), 0.01)
+	var along = L / ln
+	var c = (a + b) * 0.5
+	var now = Vector3.ZERO
+	for m in men:
+		now += m.pos
+	now /= maxf(1.0, men.size())
+	var nrm = Vector3(-along.z, 0, along.x)
+	if nrm.dot(G.flat(c - now)) < 0.0:
+		nrm = -nrm
+	var sorted = men.duplicate()
+	sorted.sort_custom(func(x, y): return G.flat(x.pos - a).dot(along) < G.flat(y.pos - a).dot(along))
+	var n = sorted.size()
+	var per_row = n if n <= 1 or ln / (n - 1) >= 1.2 else maxi(1, int(ln / 1.2) + 1)
+	var out = []
+	for i in range(n):
+		var row = i / per_row
+		var col = i % per_row
+		var cnt = mini(per_row, n - row * per_row)
+		var t = 0.5 if cnt == 1 else float(col) / (cnt - 1)
+		var q = a + along * ln * t - nrm * row * 1.8
+		out.append([sorted[i], Vector3(q.x, G.world.ground_y(q.x, q.z), q.z)])
+	return {"spots": out, "face": atan2(nrm.x, nrm.z), "c": c}
+
+func _order_line(a: Vector3, b: Vector3, queue: bool) -> void:
+	var men = _foot_men()
+	if men.is_empty():
+		return
+	var r = _line_spots(a, b, men)
+	for e in r["spots"]:
+		var s = e[0]
+		var q: Vector3 = e[1]
+		if G.world.inside_any(q.x, q.z, 0.4):
+			q = G.main._free_spot(q)
+		if queue and s.order != null and s.order.get("mode", "") == "move" and s.order.get("point") != null and not s.order.has("arrived"):
+			if not s.order.has("queue"):
+				s.order["queue"] = []
+			s.order["queue"].append(q)
+			s.order["face"] = r["face"]
+			continue
+		s.order = {"mode": "move", "point": q, "face": r["face"]}
+		_obey(s, q)
+	# vehicles in the selection go to the middle of the line
+	var vs = []
+	for s in selection:
+		if is_instance_valid(s) and s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle) and not (s.vehicle in vs):
+			vs.append(s.vehicle)
+	for v in vs:
+		v.command(r["c"])
+	G.fx.order_marker(r["c"])
+	G.audio.radio_click()
+	G.ui.message("%d soldier%s forming a line%s" % [men.size(), "" if men.size() == 1 else "s", " (queued)" if queue else ""])
+
+func _pghost(i: int) -> Node3D:
+	if pg_mats.is_empty():
+		for c in [Color(0.95, 0.95, 0.9, 0.5), Color(0.4, 1.0, 0.45, 0.6)]:
+			var m = StandardMaterial3D.new()
+			m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			m.albedo_color = c
+			m.no_depth_test = true
+			pg_mats.append(m)
+	while pghosts.size() <= i:
+		var n = Node3D.new()
+		var body = MeshInstance3D.new()
+		var cm = CapsuleMesh.new()
+		cm.radius = 0.24
+		cm.height = 1.7
+		cm.radial_segments = 8
+		cm.rings = 2
+		body.mesh = cm
+		body.position = Vector3(0, 0.85, 0)
+		body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		n.add_child(body)
+		var nose = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.1, 0.1, 0.55)
+		nose.mesh = bm
+		nose.position = Vector3(0, 1.25, 0.4)
+		nose.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		n.add_child(nose)
+		var disc = MeshInstance3D.new()
+		var dm = CylinderMesh.new()
+		dm.top_radius = 0.5
+		dm.bottom_radius = 0.5
+		dm.height = 0.03
+		dm.radial_segments = 16
+		disc.mesh = dm
+		disc.position = Vector3(0, 0.05, 0)
+		disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		n.add_child(disc)
+		add_child(n)
+		pghosts.append(n)
+	return pghosts[i]
+
+func _covered(q: Vector3) -> bool:
+	for cp in G.world.cover_near(q, 1.6):
+		if not cp.upper and G.dist2d(cp.p, q) < 1.3:
+			return true
+	return false
+
+func _order_preview_tick() -> void:
+	var used = 0
+	var show = G.started and G.player == null and not G.ui.menu_open() and not G.editor.active and not G.ui.tool.begins_with("b:")
+	var men = _foot_men() if show else []
+	if show and not men.is_empty():
+		var spots = []
+		var face = null
+		if fdrag and fdrag_a != null and fdrag_b != null:
+			var r = _line_spots(fdrag_a, fdrag_b, men)
+			spots = r["spots"]
+			face = r["face"]
+		elif drag_from == null:
+			var mp = get_viewport().get_mouse_position() if test_mouse == null else test_mouse
+			var over_ui = get_viewport().has_method("gui_get_hovered_control") and get_viewport().gui_get_hovered_control() != null
+			var p = null if over_ui and test_mouse == null else _ground_at(mp)
+			if p != null and Build.site_at(p, 1.5) == null:
+				spots = _click_spots(p, men)
+		for e in spots:
+			var q: Vector3 = e[1]
+			var g = _pghost(used)
+			used += 1
+			g.visible = true
+			g.global_position = q
+			var cov = _covered(q)
+			var mat = pg_mats[1] if cov else pg_mats[0]
+			for ch in g.get_children():
+				ch.material_override = mat
+			# bigger when the camera's high up, so they still read from the commander view
+			var zoom = clampf(cam.global_position.distance_to(q) / 40.0, 1.0, 2.2)
+			g.scale = Vector3(zoom, zoom * (0.62 if cov else 1.0), zoom)
+			var fy = face if face != null else atan2(q.x - e[0].pos.x, q.z - e[0].pos.z)
+			g.rotation = Vector3(0, fy, 0)
+	for i in range(used, pghosts.size()):
+		pghosts[i].visible = false
+	_drag_line_tick()
+	_waypoint_flags()
+
+var dline: Node3D = null
+
+# the dragged line itself, with an arrow off its middle the way they'll face
+func _drag_line_tick() -> void:
+	var on = fdrag and fdrag_a != null and fdrag_b != null and G.player == null and not _foot_men().is_empty()
+	if not on:
+		if dline != null:
+			dline.visible = false
+		return
+	if dline == null:
+		dline = Node3D.new()
+		var m = StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.albedo_color = Color(1.0, 0.86, 0.3, 0.85)
+		m.no_depth_test = true
+		var bar = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(1, 0.06, 0.25)
+		bar.mesh = bm
+		bar.material_override = m
+		dline.add_child(bar)
+		var arw = MeshInstance3D.new()
+		var pm = PrismMesh.new()
+		pm.size = Vector3(1.6, 1.4, 0.06)
+		arw.mesh = pm
+		arw.material_override = m
+		dline.add_child(arw)
+		add_child(dline)
+	dline.visible = true
+	var a: Vector3 = fdrag_a
+	var b: Vector3 = fdrag_b
+	var mid = (a + b) * 0.5
+	var L = G.dist2d(a, b)
+	var r = _line_spots(a, b, _foot_men())
+	var fy: float = r["face"]
+	var zoom = clampf(cam.global_position.distance_to(mid) / 40.0, 1.0, 2.2)
+	dline.global_position = Vector3(mid.x, G.world.ground_y(mid.x, mid.z) + 0.15, mid.z)
+	var bar: MeshInstance3D = dline.get_child(0)
+	bar.rotation = Vector3(0, atan2(b.x - a.x, b.z - a.z) + PI / 2.0, 0)
+	bar.scale = Vector3(L, 1, zoom)
+	var arw: MeshInstance3D = dline.get_child(1)
+	# flat on the ground, tip pointing the way they'll face
+	arw.basis = Basis(Vector3.UP, fy) * Basis(Vector3.RIGHT, -PI / 2.0)
+	arw.position = Vector3(sin(fy), 0, cos(fy)) * (1.6 * zoom)
+	arw.scale = Vector3(zoom, zoom, zoom)
+
+# numbered flags on the queued waypoints of the selected men (one set per squad)
+func _waypoint_flags() -> void:
+	var used = 0
+	if G.started and G.player == null:
+		var seen = {}
+		for s in selection:
+			if not is_instance_valid(s) or s.state != "alive" or s.order == null or s.order.get("queue", []).is_empty():
+				continue
+			var key = s.squad if s.squad != null else s
+			if seen.has(key):
+				continue
+			seen[key] = true
+			var pts = [s.order["point"]] + s.order["queue"]
+			for k in range(pts.size()):
+				if used >= 24:
+					break
+				while wp_flags.size() <= used:
+					wp_flags.append(_make_flag())
+				var fl: Node3D = wp_flags[used]
+				var q: Vector3 = pts[k]
+				fl.visible = true
+				fl.get_child(2).text = str(k + 1)
+				fl.global_position = Vector3(q.x, G.world.ground_y(q.x, q.z), q.z)
+				var fz = clampf(cam.global_position.distance_to(q) / 40.0, 1.0, 2.2)
+				fl.scale = Vector3(fz, fz, fz)
+				used += 1
+	for i in range(used, wp_flags.size()):
+		wp_flags[i].visible = false
+
+# a little yellow pennant on a pole with the stop's number over it
+func _make_flag() -> Node3D:
+	var n = Node3D.new()
+	var m = StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = Color(1.0, 0.86, 0.3)
+	m.no_depth_test = true
+	var pole = MeshInstance3D.new()
+	var cm = CylinderMesh.new()
+	cm.top_radius = 0.05
+	cm.bottom_radius = 0.05
+	cm.height = 2.2
+	pole.mesh = cm
+	pole.position = Vector3(0, 1.1, 0)
+	pole.material_override = m
+	pole.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(pole)
+	var fl = MeshInstance3D.new()
+	var pm = PrismMesh.new()
+	pm.size = Vector3(0.9, 0.6, 0.04)
+	fl.mesh = pm
+	fl.rotation = Vector3(0, 0, -PI / 2.0)
+	fl.position = Vector3(0.45, 1.9, 0)
+	fl.material_override = m
+	fl.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(fl)
+	var l = Label3D.new()
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.no_depth_test = true
+	l.fixed_size = true
+	l.pixel_size = 0.0016
+	l.font_size = 26
+	l.outline_size = 9
+	l.modulate = Color(1.0, 0.92, 0.55)
+	l.position = Vector3(0, 2.8, 0)
+	n.add_child(l)
+	add_child(n)
+	return n

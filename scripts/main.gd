@@ -30,6 +30,8 @@ func _ready() -> void:
 	G.ui = preload("res://scripts/ui.gd").new()
 	add_child(G.ui)
 	add_child(preload("res://scripts/editor.gd").new())
+	G.navviz = NavViz.new()
+	add_child(G.navviz)
 	markers = Node3D.new()
 	add_child(markers)
 	preview_map("town")
@@ -86,6 +88,8 @@ func _ready() -> void:
 			_map_shots(a.substr(11))
 		if a == "--camptest2":
 			_camp_test2()
+		if a.begins_with("--batchshot="):
+			_batch_shot(a.substr(12))
 		if a == "--ruintest":
 			_ruin_test()
 		if a.begins_with("--modetest="):
@@ -224,6 +228,22 @@ func apply_time() -> void:
 	sky_mat.ground_bottom_color = sky_mat.ground_horizon_color.darkened(0.5)
 	if G.world != null:
 		G.world.set_water_sky(sky_mat.sky_horizon_color.lerp(sky_mat.sky_top_color, 0.35))
+	_storm_tint()
+
+# campaign storm: grey sky, weak light, rain haze and shorter sight
+func _storm_tint() -> void:
+	env.fog_density = 0.0016
+	if not G.storm:
+		return
+	var grey = Color(0.42, 0.45, 0.48)
+	sky_mat.sky_top_color = sky_mat.sky_top_color.lerp(grey * 0.8, 0.75)
+	sky_mat.sky_horizon_color = sky_mat.sky_horizon_color.lerp(grey, 0.7)
+	sky_mat.ground_horizon_color = sky_mat.ground_horizon_color.lerp(grey * 0.85, 0.6)
+	sun.light_energy *= 0.4
+	env.ambient_light_energy *= 0.85
+	env.fog_light_color = env.fog_light_color.lerp(grey, 0.7)
+	env.fog_density = 0.0075
+	G.view_range *= 0.72
 
 func is_night() -> bool:
 	return G.settings["time"] == "night" or ((G.settings["time"] == "cycle" or G.settings["time"] == "dawn") and G.view_range < 80.0)
@@ -259,6 +279,7 @@ func _blend_time(c: float) -> void:
 		elev = -40.0       # moonlight
 	sun.rotation = Vector3(deg_to_rad(elev), deg_to_rad(-100.0 + day_k * 160.0), 0)
 	sun.shadow_enabled = G.settings["shadows"]
+	_storm_tint()
 
 func _tod(n: String) -> Array:
 	match n:
@@ -321,6 +342,9 @@ func preview_map(id: String) -> void:
 
 func start_game(o: Dictionary) -> void:
 	_clear()
+	Prep.reset()
+	G.storm = false
+	G.fx.set_storm(false)
 	if G.ui.title != null:
 		G.ui.title.visible = false
 		G.ui.menu.visible = false
@@ -547,7 +571,8 @@ func _physics_process(_delta: float) -> void:
 
 func _sim_step() -> void:
 	G.sim_time += G.DT
-	if not G.over:
+	Prep.step(G.DT)
+	if not G.over and not Prep.active():
 		G.game_time += G.DT
 	G.path_budget = 4
 	Reinforce.step(G.DT)
@@ -589,10 +614,12 @@ func _sim_step() -> void:
 	Support.step(G.DT)
 	Fog.step(G.DT)
 	Prod.step(G.DT)
-	Commander.step(G.DT)
-	Ops.step(G.DT)
+	if not Prep.active():
+		Commander.step(G.DT)
+		Ops.step(G.DT)
 	Stretcher.step(G.DT)
-	Obj.step(G.DT)
+	if not Prep.active():
+		Obj.step(G.DT)
 	Modes.step(G.DT)
 	Ferry.step(G.DT)
 	Medical.hospitals_tick(G.DT)
@@ -1789,6 +1816,13 @@ func _ruin_test() -> void:
 	get_tree().quit()
 
 # the newer modes: run one for a while and print how it is going
+func _stuck_count() -> int:
+	var n = 0
+	for x in G.soldiers:
+		if x.state == "alive" and x.stuck_n > 0:
+			n += 1
+	return n
+
 func _inside_count() -> int:
 	var n = 0
 	for x in G.soldiers:
@@ -1805,6 +1839,8 @@ func _mode_test(mode: String) -> void:
 	if _arg("time", "") != "":
 		G.settings["time"] = _arg("time", "day")
 		apply_time()
+	if _arg("aiside", "") != "":
+		G.settings["ai_side"] = true
 	if mode == "daily":
 		Modes.start_daily()
 		print("MODETEST daily ", Modes.daily_text(Modes.daily))
@@ -1957,13 +1993,117 @@ func _mode_test(mode: String) -> void:
 		for v in G.vehicles:
 			if v.kind == "atgun":
 				pz += " at[%s %.1f]" % ["dead" if v.dead else ("crew" if v.gunner() != null else "nocrew"), G.sim_time - v.get_meta("fire_t", -99.0)]
-		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " raze %d hq %s" % [G.soldiers.filter(func(x): return x.state == "alive" and x.task == "raze").size(), str(Build.sites.filter(func(x): return x["kind"] == "hq").map(func(x): return "%d/%d%s" % [x["cols"].filter(func(c): return c.alive).size(), x["cols"].size(), "X" if x["dead"] else ""]))] + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()]])
+		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " raze %d hq %s" % [G.soldiers.filter(func(x): return x.state == "alive" and x.task == "raze").size(), str(Build.sites.filter(func(x): return x["kind"] == "hq").map(func(x): return "%d/%d%s" % [x["cols"].filter(func(c): return c.alive).size(), x["cols"].size(), "X" if x["dead"] else ""]))] + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()] + " route %s stuck %d" % [str(G.world.route_stats), _stuck_count()]])
 		if G.over:
 			break
 	get_tree().quit()
 
 # doors get kicked open by people walking through them, grenades go in through windows
 # the turn-based campaign: move, fight, Bravo's turn, supply
+# this batch's features in pictures: order ghosts, a dragged line, waypoints, the kill feed with icons,
+# squad cards, the path debug view, wall dust, and a campaign battle in prep during a storm
+func _batch_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.5)
+	start_game({"map": _arg("map", "field"), "mode": "commander", "size": 10, "limit": 999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	await _wait(5.0)
+	var pc = G.pc
+	pc.force_free = false
+	pc.set_rts(true)
+	pc.select_squad(0)
+	pc.dismount_selected(true)
+	await _wait(3.0)
+	pc.select_squad(0)
+	var men = pc._foot_men()
+	print("BATCHSHOT foot men ", men.size())
+	var c = Vector3.ZERO
+	for m in men:
+		c += m.pos
+	c /= maxf(1.0, men.size())
+	var fwd = G.flat(G.world.capture - c).normalized()
+	pc.rts_focus = c + fwd * 14.0
+	pc.rts_dist = 46.0
+	await _wait(0.6)
+	var vs = get_viewport().get_visible_rect().size
+	pc.test_mouse = pc.cam.unproject_position(c + fwd * 22.0 + Vector3(fwd.z, 0, -fwd.x) * 6.0)
+	await _wait(0.4)
+	await _snap(dir, "ghosts")
+	print("BATCHSHOT ghosts ", pc.pghosts.filter(func(x): return x.visible).size(), " tool ", G.ui.tool, " menu ", G.ui.menu_open(), " mouse ", pc.test_mouse, " ground ", pc._ground_at(pc.test_mouse))
+	# a dragged line across their front
+	pc.test_mouse = Vector2(-5000, -5000)
+	var side = Vector3(fwd.z, 0, -fwd.x)
+	pc.fdrag_a = c + fwd * 18.0 - side * 9.0
+	pc.fdrag_b = c + fwd * 18.0 + side * 9.0
+	pc.fdrag = true
+	await _wait(0.4)
+	await _snap(dir, "line_drag")
+	pc._order_line(pc.fdrag_a, pc.fdrag_b, false)
+	pc.fdrag = false
+	# and two more stops queued after it
+	for m in men:
+		if m.order != null:
+			m.order["queue"] = [m.order["point"] + fwd * 14.0 + side * 8.0, m.order["point"] + fwd * 28.0]
+	# kill feed rows with icons, and a +1 over one of ours
+	var foes = G.soldiers.filter(func(x): return x.team == 1 and x.state == "alive")
+	if men.size() >= 3 and foes.size() >= 3:
+		men[0].set_weapon("lmg")
+		G.ui.feed(men[0], foes[0], false)
+		G.ui.feed(men[1], foes[1], true)
+		G.ui.feed(foes[2], men[2], false, "", "blast")
+		G.ui.feed(men[2], null, false, "Jeep")
+	await _wait(1.0)
+	await _snap(dir, "waypoints_feed")
+	print("BATCHSHOT flags ", pc.wp_flags.filter(func(x): return x.visible).size(), " queue ", men[0].order)
+	# path debug, after they've been moving for a while
+	await _wait(5.0)
+	G.navviz.toggle()
+	pc.rts_dist = 90.0
+	await _wait(1.0)
+	await _snap(dir, "pathdebug")
+	G.navviz.toggle()
+	print("BATCHSHOT route ", G.world.route_stats, " cards ", G.ui.squad_cards.visible, " ", G.ui.squad_cards.cards.size())
+	# a wall comes down: dust you can't see through
+	var wall = null
+	for col in G.world.cols:
+		if col.alive and col.dest and col.prop == 0 and not col.has_meta("tree") and col.hi.y - col.lo.y > 2.0 and maxf(col.hi.x - col.lo.x, col.hi.z - col.lo.z) > 3.0:
+			wall = col
+			break
+	if wall != null:
+		var wc: Vector3 = (wall.lo + wall.hi) / 2.0
+		pc.set_rts(false)
+		pc.force_free = true
+		await _look(wc + Vector3(12, 6, 12), wc)
+		print("BATCHSHOT wall size ", wall.hi - wall.lo, " prop ", wall.prop, " gy ", wall.gy, " started ", G.started)
+		G.world.destroy_col(wall)
+		print("BATCHSHOT wall alive ", wall.alive, " clouds ", G.smoke_clouds.size())
+		await _wait(2.2)
+		await _snap(dir, "dust")
+		print("BATCHSHOT dust clouds ", G.smoke_clouds.size())
+		pc.force_free = false
+	# a campaign battle: prep countdown, in a storm
+	Campaign.new_campaign()
+	Campaign.data["weather"] = "storm"
+	var a1 = Campaign.army_at(1, 0)
+	print("BATCHSHOT attack: ", Campaign.move(a1, 4))
+	await _wait(3.0)
+	pc.force_free = false
+	pc.set_rts(true)
+	pc.rts_focus = G.world.rally_point(0)
+	pc.rts_dist = 60.0
+	await _wait(1.0)
+	await _snap(dir, "prep_storm")
+	print("BATCHSHOT prep ", Prep.active(), " %.0f" % Prep.t, " storm ", G.storm, " air ok ", Rules.callin_ok(0, "airstrike"), " held ", Prep.held)
+	Prep.finish()
+	await _wait(2.0)
+	print("BATCHSHOT after prep ", Prep.active(), " orders ", G.soldiers.filter(func(x): return x.order != null and x.order.get("prep", false)).size())
+	# a few turns of events
+	for k in range(6):
+		Campaign._event([])
+		print("BATCHSHOT event ", Campaign.data.get("event", ""), " weather ", Campaign.data.get("weather", ""), " funds ", Campaign.data["funds"])
+	get_tree().quit()
+
 func _camp_test2() -> void:
 	await _wait(0.5)
 	Campaign.new_campaign()

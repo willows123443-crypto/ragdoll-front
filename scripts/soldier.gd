@@ -213,6 +213,12 @@ var stuck_n = 0
 var unstick_t = 0.0          # sidestepping around whatever we ran into
 var unstick_dir = Vector3.ZERO
 var bad_spot = null          # a place we got stuck trying to reach
+var path_prio = false        # the player just ordered him: plan his route ahead of the queue
+var scramble = null          # clambering out of a spot he got wedged in
+var door_wait = 0.0          # waiting for a mate to get through a doorway
+var danger_note_t = 0.0
+var look_p = null            # something loud he's turning his head to look at
+var look_t = 0.0
 var bad_t = 0.0
 var idle_p = Vector3.ZERO
 var idle_t = 0.0
@@ -1294,7 +1300,22 @@ func _bone_xform(a: Vector3, b: Vector3, side: Vector3) -> Transform3D:
 	x = x.normalized()
 	return Transform3D(Basis(x, y, x.cross(y)), (a + b) * 0.5)
 
+var head_turn = 0.0          # head turned off the line of the shoulders (radians)
+
+# a crack overhead or a bang nearby: the head snaps round to it first, the body follows if it must
+func _head_tick() -> void:
+	var want = 0.0
+	if look_t > 0.0:
+		look_t -= G.DT
+		if look_p != null and state == "alive" and not is_player and not zombie:
+			var to = G.flat(look_p - pos)
+			if to.length_squared() > 1.0:
+				var shoulders = body_yaw + clampf(G.wrap_a(aim_yaw - body_yaw), -1.1, 1.1)
+				want = clampf(G.wrap_a(atan2(to.x, to.z) - shoulders), -1.25, 1.25)
+	head_turn = move_toward(head_turn, want, G.DT * (8.0 if want != 0.0 else 2.5))
+
 func _compute_targets() -> void:
+	_head_tick()
 	var right: Vector3 = (P[6] - P[3]).normalized()
 	var up: Vector3 = P[1] - P[2]
 	var tl = up.length()
@@ -1303,7 +1324,12 @@ func _compute_targets() -> void:
 	var hipmid: Vector3 = (P[9] + P[12]) * 0.5
 	targets[0] = _bone_xform(P[2], P[1], (P[12] - P[9]).normalized())
 	targets[0].origin = hipmid + up / maxf(tl, 0.001) * 0.03
-	targets[2] = _bone_xform(P[1], P[0], right)
+	var hright = right
+	if absf(head_turn) > 0.01:
+		var neck = (P[0] - P[1]).normalized()
+		if neck.length_squared() > 0.5:
+			hright = right.rotated(neck, head_turn)
+	targets[2] = _bone_xform(P[1], P[0], hright)
 	targets[2].origin = P[0]
 	for i in range(3, 11):
 		targets[i] = _bone_xform(P[PART_SEG[i][0]], P[PART_SEG[i][1]], right)
@@ -2350,6 +2376,7 @@ func _tick_getup() -> void:
 func _tick_wounded() -> void:
 	supp = maxf(0.0, supp - 0.3 * G.DT)
 	if hp <= 0.0:
+		Combat.cause = "bleed"
 		Combat.kill(self, last_attacker, false)
 		return
 	if has_meta("stretcher") and get_meta("stretcher")["stage"] == 1:

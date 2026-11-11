@@ -29,6 +29,8 @@ var lbl_a: Label
 var lbl_na: Label
 var lbl_nb: Label
 var lbl_more: Label
+var prep_box: HBoxContainer
+var prep_lbl: Label
 var pa_panel: PanelContainer
 var pb_panel: PanelContainer
 var lbl_b: Label
@@ -106,6 +108,8 @@ func _ready() -> void:
 	_build_win()
 	_build_command()
 	_build_info()
+	squad_cards = SquadCards.new()
+	root.add_child(squad_cards)
 	menu.visible = false
 	title.visible = true
 
@@ -189,6 +193,18 @@ func _build_top() -> void:
 	lbl_more.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_place(lbl_more, Control.PRESET_CENTER_TOP, -300, 62, 600, 20)
 	root.add_child(lbl_more)
+	# campaign battle prep: the countdown and a button to start early
+	prep_box = HBoxContainer.new()
+	prep_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	prep_box.add_theme_constant_override("separation", 10)
+	_place(prep_box, Control.PRESET_CENTER_TOP, -280, 168, 560, 34)
+	prep_lbl = _label("", 16, Color(1.0, 0.88, 0.4))
+	prep_box.add_child(prep_lbl)
+	var prep_btn = _button("Start the battle", func(): Prep.finish())
+	prep_btn.focus_mode = Control.FOCUS_NONE
+	prep_box.add_child(prep_btn)
+	prep_box.visible = false
+	root.add_child(prep_box)
 	feed_box = VBoxContainer.new()
 	_place(feed_box, Control.PRESET_TOP_RIGHT, -330, 70, 320, 200)
 	feed_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -211,30 +227,51 @@ func _build_top() -> void:
 	cap_box.visible = false
 	root.add_child(cap_box)
 
-func feed(a, v, head: bool, what: String = "") -> void:
-	var t = ""
-	if v == null:
-		t = "%s  [%s]  %s destroyed" % [a.sname, a.W["name"], what]
-	elif a != null:
-		t = "%s  [%s]  %s%s" % [a.sname, a.W["name"], v.sname, "  ✦" if head else ""]
-		if a.team == v.team and a != v:
-			t += " (friendly)"
-	else:
-		t = "%s ✖" % v.sname
+func feed(a, v, head: bool, what: String = "", cause: String = "") -> void:
+	# a row: shooter, what he did it with, the man (or vehicle) he got
 	var ct = a.team if a != null else (v.team if v != null else 0)
-	var l = _label(t, 13, G.team_color(ct).lightened(0.45))
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	feed_box.add_child(l)
-	feed_box.move_child(l, 0)
+	var col = G.team_color(ct).lightened(0.45)
+	var row = HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_END
+	row.add_theme_constant_override("separation", 5)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var icon = cause
+	if icon == "" and a != null:
+		icon = "vehicle" if a.vehicle != null and is_instance_valid(a.vehicle) and a.state == "riding" else a.wid
+	if a != null:
+		row.add_child(_label(a.sname, 13, col))
+	if icon != "":
+		row.add_child(_icon(icon, col))
+	if head:
+		row.add_child(_icon("head", Color(1.0, 0.85, 0.4)))
+	if v == null:
+		row.add_child(_label("%s destroyed" % what, 13, Color(1.0, 0.8, 0.5)))
+	else:
+		var vc = G.team_color(v.team).lightened(0.45)
+		row.add_child(_label(v.sname + (" (friendly)" if a != null and a.team == v.team and a != v else ""), 13, vc))
+	feed_box.add_child(row)
+	feed_box.move_child(row, 0)
 	while feed_box.get_child_count() > 7:
 		var last = feed_box.get_child(feed_box.get_child_count() - 1)
 		feed_box.remove_child(last)
 		last.queue_free()
-	var wr = weakref(l)
+	var wr = weakref(row)
 	get_tree().create_timer(6.0).timeout.connect(func():
 		var n = wr.get_ref()
 		if n != null:
 			n.queue_free())
+	# commander view: a little +1 pops up over whoever on your side got him
+	if a != null and v != null and G.player == null and a.team == 0 and v.team != 0 and is_instance_valid(a) and a.state != "dead":
+		G.fx.float_text(a.chest() + Vector3(0, 0.9, 0), "+1", Color(1.0, 0.9, 0.35))
+
+func _icon(kind: String, col: Color) -> TextureRect:
+	var tr = TextureRect.new()
+	tr.texture = Icons.get_icon(kind)
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.custom_minimum_size = Vector2(Icons.W, Icons.H)
+	tr.modulate = col
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return tr
 
 func _tint(p: PanelContainer, c: Color) -> void:
 	var sb = p.get_theme_stylebox("panel")
@@ -1066,6 +1103,11 @@ func _show_campaign(result: String = "") -> void:
 	head.add_child(_label("Campaign  ·  Turn %d" % D["turn"], 24, Color(0.97, 0.93, 0.82)))
 	head.add_child(_label("War chest  %d  (+%d a turn)" % [D["funds"][0], Campaign.income(0)], 16, Color(1.0, 0.85, 0.4)))
 	head.add_child(_label("Regions  %d : %d" % [D["owner"].count(0), D["owner"].count(1)], 16, Color(0.8, 0.85, 0.8)))
+	var storm = D.get("weather", "") == "storm"
+	var wl = _label("Weather  " + ("STORM, no aircraft" if storm else "clear"), 14, Color(0.6, 0.75, 1.0) if storm else Color(0.75, 0.8, 0.75))
+	wl.tooltip_text = "A storm grounds every aircraft in this turn's battles: no air strikes, paratroopers, helicopters, fighters, bombers or recon planes." if storm else "Clear skies: air support can fly."
+	wl.mouse_filter = Control.MOUSE_FILTER_STOP
+	head.add_child(wl)
 	var sp = Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(sp)
@@ -1567,6 +1609,7 @@ var tip_t = 0.0
 const TITLE_TIPS = ["Right-click one of your vehicles or a mortar with soldiers selected and they'll climb in or man it.",
 	"Select soldiers and right-click a structure that's going up: they'll go and build it.",
 	"F2 switches night vision on and off.",
+	"F9 shows the path debug view: planned routes, vehicle aim points and danger spots.",
 	"Ctrl+number saves a selection as a group; the number brings it back, twice to look at it.",
 	"Medics drag the wounded to cover or carry them back to a field hospital on a stretcher.",
 	"Machine gunners are far more accurate once the bipod is down.",
@@ -1862,6 +1905,10 @@ func _unhandled_key_input(ev: InputEvent) -> void:
 			help.visible = not help.visible
 		elif ev.keycode == KEY_F2 and G.started:
 			toggle_nv()
+		elif ev.keycode == KEY_F9 and G.started:
+			G.navviz.toggle()
+		elif ev.keycode == KEY_SPACE and G.started and Prep.active() and G.player == null:
+			Prep.finish()
 		elif ev.keycode == KEY_J and G.started:
 			if report != null and report.visible:
 				report.visible = false
@@ -1907,6 +1954,9 @@ func _perf(dt: float) -> void:
 
 func update_hud(dt: float) -> void:
 	_perf(dt)
+	prep_box.visible = G.started and Prep.active() and not menu_open()
+	if prep_box.visible:
+		prep_lbl.text = Prep.banner()
 	_tip_tick(dt)
 	_order_card_tick()
 	dock_status_t -= dt
@@ -2548,6 +2598,7 @@ func radio(team: int, text: String) -> void:
 
 # ---------------------------------------------------------------- what you clicked: a structure or a vehicle
 var info: PanelContainer = null
+var squad_cards = null
 var info_title: Label
 var info_body: Label
 var info_btns: HBoxContainer

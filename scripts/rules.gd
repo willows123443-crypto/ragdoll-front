@@ -87,7 +87,11 @@ static func callins(t: int, mode: String = "") -> Array:
 			return ["recon", "artillery"] + LIGHT
 	return FIRE
 
+const FLYING = ["airstrike", "recon", "paradrop", "heli", "gunship", "fighter", "bomber"]
+
 static func callin_ok(t: int, what: String) -> bool:
+	if G.storm and what in FLYING:
+		return false          # storm: nothing flies
 	return what in callins(t)
 
 # the player's tool tabs outside commander mode

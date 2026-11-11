@@ -411,6 +411,7 @@ static func _new_turn() -> Array:
 			lines.append("The war chest grows by %d (now %d)." % [inc, data["funds"][0]])
 		else:
 			_bravo_spends(lines)
+	_event(lines)
 	data["turn"] += 1
 	var ours = data["owner"].count(0)
 	if data["owner"][HQ[1]] == 0:
@@ -418,6 +419,50 @@ static func _new_turn() -> Array:
 	elif data["owner"][HQ[0]] == 1 or ours == 0:
 		lines.append("Westfield is lost. The campaign is lost.")
 	return lines
+
+# most turns something happens: the weather turns, partisans rise behind Bravo's lines, a patrol
+# finds an enemy dump, or one of our convoys is ambushed
+static func _event(lines: Array) -> void:
+	data["weather"] = "clear"
+	data["event"] = ""
+	var r = randf()
+	if r < 0.2:
+		data["weather"] = "storm"
+		data["event"] = "storm"
+		lines.append("Storm front: rain and low cloud. No aircraft can fly in this turn's battles.")
+	elif r < 0.38:
+		var cands = []
+		for j in range(REGIONS.size()):
+			if data["owner"][j] != 1 or j == HQ[1]:
+				continue
+			for k in neighbours(j):
+				if data["owner"][k] == 0:
+					cands.append(j)
+					break
+		if cands.is_empty():
+			return
+		var j: int = cands[randi() % cands.size()]
+		var foe = army_at(j, 1)
+		data["event"] = "partisans"
+		if foe != null and foe["men"].size() > 3:
+			var n = mini(randi_range(2, 4), foe["men"].size() - 2)
+			for k in range(n):
+				foe["men"].pop_back()
+			_sync(foe)
+			lines.append("Partisans ambush Bravo's %s at %s: %d of their men lost." % [foe["name"], REGIONS[j]["name"], n])
+		elif foe == null:
+			data["owner"][j] = 0
+			lines.append("Partisans rise at %s and hand it over to us." % REGIONS[j]["name"] + _cut_note(1))
+	elif r < 0.53:
+		var n2 = randi_range(10, 22)
+		data["funds"][0] += n2
+		data["event"] = "supplies"
+		lines.append("A patrol captures an enemy supply dump: +%d to the war chest." % n2)
+	elif r < 0.63 and data["funds"][0] > 6:
+		var n3 = mini(data["funds"][0], randi_range(6, 12))
+		data["funds"][0] -= n3
+		data["event"] = "ambush"
+		lines.append("One of our supply convoys was ambushed on the road: -%d from the war chest." % n3)
 
 static func _bravo_spends(lines: Array) -> void:
 	var mine = data["armies"].filter(func(x): return x["team"] == 1)
@@ -537,7 +582,13 @@ static func attack(i: int, mode: String = "", size: int = SQUAD, supply: Array =
 		note += " · %d pieces still in ruins" % G.world.ruined_at_start
 	if kept > 0:
 		note += " · %d structures still standing" % kept
+	if data.get("weather", "") == "storm":
+		G.storm = true
+		G.fx.set_storm(true)
+		G.main.apply_time()
+		note += " · storm: no aircraft"
 	G.ui.message("Battle for %s · %d of our vehicles%s" % [r["name"], nveh, note])
+	Prep.start()
 
 # reinforcements are off for a side that's cut off
 static func reinforce_ok(t: int) -> bool:

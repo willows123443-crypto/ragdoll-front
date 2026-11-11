@@ -575,7 +575,55 @@ func _ambient_planes(dt: float) -> void:
 			p["e"] = 0.3
 			G.audio.engine(p["n"].global_position, 0.8, true)
 
+# ---------------------------------------------------------------- rain (campaign storms)
+var rain: CPUParticles3D = null
+
+func set_storm(on: bool) -> void:
+	if not on:
+		if rain != null:
+			rain.queue_free()
+			rain = null
+		return
+	if rain != null:
+		return
+	rain = CPUParticles3D.new()
+	var qm = QuadMesh.new()
+	qm.size = Vector2(0.018, 0.55)
+	var m = StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_color = Color(0.78, 0.82, 0.9, 0.22)
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	qm.material = m
+	rain.mesh = qm
+	rain.amount = 2200
+	rain.lifetime = 1.1
+	rain.preprocess = 1.0
+	rain.local_coords = false
+	rain.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	rain.emission_box_extents = Vector3(32, 1, 32)
+	rain.direction = Vector3(0.12, -1, 0.05)
+	rain.spread = 2.0
+	rain.gravity = Vector3(0, -9.8, 0)
+	rain.initial_velocity_min = 16.0
+	rain.initial_velocity_max = 20.0
+	rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(rain)
+
+func _rain_follow() -> void:
+	if rain == null:
+		return
+	var cam = get_viewport().get_camera_3d()
+	if cam != null:
+		# a box of rain in front of the camera, falling through the view whether it's low or high up
+		var p = cam.global_position
+		var f = -cam.global_transform.basis.z
+		var q = p + f * 22.0
+		rain.global_position = Vector3(q.x, q.y + 12.0, q.z)
+
 func step(dt: float) -> void:
+	_rain_follow()
 	_ambient_planes(dt)
 	if marks_mat != null:
 		marks_mat.set_shader_parameter("now", G.sim_time)
@@ -726,6 +774,25 @@ func callout(s, text: String) -> void:
 	add_child(l)
 	callouts.append({"l": l, "s": s, "t": 1.8})
 	G.audio.bark(s, text)
+
+# a few words that float up from a spot and fade (+1 over a man who got a kill)
+func float_text(p: Vector3, text: String, col: Color) -> void:
+	var l = Label3D.new()
+	l.text = text
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.no_depth_test = true
+	l.fixed_size = true
+	l.pixel_size = 0.0014
+	l.font_size = 30
+	l.outline_size = 10
+	l.modulate = col
+	add_child(l)
+	l.global_position = p
+	var tw = l.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(l, "global_position", p + Vector3(0, 1.4, 0), 1.2).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "modulate:a", 0.0, 1.2).set_delay(0.4)
+	tw.chain().tween_callback(l.queue_free)
 
 func update_callouts(dt: float) -> void:
 	for i in range(callouts.size() - 1, -1, -1):

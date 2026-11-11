@@ -657,7 +657,7 @@ static func supply_run(team: int, st: Dictionary) -> void:
 	if h == null or not Build.alive(h):
 		return
 	var start = G.main._free_spot(h["p"] + Build._front(h) * 10.0)
-	var drop = G.main._free_spot(st["p"] + Build._front(st) * -8.0)
+	var drop = G.world.park_spot(st["p"], null, start)
 	var v = Vehicle.make("truck", team, start, atan2(drop.x - start.x, drop.z - start.z))
 	v.mission = {"type": "supply", "drop": drop, "exit": start, "stage": 0, "wait": 0.0, "site": st}
 	AI.batch_begin(AI.CREW)

@@ -245,6 +245,14 @@ static func can_afford(team: int, what: String) -> bool:
 	return points[team] >= COSTS[what]
 
 static func call_in(team: int, what: String, target: Vector3, relay: bool = false) -> bool:
+	if Prep.active() and (what in Rules.FIRE or what in Rules.TROOPS or what in Rules.AIR):
+		if team == 0:
+			G.ui.message("Not until the battle starts (Space ends the prep)")
+		return false
+	if G.storm and what in Rules.FLYING:
+		if team == 0:
+			G.ui.message("Storm: nothing can fly today")
+		return false
 	if points.is_empty() or points[team] < COSTS[what] or not unlocked(team, what) or not Faction.support_ok(team, what) or not Rules.callin_ok(team, what):
 		return false
 	if what == "supplytruck":

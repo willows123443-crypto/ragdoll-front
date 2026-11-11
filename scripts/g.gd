@@ -34,6 +34,7 @@ var fx = null
 var audio = null
 var ui = null
 var pc = null          # player / camera controller
+var navviz = null      # path debug view (F9)
 
 var soldiers: Array = []
 var player = null
@@ -56,6 +57,7 @@ var over = false
 var game_time = 0.0
 var view_range = 150.0
 var path_budget = 0
+var storm = false          # campaign weather: rain and low cloud, nothing flies
 var orders = [{"mode": "free", "point": null}, {"mode": "free", "point": null}, {"mode": "free", "point": null}, {"mode": "free", "point": null}]
 var squads: Array = []
 var grenades: Array = []

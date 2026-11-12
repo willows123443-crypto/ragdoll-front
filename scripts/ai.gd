@@ -348,15 +348,18 @@ static func find_cover(s, threat: Vector3, mode: String):
 	cands.sort_custom(func(a, b): return a[0] < b[0])
 	var best = null
 	var bs = 1e9
-	for k in range(mini(6, cands.size())):
+	# (a place he can't shoot from is only worth going to if he's hiding: looked at before he sets off,
+	# not found out when he gets there)
+	var hiding = mode == "retreat" or s.hp < 40.0 or s.supp > 1.1
+	for k in range(mini(10, cands.size())):
 		var cp = cands[k][1]
 		if not cover_safe(cp, threat):
 			continue
 		var sc2 = cands[k][0]
 		if cp.type == "wall":
-			sc2 += -1.0 if can_fire_from(cp, threat) else 2.0
+			sc2 += -1.0 if can_fire_from(cp, threat) else (2.0 if hiding else 8.0)
 		elif not can_fire_from(cp, threat):
-			sc2 += 6.0
+			sc2 += 6.0 if hiding else 9.0
 		if sc2 < bs:
 			bs = sc2
 			best = cp

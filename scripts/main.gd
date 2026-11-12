@@ -92,6 +92,14 @@ func _ready() -> void:
 			_wander_test()
 		if a.begins_with("--arc="):
 			Vehicle.ARC_DRIVER = a.substr(6) == "1"
+		if a.begins_with("--plant="):
+			Soldier.PLANT = a.substr(8) == "1"
+		if a.begins_with("--walkshot="):
+			_walk_shot(a.substr(11))
+		if a == "--tanktest":
+			_tank_test()
+		if a.begins_with("--tankshot="):
+			_tank_shot(a.substr(11))
 		if a.begins_with("--roomshot="):
 			_room_shot(a.substr(11))
 		if a == "--stuckdump":
@@ -2686,6 +2694,128 @@ func _vtrace() -> void:
 	print("VTRACE episodes ", eps, " totals ", tot)
 	get_tree().quit()
 
+# --walkshot=DIR: one man walking, then running, then turning on the spot, seen from the side; and how far
+# his feet slide over the ground while they're down (metres slid per metre walked)
+func _walk_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.3)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var p0 = G.main._free_spot(Vector3(0, 0, 40))
+	var s = spawn_soldier(0, p0.x, p0.z, "rifle")
+	var shots = _arg("shots", "1") == "1"
+	for leg in [["walk", 1.6, 6.0], ["run", 5.2, 5.0]]:
+		var goal = s.pos + Vector3(leg[1] * leg[2] + 4.0, 0, 0)
+		s.order = {"mode": "move", "point": goal}
+		AI.go_to(s, goal, leg[1])
+		await _wait(1.0)
+		var slid = 0.0
+		var walked = 0.0
+		var hover = 0.0
+		var n = 0
+		var prev = [s.P[11], s.P[14]]
+		var ppos = s.pos
+		var frames = int(leg[2] * 60.0) - 60
+		for i in range(frames):
+			await get_tree().physics_frame
+			if s.move_target == null:
+				AI.go_to(s, goal, leg[1])
+			s.speed_t = leg[1]
+			walked += G.dist2d(s.pos, ppos)
+			ppos = s.pos
+			for k in range(2):
+				var fp: Vector3 = s.P[11 + k * 3]
+				var gyf = G.world.ground_y(fp.x, fp.z) + 0.07
+				if fp.y - gyf < 0.02 and prev[k].y - gyf < 0.02:
+					slid += G.dist2d(fp, prev[k])
+				prev[k] = fp
+			# the lower foot should be on the ground, not hanging above it
+			var lowest = minf(s.P[11].y - G.world.ground_y(s.P[11].x, s.P[11].z), s.P[14].y - G.world.ground_y(s.P[14].x, s.P[14].z)) - 0.07
+			hover += maxf(0.0, lowest)
+			n += 1
+			if _arg("dbg", "") != "" and i % 6 == 0 and i < 60:
+				print("WS i%d spd=%.1f ok=%s sw=%s L=(%.2f,%.2f,%.2f) R=(%.2f,%.2f,%.2f) hipL=%.2f pos=(%.2f,%.2f) gy=%.2f prone=%s cr=%.1f ph=%.1f stum=%.1f vy=%.1f lod=%s" % [i, s.vel.length(), str(s.foot_ok), str(s.foot_sw), s.P[11].x - s.pos.x, s.P[11].y - s.pos.y, s.P[11].z - s.pos.z, s.P[14].x - s.pos.x, s.P[14].y - s.pos.y, s.P[14].z - s.pos.z, s.P[9].y - s.pos.y, s.pos.x, s.pos.z, G.world.ground_y(s.pos.x, s.pos.z) - s.pos.y, str(s.prone), s.crouch, s.phase, s.stumble, s.vy, str(s.lod_frozen)])
+			if shots and i % 9 == 0 and i < 9 * 6:
+				await _look(s.pos + Vector3(0.5, 1.0, 4.2), s.pos + Vector3(0.5, 0.8, 0))
+				await _snap(dir, "%s_%d" % [leg[0], i / 9])
+		print("WALKSHOT %s plant=%s speed=%.1f walked=%.1fm slid=%.2fm (%.0f%%) lowest-foot hover avg=%.3fm" % [leg[0], str(Soldier.PLANT), leg[1], walked, slid, 100.0 * slid / maxf(walked, 0.1), hover / maxf(n, 1)])
+	# turning on the spot
+	AI.stop_move(s)
+	s.order = {"mode": "hold", "point": s.pos}
+	await _wait(1.0)
+	for i in range(6):
+		s.aim_yaw += 0.5
+		await _wait(0.25)
+		if shots:
+			await _look(s.pos + Vector3(0.5, 1.6, 3.6), s.pos + Vector3(0, 0.7, 0))
+			await _snap(dir, "turn_%d" % i)
+	get_tree().quit()
+
+# --tankshot=DIR: a tank and a squad sent into the city together: do they go in as one?
+func _tank_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	G.settings["ai_side"] = true
+	seed(5)
+	await _wait(0.3)
+	start_game({"map": "city", "mode": "capture", "size": 3, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var sp: Vector3 = G.world.spawn[0]
+	var toward = G.flat(G.world.capture - sp).normalized()
+	var tp = _free_spot(sp + toward * 22.0)
+	var tank = spawn_vehicle("tank", 0, tp, atan2(toward.x, toward.z))
+	var men = []
+	for i in range(5):
+		var q = _free_spot(sp + toward * 2.0 + Vector3(toward.z, 0, -toward.x) * (i - 2) * 1.5)
+		men.append(spawn_soldier(0, q.x, q.z, "rifle"))
+	var shot = 0
+	for t in range(int(_arg("secs", "90")) / 2):
+		await _wait(2.0)
+		if not is_instance_valid(tank) or tank.dead:
+			break
+		var ds = []
+		var behind = 0
+		for m in men:
+			if is_instance_valid(m) and m.state == "alive":
+				ds.append(int(G.dist2d(m.pos, tank.pos)))
+				if G.flat(m.pos - tank.pos).dot(tank.forward()) < 0.0:
+					behind += 1
+		var with_q = 0
+		for q in G.squads:
+			if q.get("tank") == tank and G.sim_time < q.get("tank_t", 0.0):
+				with_q += 1
+		print("TANKSHOT t%d spd=%.1f why=%s goal_d=%.0f wait=%s pace=%s squads_with=%d men_d=%s behind=%d" % [int(G.sim_time), tank.speed, tank.why, G.dist2d(tank.goal, tank.pos), str(G.sim_time < float(tank.get_meta("inf_wait", 0.0))), str(G.sim_time < float(tank.get_meta("inf_pace", 0.0))), with_q, str(ds), behind])
+		ds.sort()
+		if dir != "-" and shot < 2 and with_q > 0 and ds.size() >= 2 and ds[1] < 14 and absf(tank.speed) > 1.0:
+			await _look(tank.pos + Vector3(-10, 16, 12), tank.pos)
+			await _wait(0.2)
+			await _snap(dir, "tank_with_infantry_%d" % shot)
+			shot += 1
+	get_tree().quit()
+
+# --tanktest: a city battle with armour: when a squad is going in with a tank, how close they keep to it
+func _tank_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(11)
+	start_game({"map": _arg("map", "city"), "mode": _arg("mode", "frontline"), "size": 12, "limit": 999, "reinforce": true, "armor": "heavy", "reinf_mode": "truck", "teams": 2})
+	for t in range(int(_arg("secs", "200")) / 5):
+		await _wait(5.0)
+		for q in G.squads:
+			var tk = q.get("tank")
+			if tk == null or not is_instance_valid(tk) or tk.dead or G.sim_time > q.get("tank_t", 0.0):
+				continue
+			var ds = []
+			for m in q["members"]:
+				if is_instance_valid(m) and m.state == "alive" and m.vehicle == null:
+					ds.append(int(G.dist2d(m.pos, tk.pos)))
+			print("TANKTEST t%d %s T%d spd=%.1f wait=%s pace=%s waited=%.0f men_d=%s contact=%s" % [int(G.sim_time), tk.kind, tk.team, tk.speed, str(G.sim_time < float(tk.get_meta("inf_wait", 0.0))), str(G.sim_time < float(tk.get_meta("inf_pace", 0.0))), float(tk.get_meta("inf_waited", 0.0)), str(ds), str(G.sim_time - Squad.leader_of(q).seen_t < 8.0 if Squad.leader_of(q) != null else false)])
+	print("TANKTEST events ", Tactics.events.get("tank_inf", 0))
+	get_tree().quit()
+
 # --roomshot=DIR: a squad in the office block's ground-floor corridor, an enemy in one of the offices:
 # the stack on the door, the entry, the room afterwards
 func _room_shot(dir: String) -> void:
@@ -2805,10 +2935,10 @@ func _stuck_run() -> void:
 	for i in range(int(_arg("battles", "4"))):
 		seed(100 + i)
 		var m = maps[i % maps.size()]
-		start_game({"map": m, "mode": _arg("mode", "commander"), "size": int(_arg("size", "12")), "limit": 999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+		start_game({"map": m, "mode": _arg("mode", "commander"), "size": int(_arg("size", "12")), "limit": 999, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2})
 		StuckLog.reset()
 		await _wait(float(_arg("secs", "240")))
-		print("STUCKRUN battle %d %s: %s" % [i, m, StuckLog.summary()])
+		print("STUCKRUN battle %d %s: %s | tank_inf=%d rooms=%d/%d" % [i, m, StuckLog.summary(), Tactics.events.get("tank_inf", 0), Tactics.events.get("room_clear", 0), Tactics.events.get("room_stack", 0)])
 		for k in StuckLog.counts:
 			total[k] = total.get(k, 0) + StuckLog.counts[k]
 	var keys = total.keys()

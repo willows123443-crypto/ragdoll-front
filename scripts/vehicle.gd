@@ -2132,6 +2132,17 @@ var arc_t = 0.0
 
 func _arc_wrap(aim: Vector3, final: Vector3, dt: float) -> Array:
 	var r = _arc_drive(aim, final, dt)
+	# with infantry, in close country: wait for them to come up, then go in at their pace
+	if r[0] > 0.0:
+		if G.sim_time < float(get_meta("inf_wait", 0.0)):
+			r[0] = 0.0
+			prog_t = 0.0
+			prog_p = pos
+			stuck_t = 0.0
+			bump_t = 0.0
+			return r
+		elif G.sim_time < float(get_meta("inf_pace", 0.0)):
+			r[0] = minf(r[0], 0.38)
 	prog_t += dt
 	if prog_t > 10.0:
 		prog_t = 0.0
@@ -2393,8 +2404,8 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	arc_pick = [best[0], best[1]]
 	# nearly there: ease off so it stops on the mark instead of overshooting and turning back
 	var dfin = G.dist2d(final, pos)
-	if dfin < 14.0 and arc_pick[0] > 0.0:
-		arc_pick[0] = minf(arc_pick[0], maxf(0.3, dfin / 14.0))
+	if dfin < 7.0 and arc_pick[0] > 0.0:
+		arc_pick[0] = minf(arc_pick[0], maxf(0.35, dfin / 7.0))
 	return _arc_out(dt)
 
 var arc_bumps: Array = []     # [where, radius, until]

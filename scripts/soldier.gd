@@ -907,6 +907,84 @@ func _ik(a: Vector3, c: Vector3, L1: float, L2: float, hint: Vector3) -> Vector3
 		perp = Vector3.ZERO
 	return a + d * x + perp * h
 
+# ---------------------------------------------------------------- feet that stay where they're put
+# The ground a man covers with each step, and so how fast his legs go: short quick steps at a walk,
+# long ones at a run (the legs used to turn over at a runner's rate whatever the speed, which is why
+# a walking man's feet slid).
+static func step_len(spd: float) -> float:
+	return clampf(0.5 + 0.17 * spd, 0.62, 1.5)
+
+static var PLANT = true
+
+static func gait_k(spd: float) -> float:
+	return PI / step_len(spd) if PLANT else 2.3
+
+var foot_w: Array = [Vector3.ZERO, Vector3.ZERO]      # where each foot is planted, in the world
+var foot_sw: Array = [false, false]                   # in the air, swinging to its next place
+var foot_from: Array = [Vector3.ZERO, Vector3.ZERO]
+var foot_t0: Array = [0.0, 0.0]
+var foot_dur: Array = [0.2, 0.2]
+var foot_ok = false
+var foot_seen = -1.0
+var acc_lp = Vector3.ZERO
+var pvel = Vector3.ZERO
+
+# one leg: the foot stays planted on the spot it came down on while the body moves over it; when the
+# walk cycle says it's this leg's turn (or the leg's at full stretch) it lifts, swings through, and
+# comes down ahead where the body will be. Standing, a foot left out of place (he's turned, or shuffled)
+# takes a small step back under him.
+func _plant_foot(side: int, hip: Vector3, base: Vector3, f: Vector3, r: Vector3, cz: float, spd: float, gy: float) -> Vector3:
+	var sd = 1.0 if side == 1 else -1.0
+	var neutral = base + r * (sd * 0.13) + f * cz
+	var now = G.sim_time
+	if not foot_ok or now - foot_seen > 0.4 or G.dist2d(foot_w[side], neutral) > 1.25 or absf(foot_w[side].y - gy) > 1.1:
+		foot_w[side] = Vector3(neutral.x, G.world.surface_y(neutral.x, neutral.z, gy + 0.3) + 0.07, neutral.z)
+		foot_sw[side] = false
+	var other = 1 - side
+	var moving = spd > 0.3
+	var ph = wrapf(phase + (PI if side == 1 else 0.0), -PI, PI)
+	var swing_ph = absf(ph) < PI * 0.5
+	var w = maxf(spd * gait_k(spd), 0.5)
+	if not foot_sw[side]:
+		var stretched = (foot_w[side] - hip).length() > 0.875
+		var lift_off = false
+		if moving:
+			lift_off = swing_ph or stretched
+		else:
+			# standing: step it back under him if it's been left behind (one foot at a time)
+			var off = G.dist2d(foot_w[side], neutral)
+			lift_off = (off > 0.17 or stretched) and not foot_sw[other] and now - maxf(foot_t0[0] + foot_dur[0], foot_t0[1] + foot_dur[1]) > 0.06
+		if lift_off:
+			foot_sw[side] = true
+			foot_from[side] = foot_w[side]
+			foot_t0[side] = now
+			if moving:
+				var rem = (PI * 0.5 - ph) if swing_ph else (PI * 0.5 - ph + (TAU if ph > 0.0 else 0.0))
+				foot_dur[side] = clampf(rem / w, 0.12, 0.6)
+			else:
+				foot_dur[side] = 0.2
+	if not foot_sw[side]:
+		return foot_w[side]
+	var u = clampf((now - foot_t0[side]) / foot_dur[side], 0.0, 1.0)
+	var t_rem = (1.0 - u) * foot_dur[side]
+	var tgt = neutral
+	if moving:
+		var dirv = Vector3(vel.x, 0, vel.z) / spd
+		# as far ahead as the leg will reach from where the hips ride (no further: a foot put down out of
+		# reach has to be dragged straight back in)
+		var hv = hip.y - gy - 0.07
+		var rh = sqrt(maxf(0.86 * 0.86 - hv * hv, 0.01))
+		tgt = neutral + Vector3(vel.x, 0, vel.z) * t_rem + dirv * minf(step_len(spd) * 0.5, rh * 0.9)
+	tgt.y = G.world.surface_y(tgt.x, tgt.z, gy + 0.3) + 0.07
+	var e = u * u * (3.0 - 2.0 * u)
+	var p = foot_from[side].lerp(tgt, e)
+	p.y = lerpf(foot_from[side].y, tgt.y, e) + sin(PI * u) * (0.06 + minf(spd, 6.0) * 0.022)
+	foot_w[side] = p
+	if u >= 1.0:
+		foot_sw[side] = false
+		foot_w[side] = tgt
+	return p
+
 func _reach(from: Vector3, to: Vector3, max_l: float) -> Vector3:
 	var d = to - from
 	var l = d.length()
@@ -1237,6 +1315,10 @@ func stand_pose() -> void:
 	var bob = absf(sin(phase)) * 0.035 * minf(spd / 3.0, 1.0)
 	var breath = sin(t * 1.7) * 0.006
 	var pY = 0.98 - 0.42 * c + bob * 0.5
+	# striding out, the hips ride lower: a straight leg can't reach a foot planted ahead or behind
+	var plant = PLANT and not zombie and not swim and vault == null and climb == null and vy >= -0.5 and stumble <= 0.0
+	if plant:
+		pY -= 0.075 * clampf(spd / 1.6, 0.0, 1.0) * (1.0 - 0.6 * c)
 	var gy = pos.y
 	var base = Vector3(pos.x, gy, pos.z)
 	# standing easy: the weight drifts from one leg to the other and the hips follow
@@ -1251,6 +1333,10 @@ func stand_pose() -> void:
 	if swim:
 		al = 1.05 + sin(t * 3.2) * 0.05
 	var th = lean * 0.42
+	if plant and not prone:
+		# leaning into a start, back against a stop, and into a swerve
+		al += clampf(acc_lp.dot(f) * 0.013, -0.1, 0.15)
+		th += clampf(acc_lp.dot(r) * 0.01, -0.1, 0.1)
 	if zombie:
 		al += {"walker": 0.42, "runner": 0.3, "brute": 0.5, "bloater": 0.2, "spitter": 0.36}.get(ztype, 0.4) + (0.3 if lunge_t > 0.0 and lunge_t < 0.3 else 0.0)
 		th += sin(t * 0.9) * 0.14 + (0.1 if id % 2 == 0 else -0.1)
@@ -1318,6 +1404,15 @@ func stand_pose() -> void:
 		var cz = -0.24 * c if side == 1 else 0.3 * c
 		var wide = 0.1 if zombie and zstyle == 2 else 0.0
 		var foot = base + r * (sd * (0.13 + wide) + lmx * sw * A) + f * (lmz * sw * A + cz)
+		if plant:
+			foot = _plant_foot(side, P[hi], base, f, r, cz, spd, gy)
+			if side == 1 and kick_t > 0.0:
+				var kk2 = sin(PI * (1.0 - kick_t / 0.38))
+				foot = foot.lerp(base + kick_dir * 0.72 + r * 0.1 + Vector3(0, 0.5, 0), kk2)
+			foot = _reach(P[hi], foot, 0.88)
+			P[hi + 2] = foot
+			P[hi + 1] = _ik(P[hi], foot, 0.45, 0.45, f + r * (sd * 0.15))
+			continue
 		if swim:
 			# frog kick, legs trailing behind
 			var kk = sin(t * 3.2 + (PI if side == 1 else 0.0))
@@ -1335,6 +1430,11 @@ func stand_pose() -> void:
 		foot = _reach(P[hi], foot, 0.88)
 		P[hi + 2] = foot
 		P[hi + 1] = _ik(P[hi], foot, 0.45, 0.45, f + r * (sd * 0.15))
+	if plant:
+		foot_ok = true
+		foot_seen = G.sim_time
+	else:
+		foot_ok = false
 	_arms_and_gun(spd, sprint, uf, ur, _aim_vector(t, spd))
 
 func key_world(arr: Array, root: Vector3, yaw: float) -> Array:
@@ -1496,7 +1596,8 @@ func lod_glide() -> void:
 	# (always, however far off: skipping it made men stutter along when the commander view was zoomed out)
 	# the legs keep stepping too, not just the body sliding: move him on, step the walk cycle on, and
 	# pose him, so a walking man looks like he's walking from any height (undone before his next real tick)
-	var dph = Vector2(vel.x, vel.z).length() * (5.0 if prone else 2.3) * G.DT
+	var gs = Vector2(vel.x, vel.z).length()
+	var dph = gs * (5.0 if prone else (2.3 if zombie else gait_k(gs))) * G.DT
 	pos += d
 	glide_off += d
 	phase += dph
@@ -3026,7 +3127,10 @@ func _tick_alive() -> void:
 			if absf(dd) < 0.12:
 				turning = false
 	var ph0 = sin(phase)
-	phase += (spd * (5.0 if prone else 2.3) * (zgait if zombie else 1.0) + (6.0 if turning else 0.0) + (9.0 if stumble > 0.0 else 0.0)) * G.DT
+	phase += (spd * (5.0 if prone else (2.3 if zombie else gait_k(spd))) * (zgait if zombie else 1.0) + (6.0 if turning and zombie else 0.0) + (9.0 if stumble > 0.0 else 0.0)) * G.DT
+	# how hard he's speeding up, slowing or swerving: the body leans with it
+	acc_lp = acc_lp.lerp((Vector3(vel.x, 0, vel.z) - pvel) / G.DT, 0.18)
+	pvel = Vector3(vel.x, 0, vel.z)
 	if ph0 * sin(phase) < 0.0 and (spd > 0.8 or stumble > 0.0) and not prone:
 		if not G.world.water.is_empty() and G.world.in_water(pos.x, pos.z):
 			if not _lod_far():

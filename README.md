@@ -320,6 +320,12 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 
 - **Fixed:** indoors, men no longer throw a grenade at an enemy they have no clear line to (under a ceiling it came back off the wall among their own squad)
 
+- **Feet that stay planted:** each foot now stays on the spot it came down on while the body moves over it, then lifts, swings through and lands ahead where the body will be, on whatever is there (slopes, steps, stairs). The legs turn over at a rate that matches the ground covered (short quick steps at a walk, long ones at a run) instead of a runner's rate at every speed, and the hips ride lower as the stride lengthens. In the walk test a walking man's feet used to slide 62% of the distance he covered; now 2 to 5%
+- **Stepping round on the spot:** a man who turns, or is left with a foot out of place when he stops, takes small steps to bring his feet back under him instead of swivelling on them
+- **Leaning with the movement:** the body leans into a start, back against a stop, and into a swerve
+- **Tanks and infantry together:** among buildings, or with enemy infantry near, an AI tank (or armoured car or half-track) no longer drives in alone: it waits up to 14 seconds for the nearest free squad, then goes forward at walking pace, and that squad walks in behind and beside it instead of in its own formation. Vehicles you have given an order to are left alone
+- **Cover with a shot:** when picking cover the AI now checks more candidates for a line of fire before setting off, and a place it can't shoot from counts heavily against it unless the man is hiding
+
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
 **Command tab:** click a soldier (double-click for his squad) or drag a box to select, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it. In the commander view right-drag draws a line for them to form up on (middle-drag turns the camera), and Shift + right-click adds stops to their route.

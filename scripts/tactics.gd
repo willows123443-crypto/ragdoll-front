@@ -298,6 +298,73 @@ static func door_watch(s) -> bool:
 # ---------------------------------------------------------------- smoke
 # a tank that enemy rocket men have spotted gets a smoke screen thrown between it and them by the
 # infantry walking with it
+# ---------------------------------------------------------------- tanks and infantry together
+# In close country (among buildings, or with enemy infantry near) a tank on its own is a target for
+# anyone with a rocket, and infantry on their own have nothing to answer a machine gun with. So the
+# tank doesn't drive in alone: it waits for the nearest squad to come up, then goes forward at their
+# pace, and the squad walks in behind and beside it instead of in its own formation.
+static func tank_infantry() -> void:
+	var now = G.sim_time
+	for v in G.vehicles:
+		if v.dead or not (v.spec["tracked"] or v.kind in ["armoredcar", "halftrack", "gunbus"]) or v.spec.get("air", false) or v.spec.get("static", false):
+			continue
+		if v.gunner_seat() < 0 or v.driver() == null or v.driver().is_player or v.mission != null or v.team < 0:
+			continue
+		# (one you've given an order to does as it's told)
+		if v.cmd != null and not G.ai_runs(v.team):
+			continue
+		if v.why != "drive" or G.dist2d(v.goal, v.pos) < 4.0:
+			continue
+		var f: Vector3 = v.forward()
+		var ahead = v.pos + f * 18.0
+		var close = G.world.building_index(ahead, 12.0) >= 0 or G.world.building_index(v.pos, 10.0) >= 0
+		var near_d = 1e9
+		for s in G.soldiers:
+			if s.state != "alive" or s.vehicle != null:
+				continue
+			var d = G.dist2d(s.pos, v.pos)
+			if s.team == v.team:
+				near_d = minf(near_d, d)
+			elif s.team >= 0 and d < 60.0 and not s.zombie:
+				close = true
+		if not close:
+			continue
+		# the nearest squad of ours on foot that's free to come
+		var bq = null
+		var bd = 90.0
+		for q in G.squads:
+			if q.get("guard", false) or q["members"].is_empty():
+				continue
+			var L = Squad.leader_of(q)
+			if L == null or L.team != v.team or L.is_player or L.vehicle != null or L.order != null or L.zombie:
+				continue
+			if q.get("tank") != null and q["tank"] != v and is_instance_valid(q["tank"]) and now < q.get("tank_t", 0.0):
+				continue
+			var d2 = G.dist2d(L.pos, v.pos)
+			if d2 < bd:
+				bd = d2
+				bq = q
+		if bq == null:
+			continue
+		if bq.get("tank") != v:
+			events["tank_inf"] = events.get("tank_inf", 0) + 1
+			var L2 = Squad.leader_of(bq)
+			G.fx.callout(L2, G.pick(["On the tank! Stay close to it!", "Follow the armour in!", "Behind the tank, move up with it!"]))
+		bq["tank"] = v
+		bq["tank_t"] = now + 5.0
+		# not hit hard in the last few seconds? then it can afford to wait for them
+		if near_d > 16.0:
+			var waited: float = v.get_meta("inf_waited", 0.0)
+			if waited < 14.0:
+				v.set_meta("inf_wait", now + 1.3)
+				v.set_meta("inf_waited", waited + 1.0)
+				if now - float(v.get_meta("inf_said", -99.0)) > 25.0:
+					v.set_meta("inf_said", now)
+					G.fx.callout(v.driver(), G.pick(["Infantry, close up on the tank!", "Not going in there alone. Where's the infantry?", "Waiting on the infantry."]))
+		else:
+			v.set_meta("inf_waited", maxf(0.0, float(v.get_meta("inf_waited", 0.0)) - 2.0))
+			v.set_meta("inf_pace", now + 1.5)
+
 static func screen_armour() -> void:
 	for v in G.vehicles:
 		if v.dead or not (v.spec["tracked"] or v.kind in ["armoredcar", "halftrack"]) or v.spec.get("air", false) or v.spec.get("static", false):

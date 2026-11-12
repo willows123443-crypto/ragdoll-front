@@ -21,6 +21,7 @@ static func step(dt: float) -> void:
 	RadioPack.step()
 	Salvage.step()
 	Tactics.screen_armour()
+	Tactics.tank_infantry()
 	for q in G.squads:
 		q["members"] = q["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead")
 		if q["members"].is_empty() or q.get("guard", false):
@@ -50,6 +51,18 @@ static func slot(s):
 	var q = s.squad
 	if q == null:
 		return null
+	# going in with a tank: behind it and off its flanks, not out in front in a wedge of their own
+	var tk = q.get("tank")
+	if tk != null and is_instance_valid(tk) and not tk.dead and G.sim_time < q.get("tank_t", 0.0) and G.dist2d(tk.pos, s.pos) < 110.0:
+		var tf: Vector3 = tk.forward()
+		var tr = Vector3(tf.z, 0, -tf.x)
+		var k = index_of(s)
+		var hl: float = tk.spec["len"] * 0.5
+		var row = k / 2
+		var o2 = Vector2((tk.spec["wid"] * 0.5 + 1.5) * (1.0 if k % 2 == 0 else -1.0), -(hl + 1.5 + row * 2.2))
+		var sp: Vector3 = tk.pos + tr * o2.x + tf * o2.y
+		sp.y = G.world.ground_y(sp.x, sp.z)
+		return sp
 	var L = leader_of(q)
 	if L == null or L == s or L.vehicle != null:
 		return null

@@ -1393,9 +1393,14 @@ static func decide(s) -> void:
 				gp += Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5))
 			elif randf() < 0.6:
 				G.fx.callout(s, G.pick(["Grenade, through the window!", "Frag in the window!", "Fire in the hole!"]))
-			Combat.throw_grenade(s, gp, "frag")
-			s.burst = 0
-			s.burst_cd = 0.8
+			# indoors, under a ceiling, a grenade can't be lobbed over anything: without a clear line to
+			# where it's to land it comes back off the wall among his own squad
+			if Levels.on and (Levels.inside(s.pos, 0.5) or Levels.inside(gp, 0.5)) and G.blocked(s.head_pos(), gp + Vector3(0, 0.8, 0)):
+				s.nade_cd = 4.0
+			else:
+				Combat.throw_grenade(s, gp, "frag")
+				s.burst = 0
+				s.burst_cd = 0.8
 		s.nade_cd = randf_range(28.0, 45.0)
 	if order["mode"] == "free" and _initiative(s, known, threat, dT):
 		return
@@ -2196,7 +2201,8 @@ static func update(s) -> void:
 	aim_and_fire(s)
 	stance(s)
 	if s.vis_t == null and s.move_target == null:
-		Tactics.door_watch(s)
+		if not Tactics.door_watch(s):
+			Rooms.watch(s)
 
 # zombies only bite, so you never walk into them: anything close gets backed away from while you keep
 # shooting, nobody goes chasing the horde out of the line, and men bunch up back to back when it's thick

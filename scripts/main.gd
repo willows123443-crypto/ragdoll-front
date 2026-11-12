@@ -90,6 +90,12 @@ func _ready() -> void:
 			_level_battle()
 		if a == "--wandertest":
 			_wander_test()
+		if a.begins_with("--arc="):
+			Vehicle.ARC_DRIVER = a.substr(6) == "1"
+		if a.begins_with("--roomshot="):
+			_room_shot(a.substr(11))
+		if a == "--stuckdump":
+			StuckLog.dump = true
 		if a == "--stuckrun":
 			_stuck_run()
 		if a.begins_with("--floorshot="):
@@ -2680,6 +2686,64 @@ func _vtrace() -> void:
 	print("VTRACE episodes ", eps, " totals ", tot)
 	get_tree().quit()
 
+# --roomshot=DIR: a squad in the office block's ground-floor corridor, an enemy in one of the offices:
+# the stack on the door, the entry, the room afterwards
+func _room_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.3)
+	start_game({"map": "office", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var men = []
+	for i in range(4):
+		var s = spawn_soldier(0, -34.0 + i * 1.2, 0.3 * (1 if i % 2 == 0 else -1), "rifle")
+		s.grenades = 2
+		men.append(s)
+	var q = men[0].squad
+	for s in men:
+		if s.squad != q:
+			if s.squad != null:
+				s.squad["members"].erase(s)
+			s.squad = q
+			q["members"].append(s)
+	var foe = spawn_soldier(1, -46.0, 8.0, "rifle")
+	foe.order = {"mode": "hold", "point": foe.pos}
+	# they've heard him in there
+	for s in men:
+		AI.add_intel(s, foe, foe.pos, 0.2, false)
+	G.ui.floor_view.pick(0)
+	await _look(Vector3(-40, 15, -9), Vector3(-44, 0, 4))
+	var seen = {}
+	for t in range(160):
+		await _wait(0.25)
+		for s in men:
+			if is_instance_valid(foe) and foe.state == "alive":
+				AI.add_intel(s, foe, foe.pos, 0.2, false)
+		var st = q.get("room")
+		var stage = st["stage"] if st != null else "-"
+		if not seen.has(stage):
+			seen[stage] = true
+			print("ROOMSHOT t%.1f stage=%s foe=%s stacks=%d clears=%d" % [G.sim_time, stage, foe.state if is_instance_valid(foe) else "gone", Tactics.events.get("room_stack", 0), Tactics.events.get("room_clear", 0)])
+		if stage == "stack" and not seen.has("s_shot"):
+			var near = 0
+			for s in men:
+				if G.dist2d(s.pos, st["door"]["c"]) < 3.0:
+					near += 1
+			if near >= 2:
+				seen["s_shot"] = true
+				await _snap(dir, "room_stack")
+		if stage == "inside" and not seen.has("i_shot") and G.sim_time > st["t"] - 1.0:
+			seen["i_shot"] = true
+			await _snap(dir, "room_entry")
+		if stage == "-" and seen.has("inside") and not seen.has("d_shot"):
+			seen["d_shot"] = true
+			await _wait(0.6)
+			await _snap(dir, "room_clear")
+			break
+	print("ROOMSHOT end foe=%s stacks=%d clears=%d" % [foe.state if is_instance_valid(foe) else "gone", Tactics.events.get("room_stack", 0), Tactics.events.get("room_clear", 0)])
+	get_tree().quit()
+
 # --hqshot=DIR: your HQ from above with its roof on, then lifted off
 func _hq_shot(dir: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)
@@ -2817,7 +2881,7 @@ func _level_battle() -> void:
 		var flags = []
 		for pt in Obj.points:
 			flags.append("%s:%d" % [pt["name"], pt["owner"]])
-		print("LB t%d A[g,1,2,out]=%s B=%s flags=%s stuck_moving=%d kills=%s" % [int(G.sim_time), str(c[0]), str(c[1]), " ".join(flags), still, str(G.stats.get("kills", "?") if G.get("stats") != null else "?")])
+		print("LB t%d A[g,1,2,out]=%s B=%s flags=%s stuck_moving=%d rooms=%d doors=%d stacks=%d clears=%d" % [int(G.sim_time), str(c[0]), str(c[1]), " ".join(flags), still, Rooms.list.size(), Rooms.raw_doors.size(), Tactics.events.get("room_stack", 0), Tactics.events.get("room_clear", 0)])
 	get_tree().quit()
 
 # --leveltest: the office block's floors, stairs and paths, then men sent to every floor

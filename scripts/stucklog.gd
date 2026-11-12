@@ -6,6 +6,40 @@ extends RefCounted
 
 static var recs: Array = []
 static var counts = {}
+static var dump = false
+
+# a picture of the ground round a stuck vehicle: # solid on the vehicle map, V the vehicle, > its nose,
+# o other vehicles, m our men, * the path, x remembered bumps
+static func _dump(v) -> void:
+	var W = G.world
+	var g: AStarGrid2D = W.tastar if v.spec["tracked"] else W.vastar
+	var c0: Vector2i = W.vnav_cell(v.pos.x, v.pos.z)
+	var marks = {}
+	var f: Vector3 = v.forward()
+	marks[W.vnav_cell(v.pos.x + f.x * 3.0, v.pos.z + f.z * 3.0)] = ">"
+	for o in G.vehicles:
+		if o != v:
+			marks[W.vnav_cell(o.pos.x, o.pos.z)] = "o"
+	for s in G.soldiers:
+		if s.team == v.team and s.state == "alive" and s.vehicle == null:
+			marks[W.vnav_cell(s.pos.x, s.pos.z)] = "m"
+	for i in range(v.path_i, v.path.size()):
+		marks[W.vnav_cell(v.path[i].x, v.path[i].z)] = "*"
+	for bp in v.arc_bumps:
+		marks[W.vnav_cell(bp[0].x, bp[0].z)] = "x"
+	marks[c0] = "V"
+	print("DUMP %s at (%.0f,%.0f) yaw=%.2f bumps=%d hold=%.1f pick=%s spd=%.1f\n  %s" % [v.kind, v.pos.x, v.pos.z, v.yaw, v.arc_bumps.size(), v.arc_hold, str(v.arc_pick), v.speed, str(v.get_meta("arc_dbg", "")) + "\n  trail " + " ".join(v.get_meta("trail", []))])
+	for dz in range(-9, 10):
+		var line = ""
+		for dx in range(-14, 15):
+			var q = Vector2i(c0.x + dx, c0.y + dz)
+			if marks.has(q):
+				line += marks[q]
+			elif q.x < 0 or q.y < 0 or q.x >= g.region.size.x or q.y >= g.region.size.y:
+				line += "~"
+			else:
+				line += "#" if g.is_point_solid(q) else "."
+		print("  ", line)
 
 static func reset() -> void:
 	recs = []
@@ -28,6 +62,8 @@ static func _add(kind: String, cause: String, p: Vector3, detail: String) -> voi
 
 # a vehicle that meant to go somewhere and hasn't moved for ten seconds
 static func vehicle(v) -> void:
+	if v.tracks_broken or v.tyres >= 2 or v.fuel <= 0.0:
+		return       # broken down or dry: not the driver's doing
 	var f: Vector3 = v.forward()
 	var cause = "open"
 	var W = G.world
@@ -55,6 +91,8 @@ static func vehicle(v) -> void:
 	if cause == "open" and (v.tracks_broken or v.tyres >= 2):
 		cause = "broken_down"
 	var to = G.flat(v.goal - v.pos)
+	if dump:
+		_dump(v)
 	_add("VEH", cause, v.pos, "%s T%d why=%s mission=%s goal_d=%.0f goal_ang=%.1f pick=%s block=%.1f spd=%.1f path=%d/%d grid_solid=%s" % [v.kind, v.team, v.why, str(v.mission.get("type", "") if v.mission != null else "-"), G.dist2d(v.goal, v.pos),
 		wrapf(atan2(to.x, to.z) - v.yaw, -PI, PI), str(v.arc_pick), v.arc_block, v.speed, v.path_i, v.path.size(), str(W.vastar.is_point_solid(W.vnav_cell(v.pos.x, v.pos.z)))])
 

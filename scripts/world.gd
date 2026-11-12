@@ -1188,6 +1188,25 @@ func _vnav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 		_vnav_mark(c)
 	_vnav_water(a.x, a.y, b.x, b.y)
 
+# would a vehicle this wide, centred here, be up against something? The vehicle map answers most of it
+# at once (it's coarse, and padded, so a clear cell is clear); where it says no, look at what's really there,
+# so a gap the path threads isn't refused for being a cell wide
+func veh_blocked_at(x: float, z: float, r: float, g: AStarGrid2D, real_only: bool = false, on_steep: bool = false) -> bool:
+	var c = vnav_cell(x, z)
+	if not real_only and not g.is_point_solid(c):
+		return false
+	# ground too steep for wheels, and water, stop it whatever else is going on (unless it's already
+	# standing on a slope: then it has to be let off it)
+	if g == vastar and not on_steep and vsteep.size() == VW * VH and c.x >= 0 and c.y >= 0 and c.x < VW and c.y < VH and vsteep[c.y * VW + c.x] == 1:
+		return true
+	if not water.is_empty() and in_water(x, z):
+		return true
+	return inside_any(x, z, r)
+
+func veh_on_steep(x: float, z: float) -> bool:
+	var c = vnav_cell(x, z)
+	return vsteep.size() == VW * VH and c.x >= 0 and c.y >= 0 and c.x < VW and c.y < VH and vsteep[c.y * VW + c.x] == 1
+
 func _vnearest_free(c: Vector2i, g: AStarGrid2D) -> Vector2i:
 	if not g.is_point_solid(c):
 		return c
@@ -4863,6 +4882,7 @@ func load_map(id: String) -> void:
 	rng.seed = MAPS[id]["seed"] if MAPS.has(id) else 31337
 	G.map_id = id
 	Levels.reset()
+	Rooms.reset()
 	spawn = [Vector3(-96, 0, 0), Vector3(96, 0, 0)]
 	if id == "town":
 		build_town()

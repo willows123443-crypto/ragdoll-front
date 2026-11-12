@@ -59,8 +59,10 @@ static func build(world) -> void:
 		holes.append([])
 	for wl in wells:
 		_stairwell(wl, holes)
+	Rooms.reset()
 	for k in range(NL):
 		_storey(k, wells)
+	Rooms.link()
 	# floors and the roof
 	var fcol = [Color(0.55, 0.53, 0.5), Color(0.47, 0.36, 0.26), Color(0.4, 0.43, 0.47), Color(0.35, 0.35, 0.36)]
 	for k in range(1, NL + 1):
@@ -131,6 +133,10 @@ static func _wall(horiz: bool, fixed: float, a0: float, a1: float, k: int, color
 			"door":
 				_solid(horiz, fixed, g0, g1, y0, 2.3, h - 2.3, color, t, hp)
 				_frame(horiz, fixed, g0, g1, y0, t)
+				if horiz:
+					Rooms.add_door(k, true, (g0 + g1) / 2.0, fixed)
+				else:
+					Rooms.add_door(k, false, fixed, (g0 + g1) / 2.0)
 			"win":
 				_solid(horiz, fixed, g0, g1, y0, 0.0, 1.0, color, t, hp)
 				_solid(horiz, fixed, g0, g1, y0, 2.2, h - 2.2, color, t, hp)
@@ -253,7 +259,9 @@ static func _storey(k: int, wells: Array) -> void:
 					_wall(false, xw, za, zb, k, col_c, T_IN, gp2, 220.0)
 				if wl.is_empty():
 					_furnish(k, cr[0], cr[1], sz * CORR, sz * MIDZ, sz, true)
+					Rooms.add_room(k, cr[0], cr[1], sz * CORR, sz * MIDZ)
 				_furnish(k, cr[0], cr[1], sz * MIDZ, sz * HZ, sz, false)
+				Rooms.add_room(k, cr[0], cr[1], sz * MIDZ, sz * HZ)
 	# corridor barricades at the crossings (staggered, so there's always a way past)
 	for cx in CROSS:
 		if w.rng.randf() < 0.65:

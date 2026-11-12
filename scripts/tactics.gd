@@ -79,6 +79,7 @@ static func squad(q) -> void:
 	_call_help(q, L)
 	_danger_cross(q, L)
 	_stack_up(q, L)
+	Rooms.squad(q, L)
 
 static func _pinned(q, L) -> void:
 	var pinned = []

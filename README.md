@@ -314,6 +314,12 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Stairwells share the load:** a flight with men already on it costs more to a man planning his way, so a squad spreads over the stairwells instead of queuing at one
 - **Fixed:** the AI calling a recon plane before a battle had begun (in the battle builder, during prep or in the first seconds); it now waits two minutes and until the fighting has started
 
+- **New vehicle driver:** instead of a pile of separate rules pulling the wheel different ways (reverse, three-point turn, give way, detour), the driver now imagines a handful of ways to drive the next two and a half seconds, each the curve the vehicle would really follow with its own turning circle, throws out any that would hit a wall, a wreck, another vehicle or one of his own men, and takes the one that gets furthest along the path pointing the right way. He backs up only when there's no way on, carries a tight turn through in a few goes, backs out of a street there's no room to turn in, waits behind his own instead of backing away from them, remembers what he has bumped into, and never takes steep ground or water. In test battles vehicles see-saw far less than before (1 to 2 episodes against 6 to 10 on the same battles) and get stuck about as rarely
+- **Room clearing:** in the office block, a squad that knows of an enemy in an office on its floor stacks up either side of the nearest door, one man posts a grenade through the doorway, and they go in together: first man to one corner, second to the other, third down the middle, the last holding the door. They call the room clear and move on. Men inside a room with the enemy about cover its door
+- **Stuck recorder** no longer counts a vehicle that's broken down or out of fuel, or one that made a wide turn and came back on itself
+
+- **Fixed:** indoors, men no longer throw a grenade at an enemy they have no clear line to (under a ceiling it came back off the wall among their own squad)
+
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
 **Command tab:** click a soldier (double-click for his squad) or drag a box to select, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it. In the commander view right-drag draws a line for them to form up on (middle-drag turns the camera), and Shift + right-click adds stops to their route.
@@ -348,6 +354,7 @@ I couldn't run Godot where I wrote this. I checked the scripts with a static che
 | `scripts/squadcards.gd` | Commander view squad cards |
 | `scripts/icons.gd` | Weapon and status icons drawn at start-up |
 | `scripts/navviz.gd` | Path debug view (F9) |
+| `scripts/rooms.gd` | Room clearing in the office block: stack on the door, grenade, entry, clear |
 | `scripts/stucklog.gd` | Stuck recorder: what got stuck, where and why |
 | `scripts/levels.gd` | Buildings with real floors: a path grid per storey, joined by stairs |
 | `scripts/office.gd` | The Ministry offices map (three storeys of corridors, rooms and stairwells) |

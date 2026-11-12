@@ -1524,6 +1524,21 @@ func _better(np: Array) -> bool:
 
 # where to aim along the path: a point a little way ahead on it, so corners get rounded off
 # into a curve instead of driven to and turned on the spot
+# the point this far along the path from here
+func _path_point(look: float) -> Vector3:
+	if path_i >= path.size():
+		return goal
+	var prev = pos
+	var acc = 0.0
+	for i in range(path_i, path.size()):
+		var q: Vector3 = path[i]
+		var seg = G.dist2d(prev, q)
+		if acc + seg >= look:
+			return prev.lerp(q, (look - acc) / maxf(seg, 0.01))
+		acc += seg
+		prev = q
+	return path[path.size() - 1]
+
 func _pursuit() -> Vector3:
 	var look = 5.0 + absf(speed) * (0.55 if spec["tracked"] else 0.8)
 	var prev = pos
@@ -1945,8 +1960,8 @@ func _ai_drive(dt: float) -> Array:
 		if _better(np):
 			path = np
 			path_i = 0
-	# (the new arc-scoring driver is still being tuned: in test battles it got stuck more often than the
-	# rules below, so it stays switched off for now)
+	# the arc-scoring driver (below) does the driving; the older pile of rules after this line is kept
+	# for comparison runs (--arc=0)
 	if ARC_DRIVER:
 		return _arc_wrap(aim, target, dt)
 	var r = _steer_to(aim, dt)
@@ -2112,7 +2127,7 @@ func _ai_drive(dt: float) -> Array:
 # over either way, backing up), each as the curve this vehicle would really follow with its own
 # turning circle. Any that would hit a wall, a wreck, another vehicle or one of his own men are thrown
 # out; of the rest he takes the one that ends up nearest to where he's going, pointing the right way.
-const ARC_DRIVER = false
+static var ARC_DRIVER = true
 var arc_t = 0.0
 
 func _arc_wrap(aim: Vector3, final: Vector3, dt: float) -> Array:
@@ -2120,11 +2135,12 @@ func _arc_wrap(aim: Vector3, final: Vector3, dt: float) -> Array:
 	prog_t += dt
 	if prog_t > 10.0:
 		prog_t = 0.0
-		if G.dist2d(pos, prog_p) < 3.0 and why == "drive" and G.dist2d(goal, pos) > 12.0:
+		if G.dist2d(pos, prog_p) < 3.0 and why == "drive" and G.dist2d(goal, pos) > 12.0 and odo - odo_p < 30.0:
 			StuckLog.vehicle(self)
 			_unwedge()
 			_plan_detour()
 		prog_p = pos
+		odo_p = odo
 	return r
 var arc_pick: Array = [0.0, 0.0]
 var arc_block = 0.0        # how long every way forward has been shut
@@ -2144,8 +2160,17 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	var W = G.world
 	var tracked: bool = spec["tracked"]
 	var g: AStarGrid2D = W.tastar if tracked else W.vastar
+	# a corner of the path it can already see past is dropped: turning back to touch a point it has
+	# cut inside of is how a lorry ends up going round and round one
+	if g.region.size.x == W.VW:
+		while path_i < path.size() - 1 and G.dist2d(path[path_i], pos) < 16.0 and W._vwalk_line(W.vnav_cell(pos.x, pos.z), W.vnav_cell(path[path_i + 1].x, path[path_i + 1].z), g):
+			path_i += 1
+		if path_i < path.size():
+			aim = _pursuit()
 	# (boxed in on the map of what's solid, which is coarse, for a second and a half: trust the bumper instead)
-	var use_grid = g.region.size.x == W.VW and arc_block < 1.5
+	var use_grid = g.region.size.x == W.VW
+	var real_only = arc_block >= 2.5
+	var on_steep = use_grid and W.veh_on_steep(pos.x, pos.z)
 	var half_w: float = spec["wid"] * 0.5
 	var half_l: float = spec["len"] * 0.5
 	# what's about: other vehicles (as a few discs along their length, and where a moving one will be in a
@@ -2166,16 +2191,16 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 			var q: Vector3 = o.pos + of * ohl * kk
 			# (one we're already rubbing against doesn't count, or we could never pull away from it)
 			if G.dist2d(q, pos) > half_w + orad + 0.2:
-				obs.append([q, orad])
+				obs.append([q, orad, not o.dead and o.team == team])
 		if absf(o.speed) > 1.0 and not o.dead:
-			obs.append([o.pos + of * o.speed * 1.0, orad])
+			obs.append([o.pos + of * o.speed * 1.0, orad, true])
 	# things it has actually run up against in the last few seconds (a post, a low wall, a stump: whatever
 	# the coarse map didn't show)
 	for i in range(arc_bumps.size() - 1, -1, -1):
 		if G.sim_time > arc_bumps[i][2]:
 			arc_bumps.remove_at(i)
 		else:
-			obs.append([arc_bumps[i][0], arc_bumps[i][1]])
+			obs.append([arc_bumps[i][0], arc_bumps[i][1], false])
 	var f0 = forward()
 	var men: Array = []
 	for s in G.soldiers:
@@ -2186,7 +2211,7 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 		men.append(s)
 		# (a man standing right against the side doesn't shut every way out: only one in the path does)
 		if G.dist2d(s.pos, pos) > half_w + 0.8:
-			obs.append([s.pos, 0.55])
+			obs.append([s.pos, 0.55, true])
 	var b: Rect2 = W.bounds
 	var inside_map = b.has_point(Vector2(pos.x, pos.z))
 	var start_solid = use_grid and g.is_point_solid(W.vnav_cell(pos.x, pos.z))
@@ -2197,16 +2222,46 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	cands.append_array(ARC_REV)
 	var best = null
 	var bs = -1e9
-	var best_fwd_free = 0.0
 	var H = 0.3
+	# where it's making for: a point well down the path (as far as it could get in a couple of seconds),
+	# and the nearer point the path runs through on the way
+	var far: Vector3 = _path_point(clampf(spec["speed"] * 2.0, 10.0, 26.0)) if path_i < path.size() else final
+	var d0 = G.dist2d(far, pos)
+	var to0 = G.flat(far - pos)
+	var herr = absf(wrapf(atan2(to0.x, to0.z) - yaw, -PI, PI))
+	# (straight back into reverse only if the last one swung the nose round usefully: a turn in a tight
+	# place takes a few goes, rocking on the spot is something else)
+	# (how far the nose is off the way the path sets out: what a turn in a tight place has to put right)
+	var to_n = G.flat(aim - pos)
+	var herr_n = absf(wrapf(atan2(to_n.x, to_n.z) - yaw, -PI, PI)) if to_n.length() > 1.0 else herr
+	var rev_ok = G.sim_time >= get_meta("no_rev_t", 0.0) or herr_n < float(get_meta("rev_herr", 9.0)) - 0.35
+	var dbg: Array = []
+	# a point inside its own turning circle can't be driven to at this speed, only orbited: slow down
+	# (the circle shrinks), and if it's inside even the tightest circle, that's a job for reverse
+	var rt0 = Vector3(f0.z, 0, -f0.x)
+	var side0 = 1.0 if to0.dot(rt0) >= 0.0 else -1.0
+	var r_now = maxf(absf(speed), 4.0) / maxf(turn, 0.1)
+	var r_min = 4.0 / maxf(turn, 0.1)
+	var no_fast = not tracked and herr > 0.5 and G.dist2d(pos + rt0 * side0 * r_now, far) < r_now * 0.95
+	var tight = not tracked and herr > 0.8 and G.dist2d(pos + rt0 * side0 * r_min, far) < r_min * 0.9
+	var fwd_best = -1e9
+	var rev_best = -1e9
+	var rev_cd = null
+	var queued = false     # a way on is shut only by one of our own vehicles or men, who'll move
 	for cd in cands:
 		var thr: float = cd[0]
 		var st: float = cd[1]
+		if no_fast and thr > 0.9:
+			continue
 		var top: float = spec["speed"] if thr >= 0.0 else spec["rev"]
 		var sp: float = speed
 		var y: float = yaw
 		var p: Vector3 = pos
 		var free = 2.4
+		var by_mover = false
+		var dmin = d0
+		var tmin = 0.0
+		var nmin = 1e9
 		for i in range(8):
 			var tgt = thr * top
 			if signf(tgt) != signf(sp) and absf(sp) > 0.3:
@@ -2219,8 +2274,8 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 			p += fw * sp * H
 			var lead = p + fw * half_l * 0.7 * (1.0 if sp >= 0.0 else -1.0)
 			var hit = false
-			if use_grid and not (start_solid and i < 4):
-				if g.is_point_solid(W.vnav_cell(lead.x, lead.z)) or g.is_point_solid(W.vnav_cell(p.x, p.z)):
+			if use_grid:
+				if W.veh_blocked_at(lead.x, lead.z, half_w + 0.2, g, real_only, on_steep) or W.veh_blocked_at(p.x, p.z, half_w + 0.2, g, real_only, on_steep):
 					hit = true
 			if not hit and inside_map and not b.has_point(Vector2(lead.x, lead.z)) and b.has_point(Vector2(final.x, final.z)):
 				hit = true
@@ -2232,38 +2287,67 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 					var dz = op.z - lead.z
 					if dx * dx + dz * dz < rr * rr:
 						hit = true
+						by_mover = ob[2]
 						break
 					dx = op.x - p.x
 					dz = op.z - p.z
 					if dx * dx + dz * dz < rr * rr:
 						hit = true
+						by_mover = ob[2]
 						break
 			if hit:
 				free = i * H
 				break
-		if thr > 0.0:
-			best_fwd_free = maxf(best_fwd_free, free)
-		if free < 0.75 and not (absf(thr) < 0.2):
+			var df = G.dist2d(far, p)
+			if df < dmin - 0.01:
+				dmin = df
+				tmin = (i + 1) * H
+			nmin = minf(nmin, G.dist2d(aim, p))
+		if free < 0.75 and absf(thr) >= 0.2:
+			if by_mover and thr > 0.0:
+				queued = true
+			if StuckLog.dump:
+				dbg.append("%.1f/%.1f:X%.1f" % [thr, st, free])
 			continue
-		var to_aim = G.flat(aim - p)
-		var da = to_aim.length()
-		var head = cos(wrapf(atan2(to_aim.x, to_aim.z) - y, -PI, PI)) if da > 0.5 else 1.0
-		var sc = -da + head * 2.5 - (2.4 - free) * 2.5
-		if thr < 0.0:
-			sc -= 7.0 if arc_hold <= 0.0 else -3.0
-		elif thr < 0.5:
-			sc -= 0.6
+		# how much nearer it gets (and how soon), how well it's pointing when it's done, how close it
+		# keeps to the path, and how much room it has
+		var to_far = G.flat(far - p)
+		var head = cos(wrapf(atan2(to_far.x, to_far.z) - y, -PI, PI)) if to_far.length() > 2.0 else 1.0
+		var sc = (d0 - dmin) - tmin * 0.3 + head * 3.0 - minf(nmin, 8.0) * 0.4 - (2.4 - free) * 2.0
 		if absf(thr - arc_pick[0]) < 0.05 and absf(st - arc_pick[1]) < 0.05:
-			sc += 0.8
-		# once it's started backing up it carries the move through, and having come forward again it
-		# doesn't go straight back into reverse: no rocking to and fro
-		if arc_hold > 0.0 and thr > 0.0:
-			sc -= 12.0
-		if thr < 0.0 and G.sim_time < get_meta("no_rev_t", 0.0):
-			sc -= 12.0
-		if sc > bs:
-			bs = sc
+			sc += 1.0
+		if StuckLog.dump:
+			dbg.append("%.1f/%.1f:%.1f(f%.1f)" % [thr, st, sc, free])
+		if thr < 0.0:
+			# backing up is judged on where it leaves the nose pointing and the room behind, not on ground made
+			var to_a = G.flat(aim - p)
+			var head_n = cos(wrapf(atan2(to_a.x, to_a.z) - y, -PI, PI)) if to_a.length() > 1.0 else head
+			sc = head_n * 3.0 - (2.4 - free) * 2.0 + (1.0 if absf(st - arc_pick[1]) < 0.05 and arc_pick[0] < 0.0 else 0.0)
+			if sc > rev_best:
+				rev_best = sc
+				rev_cd = cd
+			continue
+		if sc > fwd_best:
+			fwd_best = sc
 			best = cd
+	# backing up is for when going forward gets it nowhere: every way on is shut, or the best of them
+	# leaves it pointing the wrong way with no ground made (a turn there's no room for). Once started
+	# it's carried through, and it doesn't go straight back into reverse after
+	bs = fwd_best
+	if rev_cd != null:
+		if arc_hold > 0.0 and arc_pick[0] < 0.0:
+			best = rev_cd
+			bs = rev_best
+		elif arc_pick[0] < 0.0 and herr > 1.6 and (best == null or fwd_best < -1.5) and not queued:
+			# backing out of somewhere there's no room to turn in (a street, a yard): keep backing
+			# until there is
+			best = rev_cd
+			bs = rev_best
+		elif best == null and (queued or arc_block < 0.7):
+			pass      # held up behind our own (or only just stopped): wait a moment, don't back away and come again
+		elif rev_ok and (best == null or ((fwd_best < -1.5 or tight) and rev_best > fwd_best + 1.0 and absf(speed) < 3.5)):
+			best = rev_cd
+			bs = rev_best
 	# our own men in the road are told to clear it
 	for s in men:
 		var rel = G.flat(s.pos - pos)
@@ -2273,13 +2357,25 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 			if s.move_target == null and G.sim_time > s.get_meta("clear_t", -9.0):
 				s.set_meta("clear_t", G.sim_time + 4.0)
 				AI.go_to(s, s.pos + Vector3(f0.z, 0, -f0.x) * (1.0 if lat >= 0.0 else -1.0) * (half_w + 3.0), 4.0)
+	if StuckLog.dump:
+		if G.sim_time > float(get_meta("tr_t", 0.0)):
+			set_meta("tr_t", G.sim_time + 1.0)
+			var tr: Array = get_meta("trail", [])
+			tr.append("(%.0f,%.0f|%s%.0f)" % [pos.x, pos.z, why.substr(0, 2), G.dist2d(goal, pos)])
+			if tr.size() > 14:
+				tr.pop_front()
+			set_meta("trail", tr)
+		set_meta("arc_dbg", "herr=%.1f d0=%.0f obs=%d men=%d grid=%s | %s" % [herr, d0, obs.size(), men.size(), str(use_grid), " ".join(dbg)])
+	# no way on, close to where it's going: near enough will do (the parking rules take it from there)
+	if (best == null or best[0] < 0.0) and G.dist2d(final, pos) < 22.0:
+		stuck_n = maxi(stuck_n, 1)
 	if best == null:
 		# every way is shut: stop, and if it stays shut find another way round (or, among our own, slip by)
 		arc_block += 0.13
 		arc_pick = [0.0, 0.0]
 		if arc_block > 2.0 and int(arc_block / 0.13) % 16 == 0:
 			_plan_detour()
-		if arc_block > 5.0:
+		if arc_block > 3.0:
 			for o in G.vehicles:
 				if o != self and o.team == team and not o.dead and G.dist2d(o.pos, pos) < (spec["len"] + o.spec["len"]) * 0.5 + 5.0:
 					set_meta("ghost_t", G.sim_time + 5.0)
@@ -2291,8 +2387,9 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 		arc_block = maxf(0.0, arc_block - 0.26)
 	elif best[0] < 0.0:
 		if arc_hold <= 0.0 and arc_pick[0] >= 0.0:
-			arc_hold = 1.6
-			set_meta("no_rev_t", G.sim_time + 6.0)
+			arc_hold = 2.4 if herr_n > 1.2 else 1.6
+			set_meta("no_rev_t", G.sim_time + 4.0)
+			set_meta("rev_herr", herr_n)
 	arc_pick = [best[0], best[1]]
 	# nearly there: ease off so it stops on the mark instead of overshooting and turning back
 	var dfin = G.dist2d(final, pos)
@@ -2301,10 +2398,13 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	return _arc_out(dt)
 
 var arc_bumps: Array = []     # [where, radius, until]
+var odo = 0.0                 # ground covered (a wide turn that comes back on itself isn't being stuck)
+var odo_p = 0.0
 var bump_t = 0.0
 
 func _arc_out(dt: float) -> Array:
 	var r = [arc_pick[0], arc_pick[1]]
+	odo += absf(speed) * dt
 	# foot down and going nowhere: it's up against something. Remember where, so the next look at the
 	# ways on steers round it (or backs off it) instead of pushing at it
 	if absf(r[0]) > 0.3 and absf(speed) < 1.0 and fuel > 0.0 and not tracks_broken:

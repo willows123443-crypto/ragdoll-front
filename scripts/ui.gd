@@ -135,7 +135,9 @@ func _panel(col: Color) -> PanelContainer:
 	var p = PanelContainer.new()
 	var sb = StyleBoxFlat.new()
 	sb.bg_color = col
-	sb.set_corner_radius_all(6)
+	sb.set_corner_radius_all(Hud.RADIUS)
+	sb.set_border_width_all(1)
+	sb.border_color = Hud.EDGE
 	sb.set_content_margin_all(10)
 	p.add_theme_stylebox_override("panel", sb)
 	return p
@@ -312,19 +314,43 @@ func _tint(p: PanelContainer, c: Color) -> void:
 
 # ---------------------------------------------------------------- side buttons
 func _build_side() -> void:
+	# one small button in the corner; the rest drops down under it when you click it
 	side = VBoxContainer.new()
 	side.position = Vector2(12, 12)
-	side.custom_minimum_size = Vector2(170, 0)
+	side.z_index = 20          # the drop-down opens over the squad cards
+	side.add_theme_constant_override("separation", 4)
 	root.add_child(side)
-	side.add_child(_button("☰ Menu (M)", func(): show_menu()))
-	btn_reinf = _button("Reinforcements: on", func():
+	var top = _button("☰  Menu", func():
+		side_list.visible = not side_list.visible)
+	top.custom_minimum_size = Vector2(96, 30)
+	top.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	top.tooltip_text = "Menu, pause, slow motion, the battle report and the controls"
+	side.add_child(top)
+	side_list = PanelContainer.new()
+	side_list.add_theme_stylebox_override("panel", Hud.pill(Hud.BG, Hud.EDGE))
+	side_list.visible = false
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 3)
+	side_list.add_child(v)
+	side.add_child(side_list)
+	var item = func(text: String, cb: Callable) -> Button:
+		var b = _button(text, func():
+			cb.call()
+			side_list.visible = false)
+		b.custom_minimum_size = Vector2(190, 26)
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		v.add_child(b)
+		return b
+	item.call("Main menu  (M)", func(): show_menu())
+	item.call("Pause  (P)", func(): get_tree().paused = not get_tree().paused)
+	item.call("Slow motion  (T)", func(): Engine.time_scale = 0.25 if Engine.time_scale > 0.5 else 1.0)
+	item.call("Battle report  (J)", func(): show_report())
+	item.call("Controls  (H)", func(): help.visible = true)
+	btn_reinf = item.call("Reinforcements: on", func():
 		G.reinforce = not G.reinforce
 		btn_reinf.text = "Reinforcements: " + ("on" if G.reinforce else "off"))
-	side.add_child(btn_reinf)
-	side.add_child(_button("Slow-mo (T)", func(): Engine.time_scale = 0.25 if Engine.time_scale > 0.5 else 1.0))
-	side.add_child(_button("Pause (P)", func(): get_tree().paused = not get_tree().paused))
-	side.add_child(_button("Battle report (J)", func(): show_report()))
-	side.add_child(_button("Controls (H)", func(): help.visible = true))
+
+var side_list: PanelContainer = null
 
 # ---------------------------------------------------------------- tool dock
 # One panel at the bottom of the screen: tabs along the top, then cards for what you can place,
@@ -370,7 +396,7 @@ const RECRUIT = {
 		"desc": "A radio operator with two riflemen to guard him. Only a man with a radio can call artillery"},
 }
 # call-ins that happen as soon as you pay (no map click needed)
-const INSTANT = ["plough", "technical", "recon", "atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance", "supplytruck", "ammotruck"]
+const INSTANT = ["plough", "technical", "oldtank", "gunbus", "techaa", "recon", "atgun", "heavytank", "paradrop", "heli", "jeep", "motorbike", "halftrack", "armoredcar", "tank", "gunship", "fighter", "bomber", "bridger", "radar", "ambulance", "supplytruck", "ammotruck"]
 
 func _tabs() -> Array:
 	if G.mode == "commander":
@@ -408,7 +434,7 @@ func _cards(t: String) -> Array:
 				else:
 					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], "%d pts" % Support.COSTS[k] + ("" if k in INSTANT else " · click the map")])
 		"armour":
-			for k in ["jeep", "technical", "motorbike", "halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "ambulance", "radar", "bridger"]:
+			for k in ["jeep", "technical", "techaa", "motorbike", "halftrack", "gunbus", "armoredcar", "tank", "oldtank", "heavytank", "plough", "atgun", "ambulance", "radar", "bridger"]:
 				if not Faction.support_ok(0, k) or not Rules.callin_ok(0, k):
 					continue
 				out.append(["sup:" + k, Support.NAMES[k], ("%d pts" % Support.COSTS[k]) if Support.unlocked(0, k) else Support.need_text(k)])
@@ -457,7 +483,7 @@ func _cards(t: String) -> Array:
 func _dock_style(col: Color, border: Color = Color(0, 0, 0, 0)) -> StyleBoxFlat:
 	var sb = StyleBoxFlat.new()
 	sb.bg_color = col
-	sb.set_corner_radius_all(5)
+	sb.set_corner_radius_all(Hud.RADIUS)
 	sb.set_content_margin_all(6)
 	if border.a > 0.0:
 		sb.set_border_width_all(2)
@@ -591,6 +617,9 @@ const SUP_DESC = {
 	"ammotruck": "Park it behind the line: men nearby run to its tailgate to restock. Drive it back to HQ or a supply dump to refill it",
 	"jeep": "Fast, with a mounted machine gun. Good for scouting and harassing infantry",
 	"technical": "A pickup with a heavy machine gun on the back",
+	"techaa": "A technical with twin heavy machine guns: twice the fire, just as thin-skinned",
+	"gunbus": "A lorry with boiler plate welded over it and a cannon on top: the militia's armoured car, slower and softer",
+	"oldtank": "An old tank the militia keep running: sandbags and logs for extra armour, slower and weaker than a modern one",
 	"motorbike": "Very fast and fragile: for getting a man somewhere quickly",
 	"halftrack": "Armoured troop carrier with a machine gun; carries a squad up to the fight",
 	"armoredcar": "Fast armoured car with a cannon; tough against infantry, vulnerable to rockets",
@@ -2809,15 +2838,28 @@ func radio(team: int, text: String) -> void:
 		radio_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		radio_box.alignment = BoxContainer.ALIGNMENT_END
 		root.add_child(radio_box)
-	var l = _label("📻 " + G.TEAM_NAMES[team] + ": " + text if team >= 0 else "📻 " + text, 12, G.team_color(team).lightened(0.5) if team >= 0 else Color(0.9, 0.9, 0.8))
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD
-	l.custom_minimum_size = Vector2(410, 0)
-	radio_box.add_child(l)
+	# a radio line: a dark strip with the side's colour down its edge, the same as the alerts
+	var line = PanelContainer.new()
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.add_theme_stylebox_override("panel", Hud.strip(Hud.BG_SOFT, G.team_color(team).lightened(0.25) if team >= 0 else Hud.MUTED))
+	line.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	var l = RichTextLabel.new()
+	l.bbcode_enabled = true
+	l.fit_content = true
+	l.scroll_active = false
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.custom_minimum_size = Vector2(380, 0)
+	l.add_theme_font_size_override("normal_font_size", Hud.SIZE_SMALL + 1)
+	l.add_theme_font_size_override("bold_font_size", Hud.SIZE_SMALL + 1)
+	var who = ("[b][color=#%s]%s[/color][/b]  " % [G.team_color(team).lightened(0.5).to_html(false), G.TEAM_NAMES[team]]) if team >= 0 else ""
+	l.text = who + "[color=#%s]%s[/color]" % [Hud.TEXT.to_html(false), text.replace("[", "(").replace("]", ")")]
+	line.add_child(l)
+	radio_box.add_child(line)
 	while radio_box.get_child_count() > 6:
 		var c = radio_box.get_child(0)
 		radio_box.remove_child(c)
 		c.queue_free()
-	var wr = weakref(l)
+	var wr = weakref(line)
 	get_tree().create_timer(12.0).timeout.connect(func():
 		var n = wr.get_ref()
 		if n != null:
@@ -3040,7 +3082,10 @@ func _site_act(what: String) -> void:
 			else:
 				show_site(ns)
 		"camo":
-			Build.add_camo(st)
-			message("Camouflage net over the %s" % st["name"])
+			# the net comes rolled up; men have to put it up (it isn't just there)
+			if Build.order_camo(st):
+				message("Camouflage net ordered for the %s: engineers will put it up" % st["name"])
+			else:
+				message("The %s already has a net (or one on the way)" % st["name"])
 	info_key = ""
 	info_t = 0.0

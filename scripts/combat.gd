@@ -421,6 +421,7 @@ static func knife(s, t) -> void:
 # stored ammunition or fuel going up after the first blast: a string of bangs over a few seconds,
 # each one able to set off the next drum, dump or vehicle along
 static func cook_off(p: Vector3, n: int, power: float, spread: float, delay: float = 0.6) -> void:
+	G.bal_add("cook")
 	for k in range(n):
 		var t = G.main.get_tree().create_timer(delay + k * randf_range(0.35, 0.9) + randf() * 0.4, false)
 		t.timeout.connect(func():
@@ -1013,10 +1014,11 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 		if dv < R * 1.2:
 			v.take_damage(300.0 * power * (1.0 - dv / (R * 1.2)) * (0.3 if v.spec["tracked"] else 1.0), owner_s, pos)
 			# a big blast right beside a light vehicle throws it over (if it's still in one piece)
-			if not v.dead and not v.spec["tracked"] and power >= 0.9 and dv < R * 0.55 and v.can_flip() and randf() < 0.45 * power:
+			if not v.dead and not v.spec["tracked"] and power >= 1.0 and dv < R * 0.45 and v.can_flip() and randf() < 0.3 * power:
 				var side = G.flat(v.pos - pos)
 				var rgt = Vector3(v.forward().z, 0, -v.forward().x)
 				v.hit_from = pos
+				G.bal_add("flip_blast")
 				v.flip_over(signf(side.dot(rgt)) * -1.0, randf() < 0.3, "blast")
 	for s in G.soldiers:
 		if s.state == "riding" and s.hidden_in_vehicle:

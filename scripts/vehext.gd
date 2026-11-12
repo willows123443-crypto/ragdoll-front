@@ -1017,9 +1017,17 @@ static func medevac(v, dt: float):
 
 # the command truck parks well behind the line
 static func radar_spot(v) -> Vector3:
+	# a little way out in front of HQ toward the fight, never back into the hills at the map's edge
 	var home: Vector3 = G.world.spawn[v.team]
 	var r: Vector3 = G.world.rally_point(v.team)
-	return home.lerp(r, 0.5) + G.flat(home - Build._objective(v.team)).normalized() * 10.0
+	var obj: Vector3 = Build._objective(v.team)
+	var p = home.lerp(r, 0.5)
+	if G.dist2d(r, home) < 20.0:
+		p = home + G.flat(obj - home).normalized() * minf(40.0, G.dist2d(obj, home) * 0.3)
+	var b: Rect2 = G.world.bounds.grow(-25.0)
+	p.x = clampf(p.x, b.position.x, b.end.x)
+	p.z = clampf(p.z, b.position.y, b.end.y)
+	return G.main._free_spot(p)
 
 # while it's running, the command truck tracks every enemy within a wide radius for the whole team
 # The command truck sets up as a command post whenever it's parked a few seconds: the aerial goes up
@@ -1236,7 +1244,20 @@ static func ground_tick(v, dt: float, thr: float) -> void:
 	var w = 0.52 if tracked2 else (0.12 if v.kind == "motorbike" else 0.24)
 	var rear = v.pos - f * v.spec["len"] * 0.32 * signf(v.speed)
 	var xs = [0.0] if v.kind == "motorbike" else [-half, half]
-	if near and not G.world.in_water(rear.x, rear.z):
+	# a vehicle sawing back and forth over the same few metres doesn't keep laying track on track
+	# (it built up into a black smear): skip a mark where this one has just left one
+	var recent: Array = v.get_meta("marks_at", [])
+	var dup = false
+	for q in recent:
+		if q.distance_squared_to(rear) < 0.5 * 0.5:
+			dup = true
+			break
+	if not dup:
+		recent.append(rear)
+		if recent.size() > 40:
+			recent.pop_front()
+		v.set_meta("marks_at", recent)
+	if near and not dup and not G.world.in_water(rear.x, rear.z):
 		for x in xs:
 			G.fx.track_mark(rear + right * x, f, w, step + 0.12, tracked2)
 	G.world.flatten_grass(v.pos, v.spec["wid"] * 0.5 + 0.2, f, 300.0)

@@ -100,20 +100,13 @@ func alert(key: String, text: String, p: Vector3, cd: float = 25.0, col: Color =
 	b.focus_mode = Control.FOCUS_NONE
 	b.text = "  " + text
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	b.add_theme_font_size_override("font_size", 13)
-	var sb = StyleBoxFlat.new()
-	sb.bg_color = Color(0.1, 0.1, 0.1, 0.85)
-	sb.border_color = col
-	sb.border_width_left = 4
-	sb.set_corner_radius_all(4)
-	sb.content_margin_left = 6
-	sb.content_margin_top = 4
-	sb.content_margin_bottom = 4
+	b.add_theme_font_size_override("font_size", Hud.SIZE_BODY - 1)
+	var sb = Hud.strip(Hud.BG, col)
 	b.add_theme_stylebox_override("normal", sb)
 	var sh = sb.duplicate()
-	sh.bg_color = Color(0.2, 0.2, 0.2, 0.95)
+	sh.bg_color = Color(0.16, 0.17, 0.18, 0.95)
 	b.add_theme_stylebox_override("hover", sh)
-	b.add_theme_color_override("font_color", Color(1, 1, 1))
+	b.add_theme_color_override("font_color", Hud.TEXT)
 	b.tooltip_text = "Click to go there (Space: the latest alert)"
 	b.pressed.connect(func(): _jump(p))
 	alerts_box.add_child(b)
@@ -221,6 +214,7 @@ func _draw() -> void:
 	if not active():
 		return
 	_order_icons()
+	_truck_tags()
 	_minimap(mm_rect)
 	_hover_bar()
 	_income()
@@ -329,11 +323,24 @@ func _minimap(r: Rect2) -> void:
 			continue
 		var p6 = _w2m(pg[0], r, b)
 		draw_arc(p6, 4.0 + age2 * 7.0, 0, TAU, 20, Color(1, 0.2, 0.15, 1.0 - age2 / 2.5), 2.0)
-	# what the camera is looking at
-	var fc = _w2m(G.pc.rts_focus, r, b)
-	var half = G.pc.rts_dist * 0.75
-	var vsz = Vector2(half * 1.6 / b.size.x, half / b.size.y) * r.size
-	draw_rect(Rect2(fc - vsz * 0.5, vsz), Color(1, 1, 1, 0.75), false, 1.5)
+	# what the camera is looking at: the patch of ground the screen's corners fall on, turned with the
+	# camera, and kept inside the map's frame
+	var cam = get_viewport().get_camera_3d()
+	if cam != null:
+		var vs = get_viewport().get_visible_rect().size
+		var gy: float = G.pc.rts_focus.y
+		var pts = PackedVector2Array()
+		for sc in [Vector2(0, 0), Vector2(vs.x, 0), Vector2(vs.x, vs.y), Vector2(0, vs.y)]:
+			var o = cam.project_ray_origin(sc)
+			var d = cam.project_ray_normal(sc)
+			var t = 260.0
+			if d.y < -0.02:
+				t = minf(260.0, (gy - o.y) / d.y)
+			var w: Vector3 = o + d * t
+			var m = _w2m(w, r, b)
+			pts.append(Vector2(clampf(m.x, r.position.x, r.end.x), clampf(m.y, r.position.y, r.end.y)))
+		pts.append(pts[0])
+		draw_polyline(pts, Color(1, 1, 1, 0.8), 1.5)
 	draw_rect(r, Color(0, 0, 0, 0.9), false, 2.0)
 	draw_string(font, r.position + Vector2(5, 14), "MAP · click to look", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.55))
 
@@ -429,6 +436,55 @@ func _income() -> void:
 # ---------------------------------------------------------------- what each squad's been told to do
 # a small badge over each of your squads: a shield (holding / in cover), an arrow (moving, charging,
 # falling back), a crosshair (attack-move), chevrons (following); readable when zoomed right out
+# what each supply truck is doing, over the truck: loading at HQ (with a bar), driving out to a dump,
+# unloading (with a bar), heading back; and a dotted line on the ground to where it's going
+func truck_state(v) -> Array:
+	var m = v.mission
+	if m == null or m.get("type", "") != "supply":
+		var lt = v.get_meta("load_t", 0.0) if v.has_meta("load_t") else 0.0
+		if lt > G.sim_time:
+			return ["Loading at HQ", 1.0 - (lt - G.sim_time) / Logistics.LOAD_TIME, Color(0.95, 0.8, 0.35), null]
+		if v.cmd != null and G.dist2d(v.cmd, v.pos) > 8.0:
+			return ["Driving", -1.0, Color(0.8, 0.85, 0.9), v.cmd]
+		return ["Loaded · waiting for a dump to supply", -1.0, Color(0.75, 0.78, 0.72), null]
+	var st = m.get("site")
+	var nm = st["name"].to_lower() if st != null else "dump"
+	match int(m["stage"]):
+		0:
+			return ["Taking supplies to the %s · %dm" % [nm, int(G.dist2d(v.pos, m["drop"]))], -1.0, Color(0.55, 0.85, 1.0), m["drop"]]
+		1:
+			return ["Unloading", 1.0 - clampf(m["wait"] / 6.0, 0.0, 1.0), Color(0.45, 0.9, 0.45), null]
+	return ["Heading back to HQ to load up", -1.0, Color(0.8, 0.85, 0.9), m.get("exit")]
+
+func _truck_tags() -> void:
+	var cam = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	for v in G.vehicles:
+		if v.dead or v.team != 0 or v.kind != "supplytruck":
+			continue
+		var stt = truck_state(v)
+		var top: Vector3 = v.pos + Vector3(0, 3.6, 0)
+		if cam.is_position_behind(top):
+			continue
+		var sp = cam.unproject_position(top)
+		var txt: String = stt[0]
+		var w = font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 16.0
+		var box = Rect2(sp.x - w * 0.5, sp.y - 22.0, w, 18.0 + (5.0 if stt[1] >= 0.0 else 0.0))
+		draw_style_box(Hud.pill(Color(0.06, 0.07, 0.08, 0.82), stt[2]), box)
+		draw_string(font, box.position + Vector2(8, 13), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, stt[2])
+		if stt[1] >= 0.0:
+			var br = Rect2(box.position.x + 8, box.end.y - 6, w - 16, 3)
+			draw_rect(br, Color(0, 0, 0, 0.6))
+			draw_rect(Rect2(br.position, Vector2(br.size.x * clampf(stt[1], 0.0, 1.0), 3)), stt[2])
+		# where it's headed: a dotted line along the ground
+		if stt[3] != null and not cam.is_position_behind(stt[3]):
+			var a = cam.unproject_position(v.pos + Vector3(0, 0.3, 0))
+			var b2 = cam.unproject_position(stt[3])
+			var n = int(a.distance_to(b2) / 10.0)
+			for k in range(0, n, 2):
+				draw_line(a.lerp(b2, float(k) / maxf(n, 1)), a.lerp(b2, float(k + 1) / maxf(n, 1)), Color(stt[2].r, stt[2].g, stt[2].b, 0.55), 2.0)
+
 func _order_icons() -> void:
 	var cam: Camera3D = G.pc.cam
 	for q in G.squads:

@@ -1558,6 +1558,14 @@ func destroy_col(c, depth: int = 0) -> void:
 		g["xforms"][r[1]] = zero
 		if g["mm"]:
 			g["mm"].set_instance_transform(r[1], zero)
+	if c.has_meta("quiet"):
+		if c.has_meta("cps"):
+			for cp in c.get_meta("cps"):
+				if cp.owner_s != null and is_instance_valid(cp.owner_s):
+					cp.owner_s.cover = null
+					cp.owner_s.in_cover = false
+				cover.erase(cp)
+		return
 	if c.has_meta("tree"):
 		_tree_down(c)
 	_ladder_check(c)
@@ -1623,6 +1631,42 @@ func _splinter(c) -> void:
 				var pz = mid.z + randf_range(-ext.z, ext.z) * 0.45
 				add_box(px, y0 + 0.01 * k, pz, randf_range(0.12, 0.2), 0.04, randf_range(0.5, 1.1), wc.darkened(randf_range(0.05, 0.2)), {"collide": false, "ry": randf_range(0, 3)}))).call_deferred()
 
+# building over trees, hedges and bushes clears them away (quietly: no falling, no splinters); walls,
+# houses and anything else that was already on the map are left alone
+func is_vegetation(c) -> bool:
+	return c.has_meta("tree") or c.has_meta("log") or c.prop == 2
+
+func clear_vegetation(cx: float, cz: float, hw: float, hd: float) -> void:
+	for c in cols_in_rect(cx - hw, cz - hd, cx + hw, cz + hd):
+		if c.alive and is_vegetation(c) and c.hi.x > cx - hw and c.lo.x < cx + hw and c.hi.z > cz - hd and c.lo.z < cz + hd:
+			c.set_meta("quiet", true)
+			destroy_col(c)
+	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
+	for i in range(bushes.size() - 1, -1, -1):
+		var b = bushes[i]
+		if absf(b["x"] - cx) < hw + b["r"] * 0.6 and absf(b["z"] - cz) < hd + b["r"] * 0.6:
+			for r in b["vis"]:
+				if r[1] == -2:
+					if is_instance_valid(r[0]):
+						r[0].queue_free()
+					continue
+				var g = r[0]
+				g["xforms"][r[1]] = zero
+				if g["mm"]:
+					g["mm"].set_instance_transform(r[1], zero)
+			bushes.remove_at(i)
+	flatten_grass(Vector3(cx, ground_y(cx, cz), cz), maxf(hw, hd), Vector3.ZERO, 99999.0)
+
+# solid ground to build on: like inside_any, but trees, hedges and bushes don't count (they get cleared)
+func blocked_for_building(x: float, z: float, r: float) -> bool:
+	var y = ground_y(x, z)
+	for c in cell_at(x, z):
+		if not blocks_at(c, y) or is_vegetation(c):
+			continue
+		if x > c.lo.x - r and x < c.hi.x + r and z > c.lo.z - r and z < c.hi.z + r:
+			return true
+	return false
+
 # a roof hit hard enough falls in: slabs of tiles and beams crash down into the rooms, the dust boils
 # out of the windows, and anyone upstairs under it is hurt
 func _roof_cave(c) -> void:
@@ -1670,6 +1714,7 @@ func fuel_drums(x: float, z: float, n: int) -> void:
 		dc.set_meta("boom", 0.75)
 
 func _drum_blow(c) -> void:
+	G.bal_add("drum")
 	var p = (c.lo + c.hi) * 0.5
 	var pw: float = c.get_meta("boom")
 	var t = G.main.get_tree().create_timer(randf_range(0.15, 0.6), false)
@@ -2860,6 +2905,7 @@ func _tree_stump(x: float, z: float, sh: float, trunk: Color) -> void:
 
 # the crash: dust, a thump, anyone underneath knocked flat (or worse), and the log left lying
 func _tree_landed(x: float, z: float, h: float, sh: float, dir: Vector3, dead: bool, trunk: Color) -> void:
+	G.bal_add("tree")
 	var L = maxf(1.5, h - sh)
 	var base = Vector3(x, ground_y(x, z), z)
 	var tip = base + dir * (L + 0.5)
@@ -2913,9 +2959,14 @@ func live_tree(x: float, z: float) -> void:
 	tc.set_meta("tree", h)
 
 # a rounded bush clump (visual only)
+var bushes: Array = []     # {"x", "z", "r", "vis"}: so building on top of one can clear it away
+
 func bush(x: float, z: float, sc: float = 1.0) -> void:
 	if on_road(x, z) or on_road(x + 1.2, z) or on_road(x - 1.2, z) or on_road(x, z + 1.2) or on_road(x, z - 1.2):
 		return
+	var track = piece == null
+	if track:
+		piece_start()
 	var cl = [Color(0.26, 0.33, 0.17), Color(0.3, 0.37, 0.2), Color(0.23, 0.3, 0.15), Color(0.33, 0.38, 0.19)]
 	# a mound of leafy clumps: big ones low down, smaller ones piled on top and out at the sides
 	var n = rng.randi_range(4, 6)
@@ -2931,6 +2982,9 @@ func bush(x: float, z: float, sc: float = 1.0) -> void:
 	for i in range(3):
 		var a2 = rnd(0.0, TAU)
 		add_box(x + cos(a2) * 0.35 * sc, 0.0, z + sin(a2) * 0.35 * sc, 0.05, 0.45 * sc, 0.05, Color(0.24, 0.19, 0.13), {"collide": false, "rx": rnd(-0.4, 0.4), "rz": rnd(-0.4, 0.4)})
+	if track:
+		bushes.append({"x": x, "z": z, "r": 1.2 * sc, "vis": piece})
+		piece = null
 
 func skyline(colors: Array, hmin: float, hmax: float) -> void:
 	return
@@ -3919,6 +3973,7 @@ func begin_edit(m: Dictionary) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
+	bushes = []
 	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; wall_marks = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]

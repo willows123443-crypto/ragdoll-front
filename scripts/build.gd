@@ -174,6 +174,10 @@ static func place(kind: String, team: int, p: Vector3, front: Vector3, instant: 
 	# structures are axis-aligned: pick the axis the front faces along
 	var ax = absf(f.z) >= absf(f.x)          # true: front is +-z, length runs along x
 	var fs = signf(f.z) if ax else signf(f.x)
+	# trees, hedges and bushes on the spot are cleared away first
+	var fsz: Vector2 = KINDS[kind]["size"]
+	var ext = maxf(fsz.x, fsz.y) * 0.5 + 0.6
+	G.world.clear_vegetation(p.x, p.z, ext, ext)
 	var root = Node3D.new()
 	G.world.geo_root.add_child(root)
 	var st = {"kind": kind, "team": team, "p": Vector3(p.x, G.world.ground_y(p.x, p.z), p.z), "ax": ax, "fs": fs,
@@ -1355,7 +1359,7 @@ static func clear_at(p: Vector3, kind: String, relaxed: bool = false) -> bool:
 		for iz in range(-2, 3):
 			var x = p.x + ix * r * 0.5
 			var z = p.z + iz * r * 0.5
-			if G.world.inside_any(x, z, 0.4) or G.world.in_water(x, z) or (G.world.on_road(x, z) and not relaxed):
+			if G.world.blocked_for_building(x, z, 0.4) or G.world.in_water(x, z) or (G.world.on_road(x, z) and not relaxed):
 				return false
 			if absf(G.world.ground_y(x, z) - g0) > (1.6 if not relaxed else 2.6):
 				return false

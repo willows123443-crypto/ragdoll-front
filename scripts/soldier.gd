@@ -491,7 +491,7 @@ func _kit(vest: Material, helm: Material) -> void:
 		_detail(parts[2], unit_box, Vector3(e * 0.127, -0.02, -0.03), helm, Vector3(0.012, 0.16, 0.014))
 	# magazine pouches on the chest
 	for k in range(3):
-		_detail(parts[1], unit_box, Vector3((k - 1) * 0.095, -0.02, -0.27), pouch, Vector3(0.075, 0.1, 0.035))
+		_detail(parts[1], unit_box, Vector3((k - 1) * 0.09, -0.02, -0.19), pouch, Vector3(0.07, 0.09, 0.035))
 	# collar
 	_detail(parts[1], unit_box, Vector3(0, 0.25, -0.02), _mat("collar" + G.TEAM_UNI[team].to_html(), G.TEAM_UNI[team].darkened(0.12), false), Vector3(0.26, 0.05, 0.2))
 
@@ -534,29 +534,29 @@ func drop_helmet() -> void:
 func _helmet_parts(head: Node3D, helm: Material, band: Material, cloth: Material) -> void:
 	# The heads are boxes, so the helmets are shells shaped to fit them: a rounded-off square crown sitting
 	# down over the top of the head, just clear of the brows, with each side's own brim or skirt.
-	var by = 0.075
-	var bs = 0.306
+	var by = 0.08
+	var bs = 0.296
 	match team % 4:
-		0:  # a deep, rounded crown with a narrow rolled rim all the way round
-			_hbox(head, Vector3(0.3, 0.13, 0.3), Vector3(0, 0.106, 0.004), helm, 0.052)
-			_hbox(head, Vector3(0.326, 0.018, 0.326), Vector3(0, 0.045, 0.004), helm, 0.008)
-		1:  # a higher crown, a short peak over the eyes, and a skirt flaring out over the ears and the back of the neck
-			_hbox(head, Vector3(0.29, 0.145, 0.3), Vector3(0, 0.112, 0.01), helm, 0.055)
-			_hbox(head, Vector3(0.26, 0.016, 0.05), Vector3(0, 0.05, -0.15), helm, 0.006, Vector3(0.28, 0, 0))
-			_hbox(head, Vector3(0.27, 0.08, 0.018), Vector3(0, 0.03, 0.163), helm, 0.006, Vector3(-0.38, 0, 0))
+		0:  # a deep, well-rounded steel pot that comes down over the sides, with a narrow rolled rim
+			_hbox(head, Vector3(0.292, 0.17, 0.298), Vector3(0, 0.122, 0.004), helm, 0.075)
+			_hbox(head, Vector3(0.312, 0.016, 0.318), Vector3(0, 0.042, 0.004), helm, 0.007)
+		1:  # a high crown, a short peak over the eyes, and a skirt flaring out over the ears and the back of the neck
+			_hbox(head, Vector3(0.288, 0.175, 0.298), Vector3(0, 0.125, 0.01), helm, 0.072)
+			_hbox(head, Vector3(0.25, 0.016, 0.05), Vector3(0, 0.05, -0.15), helm, 0.006, Vector3(0.28, 0, 0))
+			_hbox(head, Vector3(0.26, 0.075, 0.018), Vector3(0, 0.035, 0.16), helm, 0.006, Vector3(-0.38, 0, 0))
 			for e in [-1.0, 1.0]:
-				_hbox(head, Vector3(0.018, 0.075, 0.22), Vector3(e * 0.152, 0.032, 0.035), helm, 0.006, Vector3(0, 0, e * 0.36))
-		2:  # a shallow bowl on top of the head with a wide flat brim
-			_hbox(head, Vector3(0.27, 0.085, 0.27), Vector3(0, 0.16, 0.0), helm, 0.038)
-			_hbox(head, Vector3(0.42, 0.014, 0.42), Vector3(0, 0.122, 0.0), helm, 0.007)
-			by = 0.135
-			bs = 0.276
+				_hbox(head, Vector3(0.018, 0.07, 0.21), Vector3(e * 0.148, 0.036, 0.035), helm, 0.006, Vector3(0, 0, e * 0.36))
+		2:  # a bowl pulled down on the head with a wide flat brim
+			_hbox(head, Vector3(0.28, 0.12, 0.28), Vector3(0, 0.14, 0.0), helm, 0.05)
+			_hbox(head, Vector3(0.38, 0.014, 0.38), Vector3(0, 0.088, 0.0), helm, 0.007)
+			by = 0.1
+			bs = 0.284
 		_:  # a soft field cap with a peak
 			_hbox(head, Vector3(0.268, 0.09, 0.268), Vector3(0, 0.15, 0.0), cloth, 0.03)
 			_hbox(head, Vector3(0.2, 0.014, 0.085), Vector3(0, 0.112, -0.165), cloth, 0.006, Vector3(0.12, 0, 0))
 			by = 0.125
 			bs = 0.274
-	_hbox(head, Vector3(bs, 0.028, bs), Vector3(0, by, 0.004 if team % 4 < 2 else 0.0), band, 0.01)
+	_hbox(head, Vector3(bs, 0.022, bs), Vector3(0, by, 0.004 if team % 4 < 2 else 0.0), band, 0.01)
 
 # a bevelled box (rounded edges), for helmets and the like
 func _hbox(parent: Node3D, size: Vector3, at: Vector3, mat: Material, bevel: float, rot: Vector3 = Vector3.ZERO) -> void:
@@ -612,8 +612,8 @@ func _build_body() -> void:
 	# visuals
 	_mesh(parts[0], Vector3(0.36, 0.22, 0.25), Vector3.ZERO, uni2)
 	_mesh(parts[1], Vector3(0.42, 0.52, 0.24), Vector3.ZERO, uni)
-	_mesh(parts[1], Vector3(0.46, 0.32, 0.3), Vector3(0, 0.06, 0), vest)
-	_mesh(parts[1], Vector3(0.32, 0.3, 0.14), Vector3(0, 0.05, -0.19), vest)
+	_mesh(parts[1], Vector3(0.45, 0.3, 0.27), Vector3(0, 0.06, 0), vest)
+	_mesh(parts[1], Vector3(0.3, 0.26, 0.06), Vector3(0, 0.05, -0.15), vest)
 	_mesh(parts[2], Vector3(0.25, 0.26, 0.25), Vector3.ZERO, sk)
 	# a neck down into the collar, so the head doesn't float above the shoulders
 	_mesh(parts[2], Vector3(0.12, 0.13, 0.12), Vector3(0, -0.185, 0.015), sk)
@@ -625,7 +625,7 @@ func _build_body() -> void:
 	elif not zombie:
 		_helmet(parts[2], helm, band, uni)
 		var pack = _mat("pack" + G.TEAM_VEST[team].to_html(), G.TEAM_VEST[team].darkened(0.18), true)
-		_mesh(parts[1], Vector3(0.3, 0.3, 0.14), Vector3(0, 0.04, 0.19), pack)
+		_mesh(parts[1], Vector3(0.27, 0.28, 0.12), Vector3(0, 0.04, 0.19), pack)
 		_mesh(parts[0], Vector3(0.09, 0.13, 0.08), Vector3(0.17, 0.0, 0.08), _mat("canteen", Color(0.24, 0.26, 0.2), false))
 		_kit(vest, helm)
 	else:
@@ -1476,6 +1476,9 @@ func _lod_far() -> bool:
 	return cam != null and cam.global_position.distance_squared_to(pos) > ld * ld
 
 # a far-off soldier only thinks every other frame: in between, carry the body along so it doesn't stutter
+var glide_off = Vector3.ZERO
+var glide_ph = 0.0
+
 func lod_glide() -> void:
 	if not lod_frozen or hidden_in_vehicle:
 		return
@@ -1483,11 +1486,25 @@ func lod_glide() -> void:
 	if d.length_squared() < 1e-8:
 		return
 	# (always, however far off: skipping it made men stutter along when the commander view was zoomed out)
-	for b in parts:
-		b.global_position += d
+	# the legs keep stepping too, not just the body sliding: move him on, step the walk cycle on, and
+	# pose him, so a walking man looks like he's walking from any height (undone before his next real tick)
+	var dph = Vector2(vel.x, vel.z).length() * (5.0 if prone else 2.3) * G.DT
+	pos += d
+	glide_off += d
+	phase += dph
+	glide_ph += dph
+	_compute_targets()
+	for i in range(parts.size()):
+		parts[i].global_transform = targets[i]
 	# and his rifle with him, not left hanging where it was on the last full update
 	if gun_node != null and gun_body == null and vehicle == null:
 		gun_node.global_position += d
+
+func lod_unglide() -> void:
+	pos -= glide_off
+	phase -= glide_ph
+	glide_off = Vector3.ZERO
+	glide_ph = 0.0
 
 # far-off men don't cast shadows (dozens of little shadow casters were a big part of the frame cost)
 func _far_shadows(on: bool) -> void:
@@ -1679,7 +1696,7 @@ func _class_kit(c: String) -> void:
 			bm.size = Vector3(0.07, 0.62, 0.035)
 			belt.mesh = bm
 			belt.material_override = brass
-			belt.position = Vector3(0, 0.02, -0.2)
+			belt.position = Vector3(0, 0.02, -0.19)
 			belt.rotation.z = 0.75
 			belt.layers = 2
 			parts[1].add_child(belt)
@@ -1692,7 +1709,7 @@ func _class_kit(c: String) -> void:
 		"assault":
 			# grenades hung on the chest straps
 			for k in range(3):
-				_mesh(parts[1], Vector3(0.06, 0.08, 0.06), Vector3((k - 1) * 0.1, 0.12, -0.25), _mat("kgren", Color(0.25, 0.29, 0.2), false))
+				_mesh(parts[1], Vector3(0.06, 0.08, 0.06), Vector3((k - 1) * 0.1, 0.12, -0.2), _mat("kgren", Color(0.25, 0.29, 0.2), false))
 		"sniper", "spotter":
 			# scrim and strips of hessian on the helmet and shoulders break up the outline
 			var hess = [_mat("kh1", Color(0.4, 0.36, 0.24), false), _mat("kh2", Color(0.28, 0.33, 0.18), false)]
@@ -1710,7 +1727,7 @@ func _class_kit(c: String) -> void:
 				(parts[2] if on_head else parts[1]).add_child(m)
 		"officer":
 			# binoculars round the neck and a map case on the hip
-			_mesh(parts[1], Vector3(0.16, 0.07, 0.06), Vector3(0, 0.1, -0.24), _mat("kbino", Color(0.12, 0.12, 0.11), false))
+			_mesh(parts[1], Vector3(0.16, 0.07, 0.06), Vector3(0, 0.1, -0.2), _mat("kbino", Color(0.12, 0.12, 0.11), false))
 			_mesh(parts[0], Vector3(0.05, 0.18, 0.22), Vector3(0.21, -0.04, 0.0), _mat("kcase", Color(0.36, 0.22, 0.12), false))
 
 # a general: gold braid on the cap, shoulder boards and a Sam Browne belt
@@ -2040,11 +2057,11 @@ func give_radio(on: bool) -> void:
 		var cm = CylinderMesh.new()
 		cm.top_radius = 0.004
 		cm.bottom_radius = 0.009
-		cm.height = 1.5
+		cm.height = 0.8
 		cm.radial_segments = 4
 		ant.mesh = cm
 		ant.material_override = dark
-		ant.position = Vector3(0.1, 0.92, -0.03)
+		ant.position = Vector3(0.1, 0.57, -0.03)
 		ant.rotation = Vector3(-0.12, 0, -0.08)
 		radio_pack.add_child(ant)
 		# worn on the back, over the pack
@@ -2444,6 +2461,24 @@ func _exc_tick() -> void:
 
 var _full_mask = true
 
+# a man down (dead, wounded, knocked flat) is a ragdoll and collides with everything again. If he goes
+# down overlapping a vehicle or wreck, the physics shoves him out of it hard enough to throw him across
+# the map: ignore the vehicle he's in for a moment, and never let a limb fly faster than a real fall
+func _ragdoll_guard() -> void:
+	if state == "alive" or parts.is_empty() or parts[0].freeze:
+		return
+	var lim = 7.0
+	for b in parts:
+		var v: Vector3 = b.linear_velocity
+		if v.y > 3.5:
+			v.y = 3.5
+		var h = Vector2(v.x, v.z)
+		if h.length() > lim:
+			h = h.normalized() * lim
+		if v.y < -14.0:
+			v.y = -14.0
+		b.linear_velocity = Vector3(h.x, v.y, h.y)
+
 # Standing men are moved by their own legs, not shoved about by the physics: their limbs don't collide
 # with vehicles, wrecks or flying debris (that's what flung men into the air beside a burnt-out car or
 # when a lorry nudged them). Once they go down they're ragdolls again and land on all of it properly.
@@ -2452,6 +2487,15 @@ func _sync_mask() -> void:
 	if full == _full_mask or parts.is_empty():
 		return
 	_full_mask = full
+	if full and exc_veh == null and vehicle == null:
+		# going down right against a vehicle: don't collide with it for a few seconds
+		for v in G.vehicles:
+			if is_instance_valid(v) and is_instance_valid(v.body) and G.dist2d(v.pos, pos) < v.spec["len"] * 0.5 + 1.2:
+				for b in parts:
+					b.add_collision_exception_with(v.body)
+				exc_veh = v
+				exc_t = G.sim_time + 4.0
+				break
 	for b in parts:
 		if b.collision_layer == G.L_BODY:
 			b.collision_mask = (G.L_WORLD | G.L_BODY | G.L_DEBRIS | G.L_VEH) if full else (G.L_WORLD | G.L_BODY)
@@ -2459,6 +2503,7 @@ func _sync_mask() -> void:
 func tick() -> void:
 	_sync_mask()
 	_exc_tick()
+	_ragdoll_guard()
 	if prone and state == "alive" and vehicle == null:
 		flat_t -= G.DT
 		if flat_t <= 0.0:

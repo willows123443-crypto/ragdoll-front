@@ -7,7 +7,7 @@ extends RefCounted
 # and the points only count when it gets there. Lose the truck on the way and they're lost with it.
 
 const TIME = {"jeep": 18.0, "technical": 16.0, "motorbike": 12.0, "halftrack": 30.0, "armoredcar": 38.0, "tank": 55.0,
-	"heavytank": 75.0, "plough": 60.0, "atgun": 22.0, "ambulance": 18.0, "radar": 32.0, "bridger": 32.0}
+	"heavytank": 75.0, "plough": 60.0, "atgun": 22.0, "ambulance": 18.0, "radar": 32.0, "bridger": 32.0, "oldtank": 50.0, "gunbus": 30.0, "techaa": 18.0}
 const UPGRADES = {
 	"armour": {"name": "Heavier armour", "cost": 30, "time": 60.0, "desc": "vehicles take a third less damage",
 		"long": "every vehicle you have and buy afterwards takes a third less damage from bullets, rockets and shells"},

@@ -55,6 +55,11 @@ var limit = 50
 var started = false
 var attract = false       # the little battle playing behind the title screen
 var builder = false       # battle builder: both armies being set out, holding still until Start
+var bal = {}              # counts of things that happen in a battle, for balance testing
+var win_team = -2
+
+func bal_add(k: String, n: int = 1) -> void:
+	bal[k] = bal.get(k, 0) + n
 var over = false
 var game_time = 0.0
 var view_range = 150.0

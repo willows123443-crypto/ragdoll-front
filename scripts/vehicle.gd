@@ -239,6 +239,12 @@ var cmd = null                 # the commander's move order: drive here and wait
 
 static var mats = {}
 
+const VARIANTS = {
+	"oldtank": {"base": "tank", "spec": {"name": "Old tank", "hp": 1350.0, "speed": 6.0, "accel": 2.8, "turn": 0.75}},
+	"gunbus": {"base": "armoredcar", "spec": {"name": "Gun truck", "hp": 760.0, "speed": 13.0, "accel": 5.0, "bullet": 0.12}},
+	"techaa": {"base": "technical", "spec": {"name": "Twin-gun technical", "hp": 500.0, "rof_k": 0.55}},
+}
+
 static func make(kind_: String, team_: int, p: Vector3, yaw_: float) -> Vehicle:
 	var v = Vehicle.new()
 	if kind_ == "heavytank":
@@ -264,6 +270,14 @@ static func make(kind_: String, team_: int, p: Vector3, yaw_: float) -> Vehicle:
 		ps["speed"] = 6.0
 		v.spec = ps
 		v.set_meta("plough", true)
+	elif VARIANTS.has(kind_):
+		# the militia's own vehicles: a base type that drives and fights the same way, with its own look
+		var vd: Dictionary = VARIANTS[kind_]
+		v.kind = vd["base"]
+		var vs = SPECS[vd["base"]].duplicate(true)
+		vs.merge(vd["spec"], true)
+		v.spec = vs
+		v.set_meta("variant", kind_)
 	else:
 		v.kind = kind_
 		v.spec = SPECS[kind_]
@@ -442,9 +456,16 @@ func _suspension(dt: float) -> void:
 	if not tracked and absf(speed) > 4.0 and can_flip() and G.started:
 		var lean = absf(roll)
 		var lat = absf(yr * speed)
-		var limit = 0.55 if kind in ["jeep", "motorbike", "technical"] else 0.62
-		if (lean > limit and randf() < dt * (lean - limit) * 25.0) or (lat > 14.0 and randf() < dt * (lat - 14.0) * 0.6):
-			flip_over(signf(roll) if lean > limit else -signf(yr), randf() < 0.25, "")
+		var light = kind in ["jeep", "motorbike", "technical"]
+		var limit = 0.6 if light else 0.7
+		var lat_lim = 24.0 if light else 30.0
+		if lean > limit and randf() < dt * (lean - limit) * 6.0:
+			G.bal_add("flip_slope")
+			flip_over(signf(roll), randf() < 0.25, "")
+			return
+		if lat > lat_lim and randf() < dt * (lat - lat_lim) * 0.15:
+			G.bal_add("flip_turn")
+			flip_over(-signf(yr), randf() < 0.25, "")
 			return
 	var tgt_p = clampf(-acc * 0.014 * soft, -0.07, 0.07)
 	var tgt_r = clampf(-yr * speed * 0.012 * soft, -0.06, 0.06)
@@ -600,10 +621,13 @@ func step(dt: float) -> void:
 	# other vehicles: each is a capsule along its length; overlapping capsules push apart
 	var ra = spec["wid"] * 0.5
 	var ha = maxf(0.0, spec["len"] * 0.5 - ra)
+	var gh = ghosting()
 	for o in G.vehicles:
 		if o == self or (o.spec.get("air", false) and o.alt > 3.0) or spec.get("air", false):
 			continue
 		if absf(o.pos.x - np.x) > 14.0 or absf(o.pos.z - np.z) > 14.0:
+			continue
+		if (gh or o.ghosting()) and o.team == team and not o.dead:
 			continue
 		var rb = o.spec["wid"] * 0.5
 		var hb = maxf(0.0, o.spec["len"] * 0.5 - rb)
@@ -816,7 +840,7 @@ func _weapons(dt: float) -> void:
 					burst_cd = randf_range(0.6, 1.4)
 				return
 		if fire_cd <= 0.0:
-			fire_cd = 0.085 if kind != "aagun" else 0.055
+			fire_cd = (0.085 if kind != "aagun" else 0.055) * spec.get("rof_k", 1.0)
 			burst -= 1
 			# a fresh belt every hundred rounds: the gunner opens the cover, lays the belt in and slaps it shut
 			if belt_t > 0.0:
@@ -1289,6 +1313,7 @@ func flip_over(side: float, roof: bool, why: String = "") -> void:
 	if not can_flip():
 		return
 	set_meta("flipped", true)
+	G.bal_add("flip")
 	flip_ang = signf(side if side != 0.0 else 1.0) * (PI if roof else PI * 0.5)
 	flip_base = global_transform
 	flip_rise = 1.6 if roof else spec["wid"] * 0.5
@@ -1814,13 +1839,25 @@ func _ai_drive(dt: float) -> Array:
 		var stand = spec["standoff"]
 		if enemy != null and stand > 0.0:
 			var de = G.dist2d(enemy, pos)
-			# a band either side of each line, so it doesn't flick between backing off, holding and closing in
-			if de < stand * (0.62 if hold_mode == "back" else 0.5):
+			# a band either side of each line, so it doesn't flick between backing off, holding and closing in;
+			# and once it's picked one it sticks with it for a few seconds (the enemy's position keeps moving a
+			# little, and the tank was sawing back and forth on the spot, laying track on track)
+			var hm_locked = G.sim_time < get_meta("hm_t", 0.0)
+			if hm_locked and hold_mode == "hold" and de > stand * 0.42 and de < stand * 1.4:
+				de = stand * 0.8
+			elif hm_locked and hold_mode == "back" and de < stand * 0.9:
+				de = stand * 0.3
+			var was_mode = hold_mode
+			if de < stand * (0.75 if hold_mode == "back" else 0.5):
 				# too close: back away from the enemy
 				hold_mode = "back"
+				if was_mode != "back":
+					set_meta("hm_t", G.sim_time + 4.0)
 				target = pos + G.flat(pos - enemy).normalized() * 15.0
-			elif de < stand * (1.15 if hold_mode == "hold" else 1.0):
+			elif de < stand * (1.25 if hold_mode == "hold" else 1.0):
 				hold_mode = "hold"
+				if was_mode != "hold":
+					set_meta("hm_t", G.sim_time + 5.0)
 				why = "w9"
 				var armour = _armour_near(stand * 1.6) if spec["tracked"] else null
 				if armour != null:
@@ -1940,12 +1977,22 @@ func _ai_drive(dt: float) -> Array:
 					if a < spec["len"] * 0.5 + 1.5:
 						return [minf(r[0], 0.15), r[1]]
 					continue
+				# a man who can't move out of the way (lying down, climbing, carrying someone, you): wait a
+				# little, then find a way round him rather than sit there for ever
+				var fw_t = get_meta("fw_t", 0.0) + dt
+				set_meta("fw_t", fw_t)
+				if fw_t > 3.0:
+					set_meta("fw_t", 0.0)
+					_plan_detour()
 				return [0.0, r[1]]
 	# other vehicles (and wrecks) in the way: steer round them; nose to nose, one of them gives way
 	var lv = Vector3(cos(yaw), 0, -sin(yaw))
 	var dsg = signf(r[0]) if r[0] != 0.0 else 1.0
+	var ghost = ghosting()
 	for o in G.vehicles:
 		if o == self or (o.spec.get("air", false) and o.alt > 3.0):
+			continue
+		if ghost and o.team == team and not o.dead:
 			continue
 		var rel = G.flat(o.pos - pos)
 		var a2 = rel.dot(f) * dsg
@@ -2002,11 +2049,21 @@ func _ai_drive(dt: float) -> Array:
 		prog_p = pos
 		var b = G.world.bounds
 		var outside = pos.x < b.position.x or pos.x > b.end.x or pos.z < b.position.y or pos.z > b.end.y
+		# sitting still for ten seconds when it means to be going somewhere counts as stuck as well
+		if moved < 3.0 and why == "drive" and G.dist2d(goal, pos) > 12.0:
+			stuck_n = maxi(stuck_n, 3)
 		# creeping back and forth a metre at a time counts as stuck too
 		if (moved < 5.0 and stuck_n >= 3) or (outside and moved < 3.0):
 			stuck_n = 0
 			_unwedge()
 			_plan_detour()
+			# jammed in with our own vehicles: for a few seconds it slips past them (it can't
+			# untangle a knot of lorries by reversing and nosing in again)
+			for o in G.vehicles:
+				if o != self and o.team == team and not o.dead and G.dist2d(o.pos, pos) < (spec["len"] + o.spec["len"]) * 0.5 + 6.0:
+					set_meta("ghost_t", G.sim_time + 6.0)
+					G.bal_add("ghost")
+					break
 		elif moved < 5.0 and stuck_n >= 1:
 			_plan_detour()
 		elif moved >= 5.0:
@@ -2014,6 +2071,9 @@ func _ai_drive(dt: float) -> Array:
 	return r
 
 var stuck_n = 0
+
+func ghosting() -> bool:
+	return has_meta("ghost_t") and G.sim_time < float(get_meta("ghost_t"))
 
 # stuck against another vehicle: sort it out between the two instead of both backing up and nosing in
 # again together. A parked one with a driver shuffles out of the road; of two that both want to move,
@@ -2105,10 +2165,22 @@ func _unwedge() -> void:
 	var b = G.world.bounds
 	var best = null
 	var c = Vector3(clampf(pos.x, b.position.x + 6.0, b.end.x - 6.0), 0, clampf(pos.z, b.position.y + 6.0, b.end.y - 6.0))
-	for k in range(30):
-		var a = randf() * TAU
-		var q = c + Vector3(cos(a), 0, sin(a)) * (3.0 + k * 0.6)
+	# look first in the direction it's trying to go (straight on, then fanning out to either side), so
+	# it comes out past whatever had it pinned instead of back where it started
+	var to = G.flat(goal - pos)
+	var ga = atan2(to.z, to.x) if to.length_squared() > 1.0 else randf() * TAU
+	for k in range(36):
+		var fan = [0.0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, PI][k % 8]
+		var a = ga + fan if k < 32 else randf() * TAU
+		var q = c + Vector3(cos(a), 0, sin(a)) * (4.0 + (k / 8) * 3.0)
 		var clear = not G.world.inside_any(q.x, q.z, spec["wid"] * 0.6) and not G.world.in_water(q.x, q.z)
+		# the whole length has to fit there, not just the middle
+		if clear:
+			var fq = Vector3(cos(a), 0, sin(a))
+			for e in [-0.45, 0.45]:
+				var qq = q + fq * spec["len"] * e
+				if G.world.inside_any(qq.x, qq.z, spec["wid"] * 0.5):
+					clear = false
 		for o in G.vehicles:
 			if o != self and G.dist2d(o.pos, q) < (spec["len"] + o.spec["len"]) * 0.5 + 1.0:
 				clear = false
@@ -2117,8 +2189,12 @@ func _unwedge() -> void:
 			break
 	if best == null:
 		return
+	var fa = G.flat(goal - best)
+	if fa.length_squared() > 1.0:
+		yaw = atan2(fa.x, fa.z)
 	pos = Vector3(best.x, _ground(best.x, best.z), best.z)
 	speed = 0.0
+	G.bal_add("unwedge")
 	path = []
 	path_t = 0.0
 	_place(0.0)

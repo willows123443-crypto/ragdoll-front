@@ -76,6 +76,12 @@ func _ready() -> void:
 			_depot_test()
 		if a == "--econtest":
 			_econ_test()
+		if a.begins_with("--hudshot="):
+			_hud_shot(a.substr(10))
+		if a == "--mapinfo":
+			_map_info()
+		if a == "--vstuck":
+			_vstuck()
 		if a == "--vtrace":
 			_vtrace()
 		if a == "--distest":
@@ -114,6 +120,10 @@ func _ready() -> void:
 			_load_test(a.substr(11))
 		if a == "--recruittest":
 			_recruit_test()
+		if a.begins_with("--varshot="):
+			_var_shot(a.substr(10))
+		if a == "--balance":
+			_balance()
 		if a.begins_with("--buildertest="):
 			_builder_test(a.substr(14))
 		if a.begins_with("--physshot="):
@@ -398,6 +408,8 @@ func stop_attract() -> void:
 
 func start_game(o: Dictionary) -> void:
 	G.attract = false
+	G.bal = {}
+	G.win_team = -2
 	# the battle builder: an empty sandbox where both sides are set out by hand
 	var bld = G.ui.builder_next
 	G.ui.builder_next = false
@@ -694,9 +706,12 @@ func _sim_step() -> void:
 				s.lod_glide()
 				continue
 			G.DT = float(every) / 60.0
+			s.lod_unglide()
 			s.tick()
 			G.DT = 1.0 / 60.0
 		else:
+			if s.glide_off != Vector3.ZERO or s.glide_ph != 0.0:
+				s.lod_unglide()
 			s.tick()
 	var tc = Time.get_ticks_usec()
 	prof[0] += tb - ta
@@ -750,6 +765,7 @@ func on_kill(_s, _attacker) -> void:
 func end_game(t: int) -> void:
 	if G.over or G.attract:
 		return
+	G.win_team = t
 	if OS.get_cmdline_user_args().has("--enddbg"):
 		print("ENDGAME team ", t, " at ", G.sim_time, " ", get_stack())
 	G.over = true
@@ -2564,6 +2580,96 @@ func _vtrace() -> void:
 				v.why, str(v.cmd != null), str(v.mission.get("type", "") if v.mission != null else "-"), str(v.detour != null), str(v.driver() != null)])
 	get_tree().quit()
 
+# the commander HUD: supply trucks with their status, the menu dropped down, radio and alerts
+func _hud_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.3)
+	start_game({"map": _arg("map", "field"), "mode": "commander", "size": 10, "limit": 999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	await _wait(1.0)
+	var h = Build.hq(0)
+	var dump = Build.find_spot(h["p"] + G.flat(G.world.capture - h["p"]).normalized() * 50.0, "supply", 15.0, 30, true)
+	if dump != null:
+		Build.place("supply", 0, dump, G.flat(G.world.capture - dump), true)
+	Support.points[0] += 30
+	Support.call_in(0, "supplytruck", h["p"])
+	await _wait(float(_arg("secs", "30")))
+	var trucks = G.vehicles.filter(func(v): return v.kind == "supplytruck" and v.team == 0 and not v.dead)
+	var at: Vector3 = trucks[0].pos if not trucks.is_empty() else h["p"]
+	G.pc.rts_focus = at
+	G.pc.rts_dist = 45.0
+	G.ui.radio(0, "Supply truck heading for the supply dump at B4")
+	G.ui.cmdhud.alert("test", "Second squad pinned", at, 1.0, Hud.WARN)
+	await _wait(1.0)
+	print("HUDSHOT trucks ", trucks.size(), " states ", trucks.map(func(v): return G.ui.cmdhud.truck_state(v)[0]))
+	await _snap(dir, "commander_hud")
+	G.ui.side_list.visible = true
+	await _wait(0.3)
+	await _snap(dir, "menu_open")
+	get_tree().quit()
+
+# how fair a map is: each side's distance to the points, and how much cover lies on each half
+func _map_info() -> void:
+	await _wait(0.3)
+	for m in _arg("maps", "field,valley,town,river").split(","):
+		start_game({"map": m, "mode": "capture", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+		await _wait(0.3)
+		var line = "MAPINFO %s spawn0 (%.0f,%.0f) spawn1 (%.0f,%.0f) rally0 (%.0f,%.0f) rally1 (%.0f,%.0f) |" % [m, G.world.spawn[0].x, G.world.spawn[0].z, G.world.spawn[1].x, G.world.spawn[1].z,
+			G.world.rally_point(0).x, G.world.rally_point(0).z, G.world.rally_point(1).x, G.world.rally_point(1).z]
+		for pt in Obj.points:
+			line += " %s d0=%.0f d1=%.0f |" % [pt["name"], G.dist2d(pt["p"], G.world.spawn[0]), G.dist2d(pt["p"], G.world.spawn[1])]
+		var cov = [0, 0]
+		var mid: Vector3 = (G.world.spawn[0] + G.world.spawn[1]) * 0.5
+		var ax = G.flat(G.world.spawn[1] - G.world.spawn[0]).normalized()
+		for cp in G.world.cover:
+			cov[0 if G.flat(cp.p - mid).dot(ax) < 0.0 else 1] += 1
+		line += " cover %d/%d" % [cov[0], cov[1]]
+		print(line)
+	get_tree().quit()
+
+# vehicles that want to go somewhere but haven't moved for 20 s: where, why, and what's around them
+func _vstuck() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(int(_arg("seed", "5")))
+	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "commander"), "size": 12, "limit": 999, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2})
+	await _wait(0.5)
+	var hist = {}
+	var episodes = 0
+	var seen = {}
+	for k in range(int(_arg("n", "60"))):
+		await _wait(5.0)
+		for v in G.vehicles:
+			if v.dead or v.spec.get("air", false) or v.spec.get("static", false) or v.driver() == null:
+				continue
+			var id = v.get_instance_id()
+			var h: Array = hist.get(id, [])
+			h.append(v.pos)
+			if h.size() > 4:
+				h.pop_front()
+			hist[id] = h
+			var wants = v.why in ["drive", "convoy"]
+			if h.size() == 4 and h[0].distance_to(h[3]) < 3.0 and wants:
+				var key = "%d_%d" % [id, int(v.pos.x / 5.0) * 1000 + int(v.pos.z / 5.0)]
+				if seen.has(key):
+					continue
+				seen[key] = true
+				episodes += 1
+				var near = []
+				for o in G.vehicles:
+					if o != v and G.dist2d(o.pos, v.pos) < 10.0:
+						near.append("%s%s(%.0fm)" % [o.kind, "X" if o.dead else "", G.dist2d(o.pos, v.pos)])
+				var b: Rect2 = G.world.bounds
+				var edge = minf(minf(v.pos.x - b.position.x, b.end.x - v.pos.x), minf(v.pos.z - b.position.y, b.end.y - v.pos.z))
+				print("VSTUCK t%d %s T%d at (%.0f,%.0f) why=%s mis=%s stage=%s cmd=%s goal_d=%.0f edge=%.0f inside=%s road=%s near=%s stuck_n=%d det=%s" % [
+					int(G.sim_time), v.kind, v.team, v.pos.x, v.pos.z, v.why, str(v.mission.get("type", "") if v.mission != null else "-"),
+					str(v.mission.get("stage", -1) if v.mission != null else -1), str(v.cmd != null), G.dist2d(v.goal, v.pos),
+					edge, str(G.world.inside_any(v.pos.x, v.pos.z, 1.0)), str(G.world.on_road(v.pos.x, v.pos.z)), ",".join(near), v.stuck_n, str(v.detour != null)] + " thr=%s yield=%.1f rev=%.1f fw=%.1f spd=%.2f hold=%s friends_front=%d" % [str(v._drive_cache), v.yield_t, v.reverse_t, v.get_meta("fw_t", 0.0), v.speed, v.hold_mode,
+					G.soldiers.filter(func(sx): return sx.team == v.team and sx.state == "alive" and sx.vehicle == null and G.dist2d(sx.pos, v.pos + v.forward() * 4.0) < 4.0).size()])
+	print("VSTUCK episodes ", episodes, " vehicles ", G.vehicles.size())
+	get_tree().quit()
+
 # troops getting off a truck: where each man is, what he's doing and how fast, for a few seconds afterwards
 func _dis_test() -> void:
 	await _wait(0.5)
@@ -2683,6 +2789,59 @@ func _at_test(dir: String) -> void:
 	get_tree().quit()
 
 # vehicles with their headlights on at night, from the side, from in front and from above
+# the militia's own vehicles side by side
+func _var_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.3)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false, "factions": ["militia", "army", "army", "army"]})
+	await _wait(0.5)
+	G.pc.force_free = true
+	var c: Vector3 = _free_spot(G.world.capture + Vector3(-20, 0, 0))
+	var k = 0
+	for kind in ["oldtank", "gunbus", "techaa", "technical"]:
+		var v = spawn_vehicle(kind, 0, _free_spot(c + Vector3(k * 9.0, 0, 0)), PI * 0.5, false)
+		print("VARSHOT ", kind, " -> ", v.kind, " ", v.spec["name"], " hp ", v.hp)
+		k += 1
+	await _wait(1.0)
+	await _look(c + Vector3(13.0, 5.0, -14.0), c + Vector3(13.0, 1.0, 0))
+	await _snap(dir, "militia_vehicles")
+	get_tree().quit()
+
+# one AI-vs-AI battle, start to finish (or to a time cap), summed up on one line for balance tuning
+func _balance() -> void:
+	await _wait(0.3)
+	G.settings["ai_side"] = true
+	var mode = _arg("mode", "capture")
+	var seed_ = int(_arg("seed", str(randi())))
+	seed(seed_)
+	G.random_seed = seed_
+	start_game({"map": _arg("map", "field"), "mode": mode, "size": int(_arg("size", "12")), "limit": int(_arg("limit", "150")), "reinforce": true,
+		"armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2, "factions": (_arg("fac", "army,army") + ",army,army").split(",")})
+	var cap = float(_arg("cap", "420"))
+	var t0 = Time.get_ticks_msec()
+	var fuel_dry = {}
+	while not G.over and G.sim_time < cap:
+		await _wait(5.0)
+		for v in G.vehicles:
+			if not v.dead and v.fuel <= 0.0 and not v.spec.get("static", false) and not v.spec.get("air", false):
+				fuel_dry[v.get_instance_id()] = true
+	var k = [0, 0]
+	for s in G.soldiers:
+		if s.state == "dead" and s.team < 2:
+			k[1 - s.team] += 1
+	var vl = [0, 0]
+	for v in G.vehicles:
+		if v.dead and v.team >= 0 and v.team < 2:
+			vl[v.team] += 1
+	var styles = "%s/%s" % [Commander.style_of(0), Commander.style_of(1)]
+	print("BALANCE mode=%s map=%s seed=%d win=%d t=%d real=%ds score=%s kills=%d/%d vlost=%d/%d styles=%s flips=%d(s%d/t%d/b%d) dry=%d cook=%d drums=%d trees=%d feint=%d regroup=%d counter=%d adapt=%d toss=%d stuck=%d losses=%s" % [
+		mode, G.map_id, seed_, G.win_team, int(G.sim_time), (Time.get_ticks_msec() - t0) / 1000, str(G.cap_score if mode != "deathmatch" else G.score),
+		k[0], k[1], vl[0], vl[1], styles, G.bal.get("flip", 0), G.bal.get("flip_slope", 0), G.bal.get("flip_turn", 0), G.bal.get("flip_blast", 0), fuel_dry.size(), G.bal.get("cook", 0), G.bal.get("drum", 0), G.bal.get("tree", 0),
+		Commander.events["feint"], Commander.events["regroup"], Commander.events["counter"], Ops.events.get("adapt", 0), G.bal.get("toss", 0), _stuck_count(), str(Ops.losses.slice(0, 2)).replace(" ", "")])
+	get_tree().quit()
+
 # the battle builder: squads put down for both sides hold still, then fight once Start is pressed
 func _builder_test(dir: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)

@@ -7,18 +7,18 @@ extends RefCounted
 const COSTS = {
 	"artillery": 14, "airstrike": 20, "paradrop": 16, "heli": 20,
 	"jeep": 9, "motorbike": 7, "halftrack": 16, "armoredcar": 24, "tank": 36, "heavytank": 55, "gunship": 40,
-	"fighter": 26, "bomber": 34, "bridger": 16, "radar": 20, "ambulance": 9, "atgun": 14, "recon": 10, "technical": 8, "plough": 30,
+	"fighter": 26, "bomber": 34, "bridger": 16, "radar": 20, "ambulance": 9, "atgun": 14, "recon": 10, "technical": 8, "plough": 30, "oldtank": 30, "gunbus": 18, "techaa": 11,
 	"supplytruck": 12, "ammotruck": 10,
 }
 const NAMES = {
 	"artillery": "Artillery barrage", "airstrike": "Air strike", "paradrop": "Paratroopers", "heli": "Helicopter insertion",
 	"jeep": "Jeep", "motorbike": "Motorbike", "halftrack": "Half-track", "armoredcar": "Armoured car", "tank": "Tank", "gunship": "Gunship (70 s)",
-	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance", "atgun": "Anti-tank gun", "heavytank": "Heavy tank", "recon": "Recon plane (30 s)", "technical": "Technical", "plough": "Mine plough tank",
+	"fighter": "Fighter (90 s)", "bomber": "Dive bomber (90 s)", "bridger": "Bridge layer", "radar": "Command truck", "ambulance": "Ambulance", "atgun": "Anti-tank gun", "heavytank": "Heavy tank", "recon": "Recon plane (30 s)", "technical": "Technical", "plough": "Mine plough tank", "oldtank": "Old tank", "gunbus": "Gun truck", "techaa": "Twin-gun technical",
 	"supplytruck": "Supply truck", "ammotruck": "Ammo truck",
 }
 
 # in commander mode, what has to be built before you can call each one in
-const NEEDS = {"plough": "depot", "technical": "depot", "heavytank": "depot", "jeep": "depot", "motorbike": "depot", "halftrack": "depot", "armoredcar": "depot", "tank": "depot", "ambulance": "hospital",
+const NEEDS = {"plough": "depot", "technical": "depot", "oldtank": "depot", "gunbus": "depot", "techaa": "depot", "heavytank": "depot", "jeep": "depot", "motorbike": "depot", "halftrack": "depot", "armoredcar": "depot", "tank": "depot", "ambulance": "hospital",
 	"radar": "depot", "bridger": "depot", "atgun": "depot", "gunship": "radio", "fighter": "radio", "bomber": "radio", "airstrike": "radio",
 	"paradrop": "radio", "heli": "radio", "recon": "radio"}
 const NEED_NAMES = {"depot": "a vehicle depot", "radio": "a radio mast", "hospital": "a field hospital"}
@@ -246,7 +246,7 @@ static func _ai_spend(t: int) -> void:
 	if broken_bridge and G.armor != "none":
 		opts.append("bridger")
 	if Faction.militia(t):
-		opts = opts.map(func(o): return "technical" if o in ["jeep", "halftrack", "armoredcar", "tank", "heavytank"] else o)
+		opts = opts.map(func(o): return Faction.vehicle_kind(t, o) if o in ["jeep", "halftrack", "armoredcar", "tank", "heavytank"] else o)
 	opts = opts.filter(func(o): return COSTS[o] <= points[t] and unlocked(t, o) and Faction.support_ok(t, o) and Rules.callin_ok(t, o))
 	if opts.is_empty():
 		return
@@ -275,7 +275,7 @@ static func call_in(team: int, what: String, target: Vector3, relay: bool = fals
 		points[team] -= COSTS[what]
 		return Logistics.buy_truck(team)
 	# no radio: the request goes back to HQ with a runner, and is paid for when it gets there
-	if not relay and Comms.hold(team, what, target):
+	if not relay and not (Prod.active() and Prod.is_vehicle(what)) and Comms.hold(team, what, target):
 		return true
 	points[team] -= COSTS[what]
 	if what == "ammotruck":
@@ -411,7 +411,7 @@ static func _step_planes(dt: float) -> void:
 
 # what the AI commander buys: riflemen first, engineers if it has none, AT men against armour,
 # more when it's losing men; capped so it can't flood the map
-const AI_VEH = ["jeep", "halftrack", "armoredcar", "tank", "heavytank", "technical", "motorbike"]
+const AI_VEH = ["jeep", "halftrack", "armoredcar", "tank", "heavytank", "technical", "motorbike"]      # (by kind: the militia's own are these underneath)
 
 static func _ai_vehicle(t: int) -> bool:
 	if G.armor == "none" and not Prod.active():
@@ -427,7 +427,7 @@ static func _ai_vehicle(t: int) -> bool:
 	var enemy_armour = G.vehicles.any(func(v): return v.team != t and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar"))
 	var picks = ["tank", "armoredcar", "halftrack"] if enemy_armour else ["halftrack", "armoredcar", "jeep", "tank"]
 	if Faction.militia(t):
-		picks = ["technical"]
+		picks = ["oldtank", "gunbus", "techaa"] if enemy_armour else ["techaa", "gunbus", "technical", "oldtank"]
 	for k in picks:
 		if COSTS.has(k) and COSTS[k] <= points[t] and unlocked(t, k) and Faction.support_ok(t, k) and Rules.callin_ok(t, k):
 			if call_in(t, k, G.world.capture):

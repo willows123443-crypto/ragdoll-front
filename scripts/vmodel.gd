@@ -283,6 +283,8 @@ static func sandbag_ring(v, parent: Node3D, pts: Array, rows: int, c: Color) -> 
 static func build(v) -> void:
 	_build_main(v)
 	_extras(v)
+	if v.has_meta("variant"):
+		_dress_variant(v, v.get_meta("variant"))
 	if v.heavy:
 		_make_heavy(v)
 
@@ -1181,3 +1183,65 @@ static func _build_main(v) -> void:
 				cyl(v.gun_pivot, 0.15, 0.35, Vector3(0, 0, 3.45), dark, "z", {"seg": 12})
 			else:
 				box(v, v.gun_pivot, Vector3(0.36, 0.22, 0.4), Vector3(0, 0, 3.45), dark, {"b": 0.03})
+
+
+# ---------------------------------------------------------------- the militia's own vehicles
+# Built on a regular chassis, then dressed: patchy paint and rust, welded plates, sandbags, jerrycans,
+# and the black banner flying from a pole
+static func _rust(n: Node, k: float) -> void:
+	for c in n.get_children():
+		if c is MeshInstance3D and c.material_override is StandardMaterial3D and not c.has_meta("mark"):
+			var col: Color = c.material_override.albedo_color
+			var r = randf()
+			var nc = col.lerp(Color(0.42, 0.27, 0.16), k * (0.3 + r * 0.7)) if r < 0.6 else col.lerp(Color(0.5, 0.47, 0.36), k * 0.6)
+			c.material_override = mat(nc.darkened(randf_range(0.0, 0.12)))
+		if c is Node3D and not (c is CPUParticles3D):
+			_rust(c, k)
+
+static func _banner(v, parent: Node3D, at: Vector3) -> void:
+	box(v, parent, Vector3(0.04, 1.6, 0.04), at + Vector3(0, 0.8, 0), Color(0.22, 0.2, 0.18), {"b": 0.005})
+	var fl = box(v, parent, Vector3(0.02, 0.45, 0.7), at + Vector3(0, 1.38, -0.36), Color(0.06, 0.06, 0.06), {"b": 0.005})
+	fl.rotation.y = 0.15
+
+static func _dress_variant(v, var_: String) -> void:
+	var sand = Color(0.62, 0.55, 0.4)
+	var can = Color(0.3, 0.33, 0.2)
+	match var_:
+		"oldtank":
+			_rust(v, 0.55)
+			var L = v.spec["len"]
+			var W = v.spec["wid"]
+			# sandbags piled on the front plate and logs strapped along the sides: field-made armour
+			for k in range(4):
+				var sb = box(v, v, Vector3(0.62, 0.22, 0.38), Vector3(-0.95 + k * 0.63, 1.2, L * 0.5 - 0.55), sand.darkened(randf_range(0.0, 0.15)), {"b": 0.08})
+				sb.rotation.x = -0.35
+			for sx in [-1.0, 1.0]:
+				var lg = box(v, v, Vector3(0.22, 0.22, L * 0.7), Vector3(sx * (W * 0.5 + 0.05), 1.0, 0.0), Color(0.38, 0.28, 0.18), {"b": 0.09})
+				lg.rotation.z = sx * 0.05
+			for k in range(3):
+				box(v, v, Vector3(0.18, 0.34, 0.26), Vector3(-0.5 + k * 0.25, 1.35, -L * 0.5 + 0.3), can, {"b": 0.02})
+			_banner(v, v.turret if v.turret != null else v, Vector3(-0.6, 0.6, -0.6))
+		"gunbus":
+			_rust(v, 0.5)
+			var L2 = v.spec["len"]
+			var W2 = v.spec["wid"]
+			# boiler plate welded on at odd angles over the sides, sandbags round the top
+			for sx in [-1.0, 1.0]:
+				for k in range(3):
+					var pl = box(v, v, Vector3(0.05, 0.85, L2 * 0.27), Vector3(sx * (W2 * 0.5 + 0.04), 1.05 + randf_range(-0.06, 0.06), -L2 * 0.3 + k * L2 * 0.3),
+						Color(0.33, 0.31, 0.28).lerp(Color(0.45, 0.28, 0.16), randf() * 0.6), {"b": 0.01})
+					pl.rotation = Vector3(randf_range(-0.05, 0.05), randf_range(-0.05, 0.05), sx * randf_range(0.04, 0.12))
+			for k in range(5):
+				box(v, v, Vector3(0.5, 0.2, 0.32), Vector3(-1.0 + k * 0.5, 1.95, -0.9), sand.darkened(randf_range(0.0, 0.18)), {"b": 0.07})
+			for k in range(2):
+				box(v, v, Vector3(0.18, 0.34, 0.26), Vector3(W2 * 0.5 + 0.12, 0.95, L2 * 0.2 - k * 0.28), can, {"b": 0.02})
+			_banner(v, v, Vector3(-W2 * 0.5 + 0.2, 1.9, -L2 * 0.5 + 0.3))
+		"techaa":
+			_rust(v, 0.35)
+			# a second barrel beside the first and big ammunition drums on the mount
+			if v.gun_pivot != null:
+				for sx in [-1.0, 1.0]:
+					var br = box(v, v.gun_pivot, Vector3(0.05, 0.05, 1.3), Vector3(sx * 0.13, 0.04, 0.75), Color(0.12, 0.12, 0.12), {"b": 0.01})
+					br.set_meta("barrel", true)
+					box(v, v.gun_pivot, Vector3(0.12, 0.22, 0.22), Vector3(sx * 0.22, -0.05, 0.1), Color(0.25, 0.27, 0.2), {"b": 0.02})
+			_banner(v, v, Vector3(-0.85, 1.2, -2.2))

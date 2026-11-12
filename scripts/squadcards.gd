@@ -14,7 +14,7 @@ func _ready() -> void:
 	add_theme_constant_override("separation", 2)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_preset(Control.PRESET_TOP_LEFT)
-	position = Vector2(192, 12)
+	position = Vector2(118, 12)
 	visible = false
 	head = Button.new()
 	head.focus_mode = Control.FOCUS_NONE
@@ -22,8 +22,8 @@ func _ready() -> void:
 	head.add_theme_font_size_override("font_size", 11)
 	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	var hs = StyleBoxFlat.new()
-	hs.bg_color = Color(0.07, 0.08, 0.09, 0.7)
-	hs.set_corner_radius_all(3)
+	hs.bg_color = Hud.BG_SOFT
+	hs.set_corner_radius_all(Hud.RADIUS)
 	hs.content_margin_left = 6
 	head.add_theme_stylebox_override("normal", hs)
 	head.add_theme_stylebox_override("hover", hs)
@@ -156,9 +156,9 @@ func _card(i: int) -> Dictionary:
 		b.custom_minimum_size = Vector2(CW, 38)
 		b.focus_mode = Control.FOCUS_NONE
 		var sb = StyleBoxFlat.new()
-		sb.bg_color = Color(0.07, 0.08, 0.09, 0.72)
-		sb.set_corner_radius_all(3)
-		sb.border_color = Color(1.0, 0.86, 0.3, 0.0)
+		sb.bg_color = Hud.BG
+		sb.set_corner_radius_all(Hud.RADIUS)
+		sb.border_color = Color(Hud.ACCENT.r, Hud.ACCENT.g, Hud.ACCENT.b, 0.0)
 		sb.set_border_width_all(1)
 		var sh = sb.duplicate()
 		sh.bg_color = Color(0.14, 0.16, 0.17, 0.85)
@@ -249,7 +249,7 @@ func _process(dt: float) -> void:
 		var d = doing(q)
 		c["act"].text = d[0]
 		c["act"].add_theme_color_override("font_color", d[1])
-		c["sb"].border_color = Color(1.0, 0.86, 0.3, 0.95 if sel else 0.0)
+		c["sb"].border_color = Color(Hud.ACCENT.r, Hud.ACCENT.g, Hud.ACCENT.b, 0.95 if sel else 0.0)
 		c["men"].set_meta("q", q)
 		c["men"].queue_redraw()
 		c["b"].tooltip_text = "Squad %d: click to select it and look at it (or press %d)" % [i + 1, i + 1]

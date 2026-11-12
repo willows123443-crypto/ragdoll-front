@@ -1722,6 +1722,7 @@ static func _help_walk(s) -> bool:
 static func toss_mag(s, o) -> void:
 	if s.reserve < s.W["mag"]:
 		return
+	G.bal_add("toss")
 	s.throw_t = 0.45
 	s.body_yaw = atan2(o.pos.x - s.pos.x, o.pos.z - s.pos.z)
 	s.aim_yaw = s.body_yaw

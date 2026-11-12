@@ -276,6 +276,19 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Where's the fighting?** in commander mode press Home (or the button under the map) to jump the camera to the heaviest fighting; press again for the next spot
 - **Battle builder** (title screen): an empty battlefield where you set out squads, vehicles and defences for both sides (defences go up at once, free). Everyone holds still until you press Start the battle, then you watch
 - **Fixed:** "We've lost the radio" messages at the start of a sandbox
+- **Balance pass:** a harness (`--balance`) plays one AI-vs-AI battle and sums it up on one line (winner, kills, vehicles lost, flips, fuel, feints, regroups, adaptations). From a dozen battles across capture, frontline and commander: rollovers were far too common (12 in one battle, mostly lorries flung round turns), so the turn limit is much stricter and blasts flip vehicles less often; no side came out consistently ahead
+- **Simpler HUD:** the column of buttons on the left is now one Menu button that drops down (main menu, pause, slow motion, battle report, controls, reinforcements)
+- **One look for the HUD:** radio messages, alerts, speech bubbles, squad cards, menus and tags all use the same dark rounded panels, colours and text sizes; speech bubbles are dark with the speaker's team colour on the edge
+- **Soldiers re-proportioned:** helmets are deeper and rounder and come down over the head instead of sitting on top like a cap; the chest plate, pouches and pack are slimmer so the men look less boxy
+- **Minimap:** the box showing what the camera sees is now the real patch of ground (turned with the camera) and stays inside the map
+- **Building clears the ground:** putting a structure down clears trees, hedges, bushes and grass where it goes (houses, walls and the rest of the map are left alone), so they no longer block a site
+- **Supply trucks show what they're doing** in commander mode: "Loading at HQ" or "Unloading" with a progress bar, "Taking supplies to the dump · 80m" or "Heading back to HQ", with a dotted line to where they're going
+- **Ragdolls stay put:** a man going down against a vehicle or wreck isn't thrown across the map any more, and no limb can fly faster than a real fall
+- **Distant men walk properly:** far-off men in commander view keep stepping between their updates, so they walk instead of sliding and twitching
+- **Vehicles get unstuck:** a vehicle that means to move but hasn't for ten seconds counts as stuck; when it's jammed in with its own side's vehicles it slips past them for a few seconds; when it's wedged it's moved clear toward where it was going (not back where it came from); a vehicle waiting on a man who can't move goes round him; the command truck no longer tries to drive into the hills behind HQ
+- **No back-and-forth sawing:** a tank holding a firing position sticks with its decision for a few seconds instead of flicking between closing in and backing off, and a vehicle going over the same spot again doesn't lay more track on it
+- **Camo nets always need building:** the Camo button on a structure now orders a net that engineers put up, instead of it appearing at once
+- **Black Banner Militia vehicles:** the militia now field an old tank (sandbags and logs for armour, a black banner on the turret), a gun truck (a lorry with boiler plate welded over it and a cannon) and a twin-gun technical, as well as the technical. In commander mode, vehicles you order now always go into the depot's queue and show their progress, even for the militia (who have no radio: the depot is at home)
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

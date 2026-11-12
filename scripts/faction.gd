@@ -118,7 +118,7 @@ static func rig(s, vest: Material, uni: Material, uni2: Material) -> void:
 	s._detail(s.parts[5], box, Vector3(0, 0.06, 0), band, Vector3(0.14, 0.06, 0.14))
 
 # ---------------------------------------------------------------- vehicles and support
-const MIL_VEH = {"jeep": "technical", "halftrack": "technical", "armoredcar": "technical", "tank": "technical", "heavytank": "technical",
+const MIL_VEH = {"jeep": "technical", "halftrack": "gunbus", "armoredcar": "gunbus", "tank": "oldtank", "heavytank": "oldtank",
 	"radar": "", "atgun": "", "bridger": "", "ambulance": "", "gunship": "", "fighter": "", "bomber": ""}
 
 static func vehicle_kind(t: int, kind: String) -> String:
@@ -128,7 +128,7 @@ static func vehicle_kind(t: int, kind: String) -> String:
 
 static func support_ok(t: int, what: String) -> bool:
 	if not militia(t):
-		return what != "technical"
+		return not (what in ["technical", "oldtank", "gunbus", "techaa"])
 	return not (what in ["airstrike", "paradrop", "heli", "gunship", "fighter", "bomber", "recon", "tank", "heavytank", "armoredcar", "halftrack", "radar", "atgun", "bridger", "ambulance", "jeep", "plough"])
 
 # ---------------------------------------------------------------- the militia's ground

@@ -256,7 +256,7 @@ func _bubbles() -> void:
 		return
 	if bubble_sb == null:
 		bubble_sb = StyleBoxFlat.new()
-		bubble_sb.set_corner_radius_all(7)
+		bubble_sb.set_corner_radius_all(Hud.RADIUS)
 		bubble_sb.set_border_width_all(1)
 	for c in G.fx.callouts:
 		var s = c["s"]
@@ -275,13 +275,16 @@ func _bubbles() -> void:
 		var w = tw + iw + 14.0
 		var r = Rect2(p.x - w * 0.5, p.y - 30.0, w, 21.0)
 		var tc = G.team_color(s.team)
-		bubble_sb.bg_color = Color(0.97, 0.96, 0.92, 0.9 * a)
-		bubble_sb.border_color = Color(tc.r, tc.g, tc.b, 0.9 * a)
+		# the same dark glass as the rest of the HUD, edged in the speaker's team colour
+		var bg = Hud.BG
+		bubble_sb.bg_color = Color(bg.r, bg.g, bg.b, bg.a * a)
+		bubble_sb.border_color = Color(tc.r, tc.g, tc.b, 0.85 * a).lightened(0.3)
 		draw_style_box(bubble_sb, r)
 		# the little tail down to the speaker
-		draw_colored_polygon(PackedVector2Array([Vector2(p.x - 5, r.end.y - 1), Vector2(p.x + 5, r.end.y - 1), Vector2(p.x, r.end.y + 6)]), Color(0.97, 0.96, 0.92, 0.9 * a))
+		draw_colored_polygon(PackedVector2Array([Vector2(p.x - 5, r.end.y - 1), Vector2(p.x + 5, r.end.y - 1), Vector2(p.x, r.end.y + 6)]), Color(bg.r, bg.g, bg.b, bg.a * a))
 		var x = r.position.x + 7.0
+		var tx = Hud.TEXT
 		if icon != "":
-			draw_texture_rect(Icons.get_icon(icon), Rect2(x, r.position.y + 6.0, 17.0, 7.0), false, Color(0.15, 0.15, 0.15, a))
+			draw_texture_rect(Icons.get_icon(icon), Rect2(x, r.position.y + 6.0, 17.0, 7.0), false, Color(Hud.ACCENT.r, Hud.ACCENT.g, Hud.ACCENT.b, a))
 			x += iw
-		draw_string(font, Vector2(x, r.position.y + 15.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.1, 0.1, 0.1, a))
+		draw_string(font, Vector2(x, r.position.y + 15.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(tx.r, tx.g, tx.b, a))

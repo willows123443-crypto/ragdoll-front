@@ -20,7 +20,8 @@ const STYLE_TEXT = {"reckless": "reckless: attacks at once and keeps coming", "c
 static var feints: Array = []       # per side: a feint in progress, or null
 static var feint_cd: Array = []
 static var regroup: Array = []      # per side: the second line it has pulled back to, or null
-static var events = {"feint": 0, "feint_go": 0, "regroup": 0, "counter": 0}
+static var events = {"feint": 0, "feint_go": 0, "regroup": 0, "counter": 0, "form": 0, "assault": 0, "reserve": 0, "reform": 0}
+static var plans: Array = []        # per side: the battle plan in a commander battle: {"phase", "t", "n0", ...}
 
 static func reset() -> void:
 	timers = []
@@ -31,6 +32,7 @@ static func reset() -> void:
 	feints = []
 	feint_cd = []
 	regroup = []
+	plans = []
 	for k in events:
 		events[k] = 0
 	for t in range(G.team_count()):
@@ -42,6 +44,7 @@ static func reset() -> void:
 		feints.append(null)
 		feint_cd.append(randf_range(45.0, 90.0))
 		regroup.append(null)
+		plans.append(null)
 
 static func style_of(t: int) -> String:
 	return style[t] if t >= 0 and t < style.size() else "cunning"
@@ -317,17 +320,123 @@ static func _base_plan(team: int, qs: Array, home: Vector3) -> void:
 	if _try_feint(team, qs, home, targets.map(func(st): return st["p"])):
 		return
 	var mine = Build.hq(team)
-	Ops.plan_lane(team, home, targets[0]["p"])
-	var k = 0
+	var tp: Vector3 = targets[0]["p"]
+	Ops.plan_lane(team, home, tp)
+	# The battle is fought to a plan, not as a stream of squads sent at the enemy as they turn up:
+	#   form up   scouts go forward; the squads gather at a forming-up point short of the enemy, on the
+	#             side he's thinnest, and wait for the scouts' word and for each other
+	#   assault   everyone goes in together behind a barrage: the main body up the middle of that side,
+	#             one squad round the flank, one kept back in reserve
+	#   reserve   goes home if the HQ is threatened, goes in when the attack has lost half its men (or
+	#             has had a minute and a bit to make a gap)
+	#   re-form   an attack that's spent itself is called off and formed up again with whoever's arrived
+	var now = G.sim_time
+	var st = style_of(team)
+	var pl = plans[team]
+	if pl == null:
+		pl = {"phase": "assault" if st == "reckless" else "form", "t": now, "n0": 0, "said": false, "res": "hold"}
+		plans[team] = pl
+	var to = G.flat(tp - home)
+	var D = to.length()
+	to = to / maxf(D, 0.01)
+	var asm: Vector3 = tp - to * minf(95.0, D * 0.55) + Ops.lane_off[team] * 0.8
+	var bnd: Rect2 = G.world.bounds.grow(-8.0)
+	asm.x = clampf(asm.x, bnd.position.x, bnd.end.x)
+	asm.z = clampf(asm.z, bnd.position.y, bnd.end.y)
+	asm = G.main._free_spot(asm)
+	# who does what: with four squads or more one guards the HQ; with three or more in the attack one is the reserve
+	var body: Array = []
+	var guard = null
 	for q in qs:
-		if k % 4 == 3 and mine != null and Build.alive(mine):
-			_assign(q, "defend", mine["p"] + G.flat(targets[0]["p"] - mine["p"]).normalized() * 12.0, home)
+		if guard == null and qs.size() >= 4 and mine != null and Build.alive(mine) and q.get("id", 0) % 4 == 3:
+			guard = q
 		else:
-			var tg = targets[mini(k / 3, targets.size() - 1)]
-			_assign(q, "flank" if k % 3 == 1 else "attack", tg["p"], home)
+			body.append(q)
+	if guard == null and qs.size() >= 4 and mine != null and Build.alive(mine):
+		guard = body.pop_back()
+	if guard != null:
+		_assign(guard, "defend", mine["p"] + G.flat(tp - mine["p"]).normalized() * 12.0, home)
+	var reserve = null
+	for q in body:
+		if q.get("reserve", false):
+			reserve = q
+	if reserve == null and body.size() >= 3 and st != "reckless":
+		var far_d = -1.0
+		for q in body:
+			var L0 = Squad.leader_of(q)
+			var d0 = G.dist2d(L0.pos, tp) if L0 != null else 0.0
+			if d0 > far_d:
+				far_d = d0
+				reserve = q
+		reserve["reserve"] = true
+		pl["res"] = "hold"
+	var alive_n = 0
+	for q in body:
+		if q != reserve:
+			for m in q["members"]:
+				if is_instance_valid(m) and m.state == "alive":
+					alive_n += 1
+	if pl["phase"] == "form":
+		var gathered = 0
+		for q in body:
+			_assign(q, "defend", asm, home)
+			var L1 = Squad.leader_of(q)
+			if L1 != null and G.dist2d(L1.pos, asm) < 38.0:
+				gathered += 1
+		if not pl["said"]:
+			pl["said"] = true
+			events["form"] += 1
+			G.ui.radio(team, "Command: scouts forward. All squads form up at %s and wait for the word" % AI.grid_ref(asm))
+		var scouted = strength(team, tp, 80.0) > 0.0
+		var waited = now - pl["t"]
+		var patience = 55.0 if st == "cunning" else 80.0
+		if (gathered * 10 >= body.size() * 6 and (scouted or waited > patience * 0.6) and waited > 20.0) or waited > patience:
+			pl["phase"] = "assault"
+			pl["t"] = now
+			pl["n0"] = maxi(alive_n, 1)
+			pl["said"] = false
+		else:
+			return
+	# the assault
+	if not pl["said"]:
+		pl["said"] = true
+		pl["n0"] = maxi(alive_n, 1)
+		events["assault"] += 1
+		G.ui.radio(team, "Command: all squads, go! Hit the enemy %s at %s%s" % [targets[0]["name"], AI.grid_ref(tp), (". Reserve, stand by at %s" % AI.grid_ref(asm)) if reserve != null else ""])
+		Ops.coordinated(team, tp, home)
+	var k = 0
+	for q in body:
+		if q == reserve:
+			continue
+		var tg = targets[mini(k / 3, targets.size() - 1)]
+		_assign(q, "flank" if k % 3 == 1 else "attack", tg["p"], home)
 		k += 1
-	G.ui.radio(team, "Command: all squads, hit the enemy %s at %s" % [targets[0]["name"], AI.grid_ref(targets[0]["p"])])
-	Ops.coordinated(team, targets[0]["p"], home)
+	if reserve != null:
+		var threat = strength(team, mine["p"], 55.0) if mine != null and Build.alive(mine) else 0.0
+		if threat >= 3.0 and pl["res"] != "home":
+			pl["res"] = "home"
+			events["reserve"] += 1
+			G.ui.radio(team, "Command: enemy at our HQ! Reserve, back to base and clear them out")
+		elif pl["res"] == "hold" and threat < 3.0 and (alive_n * 100 < pl["n0"] * 55 or now - pl["t"] > 75.0):
+			pl["res"] = "in"
+			events["reserve"] += 1
+			G.ui.radio(team, "Command: reserve, go in. Follow the main body onto %s" % AI.grid_ref(tp))
+		elif pl["res"] == "home" and threat < 1.0:
+			pl["res"] = "hold"
+		match pl["res"]:
+			"home":
+				_assign(reserve, "defend", mine["p"], home)
+			"in":
+				_assign(reserve, "attack", tp, home)
+			_:
+				_assign(reserve, "defend", asm, home)
+	# spent: call it off and form up again
+	if st != "reckless" and now - pl["t"] > 150.0 and alive_n * 100 < pl["n0"] * 40:
+		plans[team] = {"phase": "form", "t": now, "n0": 0, "said": false, "res": "hold"}
+		for q in body:
+			q["reserve"] = false
+		events["reform"] += 1
+		G.ui.radio(team, "Command: the attack's spent. Pull back to %s and form up again" % AI.grid_ref(asm))
 
 # sabotage: raiders split between the targets; defenders guard them and hunt the raiders
 static func _raid_plan(team: int, qs: Array, home: Vector3) -> void:

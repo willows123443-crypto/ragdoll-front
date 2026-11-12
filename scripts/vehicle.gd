@@ -2157,7 +2157,7 @@ var arc_pick: Array = [0.0, 0.0]
 var arc_block = 0.0        # how long every way forward has been shut
 var arc_hold = 0.0         # carrying a reverse through, so it doesn't dither
 
-const ARC_FWD = [[1.0, 0.0], [1.0, 0.45], [1.0, -0.45], [1.0, 1.0], [1.0, -1.0], [0.4, 0.0], [0.4, 1.0], [0.4, -1.0]]
+const ARC_FWD = [[1.0, 0.0], [1.0, 0.2], [1.0, -0.2], [1.0, 0.45], [1.0, -0.45], [1.0, 1.0], [1.0, -1.0], [0.4, 0.0], [0.4, 1.0], [0.4, -1.0]]
 const ARC_PIVOT = [[0.12, 1.0], [0.12, -1.0]]
 const ARC_REV = [[-0.7, 0.0], [-0.7, 1.0], [-0.7, -1.0]]
 
@@ -2174,7 +2174,7 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	# a corner of the path it can already see past is dropped: turning back to touch a point it has
 	# cut inside of is how a lorry ends up going round and round one
 	if g.region.size.x == W.VW:
-		while path_i < path.size() - 1 and G.dist2d(path[path_i], pos) < 16.0 and W._vwalk_line(W.vnav_cell(pos.x, pos.z), W.vnav_cell(path[path_i + 1].x, path[path_i + 1].z), g):
+		while path_i < path.size() - 1 and G.dist2d(path[path_i], pos) < 16.0 and W._vwalk_line(W.vnav_cell(pos.x, pos.z), W.vnav_cell(path[path_i + 1].x, path[path_i + 1].z), g, not tracked):
 			path_i += 1
 		if path_i < path.size():
 			aim = _pursuit()
@@ -2184,6 +2184,9 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	var on_steep = use_grid and W.veh_on_steep(pos.x, pos.z)
 	var half_w: float = spec["wid"] * 0.5
 	var half_l: float = spec["len"] * 0.5
+	# already pressed up against something (a gun dug in among its sandbags, a lorry parked hard by a
+	# wall): the first metre of any move is allowed, or it could never pull clear
+	var embedded = use_grid and W.veh_blocked_at(pos.x, pos.z, half_w + 0.2, g, real_only, on_steep)
 	# what's about: other vehicles (as a few discs along their length, and where a moving one will be in a
 	# second), and our own men on foot
 	var obs: Array = []
@@ -2205,12 +2208,16 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 				obs.append([q, orad, not o.dead and o.team == team])
 		if absf(o.speed) > 1.0 and not o.dead:
 			obs.append([o.pos + of * o.speed * 1.0, orad, true])
+			# one coming the other way closes fast: look further down its road
+			if of.dot(forward()) < -0.5:
+				obs.append([o.pos + of * o.speed * 2.0, orad, true])
 	# things it has actually run up against in the last few seconds (a post, a low wall, a stump: whatever
 	# the coarse map didn't show)
 	for i in range(arc_bumps.size() - 1, -1, -1):
 		if G.sim_time > arc_bumps[i][2]:
 			arc_bumps.remove_at(i)
-		else:
+		elif G.dist2d(arc_bumps[i][0], pos) > half_w + arc_bumps[i][1] + 0.05:
+			# (one it's sitting on top of doesn't count, or a small vehicle is shut in by its own memory)
 			obs.append([arc_bumps[i][0], arc_bumps[i][1], false])
 	var f0 = forward()
 	var men: Array = []
@@ -2237,6 +2244,16 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	# where it's making for: a point well down the path (as far as it could get in a couple of seconds),
 	# and the nearer point the path runs through on the way
 	var far: Vector3 = _path_point(clampf(spec["speed"] * 2.0, 10.0, 26.0)) if path_i < path.size() else final
+	# on a road: keep to the right-hand side of it
+	var lane: Array = []
+	if not W.roads.is_empty() and G.dist2d(final, pos) > 18.0:
+		var tf = G.flat(far - pos)
+		if tf.length() > 3.0:
+			tf = tf.normalized()
+			far = W.lane_point(far, tf, half_w)
+			aim = W.lane_point(aim, tf, half_w)
+			lane = W.lane_of(pos, tf, half_w)
+	var lane_x: bool = lane[0] if not lane.is_empty() else true
 	var d0 = G.dist2d(far, pos)
 	var to0 = G.flat(far - pos)
 	var herr = absf(wrapf(atan2(to0.x, to0.z) - yaw, -PI, PI))
@@ -2269,6 +2286,7 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 		var y: float = yaw
 		var p: Vector3 = pos
 		var free = 2.4
+		var lat_e = pos.z if lane_x else pos.x
 		var by_mover = false
 		var dmin = d0
 		var tmin = 0.0
@@ -2285,7 +2303,7 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 			p += fw * sp * H
 			var lead = p + fw * half_l * 0.7 * (1.0 if sp >= 0.0 else -1.0)
 			var hit = false
-			if use_grid:
+			if use_grid and not (embedded and i < 3):
 				if W.veh_blocked_at(lead.x, lead.z, half_w + 0.2, g, real_only, on_steep) or W.veh_blocked_at(p.x, p.z, half_w + 0.2, g, real_only, on_steep):
 					hit = true
 			if not hit and inside_map and not b.has_point(Vector2(lead.x, lead.z)) and b.has_point(Vector2(final.x, final.z)):
@@ -2309,6 +2327,8 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 			if hit:
 				free = i * H
 				break
+			if i == 2:
+				lat_e = p.z if lane_x else p.x
 			var df = G.dist2d(far, p)
 			if df < dmin - 0.01:
 				dmin = df
@@ -2325,6 +2345,9 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 		var to_far = G.flat(far - p)
 		var head = cos(wrapf(atan2(to_far.x, to_far.z) - y, -PI, PI)) if to_far.length() > 2.0 else 1.0
 		var sc = (d0 - dmin) - tmin * 0.3 + head * 3.0 - minf(nmin, 8.0) * 0.4 - (2.4 - free) * 2.0
+		if not lane.is_empty() and thr > 0.0:
+			# (judged a second in, not at the end: a small pull to the right now, straightened up after)
+			sc -= minf(absf(lat_e - lane[1]), 6.0) * 1.4
 		if absf(thr - arc_pick[0]) < 0.05 and absf(st - arc_pick[1]) < 0.05:
 			sc += 1.0
 		if StuckLog.dump:
@@ -2423,7 +2446,7 @@ func _arc_out(dt: float) -> Array:
 		if bump_t > 1.1:
 			bump_t = 0.0
 			var sg = 1.0 if r[0] > 0.0 else -1.0
-			arc_bumps.append([pos + forward() * sg * (spec["len"] * 0.5 + 0.9), 1.0, G.sim_time + 9.0])
+			arc_bumps.append([pos + forward() * sg * (spec["len"] * 0.5 + 0.9), clampf(spec["len"] * 0.5 + 0.8 - spec["wid"] * 0.5, 0.35, 1.0), G.sim_time + 9.0])
 			if arc_bumps.size() > 6:
 				arc_bumps.pop_front()
 			remove_meta("no_rev_t")

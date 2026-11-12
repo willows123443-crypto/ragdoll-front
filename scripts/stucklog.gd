@@ -117,7 +117,46 @@ static func soldier(s) -> void:
 			if G.dist2d(v.pos, s.pos) < v.spec["len"] * 0.5 + 1.5:
 				cause = "against_vehicle"
 				break
+	if dump:
+		_dump_man(s, cause)
 	_add("MAN", cause, s.pos, "%s T%d task=%s order=%s" % [s.cls, s.team, str(s.task), str(s.order.get("mode", "") if s.order != null else "-")])
+
+# the ground round a stuck man on the walking map: # solid, + costly (low cover), S him, T where he's going,
+# * his path, m other men, . open
+static func _dump_man(s, cause: String) -> void:
+	var W = G.world
+	var lk = Levels.level_of(s.pos) if Levels.on else 0
+	var marks = {}
+	var cellf = func(p: Vector3) -> Vector2i:
+		return Levels.cell(p.x, p.z) if lk > 0 else W.nav_cell(p.x, p.z)
+	for o in G.soldiers_near(s.pos):
+		if o != s and o.state == "alive" and absf(o.pos.y - s.pos.y) < 1.5:
+			marks[cellf.call(o.pos)] = "m"
+	for i in range(s.path_i, s.path.size()):
+		marks[cellf.call(s.path[i])] = "*"
+	if s.move_target != null:
+		marks[cellf.call(s.move_target)] = "T"
+	var c0: Vector2i = cellf.call(s.pos)
+	marks[c0] = "S"
+	var g: AStarGrid2D = Levels.grids[lk] if lk > 0 else W.astar
+	var mt = s.move_target
+	print("MANDUMP %s %s T%d at (%.1f,%.1f,%.1f) lv%d task=%s tgt=%s d=%.1f path=%d/%d partial=%s cover=%s in_cover=%s wedge=%d vel=%.1f want=%.1f slide=%.1f unstick=%.1f tgt_solid=%s here_solid=%s inside_any=%s" % [cause, s.cls, s.team, s.pos.x, s.pos.y, s.pos.z, lk, str(s.task),
+		("(%.1f,%.1f,%.1f)" % [mt.x, mt.y, mt.z]) if mt != null else "-", G.dist2d(mt, s.pos) if mt != null else 0.0, s.path_i, s.path.size(), str(s.partial), str(s.cover != null), str(s.in_cover), s.wedge_n, s.vel.length(), s.want.length(), s.slide_t, s.unstick_t,
+		str(g.is_point_solid(cellf.call(mt))) if mt != null else "-", str(g.is_point_solid(c0)), str(W.inside_any(s.pos.x, s.pos.z, 0.33, s.pos.y))])
+	var rg = g.region
+	for dz in range(-9, 10):
+		var line = ""
+		for dx in range(-16, 17):
+			var q = Vector2i(c0.x + dx, c0.y + dz)
+			if marks.has(q):
+				line += marks[q]
+			elif q.x < rg.position.x or q.y < rg.position.y or q.x >= rg.end.x or q.y >= rg.end.y:
+				line += "~"
+			elif g.is_point_solid(q):
+				line += "#"
+			else:
+				line += "+" if g.get_point_weight_scale(q) > 1.5 else "."
+		print("  ", line)
 
 static func summary() -> String:
 	var keys = counts.keys()

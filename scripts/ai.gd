@@ -360,6 +360,13 @@ static func find_cover(s, threat: Vector3, mode: String):
 			sc2 += -1.0 if can_fire_from(cp, threat) else (2.0 if hiding else 8.0)
 		elif not can_fire_from(cp, threat):
 			sc2 += 6.0 if hiding else 9.0
+		# the way there matters too: cover he'd have to cross open ground in the enemy's sights to reach
+		# is worth less than cover he can get to unseen (a street a machine gun is looking down, say)
+		var dcp = G.dist2d(cp.p, s.pos)
+		if dcp > 6.0 and G.sim_time - s.seen_t < 20.0:
+			var mid = s.pos.lerp(cp.p, 0.5) + Vector3(0, 1.0, 0)
+			if not G.blocked(Vector3(threat.x, threat.y + 1.3, threat.z), mid):
+				sc2 += minf(dcp * 0.35, 7.0)
 		if sc2 < bs:
 			bs = sc2
 			best = cp
@@ -1628,8 +1635,8 @@ static func decide(s) -> void:
 		var fs = Squad.slot(s)
 		var in_form = false
 		if fs != null and G.dist2d(s.pos, obj) > 12.0:
-			# keep formation on the squad leader while moving up
-			goal2 = fs
+			# keep formation on the squad leader while moving up (round a building the way he went)
+			goal2 = Squad.follow_point(s, fs)
 			in_form = true
 		# nobody's shooting at us: no ducking into cover on the way up, keep moving
 		if s.cover != null and s.supp < 0.3 and G.dist2d(s.pos, obj) > 12.0:
@@ -1642,9 +1649,13 @@ static func decide(s) -> void:
 		if in_form:
 			# keeping pace with the leader: a short wait at the slot, never a dive for cover
 			if G.dist2d(s.pos, goal2) < 2.5:
-				stop_move(s)
-				s.task = "advance"
-				return
+				if goal2 != fs:
+					s.set_meta("fp_t", 0.0)      # reached that bit of the leader's trail: on to the next
+					goal2 = Squad.follow_point(s, fs)
+				if goal2 == fs or G.dist2d(s.pos, goal2) < 2.5:
+					stop_move(s)
+					s.task = "advance"
+					return
 			s.task = "advance"
 			go_to(s, goal2, 3.6)
 			return

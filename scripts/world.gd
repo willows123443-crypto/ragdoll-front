@@ -1220,14 +1220,20 @@ func _vnearest_free(c: Vector2i, g: AStarGrid2D) -> Vector2i:
 					return p
 	return Vector2i(-1, -1)
 
-func _vwalk_line(a: Vector2i, b: Vector2i, g: AStarGrid2D = null) -> bool:
+func _vwalk_line(a: Vector2i, b: Vector2i, g: AStarGrid2D = null, keep_road: bool = false) -> bool:
 	if g == null:
 		g = vastar
 	var d = Vector2(b - a)
 	var n = int(ceil(d.length() * 2.0))
+	# (wheels keep to the road: a straight line between two points on it that cuts across rough ground
+	# isn't a short cut the path is allowed to take)
+	var wmax = maxf(g.get_point_weight_scale(a), g.get_point_weight_scale(b)) + 0.2 if keep_road else 1e9
 	for i in range(1, n + 1):
 		var t = float(i) / n
-		if g.is_point_solid(Vector2i(roundi(a.x + d.x * t), roundi(a.y + d.y * t))):
+		var q = Vector2i(roundi(a.x + d.x * t), roundi(a.y + d.y * t))
+		if g.is_point_solid(q):
+			return false
+		if keep_road and g.get_point_weight_scale(q) > wmax:
 			return false
 	return true
 
@@ -1273,7 +1279,7 @@ func find_vpath(from: Vector3, to: Vector3, tracked: bool = false, me = null) ->
 	var i = 0
 	while i < ids.size() - 1:
 		var j = mini(ids.size() - 1, i + 20)
-		while j > i + 1 and not _vwalk_line(ids[i], ids[j], g):
+		while j > i + 1 and not _vwalk_line(ids[i], ids[j], g, not tracked):
 			j -= 1
 		var x = TX0 + (ids[j].x + 0.5) * VCS
 		var z = TZ0 + (ids[j].y + 0.5) * VCS
@@ -4640,6 +4646,39 @@ func near_road(x: float, z: float, r: float) -> bool:
 		if x > rd[0] - r and x < rd[1] + r and z > rd[2] - r and z < rd[3] + r:
 			return true
 	return false
+
+# keep right: a point on a road, for something travelling this way along it, moved over into the
+# right-hand lane (so two vehicles meeting pass each other instead of both holding the crown of the road)
+func lane_point(q: Vector3, dirv: Vector3, half_w: float) -> Vector3:
+	for r in roads:
+		if q.x > r[0] and q.x < r[1] and q.z > r[2] and q.z < r[3]:
+			var along_x = (r[1] - r[0]) >= (r[3] - r[2])
+			var wd: float = (r[3] - r[2]) if along_x else (r[1] - r[0])
+			var d: float = dirv.x if along_x else dirv.z
+			if absf(d) < 0.7 or wd < 3.0:
+				return q
+			# as far right as leaves the vehicle a wheel's width on the road
+			var off = clampf(wd * 0.25, 1.0, maxf(1.0, wd * 0.5 - half_w + 0.9))
+			if along_x:
+				return Vector3(q.x, q.y, (r[2] + r[3]) * 0.5 - signf(d) * off)
+			return Vector3((r[0] + r[1]) * 0.5 + signf(d) * off, q.y, q.z)
+	return q
+
+# the right-hand lane of the road a vehicle's on, as [true if the road runs along x, the lane's centre
+# line (a z, or an x)], or [] if it isn't on a road it's driving along
+func lane_of(q: Vector3, dirv: Vector3, half_w: float) -> Array:
+	for r in roads:
+		if q.x > r[0] - 2.0 and q.x < r[1] + 2.0 and q.z > r[2] - 2.0 and q.z < r[3] + 2.0:
+			var along_x = (r[1] - r[0]) >= (r[3] - r[2])
+			var wd: float = (r[3] - r[2]) if along_x else (r[1] - r[0])
+			var d: float = dirv.x if along_x else dirv.z
+			if absf(d) < 0.7 or wd < 3.0:
+				continue
+			var off = clampf(wd * 0.25, 1.0, maxf(1.0, wd * 0.5 - half_w + 0.9))
+			if along_x:
+				return [true, (r[2] + r[3]) * 0.5 - signf(d) * off]
+			return [false, (r[0] + r[1]) * 0.5 + signf(d) * off]
+	return []
 
 func on_road(x: float, z: float) -> bool:
 	for r in roads:

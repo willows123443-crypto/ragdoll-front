@@ -1579,13 +1579,43 @@ func _lod_far() -> bool:
 var glide_off = Vector3.ZERO
 var glide_ph = 0.0
 
+# going to ground and getting up again: the body goes down through a crouch over half a second (and
+# comes up a little slower) instead of flicking from one pose to the other
+var pose_mode = ""
+var tr_from: Array = []
+var tr_t0 = -9.0
+var tr_dur = 0.5
+
 func _pose_now() -> void:
+	var mode = "prone" if prone else "stand"
+	if mode != pose_mode:
+		if pose_mode != "" and state == "alive" and vault == null and not zombie and PLANT:
+			tr_from = []
+			for i in range(15):
+				tr_from.append(P[i] - pos)
+			tr_t0 = G.sim_time
+			tr_dur = 0.5 if prone else 0.62
+		pose_mode = mode
 	if prone and (zombie or Vector2(vel.x, vel.z).length() > 0.25):
 		crawl_pose()          # moving while down: elbows and knees, not sliding on his belly
 	elif prone:
 		prone_pose()
 	else:
 		stand_pose()
+	var u = (G.sim_time - tr_t0) / tr_dur
+	if u < 1.0 and tr_from.size() == 15:
+		var e = u * u * (3.0 - 2.0 * u)
+		# through a crouch on the way: the hips lead going down, the head and chest lead coming up
+		var dip = sin(PI * u) * 0.12
+		for i in range(15):
+			var k = e
+			if i == 2 or i == 9 or i == 12:
+				k = clampf(e * (1.25 if prone else 0.85), 0.0, 1.0)
+			elif i <= 1:
+				k = clampf(e * (0.85 if prone else 1.2), 0.0, 1.0)
+			P[i] = (pos + tr_from[i]).lerp(P[i], k)
+			if i <= 8 and i != 2:
+				P[i].y -= dip * (1.0 if not prone else 0.4)
 
 func lod_glide() -> void:
 	if not lod_frozen or hidden_in_vehicle or state != "alive":

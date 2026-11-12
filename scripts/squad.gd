@@ -26,6 +26,7 @@ static func step(dt: float) -> void:
 		q["members"] = q["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead")
 		if q["members"].is_empty() or q.get("guard", false):
 			continue
+		_trail(q)
 		_bounding(q)
 		_flank(q)
 		_breach(q)
@@ -80,6 +81,62 @@ static func slot(s):
 	var r = Vector3(f.z, 0, -f.x)
 	var o: Vector2 = offs[i]
 	return L.pos + r * o.x + f * o.y
+
+# ---------------------------------------------------------------- one way round for the whole squad
+# The leader's route is the squad's route. He leaves a trail as he goes; a man who can walk straight to
+# his place in the formation does, and one who can't (there's a building between them) follows the
+# trail round it the way the leader went, instead of finding his own way and coming round the far side.
+static var TRAIL = true
+
+static func _trail(q) -> void:
+	var L = leader_of(q)
+	if L == null or L.vehicle != null:
+		return
+	var tr: Array = q.get("trail", [])
+	if tr.is_empty() or G.dist2d(tr[tr.size() - 1], L.pos) > 2.5:
+		tr.append(L.pos)
+		if tr.size() > 28:
+			tr.pop_front()
+		q["trail"] = tr
+
+static func _clear(a: Vector3, b: Vector3) -> bool:
+	var W = G.world
+	return W._walk_line(W.nav_cell(a.x, a.z), W.nav_cell(b.x, b.z))
+
+# where a man should make for to get to his slot
+static func follow_point(s, slot_p: Vector3) -> Vector3:
+	var q = s.squad
+	if q == null or not TRAIL or (Levels.on and (Levels.inside(s.pos, 1.0) or Levels.inside(slot_p, 1.0))):
+		return slot_p
+	if G.dist2d(s.pos, slot_p) < 6.0:
+		return slot_p
+	# (looked at a few times a second for each man, not every tick)
+	if G.sim_time < float(s.get_meta("fp_t", 0.0)) and s.has_meta("fp"):
+		var keep: Vector3 = s.get_meta("fp")
+		return slot_p if keep == Vector3.INF else keep
+	s.set_meta("fp_t", G.sim_time + 0.6)
+	var W = G.world
+	if not W.astar.is_point_solid(W.nav_cell(slot_p.x, slot_p.z)) and _clear(s.pos, slot_p):
+		s.set_meta("fp", Vector3.INF)
+		return slot_p
+	var tr: Array = q.get("trail", [])
+	# the furthest point along the leader's trail he can walk straight to
+	for i in range(tr.size() - 1, -1, -1):
+		var c: Vector3 = tr[i]
+		if G.dist2d(c, s.pos) > 1.5 and G.dist2d(c, s.pos) < 45.0 and _clear(s.pos, c):
+			events["trail"] = events.get("trail", 0) + 1
+			s.set_meta("fp", c)
+			return c
+	# none in sight: the nearest bit of trail, by whatever way gets him to it
+	var best = slot_p
+	var bd = 1e9
+	for c2 in tr:
+		var d = G.dist2d(c2, s.pos)
+		if d < bd and d > 1.5:
+			bd = d
+			best = c2
+	s.set_meta("fp", best)
+	return best
 
 # pick a formation from the situation unless an order fixed one
 static func auto_form(q) -> void:

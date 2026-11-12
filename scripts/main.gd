@@ -96,6 +96,14 @@ func _ready() -> void:
 			Soldier.PLANT = a.substr(8) == "1"
 		if a.begins_with("--walkshot="):
 			_walk_shot(a.substr(11))
+		if a.begins_with("--trail="):
+			Squad.TRAIL = a.substr(8) == "1"
+		if a == "--cohesion":
+			_cohesion_test()
+		if a.begins_with("--poseshot="):
+			_pose_shot(a.substr(11))
+		if a == "--lanetest":
+			_lane_test()
 		if a == "--tanktest":
 			_tank_test()
 		if a.begins_with("--tankshot="):
@@ -2753,6 +2761,142 @@ func _walk_shot(dir: String) -> void:
 			await _snap(dir, "turn_%d" % i)
 	get_tree().quit()
 
+# --cohesion: an AI battle; for squads on the move and out of contact, how far the men are from their leader
+func _cohesion_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(int(_arg("seed", "21")))
+	start_game({"map": _arg("map", "city"), "mode": _arg("mode", "capture"), "size": 14, "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	var sum = 0.0
+	var n = 0
+	var far = 0
+	for t in range(int(_arg("secs", "150")) * 2):
+		await _wait(0.5)
+		for q in G.squads:
+			var L = Squad.leader_of(q)
+			if L == null or L.vehicle != null or L.state != "alive" or G.sim_time - L.seen_t < 10.0 or L.move_target == null:
+				continue
+			for m in q["members"]:
+				if m == L or not is_instance_valid(m) or m.state != "alive" or m.vehicle != null or m.task != "advance":
+					continue
+				var d = G.dist2d(m.pos, L.pos)
+				sum += d
+				n += 1
+				if d > 18.0:
+					far += 1
+	print("COHESION trail=%s map=%s samples=%d avg_dist_to_leader=%.1fm far(>18m)=%.1f%% trail_uses=%d stuck=%s" % [str(Squad.TRAIL), _arg("map", "city"), n, sum / maxf(n, 1), 100.0 * far / maxf(n, 1), Squad.events.get("trail", 0), StuckLog.summary()])
+	get_tree().quit()
+
+# --poseshot=DIR: one man going to ground, getting up, and turning on the spot: how far his head jumps
+# in a single frame (a snap shows as a big jump), how many steps he takes to turn, and pictures of each
+func _pose_shot(dir: String) -> void:
+	var shots = dir != "-"
+	if shots:
+		DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.3)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var p0 = G.main._free_spot(Vector3(0, 0, 60))
+	var s = spawn_soldier(0, p0.x, p0.z, "rifle")
+	s.order = {"mode": "hold", "point": s.pos}
+	await _wait(1.5)
+	for ph in [["down", true], ["up", false]]:
+		var worst = 0.0
+		var prev: Vector3 = s.parts[2].global_position - s.pos
+		for i in range(54):
+			s.prone_t = ph[1]
+			AI.stop_move(s)
+			await get_tree().physics_frame
+			var cur: Vector3 = s.parts[2].global_position - s.pos
+			worst = maxf(worst, cur.distance_to(prev))
+			prev = cur
+			if shots and i % 9 == 4:
+				await _look(s.pos + Vector3(0.3, 1.0, 4.0), s.pos + Vector3(0, 0.6, 0))
+				await _snap(dir, "%s_%d" % [ph[0], i / 9])
+		print("POSESHOT going %s: biggest head jump in one frame %.3fm" % [ph[0], worst])
+	# turning on the spot: half a turn, in steps
+	await _wait(0.5)
+	var swings = 0
+	var was = [false, false]
+	var y0 = s.body_yaw
+	for i in range(150):
+		s.prone_t = false
+		AI.stop_move(s)
+		s.aim_yaw = y0 + minf(float(i) / 60.0, 1.0) * PI
+		s.body_yaw = s.aim_yaw
+		await get_tree().physics_frame
+		for k in range(2):
+			if s.foot_sw[k] and not was[k]:
+				swings += 1
+			was[k] = s.foot_sw[k]
+		if shots and i % 15 == 7 and i < 90:
+			await _look(s.pos + Vector3(0.3, 2.2, 3.4), s.pos + Vector3(0, 0.5, 0))
+			await _snap(dir, "turn_%d" % (i / 15))
+	var f = Vector3(sin(s.body_yaw), 0, cos(s.body_yaw))
+	var r = Vector3(-f.z, 0, f.x)
+	var offL = G.dist2d(s.foot_w[0], s.pos - r * 0.13)
+	var offR = G.dist2d(s.foot_w[1], s.pos + r * 0.13)
+	print("POSESHOT half turn: body turned %.2f rad, steps taken %d, feet end %.2fm and %.2fm from under him" % [absf(G.wrap_a(s.body_yaw - y0)), swings, offL, offR])
+	get_tree().quit()
+
+# --lanetest: lorries sent both ways along the same road: which side do they pass on, how close, how long
+func _lane_test() -> void:
+	await _wait(0.5)
+	start_game({"map": _arg("map", "town"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var rd = G.world.roads[0]
+	var zc = (rd[2] + rd[3]) * 0.5
+	var vs = []
+	for i in range(int(_arg("n", "3"))):
+		var a = spawn_vehicle("truck", 0, Vector3(-70.0 - i * 14.0, 0, zc), PI / 2.0)
+		var b = spawn_vehicle("truck", 0, Vector3(70.0 + i * 14.0, 0, zc), -PI / 2.0)
+		a.cmd = Vector3(80.0 - i * 12.0, 0, zc)
+		b.cmd = Vector3(-80.0 + i * 12.0, 0, zc)
+		vs.append([a, 1.0])
+		vs.append([b, -1.0])
+	await _wait(1.5)
+	var v0 = vs[1][0]
+	var W = G.world
+	var roadw = []
+	for x in range(-60, 61, 12):
+		var c = W.vnav_cell(float(x), zc)
+		roadw.append("%s%.1f" % ["#" if W.vastar.is_point_solid(c) else "", W.vastar.get_point_weight_scale(c)])
+	print("LANE path of first lorry (at %.0f,%.0f, goal %s, why=%s): %s | road weights %s" % [v0.pos.x, v0.pos.z, str(v0.goal), v0.why, str(v0.path.map(func(q): return "%.0f,%.0f" % [q.x, q.z])), str(roadw)])
+	var min_d = 1e9
+	var right_n = 0
+	var cross_n = 0
+	var done_t = -1.0
+	var crossed = {}
+	for t in range(60 * 8):
+		await _wait(0.125)
+		var arrived = 0
+		for e in vs:
+			var v = e[0]
+			if v.cmd == null or G.dist2d(v.cmd, v.pos) < 14.0:
+				arrived += 1
+			# which side of the road it's on as it goes through the middle stretch
+			if absf(v.pos.x) < 6.0 and not crossed.has(v):
+				crossed[v] = true
+				cross_n += 1
+				print("LANE cross dir=%+d z_off=%.1f t=%.0f spd=%.1f" % [int(e[1]), v.pos.z - zc, G.sim_time, v.speed])
+				if _arg("laneshot", "") != "" and cross_n == 3:
+					DirAccess.make_dir_recursive_absolute(_arg("laneshot", ""))
+					await _look(Vector3(0, 46, zc + 16.0), Vector3(0, 0, zc))
+					await _wait(0.1)
+					await _snap(_arg("laneshot", ""), "lorries_keep_right")
+				if (v.pos.z - zc) * e[1] < -0.3:
+					right_n += 1
+			for e2 in vs:
+				if e2[0] != v and e2[1] != e[1] and absf(v.speed) > 2.0 and absf(e2[0].speed) > 2.0:
+					min_d = minf(min_d, G.dist2d(v.pos, e2[0].pos))
+		if arrived == vs.size() and done_t < 0.0:
+			done_t = G.sim_time
+			break
+	print("LANETEST road z=%.1f..%.1f lorries=%d crossed=%d on_right=%d closest_pass=%.1fm all_arrived=%s stuck=%s" % [rd[2], rd[3], vs.size(), cross_n, right_n, min_d, ("%.0fs" % done_t) if done_t > 0.0 else "no", StuckLog.summary()])
+	get_tree().quit()
+
 # --tankshot=DIR: a tank and a squad sent into the city together: do they go in as one?
 func _tank_shot(dir: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)
@@ -2938,7 +3082,8 @@ func _stuck_run() -> void:
 		start_game({"map": m, "mode": _arg("mode", "commander"), "size": int(_arg("size", "12")), "limit": 999, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2})
 		StuckLog.reset()
 		await _wait(float(_arg("secs", "240")))
-		print("STUCKRUN battle %d %s: %s | tank_inf=%d rooms=%d/%d" % [i, m, StuckLog.summary(), Tactics.events.get("tank_inf", 0), Tactics.events.get("room_clear", 0), Tactics.events.get("room_stack", 0)])
+		print("PLAN %s styles=%s phases=%s" % [str(Commander.events), str(Commander.style), str(Commander.plans.map(func(p): return (p["phase"] + "/" + p["res"]) if p != null else "-"))])
+		print("STUCKRUN battle %d %s: %s | trail=%d tank_inf=%d rooms=%d/%d" % [i, m, StuckLog.summary(), Squad.events.get("trail", 0), Tactics.events.get("tank_inf", 0), Tactics.events.get("room_clear", 0), Tactics.events.get("room_stack", 0)])
 		for k in StuckLog.counts:
 			total[k] = total.get(k, 0) + StuckLog.counts[k]
 	var keys = total.keys()

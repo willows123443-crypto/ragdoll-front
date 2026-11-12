@@ -162,8 +162,9 @@ static func step(dt: float) -> void:
 			if G.mode == "commander":
 				# the HQ alone brings in a trickle; supply dumps are where the real income is
 				# the HQ brings in a trickle; supply dumps only pay when a convoy gets through (see Prod)
+				# (two points every 18 s: a bit more than it was, so a side that's lost its dumps isn't stuck)
 				hq_t[t] = hq_t[t] + 1
-				if hq_t[t] % 2 == 0:
+				if hq_t[t] % 3 != 0 and Build.hq(t) != null and Build.alive(Build.hq(t)):
 					points[t] += 1
 			else:
 				points[t] += 1
@@ -257,6 +258,26 @@ static func can_afford(team: int, what: String) -> bool:
 	return points[team] >= COSTS[what]
 
 static func call_in(team: int, what: String, target: Vector3, relay: bool = false) -> bool:
+	# commander mode: shells can't hurt an HQ (it's dug in too deep). The AI knows it and puts the
+	# barrage on the men defending it instead; you get told
+	if G.mode == "commander" and what == "artillery":
+		var ehq = Build.hq((team + 1) % 2)
+		if ehq != null and Build.alive(ehq) and G.dist2d(target, ehq["p"]) < 24.0:
+			if G.ai_runs(team):
+				var alt = null
+				var bd = 1e9
+				for s in G.soldiers:
+					if s.team != team and s.state == "alive" and s.vehicle == null:
+						var dh = G.dist2d(s.pos, ehq["p"])
+						var dt2 = G.dist2d(s.pos, target)
+						if dh > 14.0 and dt2 < 70.0 and dt2 < bd:
+							bd = dt2
+							alt = s.pos
+				if alt == null:
+					return false
+				target = alt
+			elif team == 0:
+				G.ui.message("Shells can't hurt their HQ: it's dug in too deep. Take it on the ground: satchels, rockets, tank and rifle fire")
 	if Prep.active() and (what in Rules.FIRE or what in Rules.TROOPS or what in Rules.AIR):
 		if team == 0:
 			G.ui.message("Not until the battle starts (Space ends the prep)")
@@ -449,15 +470,15 @@ static func _ai_recruit(t: int) -> bool:
 		k = "atk"
 	elif randf() < 0.25:
 		k = G.pick(["asl", "snp", "med", "mgt", "rad"])
-	elif points[t] >= R["plt"]["cost"] + 10 and randf() < 0.3:
+	elif points[t] >= G.ui.recruit_cost(t, "plt") + 10 and randf() < 0.3:
 		k = "plt"
 	# short-handed: spend on men before anything else; otherwise only now and then
 	var short = mine.size() < G.team_size
 	if not short and randf() < 0.45:
 		return false
-	if points[t] < R[k]["cost"]:
+	if points[t] < G.ui.recruit_cost(t, k):
 		return false
-	points[t] -= R[k]["cost"]
+	points[t] -= G.ui.recruit_cost(t, k)
 	Reinforce.truck_cls(t, R[k]["cls"])
 	return true
 

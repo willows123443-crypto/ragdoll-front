@@ -1627,11 +1627,22 @@ func _steer_to(target: Vector3, dt: float) -> Array:
 		if G.sim_time < leg_t and leg != 0 and not (leg < 0 and absf(ang) < 0.5):
 			thr = 0.75 * leg
 			steer = -steer if leg < 0 else steer
-		elif absf(ang) > 1.1 and L < tight * 2.2:
+		elif absf(ang) > 1.1 and L < tight * 2.2 and G.sim_time > get_meta("no_rev_t", 0.0):
 			thr = -0.75
 			steer = -steer
 			set_meta("leg", -1)
 			set_meta("leg_t", G.sim_time + 1.8)
+			# a third reverse leg inside 15 s: it's sawing at the spot; swing round forward on full lock instead
+			var legs: Array = get_meta("legs", [])
+			legs = legs.filter(func(t): return G.sim_time - t < 15.0)
+			legs.append(G.sim_time)
+			set_meta("legs", legs)
+			if legs.size() >= 3:
+				set_meta("no_rev_t", G.sim_time + 9.0)
+				set_meta("legs", [])
+		elif absf(ang) > 1.1 and L < tight * 2.2:
+			thr = 0.5
+			steer = signf(ang) if ang != 0.0 else 1.0
 		elif absf(ang) > 1.2:
 			thr = 0.55
 			if leg < 0:
@@ -1693,6 +1704,11 @@ func _drives_through(c) -> bool:
 
 # parked near enough: once a lorry has stopped at its spot it stays put until the spot itself moves well
 # away, instead of creeping at a spot it can't quite reach and sawing back and forth for minutes
+# how far round from the nose a point is (radians)
+func _off_nose(p: Vector3) -> float:
+	var to = G.flat(p - pos)
+	return absf(wrapf(atan2(to.x, to.z) - yaw, -PI, PI))
+
 func _parked(target: Vector3, r: float) -> bool:
 	if has_meta("parked_at"):
 		var pa: Vector3 = get_meta("parked_at")
@@ -1701,7 +1717,8 @@ func _parked(target: Vector3, r: float) -> bool:
 		remove_meta("parked_at")
 	# close enough, or close-ish and it's been trying for a while without getting any closer
 	var d = G.dist2d(target, pos)
-	if d < r or (d < r + 10.0 and stuck_n >= 1):
+	# (a spot a few metres off to the side or behind: that's parked, not a reason for a three-point turn)
+	if d < r or (d < r + 10.0 and stuck_n >= 1) or (d < r + 5.0 and _off_nose(target) > 1.0):
 		set_meta("parked_at", pos)
 		stuck_n = 0
 		return true
@@ -2005,7 +2022,18 @@ func _ai_drive(dt: float) -> Array:
 			if close and not o.dead and o.team == team and absf(o.speed) > 0.2:
 				var mine = rank()
 				var theirs = o.rank()
-				if theirs > mine or (theirs == mine and get_instance_id() > o.get_instance_id()):
+				# only one that's actually coming at us is worth stopping for; one driving off ahead (or
+				# across) we just ease off behind
+				var o_to_me = G.flat(pos - o.pos).normalized()
+				var coming = o.forward().dot(o_to_me) * signf(o.speed) > 0.3
+				var waited: float = get_meta("yield_sum", 0.0)
+				if not coming:
+					r[0] = minf(absf(r[0]), 0.4) * dsg
+				elif waited > 6.0:
+					# given way long enough: slip past instead
+					set_meta("ghost_t", G.sim_time + 4.0)
+					set_meta("yield_sum", 0.0)
+				elif theirs > mine or (theirs == mine and get_instance_id() > o.get_instance_id()):
 					# the smaller one gives way: nose to nose it backs off a little, either way it waits
 					if f.dot(o.forward()) < -0.4 and reverse_t <= 0.0 and yield_t <= 0.0:
 						reverse_t = 1.1
@@ -2013,6 +2041,9 @@ func _ai_drive(dt: float) -> Array:
 					r[0] = minf(absf(r[0]), 0.1) * dsg
 	if yield_t > 0.0:
 		yield_t -= dt
+		set_meta("yield_sum", get_meta("yield_sum", 0.0) + dt)
+	else:
+		set_meta("yield_sum", maxf(0.0, get_meta("yield_sum", 0.0) - dt * 0.5))
 	# unstick: if we want to move but aren't, back up for a moment
 	if reverse_t > 0.0:
 		reverse_t -= dt
@@ -2093,10 +2124,16 @@ func _jam_sort(f: Vector3, lv: Vector3, dsg: float) -> void:
 	if blk == null:
 		reverse_t = 1.4
 		return
+	# second time jammed against one of our own: just slip past it (two lorries can back and nose in
+	# at each other for ever)
+	if blk.team == team and not blk.dead and stuck_n >= 2:
+		set_meta("ghost_t", G.sim_time + 5.0)
+		G.bal_add("ghost")
+		return
 	var rel_b = G.flat(blk.pos - pos)
 	var away_side = -signf(rel_b.dot(lv)) if absf(rel_b.dot(lv)) > 0.2 else (1.0 if get_instance_id() % 2 == 0 else -1.0)
 	var drv = blk.driver()
-	var idle = drv != null and not blk.dead and blk.team == team and absf(blk.speed) < 0.3 and blk.mission == null and blk.cmd == null and not blk.spec.get("static", false)
+	var idle = drv != null and not blk.dead and blk.team == team and absf(blk.speed) < 0.3 and blk.mission == null and (blk.cmd == null or G.dist2d(blk.cmd, blk.pos) < 5.0) and not blk.spec.get("static", false)
 	if idle:
 		# the parked one moves over to let us by
 		var bl = Vector3(cos(blk.yaw), 0, -sin(blk.yaw))
@@ -2233,7 +2270,8 @@ func _mission_target(dt: float):
 		if not inb.has_point(Vector2(m["drop"].x, m["drop"].z)):
 			# a drop point out past the edge (stuck coming in): bring it inside the map
 			m["drop"] = G.main._free_spot(Vector3(clampf(m["drop"].x, inb.position.x, inb.end.x), 0, clampf(m["drop"].z, inb.position.y, inb.end.y)))
-		if G.dist2d(pos, m["drop"]) < 6.0 and G.world.bounds.grow(-6.0).has_point(Vector2(pos.x, pos.z)):
+		var dd = G.dist2d(pos, m["drop"])
+		if (dd < 6.0 or (dd < 11.0 and _off_nose(m["drop"]) > 1.0)) and G.world.bounds.grow(-6.0).has_point(Vector2(pos.x, pos.z)):
 			if absf(speed) > 0.4 and not spec.get("air", false):
 				return null          # roll to a stop before anyone gets out
 			m["stage"] = 1
@@ -2269,7 +2307,7 @@ func _mission_target(dt: float):
 		return null
 	# a supply truck of the fleet goes back to HQ to load up again
 	if m.get("fleet", false):
-		if G.dist2d(pos, m["exit"]) < 8.0:
+		if G.dist2d(pos, m["exit"]) < 8.0 or (G.dist2d(pos, m["exit"]) < 13.0 and _off_nose(m["exit"]) > 1.0):
 			Logistics.arrived_home(self)
 			return null
 		return m["exit"]
@@ -2302,6 +2340,7 @@ func _mission_target(dt: float):
 # ---------------------------------------------------------------- engine fires and bailing out
 var heavy_t = -99.0          # last time something big hit her
 var hit_from = Vector3.ZERO
+const SOFT_KINDS = ["supplytruck", "ammotruck", "truck", "ambulance", "radar", "jeep", "bridger"]
 
 # stuck (track off, wheels shot) or badly holed, and still being hit by something heavy: the crew don't
 # sit there waiting for the next one, they get out and run for cover away from whoever's firing
@@ -2409,6 +2448,10 @@ func _fix_tyres() -> void:
 # a thrown track or a flat: a crewman climbs out (under fire if need be) and fixes it, then gets back in
 func _self_repair() -> void:
 	if dead or not (tracks_broken or tyres > 0 or (hp < spec["hp"] * 0.4 and not burning)) or spec.get("air", false) or spec.get("static", false):
+		return
+	# lorries and other soft vehicles drive on with a holed body or one flat: the driver is the only
+	# crewman, and him getting out stops the whole run; only two or more flats are worth a wheel change
+	if kind in SOFT_KINDS and not tracks_broken and tyres < 2:
 		return
 	if fix_by != null and is_instance_valid(fix_by) and fix_by.state == "alive" and fix_by.task == "fixwheel":
 		return

@@ -34,6 +34,12 @@ static func step(dt: float) -> void:
 	for v in G.vehicles:
 		if v.team == 0 and not v.dead:
 			mine.append(v.pos)
+	# your HQ and forward bases keep a lookout of their own: anything that comes near them shows,
+	# even with none of your men left standing there
+	var posts: Array = []
+	for st in Build.sites:
+		if st["team"] == 0 and Build.alive(st) and st["kind"] in ["hq", "fob", "fob2", "bunker", "tower", "pillbox"]:
+			posts.append([st["p"], 55.0 if st["kind"] == "hq" else 35.0])
 	# vehicles first: seen up close (or by their lights), or because someone's spotted a man aboard
 	for v in G.vehicles:
 		if v.team == 0:
@@ -43,6 +49,11 @@ static func step(dt: float) -> void:
 		if not vv:
 			for p in mine:
 				if G.dist2d(p, v.pos) < vs:
+					vv = true
+					break
+		if not vv:
+			for ps in posts:
+				if G.dist2d(ps[0], v.pos) < ps[1]:
 					vv = true
 					break
 		if not vv:
@@ -67,6 +78,11 @@ static func step(dt: float) -> void:
 		if not vis:
 			for p in mine:
 				if G.dist2d(p, s.pos) < 12.0:
+					vis = true
+					break
+		if not vis:
+			for ps in posts:
+				if G.dist2d(ps[0], s.pos) < ps[1] * 0.8:
 					vis = true
 					break
 		if not vis:
@@ -124,7 +140,7 @@ static func _show(s, vis: bool) -> void:
 		return
 	if vis:
 		s.remove_meta("fogged")
-		s.visible = not s.hidden_in_vehicle
+		s.visible = not s.hidden_in_vehicle and not s.has_meta("fv_hid")
 	else:
 		s.set_meta("fogged", true)
 		s.visible = false

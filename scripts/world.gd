@@ -62,6 +62,7 @@ var MAPS = {
 	"front": {"name": "Western front (large)", "ground": Color(0.41, 0.37, 0.3), "seed": 1916, "size": Vector2(560, 240)},
 	"huge": {"name": "Huge battlefield (huge)", "ground": Color(0.43, 0.46, 0.31), "seed": 5150, "size": Vector2(840, 340)},
 	"factory": {"name": "Tank factory (indoor)", "ground": Color(0.44, 0.43, 0.4), "seed": 6060, "size": Vector2(300, 200)},
+	"office": {"name": "Ministry offices (3 floors, indoor)", "ground": Color(0.42, 0.43, 0.38), "seed": 7070, "size": Vector2(200, 130)},
 }
 
 # the extra ground round a map enlarged for commander mode: woods, hedges, farms and ruins,
@@ -428,7 +429,7 @@ func surface_y(x: float, z: float, cur: float) -> float:
 			if r != null and x > r[0] and x < r[1] and z > r[2] and z < r[3]:
 				in_tower = true
 				break
-		if not in_tower:
+		if not in_tower and not Levels.inside(Vector3(x, 0, z), 0.5):
 			return g
 	return _surface_ray(x, z, cur)
 
@@ -896,6 +897,8 @@ func update_nav_area(x0: float, z0: float, x1: float, z1: float) -> void:
 	for c in cols_in_rect(x0 - 2.0, z0 - 2.0, x1 + 2.0, z1 + 2.0):
 		_nav_mark(c)
 	_vnav_area(x0, z0, x1, z1)
+	if Levels.on and Levels.inside(Vector3((x0 + x1) / 2.0, 0, (z0 + z1) / 2.0), 3.0):
+		Levels.update_area(x0, z0, x1, z1)
 	# water stays slow going
 	for iz in range(a.y, b.y + 1):
 		for ix in range(a.x, b.x + 1):
@@ -1384,6 +1387,10 @@ func cover_near(p: Vector3, r: float) -> Array:
 	for ix in range(int(floor((p.x - r) / CGRID)), int(floor((p.x + r) / CGRID)) + 1):
 		for iz in range(int(floor((p.z - r) / CGRID)), int(floor((p.z + r) / CGRID)) + 1):
 			out.append_array(cover_grid.get(ix * 4096 + iz, []))
+	# in a building with floors, only the cover on the floor the point is on
+	if Levels.on and Levels.inside(p, r + 1.0):
+		var lv = Levels.level_of(p)
+		out = out.filter(func(cp): return cp.lv == lv)
 	return out
 
 func add_cp(x: float, z: float, n: Vector3, t: Vector3, type: String, c, y: float = -999.0):
@@ -1415,9 +1422,10 @@ func add_cp(x: float, z: float, n: Vector3, t: Vector3, type: String, c, y: floa
 		c.get_meta("cps").append(cp)
 	return cp
 
-func gen_cover_for(c) -> void:
-	var rel: float = c.hi.y - c.gy
-	if c.lo.y - c.gy > 0.3 or rel < 0.85 or c.no_move:
+func gen_cover_for(c, base: float = -999.0, lv: int = 0) -> void:
+	var gb: float = c.gy if base == -999.0 else base
+	var rel: float = c.hi.y - gb
+	if c.lo.y - gb > 0.3 or rel < 0.85 or c.no_move:
 		return
 	var sx: float = c.hi.x - c.lo.x
 	var sz: float = c.hi.z - c.lo.z
@@ -1437,7 +1445,7 @@ func gen_cover_for(c) -> void:
 			for i in range(n):
 				var s: float = f["a"] + (i + 0.5) * L / n
 				var p = _face_pt(f, s)
-				add_cp(p.x, p.y, f["n"], Vector3.ZERO, "low", c)
+				_lcp(p.x, p.y, f["n"], Vector3.ZERO, "low", c, base, lv)
 		else:
 			if L >= 0.7:
 				for e in [[f["a"] + 0.3, -1.0], [f["b"] - 0.3, 1.0]]:
@@ -1445,14 +1453,27 @@ func gen_cover_for(c) -> void:
 					var tv = Vector3(e[1], 0, 0) if f["ax"] == "x" else Vector3(0, 0, e[1])
 					var px = p.x + tv.x * 0.85
 					var pz = p.y + tv.z * 0.85
-					var gy = ground_y(px, pz)
+					var gy = ground_y(px, pz) if base == -999.0 else base
 					if not inside_at(px, gy + 1.5, pz) and not inside_at(px, gy + 1.0, pz):
-						add_cp(p.x, p.y, f["n"], tv, "corner", c)
+						_lcp(p.x, p.y, f["n"], tv, "corner", c, base, lv)
 			if L > 2.4:
 				var n2 = roundi((L - 1.2) / 2.2)
 				for i in range(n2):
 					var p = _face_pt(f, f["a"] + 0.6 + (i + 0.5) * (L - 1.2) / n2)
-					add_cp(p.x, p.y, f["n"], Vector3(1, 0, 0) if f["ax"] == "x" else Vector3(0, 0, 1), "wall", c)
+					_lcp(p.x, p.y, f["n"], Vector3(1, 0, 0) if f["ax"] == "x" else Vector3(0, 0, 1), "wall", c, base, lv)
+
+# a cover point on the ground, or (base given) on an upper floor of a building with floors
+func _lcp(x: float, z: float, n: Vector3, t: Vector3, type: String, c, base: float, lv: int):
+	if base == -999.0:
+		return add_cp(x, z, n, t, type, c)
+	var q = Vector3(x, base, z)
+	if not Levels.inside(q, -0.4) or not Levels.walkable(lv, q) or inside_any(x, z, 0.28, base):
+		return null
+	var cp = add_cp(x, z, n, t, type, c, base)
+	if cp != null:
+		cp.upper = false
+		cp.lv = lv
+	return cp
 
 func _face_pt(f: Dictionary, s: float) -> Vector2:
 	if f["ax"] == "x":
@@ -1655,7 +1676,31 @@ func clear_vegetation(cx: float, cz: float, hw: float, hd: float) -> void:
 				if g["mm"]:
 					g["mm"].set_instance_transform(r[1], zero)
 			bushes.remove_at(i)
-	flatten_grass(Vector3(cx, ground_y(cx, cz), cz), maxf(hw, hd), Vector3.ZERO, 99999.0)
+	if grass_bush_mm != null:
+		for i in range(grass_bushes.size() - 1, -1, -1):
+			var gb = grass_bushes[i]
+			if absf(gb[0] - cx) < hw + gb[3] and absf(gb[1] - cz) < hd + gb[3]:
+				for j in range(3):
+					grass_bush_mm.set_instance_transform(gb[2] + j, zero)
+				grass_bushes.remove_at(i)
+	clear_grass(cx, cz, hw, hd)
+
+# grass under a new structure goes for good (rather than lying flattened under the floor)
+func clear_grass(cx: float, cz: float, hw: float, hd: float) -> void:
+	if grass_mm == null:
+		return
+	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
+	for gx in range(floori((cx - hw) / 4.0), floori((cx + hw) / 4.0) + 1):
+		for gz in range(floori((cz - hd) / 4.0), floori((cz + hd) / 4.0) + 1):
+			var ck = Vector2i(gx, gz)
+			if not grass_cells.has(ck):
+				continue
+			for i in grass_cells[ck]:
+				var t: Transform3D = grass_orig[i]
+				if absf(t.origin.x - cx) < hw and absf(t.origin.z - cz) < hd:
+					grass_orig[i] = zero
+					grass_flat[i] = 0.0
+					grass_mm.set_instance_transform(i, zero)
 
 # solid ground to build on: like inside_any, but trees, hedges and bushes don't count (they get cleared)
 func blocked_for_building(x: float, z: float, r: float) -> bool:
@@ -2960,6 +3005,8 @@ func live_tree(x: float, z: float) -> void:
 
 # a rounded bush clump (visual only)
 var bushes: Array = []     # {"x", "z", "r", "vis"}: so building on top of one can clear it away
+var grass_bushes: Array = []   # [x, z, first instance, radius]: the little bushes scattered through the grass
+var grass_bush_mm: MultiMesh = null
 
 func bush(x: float, z: float, sc: float = 1.0) -> void:
 	if on_road(x, z) or on_road(x + 1.2, z) or on_road(x - 1.2, z) or on_road(x, z + 1.2) or on_road(x, z - 1.2):
@@ -3974,7 +4021,7 @@ func begin_edit(m: Dictionary) -> void:
 	geo_root = Node3D.new()
 	add_child(geo_root)
 	bushes = []
-	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; wall_marks = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
+	openings = []; tables = []; craters = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; wall_marks = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bush_mm = null; grass_bushes = []; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	_set_size(m["size"].x, m["size"].y)
 	th = m["heights"]
 	paint = m.get("paint", PackedByteArray())
@@ -4718,8 +4765,11 @@ func build_decor() -> void:
 	bm.use_colors = true
 	bm.mesh = shape_mesh("blob")
 	bm.instance_count = bush_spots.size() * 3
+	grass_bush_mm = bm
+	grass_bushes = []
 	for sp in bush_spots:
 		var bsz = rnd(0.6, 1.3)
+		grass_bushes.append([sp.x, sp.z, nb, bsz * 1.2])
 		for j in range(3):
 			var ss = bsz * rnd(0.6, 1.0)
 			var off = Vector3(rnd(-0.5, 0.5), 0, rnd(-0.5, 0.5)) * bsz
@@ -4768,7 +4818,7 @@ func load_map(id: String) -> void:
 		geo_root.queue_free()
 	geo_root = Node3D.new()
 	add_child(geo_root)
-	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; wall_marks = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
+	openings = []; cols = []; grid = {}; groups = {}; cover = []; cover_grid = {}; terrain_cover = []; towers = []; roof_cols = []; wall_marks = []; smoke_sources = []; buildings = []; cut_now = {}; grass_mm = null; grass_bush_mm = null; grass_bushes = []; grass_bent = []; roads = []; ammo_points = []; water = []; water_mats = []; bridges = []
 	paint = PackedByteArray()
 	if id == "random":
 		var rs = RandomNumberGenerator.new()
@@ -4788,6 +4838,7 @@ func load_map(id: String) -> void:
 	th.fill(0.0)
 	rng.seed = MAPS[id]["seed"] if MAPS.has(id) else 31337
 	G.map_id = id
+	Levels.reset()
 	spawn = [Vector3(-96, 0, 0), Vector3(96, 0, 0)]
 	if id == "town":
 		build_town()
@@ -4813,6 +4864,8 @@ func load_map(id: String) -> void:
 		build_huge()
 	elif id == "factory":
 		build_factory()
+	elif id == "office":
+		Office.build(self)
 	elif id == "custom":
 		build_custom(G.custom_map)
 	else:
@@ -4837,8 +4890,11 @@ func load_map(id: String) -> void:
 	finalize_static()
 	Doors.setup(self)
 	build_nav()
+	if Levels.on:
+		Levels.build()
 	build_cover()
+	Office.cover(self)
 	build_decor()
-	build_backdrop({"factory": "urban", "huge": "farm", "town": "urban", "field": "farm", "trenches": "war", "valley": "farm", "front": "war", "city": "urban", "river": "farm", "pass": "farm", "forest": "farm", "beach": "farm"}.get(id, "farm"))
+	build_backdrop({"factory": "urban", "office": "urban", "huge": "farm", "town": "urban", "field": "farm", "trenches": "war", "valley": "farm", "front": "war", "city": "urban", "river": "farm", "pass": "farm", "forest": "farm", "beach": "farm"}.get(id, "farm"))
 	for s in smoke_sources:
 		G.fx.wreck_smoke(s, geo_root)

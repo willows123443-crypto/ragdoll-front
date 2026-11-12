@@ -10,4 +10,5 @@ var col = null
 var owner_s = null
 var ban = 0.0
 var upper = false
+var lv = 0               # which floor (in a building with floors)
 var tower = null

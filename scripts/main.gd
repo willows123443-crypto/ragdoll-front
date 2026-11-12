@@ -84,6 +84,16 @@ func _ready() -> void:
 			_vstuck()
 		if a == "--vtrace":
 			_vtrace()
+		if a == "--leveltest":
+			_level_test()
+		if a == "--levelbattle":
+			_level_battle()
+		if a == "--wandertest":
+			_wander_test()
+		if a.begins_with("--floorshot="):
+			_floor_shot(a.substr(12))
+		if a.begins_with("--hqshot="):
+			_hq_shot(a.substr(9))
 		if a == "--distest":
 			_dis_test()
 		if a == "--rtstest":
@@ -2566,21 +2576,6 @@ func _ui_shot(dir: String) -> void:
 	await _snap(dir, "setup_commander")
 	get_tree().quit()
 
-# every vehicle's position, speed and where it's trying to go, every couple of seconds
-func _vtrace() -> void:
-	await _wait(0.5)
-	start_game({"map": _arg("map", "field"), "mode": _arg("mode", "commander"), "size": 10, "limit": 999, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2})
-	await _wait(0.5)
-	for k in range(int(_arg("n", "30"))):
-		await _wait(2.0)
-		for v in G.vehicles:
-			if v.dead or v.spec.get("air", false) or v.spec.get("static", false):
-				continue
-			print("VTRACE t%02d %s#%d T%d pos (%.0f,%.0f) spd %.1f tgt %s cmd %s mis %s det %s drv %s" % [k * 2, v.kind, v.get_instance_id() % 1000, v.team, v.pos.x, v.pos.z, v.speed,
-				v.why, str(v.cmd != null), str(v.mission.get("type", "") if v.mission != null else "-"), str(v.detour != null), str(v.driver() != null)])
-	get_tree().quit()
-
-# the commander HUD: supply trucks with their status, the menu dropped down, radio and alerts
 func _hud_shot(dir: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)
 	G.settings["time"] = "day"
@@ -2629,6 +2624,231 @@ func _map_info() -> void:
 	get_tree().quit()
 
 # vehicles that want to go somewhere but haven't moved for 20 s: where, why, and what's around them
+# --vtrace: catch vehicles see-sawing (going forward, stopping, backing, forward again) and say which rule did it
+func _vtrace() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(int(_arg("seed", "5")))
+	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "commander"), "size": int(_arg("size", "12")), "limit": 999, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2})
+	await _wait(0.5)
+	var rec = {}
+	var eps = 0
+	var cool = {}
+	var tot = {}
+	for k in range(int(_arg("n", "240")) * 4):
+		await _wait(0.25)
+		for v in G.vehicles:
+			if v.dead or v.spec.get("air", false) or v.spec.get("static", false) or v.driver() == null or v.driver().is_player:
+				continue
+			var id = v.get_instance_id()
+			var r: Array = rec.get(id, [])
+			var thr = v._drive_cache[0] if v._drive_cache.size() > 0 else 0.0
+			var tags = [v.why, "hm:" + v.hold_mode]
+			if v.reverse_t > 0.0: tags.append("rev")
+			if v.yield_t > 0.0: tags.append("yield")
+			if v.get_meta("leg", 0) != 0 and G.sim_time < v.get_meta("leg_t", 0.0): tags.append("leg%d" % v.get_meta("leg", 0))
+			if v.detour != null and G.sim_time < v.detour_t: tags.append("detour")
+			if v.stuck_t > 0.5: tags.append("stuck_t")
+			if v.get_meta("fw_t", 0.0) > 0.0: tags.append("fw")
+			if v.mission != null: tags.append("mis:" + str(v.mission.get("type", "")))
+			r.append([v.pos, signf(v.speed) if absf(v.speed) > 0.4 else 0.0, thr, tags])
+			if r.size() > 60:
+				r.pop_front()
+			rec[id] = r
+			if r.size() < 60 or G.sim_time < cool.get(id, 0.0):
+				continue
+			var flips = 0
+			var last = 0.0
+			for e in r:
+				if e[1] != 0.0 and last != 0.0 and e[1] != last:
+					flips += 1
+				if e[1] != 0.0:
+					last = e[1]
+			var disp = G.dist2d(r[0][0], r[r.size() - 1][0])
+			if flips >= 3 and disp < 12.0:
+				eps += 1
+				cool[id] = G.sim_time + 20.0
+				var h = {}
+				for e in r:
+					for t in e[3]:
+						h[t] = h.get(t, 0) + 1
+						tot[t] = tot.get(t, 0) + 1
+				print("VTRACE t%d %s T%d (%.0f,%.0f) flips=%d disp=%.1f %s" % [int(G.sim_time), v.kind, v.team, v.pos.x, v.pos.z, flips, disp, str(h)])
+	print("VTRACE episodes ", eps, " totals ", tot)
+	get_tree().quit()
+
+# --hqshot=DIR: your HQ from above with its roof on, then lifted off
+func _hq_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.3)
+	start_game({"map": "field", "mode": "commander", "size": 8, "limit": 999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2, "factions": (_arg("fac", "army,army") + ",army").split(",")})
+	await _wait(4.0)
+	var hq = Build.hq(0)
+	var p: Vector3 = hq["p"]
+	G.pc.rts_focus = p
+	G.pc.rts_dist = 22.0
+	await _wait(0.6)
+	await _snap(dir, "hq_roof")
+	G.pc._hq_cut(hq)
+	await _wait(0.3)
+	await _snap(dir, "hq_inside")
+	get_tree().quit()
+
+# --floorshot=DIR: the office block from above with each floor shown in turn, and a few views inside
+func _floor_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	G.settings["ai_side"] = true
+	seed(3)
+	await _wait(0.3)
+	start_game({"map": "office", "mode": _arg("mode", "capture"), "size": 12, "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	await _wait(float(_arg("wait", "45")))
+	G.ui.floor_view.pick(-1)
+	await _look(Vector3(-30, 62, 34), Vector3(-6, 0, 0))
+	await _wait(0.4)
+	await _snap(dir, "office_whole")
+	for k in range(Levels.n):
+		G.ui.floor_view.pick(k)
+		await _wait(0.4)
+		await _snap(dir, "office_floor%d" % k)
+	G.ui.floor_view.pick(1)
+	await _look(Vector3(-46, 30, 16), Vector3(-30, 3.6, 2))
+	await _wait(0.4)
+	await _snap(dir, "office_floor1_close")
+	G.ui.floor_view.pick(2)
+	await _look(Vector3(-4, 26, 18), Vector3(4, 7.2, 4))
+	await _wait(0.4)
+	await _snap(dir, "office_floor2_close")
+	G.ui.floor_view.pick(-1)
+	await _look(Vector3(-110, 20, -50), Vector3(0, 4, 0))
+	await _wait(0.4)
+	await _snap(dir, "office_outside")
+	get_tree().quit()
+
+# --wandertest: men who keep walking and get nowhere (or walk with nowhere to go): what they're up to
+func _wander_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(int(_arg("seed", "6")))
+	start_game({"map": _arg("map", "field"), "mode": _arg("mode", "commander"), "size": int(_arg("size", "12")), "limit": 999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	await _wait(0.5)
+	var hist = {}
+	var told = {}
+	var n = 0
+	for k in range(int(_arg("secs", "240")) / 2):
+		await _wait(2.0)
+		for s in G.soldiers:
+			if s.state != "alive" or s.vehicle != null or s.is_player:
+				continue
+			var id = s.get_instance_id()
+			var h: Array = hist.get(id, [])
+			h.append([s.pos, s.vel.length()])
+			if h.size() > 10:
+				h.pop_front()
+			hist[id] = h
+			if h.size() < 10 or told.has(id):
+				continue
+			var walked = 0.0
+			var moving_n = 0
+			for e in h:
+				walked += e[1] * 2.0
+				if e[1] > 0.6:
+					moving_n += 1
+			var net = G.dist2d(h[0][0], h[h.size() - 1][0])
+			if moving_n >= 8 and net < 4.0 and walked > 14.0:
+				told[id] = true
+				n += 1
+				var fwd = Vector3(sin(s.body_yaw), 0, cos(s.body_yaw))
+				var side = absf(G.flat(s.vel).normalized().dot(fwd)) if s.vel.length() > 0.3 else -1.0
+				print("WANDER t%d T%d %s at (%.0f,%.0f) task=%s order=%s mt=%s path=%d/%d unstick=%.1f slide=%.1f stuck=%d wedge=%d cover=%s in_cover=%s ready=%s fwd_dot=%.2f flee=%s scramble=%s vis=%s" % [int(G.sim_time), s.team, s.cls, s.pos.x, s.pos.z,
+					str(s.task), str(s.order.get("mode", "") if s.order != null else "-"), str(s.move_target), s.path_i, s.path.size(), s.unstick_t, s.slide_t, s.stuck_n, s.wedge_n,
+					str(s.cover != null), str(s.in_cover), str(s.ready_), side, str(s.flee != null), str(s.scramble != null), str(s.vis_t != null)])
+	print("WANDER total ", n)
+	get_tree().quit()
+
+# --levelbattle: an AI battle in the office block: who's on which floor, who holds the flags
+func _level_battle() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(int(_arg("seed", "4")))
+	start_game({"map": "office", "mode": _arg("mode", "capture"), "size": int(_arg("size", "12")), "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var stuck = {}
+	for t in range(int(_arg("secs", "300")) / 10):
+		await _wait(10.0)
+		var c = [[0, 0, 0, 0], [0, 0, 0, 0]]
+		var still = 0
+		for s in G.soldiers:
+			if s.state != "alive" or s.team > 1:
+				continue
+			var k = Levels.level_of(s.pos) if Levels.inside(s.pos) else 3
+			c[s.team][k] += 1
+			var key = s.get_instance_id()
+			if stuck.has(key) and stuck[key].distance_to(s.pos) < 0.5 and s.move_target != null:
+				still += 1
+			stuck[key] = s.pos
+		var flags = []
+		for pt in Obj.points:
+			flags.append("%s:%d" % [pt["name"], pt["owner"]])
+		print("LB t%d A[g,1,2,out]=%s B=%s flags=%s stuck_moving=%d kills=%s" % [int(G.sim_time), str(c[0]), str(c[1]), " ".join(flags), still, str(G.stats.get("kills", "?") if G.get("stats") != null else "?")])
+	get_tree().quit()
+
+# --leveltest: the office block's floors, stairs and paths, then men sent to every floor
+func _level_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "office", "mode": _arg("mode", "capture"), "size": int(_arg("size", "8")), "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	print("LEVELS on=", Levels.on, " grids=", Levels.grids.size(), " stairs=", Levels.stairs.size(), " bi=", Levels.bi)
+	for k in range(1, Levels.n):
+		var g: AStarGrid2D = Levels.grids[k]
+		var free = 0
+		for iz in range(Levels.GH):
+			for ix in range(Levels.GW):
+				if not g.is_point_solid(Vector2i(ix, iz)):
+					free += 1
+		print("LEVEL ", k, " free cells ", free, " of ", Levels.GW * Levels.GH)
+	for st in Levels.stairs:
+		print("STAIR k=", st["k"], " a=", st["a"], " walk_a=", Levels.walkable(st["k"], st["a"]), " b=", st["b"], " walk_b=", Levels.walkable(st["k"] + 1, st["b"]))
+	var cps = [0, 0, 0]
+	for cp in G.world.cover:
+		if Levels.inside(cp.p):
+			cps[cp.lv] += 1
+	print("COVER per floor ", cps)
+	for pt in Obj.points:
+		var pth = Levels.path(G.world.spawn[0], pt["p"])
+		var lvls = []
+		for q in pth:
+			lvls.append(Levels.level_of(q))
+		print("PATH to ", pt["name"], " lv", pt.get("lv", 0), " pts=", pth.size(), " levels=", lvls)
+	# men sent to each floor: where do they get to?
+	var men = []
+	var goals = []
+	for k in range(Levels.n):
+		for j in range(2):
+			var s = spawn_soldier(0, -60.0, -4.0 + j * 2.0 + k * 4.0, "rifle")
+			var goal = Levels.spot_on(k, Vector3(20.0 - k * 10.0, 0, 8.0 * (1 if j == 0 else -1)), 3.0)
+			s.order = {"mode": "move", "point": goal}
+			AI.route_to(s, goal, 3.0)
+			men.append(s)
+			goals.append(goal)
+	for t in range(int(_arg("secs", "70"))):
+		await _wait(1.0)
+		if _arg("trace", "") != "" and t % 3 == 0:
+			var ti = int(_arg("trace", "0"))
+			var tm = men[ti]
+			print("TR t%d (%.1f,%.1f,%.1f) lv%d tgt=%s path_i=%d/%d task=%s stuck=%d wedge=%d" % [t, tm.pos.x, tm.pos.y, tm.pos.z, Levels.level_of(tm.pos), str(tm.move_target), tm.path_i, tm.path.size(), str(tm.task), tm.stuck_n, tm.wedge_n])
+		for i in range(men.size()):
+			var s = men[i]
+			if s.order != null and s.move_target == null and G.dist2d(s.pos, goals[i]) > 2.0:
+				AI.route_to(s, goals[i], 3.0)
+	for i in range(men.size()):
+		var s = men[i]
+		print("MAN ", i, " goal lv", Levels.level_of(goals[i]), " at lv", Levels.level_of(s.pos), " y=%.1f d=%.1f state=%s" % [s.pos.y, G.dist2d(s.pos, goals[i]), s.state])
+	get_tree().quit()
+
 func _vstuck() -> void:
 	await _wait(0.5)
 	G.settings["ai_side"] = true

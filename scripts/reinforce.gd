@@ -233,6 +233,37 @@ static func truck_cls(t: int, cls: Array, dest = null) -> int:
 		n += 1
 	return n
 
+static var hot_said = -99.0
+
+static func _enemies_near(t: int, p: Vector3, r: float) -> int:
+	var n = 0
+	for s in G.soldiers:
+		if s.team != t and s.state == "alive" and s.team < G.team_count() and G.dist2d(s.pos, p) < r:
+			n += 1
+	for v in G.vehicles:
+		if v.team != t and v.team >= 0 and not v.dead and not v.spec.get("static", false) and G.dist2d(v.pos, p) < r:
+			n += 3
+	return n
+
+static func safe_drop(t: int, drop: Vector3, entry: Vector3) -> Vector3:
+	if _enemies_near(t, drop, 30.0) < 3:
+		return drop
+	var back = G.flat(entry - drop)
+	var L = back.length()
+	if L < 1.0:
+		return drop
+	back /= L
+	var side = Vector3(-back.z, 0, back.x)
+	var b: Rect2 = G.world.bounds.grow(-12.0)
+	for k in range(1, 9):
+		for sd in [0.0, 1.0, -1.0]:
+			var q = drop + back * (k * 18.0) + side * sd * (k * 8.0)
+			q.x = clampf(q.x, b.position.x, b.end.x)
+			q.z = clampf(q.z, b.position.y, b.end.y)
+			if _enemies_near(t, q, 35.0) == 0 and not G.world.in_water(q.x, q.z):
+				return G.main._free_spot(q)
+	return drop
+
 static func truck(t: int, n: int, dest = null) -> void:
 	if G.map_id == "beach" and t == 0:
 		boat(t, n)
@@ -240,6 +271,14 @@ static func truck(t: int, n: int, dest = null) -> void:
 	var entry = offmap(clear_entry(t))
 	# drop them where they're needed: a little behind the front line (or wherever they were sent)
 	var drop = G.main._free_spot(dest if dest != null else forward_drop(t))
+	# but not into the middle of the enemy (an HQ that's been overrun): somewhere back toward the
+	# edge they come in from, out of the fighting, where they can form up
+	var safe = safe_drop(t, drop, entry)
+	if safe != drop:
+		if t == 0 and G.sim_time - hot_said > 20.0:
+			hot_said = G.sim_time
+			G.ui.radio(0, "Drop zone at %s is crawling with enemy: the trucks will let your men off at %s instead" % [AI.grid_ref(drop), AI.grid_ref(safe)])
+		drop = safe
 	var yaw = atan2(drop.x - entry.x, drop.z - entry.z)
 	var v = Vehicle.make("truck", t, entry, yaw)
 	v.mission = {"type": "deliver", "drop": drop, "exit": entry, "stage": 0, "wait": 0.0}

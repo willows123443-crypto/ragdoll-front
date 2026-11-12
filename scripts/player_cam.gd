@@ -709,12 +709,66 @@ func _cut_tick(dt: float) -> void:
 			var bi = w.building_index(hit.position, 0.4)
 			if bi >= 0 and _looks_down_on(bi, cp):
 				want[bi] = 2.3
+			# an HQ under the cursor, seen from above: its roof comes off so you can see who's inside
+			var hq_hover = null
+			for st in Build.sites:
+				if st["kind"] == "hq" and not st["dead"] and G.dist2d(hit.position, st["p"]) < 9.0 and cp.y > st["p"].y + 6.0:
+					hq_hover = st
+			_hq_cut(hq_hover)
+		else:
+			_hq_cut(null)
 		for c in selection:
 			if is_instance_valid(c) and c is Soldier and c.state == "alive" and c.vehicle == null:
 				var sb = w.building_index(c.pos, -0.1)
 				if sb >= 0 and _looks_down_on(sb, cp):
 					want[sb] = maxf(want.get(sb, 0.0), maxf(2.3, c.pos.y - w.buildings[sb]["gy"] + 2.3))
+	else:
+		_hq_cut(null)
+	# the office block: the floor picked on the floor panel (or the floor of the man you're playing)
+	if Levels.on and Levels.bi >= 0:
+		want.erase(Levels.bi)
+		var fv = G.ui.floor_view
+		var k = fv.shown if fv != null else Levels.view
+		if k >= 0:
+			want[Levels.bi] = k * Levels.FH + Levels.FH - 0.5
 	w.set_cut(want)
+
+var hq_cut = null
+var hq_hidden: Array = []
+
+# lift the roof off an HQ (or put it back: null)
+func _hq_cut(st) -> void:
+	if st == hq_cut:
+		return
+	for m in hq_hidden:
+		if is_instance_valid(m):
+			m.visible = true
+	hq_hidden = []
+	hq_cut = st
+	if st == null or not is_instance_valid(st["root"]):
+		return
+	var gy: float = st["p"].y
+	var items = []
+	var slabs = []
+	for ch in st["root"].get_children():
+		if not (ch is MeshInstance3D) or not ch.visible:
+			continue
+		var sc: Vector3 = ch.global_transform.basis.get_scale()
+		var o: Vector3 = ch.global_position
+		var bottom = o.y - sc.y * 0.5 - gy
+		items.append([ch, bottom, o, sc])
+		if bottom > 2.0 and sc.x * sc.z > 3.0 and sc.y < 1.0:
+			slabs.append(Rect2(o.x - sc.x * 0.5 - 0.6, o.z - sc.z * 0.5 - 0.6, sc.x + 1.2, sc.z + 1.2))
+	for it in items:
+		if it[1] < 2.0:
+			continue
+		var on_roof = false
+		for r in slabs:
+			if r.has_point(Vector2(it[2].x, it[2].z)):
+				on_roof = true
+		if on_roof:
+			it[0].visible = false
+			hq_hidden.append(it[0])
 
 func _looks_down_on(bi: int, cp: Vector3) -> bool:
 	var b = G.world.buildings[bi]
@@ -901,6 +955,9 @@ func jump_to_fight() -> void:
 	G.ui.message("Heavy fighting at grid %s%s" % [AI.grid_ref(p), "  ·  press again for the next" if hot_list.size() > 1 else ""])
 
 func _key(k: int) -> void:
+	if (k == KEY_PAGEUP or k == KEY_PAGEDOWN) and Levels.on and G.ui.floor_view != null:
+		G.ui.floor_view.step_floor(1 if k == KEY_PAGEUP else -1)
+		return
 	if k == KEY_HOME and G.player == null:
 		jump_to_fight()
 		return

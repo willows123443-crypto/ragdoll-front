@@ -398,18 +398,21 @@ static func hop_cover(s, goal: Vector3):
 static func raze_tick(s) -> bool:
 	if G.mode != "commander" or s.vehicle != null or s.is_player or s.zombie or s.task in ["medic", "stretcher", "construct", "get_radio", "salvage"]:
 		return false
-	if s.vis_t != null or G.sim_time - s.seen_t < 4.0 or ClassAI.busy(s):
-		if s.task == "raze":
-			s.task = null
-		return false
-	var o = order_of(s)
-	if o["mode"] == "move" and not o.get("arrived", false):
-		return false
 	var hq = Build.hq((s.team + 1) % 2)
 	if hq == null or not Build.alive(hq):
 		return false
 	var hp: Vector3 = hq["p"]
 	var d = G.dist2d(s.pos, hp)
+	# sappers and rocket men close to it go for the HQ even with the defenders shooting at them (shells
+	# can't touch it: it's only ever taken like this); everyone else clears the defenders first
+	var sapper = d < 38.0 and (s.satchels > 0 or s.W["rocket"]) and not s.broken
+	if (s.vis_t != null or G.sim_time - s.seen_t < 4.0 or ClassAI.busy(s)) and not (sapper and not ClassAI.busy(s)):
+		if s.task == "raze":
+			s.task = null
+		return false
+	var o = order_of(s)
+	if o["mode"] == "move" and not o.get("arrived", false) and G.dist2d(o["point"], hp) > 30.0:
+		return false
 	if d > 48.0:
 		if s.task == "raze":
 			s.task = null
@@ -523,6 +526,11 @@ static func tower_at(p: Vector3) -> Variant:
 
 # go somewhere, by the stairs (or ladder) if it's upstairs, or down them first if we're up and it isn't
 static func route_to(s, goal: Vector3, speed: float) -> void:
+	# a building with real floors: the path finder knows the stairs
+	if Levels.on and (Levels.inside(goal, 1.0) or Levels.inside(s.pos, 1.0)):
+		s.tower = null
+		go_to(s, goal, speed)
+		return
 	var up_goal = goal.y - G.world.ground_y(goal.x, goal.z) > 1.5
 	if up_goal:
 		var T = tower_at(goal)
@@ -544,9 +552,14 @@ static func route_to(s, goal: Vector3, speed: float) -> void:
 	go_to(s, goal, speed)
 
 static func upstairs(s) -> bool:
-	return s.pos.y - G.world.ground_y(s.pos.x, s.pos.z) > 1.5
+	# (on a floor of a building with floors he's not "up a tower": he moves and fights there like anywhere)
+	return s.pos.y - G.world.ground_y(s.pos.x, s.pos.z) > 1.5 and not Levels.inside(s.pos, 0.6)
 
 static func go_downstairs(s) -> void:
+	if Levels.inside(s.pos, 0.6):
+		release_cover(s)
+		stop_move(s)
+		return
 	var T = s.tower
 	if T == null:
 		for t2 in G.world.towers:
@@ -614,7 +627,16 @@ static func follow_path(s) -> String:
 		var tgt: Vector3 = s.move_target
 		s.partial = false
 		var far = G.dist2d(s.pos, tgt)
-		if far > 22.0 and not upstairs(s) and absf(tgt.y - G.world.ground_y(tgt.x, tgt.z)) < 1.5:
+		if Levels.on and (Levels.level_of(s.pos) > 0 or Levels.target_level(s.pos, tgt) > 0):
+			# up or down floors (or along one): the whole way at once, stairs and all
+			s.path = Levels.path(s.pos, tgt)
+			if s.path.is_empty():
+				s.path = [tgt]
+			s.path_i = 0
+			far = -1.0
+		if far < 0.0:
+			pass
+		elif far > 22.0 and not upstairs(s) and absf(tgt.y - G.world.ground_y(tgt.x, tgt.z)) < 1.5:
 			# know the whole way first, then walk it a leg at a time
 			var r: Array = G.world.find_route(s.pos, tgt, s.team)
 			if r.size() > 1:
@@ -636,10 +658,11 @@ static func follow_path(s) -> String:
 			# long trips are planned in legs so path searches stay cheap on large maps
 			tgt = s.pos + G.flat(tgt - s.pos).normalized() * 55.0
 			s.partial = true
-		s.path = G.world.find_path(s.pos, tgt)
-		if s.path.is_empty():
-			s.path = [tgt]
-		s.path_i = 0
+		if far >= 0.0:
+			s.path = G.world.find_path(s.pos, tgt)
+			if s.path.is_empty():
+				s.path = [tgt]
+			s.path_i = 0
 	var wp: Vector3 = s.path[s.path_i]
 	var d = G.dist2d(wp, s.pos)
 	while d < 0.55 and s.path_i < s.path.size() - 1:
@@ -707,6 +730,22 @@ static func follow_path(s) -> String:
 static func unwedge(s) -> void:
 	var W = G.world
 	var best = null
+	var lk = Levels.level_of(s.pos)
+	if lk > 0:
+		# upstairs in a building with floors: the nearest open floor on his own storey
+		var ly = Levels.floor_y(lk)
+		for k in range(24):
+			var a = randf() * TAU
+			var q = s.pos + Vector3(cos(a), 0, sin(a)) * (1.0 + (k % 6) * 0.4)
+			q.y = ly
+			if Levels.walkable(lk, q) and not W.inside_any(q.x, q.z, 0.45, ly):
+				best = q
+				break
+		if best == null:
+			best = Levels.free_near(s.pos)
+		s.scramble = {"a": s.pos, "b": best, "k": 0.0, "dur": clampf(G.dist2d(s.pos, best) * 0.28, 0.4, 1.4)}
+		s.need_path = true
+		return
 	for k in range(24):
 		var a = randf() * TAU
 		var q = s.pos + Vector3(cos(a), 0, sin(a)) * (1.5 + (k % 6) * 0.5)
@@ -782,8 +821,23 @@ static func perceive(s) -> void:
 		s.light_on = false
 	var eye = s.head_pos()
 	var in_c = s.in_cover and s.cover != null
-	if in_c and s.cover.type == "wall" and s.has_threat:
-		can_fire_from(s.cover, s.threat)
+	var shot_ok = true
+	if in_c and s.has_threat:
+		shot_ok = can_fire_from(s.cover, s.threat)
+	# in cover with the enemy about, and no line of fire from it at all (a wall, not a window, between
+	# him and them): after a few seconds he looks for somewhere he can actually shoot from
+	if in_c and s.has_seen and G.sim_time - s.seen_t < 5.0 and not s.broken and s.supp < 0.5 and s.task != "post":
+		if not shot_ok:
+			if not s.has_meta("noshot"):
+				s.set_meta("noshot", G.sim_time)
+			elif G.sim_time - float(s.get_meta("noshot")) > 5.0:
+				s.remove_meta("noshot")
+				s.cover.ban = G.sim_time + 20.0
+				release_cover(s)
+				s.decide_t = 0.0
+				in_c = false
+		elif s.has_meta("noshot"):
+			s.remove_meta("noshot")
 	var pe = peek_pos(s.cover) if in_c else Vector3.ZERO
 	var vis = null
 	var peek_only = false
@@ -2294,11 +2348,32 @@ static func aim_and_fire(s) -> void:
 	if point != null and tgt == null and not G.smoke_clouds.is_empty() and G.blocked(s.head_pos(), point, true) and not G.blocked(s.head_pos(), point, false):
 		if G.sim_time - s.seen_t > 4.0:
 			point = null
+	# walking somewhere with nobody actually in his sights: no crabbing along sideways firing blind at
+	# where the enemy was; he looks where he's going
+	if point != null and tgt == null and veh_t == null and s.task != "raze" and Vector2(s.vel.x, s.vel.z).length() > 1.4:
+		var mv = atan2(s.vel.x, s.vel.z)
+		var at = atan2(point.x - s.pos.x, point.z - s.pos.z)
+		if absf(G.wrap_a(at - mv)) > 1.2:
+			point = null
 	if point != null:
 		s.ready_ = true
 		var err = aim_at(s, point, 5.5)
 		s.want_peek = s.in_cover and (s.burst > 0 or s.burst_cd < 0.35) and s.reload_t <= 0.0
-		if s.reload_t <= 0.0 and err < 0.12 and exposed_for_shot(s) and not s.gun_blocked:
+		if s.reload_t <= 0.0 and err < 0.15 and s.gun_blocked and tgt != null:
+			# the barrel's in the wall (leaning into it, a doorframe, a window jamb): no use standing
+			# there aiming at plaster. Step back from it, or give up this bit of cover for another
+			s.block_t += G.DT
+			if s.block_t > 1.6:
+				s.block_t = 0.0
+				if s.in_cover and s.cover != null:
+					s.cover.ban = G.sim_time + 15.0
+					release_cover(s)
+					s.decide_t = 0.0
+				elif s.move_target == null:
+					var ad = G.flat(point - s.pos).normalized()
+					var sd2 = Vector3(-ad.z, 0, ad.x) * (1.0 if randf() < 0.5 else -1.0)
+					go_to(s, s.pos - ad * 1.2 + sd2 * 1.2, 3.0)
+		elif s.reload_t <= 0.0 and err < 0.12 and exposed_for_shot(s) and not s.gun_blocked:
 			if s.burst > 0:
 				if s.fire_cd <= 0.0:
 					var dist = s.pos.distance_to(point)

@@ -27,6 +27,8 @@ const ACTIONS = [
 	["report", "Battle report", KEY_J],
 	["nv", "Night vision", KEY_F2],
 	["hotspot", "Jump to the heaviest fighting", KEY_HOME],
+	["floor_up", "Office block: look at the floor above", KEY_PAGEUP],
+	["floor_down", "Office block: look at the floor below", KEY_PAGEDOWN],
 ]
 
 static func _custom() -> Dictionary:

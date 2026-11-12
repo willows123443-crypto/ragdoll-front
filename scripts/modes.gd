@@ -1109,7 +1109,7 @@ static func status_text() -> String:
 	return ""
 
 # ---------------------------------------------------------------- the daily challenge
-const DAILY_MAPS = ["town", "field", "trenches", "forest", "city", "factory", "valley", "river", "pass", "front", "random"]
+const DAILY_MAPS = ["town", "field", "trenches", "forest", "city", "factory", "office", "valley", "river", "pass", "front", "random"]
 const DAILY_MODES = ["capture", "frontline", "escort", "rescue", "horde", "breakthrough", "siege", "general"]
 const DAILY_PATH = "user://daily.dat"
 
@@ -1123,7 +1123,7 @@ static func daily_config() -> Dictionary:
 	r.seed = hash(key + "ragdoll-front")
 	var mode = DAILY_MODES[r.randi() % DAILY_MODES.size()]
 	var map = DAILY_MAPS[r.randi() % DAILY_MAPS.size()]
-	if mode == "escort" and map in ["factory", "trenches"]:
+	if mode == "escort" and map in ["factory", "trenches", "office"]:
 		map = "valley"
 	var tod = ["day", "day", "dusk", "night", "dawn"][r.randi() % 5]
 	var mods = []

@@ -3,7 +3,7 @@ extends CanvasLayer
 
 var tool = "ctl"
 var tab = "units"
-const MAP_IDS = ["town", "field", "trenches", "forest", "city", "factory", "beach", "valley", "front", "river", "pass", "huge", "random"]
+const MAP_IDS = ["town", "field", "trenches", "forest", "city", "factory", "office", "beach", "valley", "front", "river", "pass", "huge", "random"]
 const TIPS = {"s1": "Click the ground to drop in a soldier", "s5": "Click the ground to drop in five soldiers",
 	"sp": "Click where this side's reinforcements should arrive", "mv": "Click a point to send the whole side there",
 	"up": "Click a structure to upgrade it: sandbags → concrete wall, MG nest → pillbox, FOB tent → hut",
@@ -110,6 +110,8 @@ func _ready() -> void:
 	_build_info()
 	squad_cards = SquadCards.new()
 	root.add_child(squad_cards)
+	floor_view = FloorView.new()
+	root.add_child(floor_view)
 	menu.visible = false
 	title.visible = true
 
@@ -444,7 +446,7 @@ func _cards(t: String) -> Array:
 			out.append(["sup:ammotruck", "Ammo truck", "%d pts · park it behind the line" % Support.COSTS["ammotruck"]])
 		"recruit":
 			for k in RECRUIT:
-				out.append(["r:" + k, "%s ×%d" % [RECRUIT[k]["name"], RECRUIT[k]["cls"].size()], "%d pts · click where" % RECRUIT[k]["cost"]])
+				out.append(["r:" + k, "%s ×%d" % [RECRUIT[k]["name"], RECRUIT[k]["cls"].size()], "%d pts · click where" % recruit_cost(0, k)])
 			if Faction.militia(0):
 				return out
 			out.append(["sup:paradrop", "Paratroopers ×6", ("%d pts" % Support.COSTS["paradrop"]) if Support.unlocked(0, "paradrop") else Support.need_text("paradrop")])
@@ -630,7 +632,7 @@ const SUP_DESC = {
 	"ambulance": "Picks up the wounded and takes them to a field hospital",
 	"radar": "Command truck: park it and it sets up as a command post. Men within 45 m steady faster under fire and shoot straighter, it spots enemies far around, call-ins work through its radio, and reinforcements come up to it",
 	"bridger": "Lays a bridge over a river or a blown bridge",
-	"artillery": "A barrage of shells on the spot you click",
+	"artillery": "A barrage of shells on the spot you click (in commander battles it can't hurt an HQ: that has to be taken on the ground)",
 	"airstrike": "A plane bombs the spot you click",
 	"recon": "A spotter plane circles the enemy's side for thirty seconds and shows everything it sees",
 	"gunship": "A helicopter gunship hunts the enemy for seventy seconds",
@@ -648,7 +650,7 @@ func _card_desc(id: String) -> String:
 		return "%s: %s. %s" % [u["name"], u.get("long", u["desc"]), st]
 	if id.begins_with("r:"):
 		var r = RECRUIT[id.substr(2)]
-		return "%s (%d pts): %s. Click where you want them dropped off." % [r["name"], r["cost"], r.get("desc", "")]
+		return "%s (%d pts): %s. Click where you want them dropped off." % [r["name"], recruit_cost(0, id.substr(2)), r.get("desc", "")]
 	if id.begins_with("sup:"):
 		var k2 = id.substr(4)
 		var d = SUP_DESC.get(k2, "")
@@ -680,7 +682,7 @@ func _cost(id: String) -> int:
 	if id.begins_with("sup:"):
 		return Support.COSTS.get(id.substr(4), 0)
 	if id.begins_with("r:"):
-		return RECRUIT[id.substr(2)]["cost"]
+		return recruit_cost(0, id.substr(2))
 	if id.begins_with("b:"):
 		return Build.cost(id.substr(2))
 	if id.begins_with("u:"):
@@ -748,14 +750,19 @@ func _card_clicked(id: String) -> void:
 	tool = id
 	_render_tools()
 
+# what a body of men costs a side: the militia's irregulars come cheaper than trained soldiers
+func recruit_cost(team: int, k: String) -> int:
+	return int(round(RECRUIT[k]["cost"] * (0.8 if Faction.militia(team) else 1.0)))
+
 func _recruit(k: String, dest = null) -> void:
 	var r = RECRUIT[k]
-	if Support.points[0] < r["cost"]:
-		message("Not enough supply points: %s costs %d, you have %d" % [r["name"], r["cost"], Support.points[0]])
+	var cost = recruit_cost(0, k)
+	if Support.points[0] < cost:
+		message("Not enough supply points: %s costs %d, you have %d" % [r["name"], cost, Support.points[0]])
 		return
-	Support.points[0] -= r["cost"]
+	Support.points[0] -= cost
 	var n = Reinforce.truck_cls(0, r["cls"], dest)
-	message("%s on the way by %s%s (-%d pts)" % [r["name"], "truck" if n == 1 else "%d trucks" % n, " to the marked spot" if dest != null else "", r["cost"]])
+	message("%s on the way by %s%s (-%d pts)" % [r["name"], "truck" if n == 1 else "%d trucks" % n, " to the marked spot" if dest != null else "", cost])
 	if dest != null:
 		G.fx.order_marker(dest)
 	_dock_points()
@@ -984,7 +991,7 @@ func _row(parent: Control, label: String, ctrl: Control) -> void:
 	ctrl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(h)
 
-const MAP_NAMES = ["Town ruins", "Farmland", "Trenches", "Forest", "City blocks", "Tank factory (indoor)", "Beach landing", "Valley offensive (large)",
+const MAP_NAMES = ["Town ruins", "Farmland", "Trenches", "Forest", "City blocks", "Tank factory (indoor)", "Ministry offices (3 floors, indoor)", "Beach landing", "Valley offensive (large)",
 	"Western front (large)", "River crossing (large)", "Mountain pass (large)", "Huge battlefield (huge)", "Random map (seed below)"]
 
 func _section(parent: Control, title: String) -> void:
@@ -2867,6 +2874,7 @@ func radio(team: int, text: String) -> void:
 
 # ---------------------------------------------------------------- what you clicked: a structure or a vehicle
 var info: PanelContainer = null
+var floor_view: FloorView = null
 var squad_cards = null
 var info_title: Label
 var info_body: Label

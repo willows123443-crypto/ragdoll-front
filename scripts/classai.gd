@@ -324,7 +324,8 @@ static func work(s) -> void:
 				s.build_t += G.DT
 				fv.hp = minf(fv.spec["hp"], fv.hp + 12.0 * G.DT)      # patching up the damage while he's at it
 				fv._clear_damage_smoke()
-				if s.build_t > (10.0 if fv.tracks_broken else 6.0) and fv.hp >= fv.spec["hp"] * 0.6:
+				var soft = fv.kind in Vehicle.SOFT_KINDS
+				if s.build_t > (10.0 if fv.tracks_broken else 6.0) and (fv.hp >= fv.spec["hp"] * 0.6 or soft or s.build_t > 16.0):
 					fv.tracks_broken = false
 					fv._fix_tyres()
 					fv.fix_by = null

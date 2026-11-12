@@ -290,13 +290,29 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Camo nets always need building:** the Camo button on a structure now orders a net that engineers put up, instead of it appearing at once
 - **Black Banner Militia vehicles:** the militia now field an old tank (sandbags and logs for armour, a black banner on the turret), a gun truck (a lorry with boiler plate welded over it and a cannon) and a twin-gun technical, as well as the technical. In commander mode, vehicles you order now always go into the depot's queue and show their progress, even for the militia (who have no radio: the depot is at home)
 
+- **New map: Ministry offices (3 floors, indoor):** a three-storey office block in a walled yard. Every floor has a long corridor, three cross corridors and wings of front and back offices with doors between them, furnished with desks, cabinets and corridor barricades. Four U-shaped stairwells join the floors, laid out so both sides get the same. The flags are on different floors (A and C on the first floor at either end, B on the top floor in the middle)
+- **Fighting on every floor:** each storey has its own path grid, joined by the stairwells, so the AI can be sent anywhere on any floor and finds its own way up and down. Cover is generated on the upper floors too, men only pick cover on the floor they're on, and a flag on a floor is held by whoever is on that floor
+- **Floor view:** in the office block, Page Up / Page Down (or the floor buttons on the right) lift off everything above the chosen floor so you look straight down into its rooms. Each button shows how many of your men and how many seen enemies are on that floor, and men on hidden floors show as small markers with their floor number. While you play a man inside, the view follows his floor
+- **See inside your HQ:** hover over an HQ from above and its roof lifts off
+- **AI goes for the HQ:** sappers and rocket men close to an enemy HQ now attack it even under fire, instead of circling it; the AI knows artillery can't hurt an HQ in commander battles and shells the defenders instead, and you're told if you try (the artillery card says so too)
+- **Your bases keep watch:** enemy soldiers and vehicles near your HQ (and forward bases, bunkers and towers) always show through the fog of war
+- **Safe drop-offs:** reinforcements ordered while the drop point is overrun get dropped back toward the map edge, out of the fighting, and you're told where
+- **Economy:** the HQ earns a little more supply on its own (2 points every 18 s), and militia squads cost 20% less than army ones
+- **Troops find a clear shot:** a man whose rifle is jammed against the wall he's leaning on steps back or picks other cover, and one who has no line of fire from his cover for five seconds goes and finds some; no more firing blind sideways while walking
+- **Fixed:** far-off men in the commander view are posed fresh on every frame between their updates (they were sliding, then snapping forward, with their rifles floating in front of them)
+- **Fixed:** vehicles stopping for any friendly vehicle close by: they now only stop for one that's coming at them, ease off behind one driving away, and slip past after six seconds of giving way. A vehicle sawing back and forth with three-point turns swings round forward instead, and a parking or drop-off spot a few metres to the side or behind counts as reached
+- **Fixed:** damaged supply trucks (and other lorries and jeeps) stopping for ages while the driver got out to patch the body; they now drive on, and only stop to change a wheel with two or more flats
+- **Fixed:** two supply trucks jammed nose to side at HQ: a waiting truck now moves over, and the second time a vehicle jams against one of its own it slips past
+- **Fixed:** a supply truck that restarted its run out on the road showing "Loading at HQ"; it drives back first
+- **Fixed:** building didn't clear the small bushes scattered through the grass, and left flattened grass showing through the floor
+
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
 **Command tab:** click a soldier (double-click for his squad) or drag a box to select, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it. In the commander view right-drag draws a line for them to form up on (middle-drag turns the camera), and Shift + right-click adds stops to their route.
 **Controlling a soldier:** mouse aim, left-click fire, right mouse aim down sights, Q/E lean, Shift sprint, C crouch, Z prone, R reload, G grenade, V smoke, L flare, 1–5 weapons, Y first person, O squad follows you, F pick up a fallen soldier's gun or get into a vehicle, hold U to help build a friendly site, I to dismantle what you aim at, X leave the soldier.
 **In a vehicle:** WASD drive, mouse aims the turret, left-click fire, 1–4 change seat, F get out.
 **Controlling a soldier (more):** walk into a ladder to climb it, 0 for a panzerfaust.
-**Anywhere:** M or Esc menu, H help (dresses your wound while controlling a bleeding soldier), J battle report, P pause, T slow motion, F2 night vision, F9 path debug view, Space ends campaign battle prep.
+**Anywhere:** Page Up / Page Down floor view (office block), M or Esc menu, H help (dresses your wound while controlling a bleeding soldier), J battle report, P pause, T slow motion, F2 night vision, F9 path debug view, Space ends campaign battle prep.
 
 ## I couldn't run this, so please report problems
 I couldn't run Godot where I wrote this. I checked the scripts with a static checker, but the first run will probably surface a few errors. When something breaks, send me:
@@ -324,4 +340,7 @@ I couldn't run Godot where I wrote this. I checked the scripts with a static che
 | `scripts/squadcards.gd` | Commander view squad cards |
 | `scripts/icons.gd` | Weapon and status icons drawn at start-up |
 | `scripts/navviz.gd` | Path debug view (F9) |
+| `scripts/levels.gd` | Buildings with real floors: a path grid per storey, joined by stairs |
+| `scripts/office.gd` | The Ministry offices map (three storeys of corridors, rooms and stairwells) |
+| `scripts/floorview.gd` | Floor view: lifts off the floors above the one you pick |
 | `scripts/prep.gd` | Campaign battle prep phase |

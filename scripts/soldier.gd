@@ -1479,8 +1479,16 @@ func _lod_far() -> bool:
 var glide_off = Vector3.ZERO
 var glide_ph = 0.0
 
+func _pose_now() -> void:
+	if prone and (zombie or Vector2(vel.x, vel.z).length() > 0.25):
+		crawl_pose()          # moving while down: elbows and knees, not sliding on his belly
+	elif prone:
+		prone_pose()
+	else:
+		stand_pose()
+
 func lod_glide() -> void:
-	if not lod_frozen or hidden_in_vehicle:
+	if not lod_frozen or hidden_in_vehicle or state != "alive":
 		return
 	var d = Vector3(vel.x, 0, vel.z) * G.DT
 	if d.length_squared() < 1e-8:
@@ -1493,12 +1501,14 @@ func lod_glide() -> void:
 	glide_off += d
 	phase += dph
 	glide_ph += dph
+	# a fresh pose from where he is now (the joints were last worked out where he was on the full update)
+	_pose_now()
 	_compute_targets()
 	for i in range(parts.size()):
 		parts[i].global_transform = targets[i]
-	# and his rifle with him, not left hanging where it was on the last full update
+	# and his rifle in his hands, from the same pose
 	if gun_node != null and gun_body == null and vehicle == null:
-		gun_node.global_position += d
+		compute_muzzle()
 
 func lod_unglide() -> void:
 	pos -= glide_off
@@ -2569,7 +2579,7 @@ func tick() -> void:
 			_tick_riding()
 		"chute":
 			_tick_chute()
-	if state != "dead" and not hidden_in_vehicle and (not lod_frozen or lod_n % 2 == 0):
+	if state != "dead" and not hidden_in_vehicle:
 		compute_muzzle()
 
 # the last moments: buckling at the knees, hands going to the wound, staggering back, spinning round
@@ -3030,20 +3040,9 @@ func _tick_alive() -> void:
 	kick_t = maxf(0.0, kick_t - G.DT)
 	# far away in a big battle: pose and body only every third tick, and no balance checks
 	var far = _lod_far()
-	if far:
-		# far off: the pose is worked out every other tick and the body carried along in between
-		lod_n += 1
-		if lod_n % 2 != 0:
-			lod_glide()
-			return
 	if not far:
 		check_gun_clip()
-	if prone and (zombie or Vector2(vel.x, vel.z).length() > 0.25):
-		crawl_pose()          # moving while down: elbows and knees, not sliding on his belly
-	elif prone:
-		prone_pose()
-	else:
-		stand_pose()
+	_pose_now()
 	strength = 0.42 * (1.0 - 0.8 * minf(1.0, stun / 0.25))
 	drive()
 	# balance: if the body gets pushed away from the legs, step after it or fall

@@ -154,8 +154,12 @@ static func _keep_running(t: int, v, h) -> void:
 		v.remove_meta("prog_p")
 		v.remove_meta("parked_at")
 		v._plan_detour()
-		if was_home:
+		if was_home and G.dist2d(v.pos, h["p"]) < 25.0:
 			arrived_home(v)
+		elif was_home:
+			# still out on the road: try the drive back again (it only loads once it's really at HQ)
+			var home = G.world.park_spot(h["p"] + Build._front(h) * 12.0, v, v.pos)
+			v.mission = {"type": "supply", "fleet": true, "drop": v.pos, "exit": home, "stage": 2, "wait": 0.0, "site": null, "pts": 0}
 		else:
 			v.set_meta("load_t", 0.0)
 

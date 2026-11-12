@@ -71,8 +71,10 @@ static func reset() -> void:
 	if not uses_points():
 		src = []
 	for o in src:
-		points.append({"p": Vector3(o["p"].x, G.world.ground_y(o["p"].x, o["p"].z), o["p"].z), "name": o["name"],
-			"owner": -1, "prog": 0.0, "contested": false, "n": _zeros(), "amt": 0.0, "ct": -1})
+		# (a flag on an upper floor of a building with floors: held by whoever's on that floor)
+		var lv: int = o.get("lv", 0) if Levels.on else 0
+		points.append({"p": Vector3(o["p"].x, G.world.ground_y(o["p"].x, o["p"].z) + lv * Levels.FH, o["p"].z), "name": o["name"],
+			"owner": -1, "prog": 0.0, "contested": false, "n": _zeros(), "amt": 0.0, "ct": -1, "dy": 1.8 if Levels.on and Levels.inside(o["p"]) else 6.0, "lv": lv})
 	if G.mode == "frontline" and points.size() >= 2:
 		# each side starts holding the flags on its own side of the line; the middle one (if any) is open.
 		# (with every flag neutral, whoever got to them first in the opening minute won outright)
@@ -127,7 +129,7 @@ static func _capture_points() -> Array:
 				ci = i
 		var a = clampi(ci - 1, 0, W.objectives.size() - 3)
 		for i in range(3):
-			out.append({"p": W.objectives[a + i]["p"], "name": "ABC"[i]})
+			out.append({"p": W.objectives[a + i]["p"], "name": "ABC"[i], "lv": W.objectives[a + i].get("lv", 0)})
 		return out
 	var c: Vector3 = W.capture
 	var axis = G.flat(W.spawn[1] - W.spawn[0])
@@ -279,7 +281,7 @@ static func step(dt: float) -> void:
 	for s in G.soldiers:
 		if (s.state == "alive" or s.state == "riding") and s.team < G.team_count():
 			for pt in points:
-				if G.dist2d(s.pos, pt["p"]) < RADIUS and absf(s.pos.y - pt["p"].y) < 6.0:
+				if G.dist2d(s.pos, pt["p"]) < RADIUS and absf(s.pos.y - pt["p"].y) < pt.get("dy", 6.0):
 					pt["n"][s.team] += 1
 	if G.team_count() > 2:
 		_step_multi(dt)

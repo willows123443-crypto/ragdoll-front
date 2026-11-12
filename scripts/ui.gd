@@ -75,8 +75,9 @@ var mode_rules: Label
 var size_lbl: Label
 # (assault, last stand, destroy base and king of the hill were too close to frontline/breakthrough, siege,
 # commander and capture; they live on in the campaign but aren't offered on their own)
-const MODE_IDS = ["sandbox", "deathmatch", "capture", "frontline", "breakthrough", "sabotage", "siege",
-	"escort", "rescue", "commander", "horde", "general"]
+# (only the sandbox, the commander RTS and the zombie horde are offered on their own, with the campaign
+# on the title screen; the other battle types live on as campaign missions)
+const MODE_IDS = ["sandbox", "commander", "horde"]
 var opt_size: OptionButton
 var opt_limit: OptionButton
 var opt_reinf: OptionButton
@@ -1040,9 +1041,7 @@ func _build_menu() -> void:
 			_select_map(i))
 	refresh_maps()
 	_row(v, "Map", opt_map)
-	opt_mode = _option(["Sandbox — endless", "Team deathmatch", "Capture the points", "Frontline — push across the map",
-		"Breakthrough — break the line", "Sabotage — night raid", "Siege — hold the town",
-		"Escort — get the convoy through", "Rescue — bring the pilot home", "Commander — top-down RTS", "Horde — the dead walk", "Kill the general"], 0)
+	opt_mode = _option(["Sandbox — endless", "Commander — top-down RTS", "Horde — the dead walk"], 0)
 	_row(v, "Mode", opt_mode)
 	mode_info = _label("", 13, Color(0.8, 0.82, 0.78))
 	mode_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1857,7 +1856,6 @@ func _fill_title() -> void:
 		_title_header("PLAY")
 		_title_button("Commander", "fight a battle from above, RTS style", func(): _quick("commander"))
 		_title_button("Campaign", "twelve regions, one battle at a time", func(): _show_campaign())
-		_title_button("Daily challenge", "the same battle for everyone today", func(): _show_daily())
 		_title_button("Zombie horde", "hold out against the waves", func(): _quick("horde"))
 		_title_button("Battle builder", "set out both armies yourself, then press Start and watch", func():
 			builder_next = true

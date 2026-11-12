@@ -90,6 +90,8 @@ func _ready() -> void:
 			_level_battle()
 		if a == "--wandertest":
 			_wander_test()
+		if a == "--stuckrun":
+			_stuck_run()
 		if a.begins_with("--floorshot="):
 			_floor_shot(a.substr(12))
 		if a.begins_with("--hqshot="):
@@ -727,6 +729,7 @@ func _sim_step() -> void:
 	prof[0] += tb - ta
 	prof[1] += tc - tb
 	Doors.step()
+	Levels.step(G.DT)
 	Combat.step_grenades()
 	Combat.step_rockets()
 	Combat.step_strikes()
@@ -2726,6 +2729,27 @@ func _floor_shot(dir: String) -> void:
 	await _look(Vector3(-110, 20, -50), Vector3(0, 4, 0))
 	await _wait(0.4)
 	await _snap(dir, "office_outside")
+	get_tree().quit()
+
+# --stuckrun --battles=N --secs=S --maps=a,b --mode=m: play AI battles back to back and count what got stuck, and why
+func _stuck_run() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	var maps = _arg("maps", "field,town,office,valley").split(",")
+	StuckLog.reset()
+	var total = {}
+	for i in range(int(_arg("battles", "4"))):
+		seed(100 + i)
+		var m = maps[i % maps.size()]
+		start_game({"map": m, "mode": _arg("mode", "commander"), "size": int(_arg("size", "12")), "limit": 999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+		StuckLog.reset()
+		await _wait(float(_arg("secs", "240")))
+		print("STUCKRUN battle %d %s: %s" % [i, m, StuckLog.summary()])
+		for k in StuckLog.counts:
+			total[k] = total.get(k, 0) + StuckLog.counts[k]
+	var keys = total.keys()
+	keys.sort_custom(func(a, b): return total[a] > total[b])
+	print("STUCKRUN total: ", " ".join(keys.map(func(k): return "%s=%d" % [k, total[k]])))
 	get_tree().quit()
 
 # --wandertest: men who keep walking and get nowhere (or walk with nowhere to go): what they're up to

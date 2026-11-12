@@ -63,6 +63,8 @@ func _minimap(r: Rect2) -> void:
 			draw_arc(p, 10.0 * k + 3.0, 0, TAU, 16, col, 2.0)
 			draw_string(font, p + Vector2(-4, 5), pt["name"], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, col)
 	var my_team = G.player.team if G.player != null and is_instance_valid(G.player) else 0
+	# sandbox and horde: every enemy shows. Commander and campaign battles: only the ones your men can see
+	var show_all = G.mode != "commander" and not Campaign.active
 	for st in Build.sites:
 		if st["dead"] or (st["team"] != my_team and st["kind"] != "hq"):
 			continue
@@ -73,7 +75,7 @@ func _minimap(r: Rect2) -> void:
 		if v.dead:
 			continue
 		var p3 = rot.call(v.pos)
-		if r.has_point(p3) and (v.team == my_team or _seen(v.pos, my_team)):
+		if r.has_point(p3) and (v.team == my_team or show_all or _seen(v.pos, my_team)):
 			draw_rect(Rect2(p3 - Vector2(4, 4), Vector2(8, 8)), G.team_color(v.team), false, 2.0)
 	for s in G.soldiers:
 		if s.state == "dead" or s.state == "riding":
@@ -84,7 +86,7 @@ func _minimap(r: Rect2) -> void:
 		if s.team == my_team:
 			var same_squad = G.player != null and is_instance_valid(G.player) and s.squad == G.player.squad
 			draw_circle(p4, 2.6 if same_squad else 1.8, Color(0.6, 1.0, 0.6) if same_squad else G.team_color(s.team).lightened(0.35))
-		elif _seen(s.pos, my_team):
+		elif show_all or _seen(s.pos, my_team):
 			draw_circle(p4, 2.4, Color(1.0, 0.3, 0.25))
 	# you, at the centre, pointing up
 	draw_colored_polygon(PackedVector2Array([mid + Vector2(0, -6), mid + Vector2(4, 4), mid + Vector2(-4, 4)]), Color(1, 1, 1))

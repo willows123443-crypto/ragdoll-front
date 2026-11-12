@@ -181,9 +181,48 @@ static func flat_path(k: int, from: Vector3, to: Vector3) -> Array:
 		i = j
 	if out.is_empty():
 		out.append(cpos(ids[ids.size() - 1], k))
+	for i2 in range(out.size() - 1):
+		out[i2] = _off_walls(g, out[i2])
 	if ids[ids.size() - 1] == t and not g.is_point_solid(cell(to.x, to.z)):
 		out[out.size() - 1] = Vector3(to.x, floor_y(k), to.z)
 	return out
+
+static func _off_walls(g: AStarGrid2D, p: Vector3) -> Vector3:
+	var c = cell(p.x, p.z)
+	var push = Vector2.ZERO
+	for dz in range(-2, 3):
+		for dx in range(-2, 3):
+			if dx == 0 and dz == 0:
+				continue
+			var q = Vector2i(c.x + dx, c.y + dz)
+			if q.x < 0 or q.y < 0 or q.x >= GW or q.y >= GH:
+				continue
+			if g.is_point_solid(q):
+				push -= Vector2(dx, dz) / float(dx * dx + dz * dz)
+	if push.length_squared() < 0.01:
+		return p
+	push = push.normalized() * 0.4
+	var np = Vector3(p.x + push.x, p.y, p.z + push.y)
+	if g.is_point_solid(cell(np.x, np.z)):
+		return p
+	return np
+
+# how many men are on each flight of stairs (a busy flight costs more, so a squad spreads over the stairwells)
+static var busy_t = 0.0
+static func step(dt: float) -> void:
+	if not on:
+		return
+	busy_t -= dt
+	if busy_t > 0.0:
+		return
+	busy_t = 1.0
+	for st in stairs:
+		st["busy"] = 0
+		var a: Vector3 = st["a"]
+		var b: Vector3 = st["b"]
+		for s in G.soldiers:
+			if s.state == "alive" and s.pos.y > a.y + 0.3 and s.pos.y < b.y - 0.1 and absf(s.pos.x - a.x) < 1.6 and s.pos.z > minf(a.z, b.z) - 1.0 and s.pos.z < maxf(a.z, b.z) + 1.0:
+				st["busy"] += 1
 
 # the whole way, floor to floor, by whichever stairs make the trip shortest
 static func path(from: Vector3, to: Vector3) -> Array:

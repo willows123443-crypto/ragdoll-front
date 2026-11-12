@@ -306,6 +306,14 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Fixed:** a supply truck that restarted its run out on the road showing "Loading at HQ"; it drives back first
 - **Fixed:** building didn't clear the small bushes scattered through the grass, and left flattened grass showing through the floor
 
+- **Fewer modes:** the menu now offers Sandbox, Commander (RTS) and Zombie horde, with the Campaign on the title screen. The other battle types are no longer offered on their own (they still turn up as campaign missions), and the daily challenge is gone
+- **Minimap shows every enemy** in sandbox and horde battles; in commander and campaign battles it still only shows the ones your men can see
+- **Stuck recorder:** every time a vehicle that means to move hasn't for ten seconds, or a man is blocked three times on the same walk, the game notes where, what it was doing and the likeliest cause (own vehicle, wreck, wall, crowd, map edge...) in `user://stuck_log.txt`. `--stuckrun --battles=N` plays AI battles back to back and prints the causes by count
+- **Men pass each other:** a man with one of his own just ahead and in his way steps round him on the right, early, instead of walking into his back; two meeting where there's no room (a doorway, a stair) take turns
+- **Paths keep off corners:** the turning points of a path are eased 40 cm out from the wall they bend round, on the ground and on the upper floors of the office block, which is where men used to snag
+- **Stairwells share the load:** a flight with men already on it costs more to a man planning his way, so a squad spreads over the stairwells instead of queuing at one
+- **Fixed:** the AI calling a recon plane before a battle had begun (in the battle builder, during prep or in the first seconds); it now waits two minutes and until the fighting has started
+
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
 **Command tab:** click a soldier (double-click for his squad) or drag a box to select, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it. In the commander view right-drag draws a line for them to form up on (middle-drag turns the camera), and Shift + right-click adds stops to their route.
@@ -340,6 +348,7 @@ I couldn't run Godot where I wrote this. I checked the scripts with a static che
 | `scripts/squadcards.gd` | Commander view squad cards |
 | `scripts/icons.gd` | Weapon and status icons drawn at start-up |
 | `scripts/navviz.gd` | Path debug view (F9) |
+| `scripts/stucklog.gd` | Stuck recorder: what got stuck, where and why |
 | `scripts/levels.gd` | Buildings with real floors: a path grid per storey, joined by stairs |
 | `scripts/office.gd` | The Ministry offices map (three storeys of corridors, rooms and stairwells) |
 | `scripts/floorview.gd` | Floor view: lifts off the floors above the one you pick |

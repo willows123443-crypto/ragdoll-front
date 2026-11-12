@@ -696,6 +696,43 @@ static func follow_path(s) -> String:
 				s.slide_dir = nd
 				s.slide_t = 0.5
 				break
+	# someone of ours just ahead, in the way: pass him on the right, early, instead of walking into his back
+	# (and both keeping right means two men meeting in a corridor or a doorway don't dance)
+	if (Engine.get_physics_frames() + s.id) % 3 == 0:
+		var side = Vector3.ZERO
+		var rt = Vector3(-dir.z, 0, dir.x)
+		for o in G.soldiers_near(s.pos):
+			if o == s or o.state != "alive" or o.vehicle != null or absf(o.pos.y - s.pos.y) > 1.2:
+				continue
+			var rel = G.flat(o.pos - s.pos)
+			var ah = rel.dot(dir)
+			if ah < 0.15 or ah > 1.7:
+				continue
+			var lat = rel.dot(rt)
+			if absf(lat) > 0.7:
+				continue
+			# he's going my way and at least as fast: just follow him
+			if o.vel.dot(dir) > sp * 0.8:
+				continue
+			var pass_side = -1.0 if lat > 0.25 else 1.0
+			var cand = rt * pass_side
+			if G.world.solid_at(s.pos.x + cand.x * 0.7, s.pos.z + cand.z * 0.7, 0.22, s.pos.y):
+				cand = -cand
+				if G.world.solid_at(s.pos.x + cand.x * 0.7, s.pos.z + cand.z * 0.7, 0.22, s.pos.y):
+					# nowhere to pass (a doorway, a stair): wait his turn rather than shove
+					# (meeting head on, the one with the lower number waits and the other comes through)
+					# (a man standing still in a doorway isn't waited for: squeeze by as before)
+					if o.vel.length() > 0.4 and not (o.vel.dot(dir) < -0.3 and s.id > o.id):
+						s.set_meta("yield_until", G.sim_time + 0.35)
+					cand = Vector3.ZERO
+			side = cand
+			break
+		s.set_meta("pass_dir", side)
+	if G.sim_time < s.get_meta("yield_until", 0.0):
+		sp *= 0.15
+	var pd: Vector3 = s.get_meta("pass_dir", Vector3.ZERO)
+	if pd != Vector3.ZERO and s.slide_t <= 0.0:
+		dir = (dir + pd * 0.8).normalized()
 	s.want = dir * sp
 	s.prog_t += G.DT
 	if s.prog_t > 1.2:
@@ -711,6 +748,7 @@ static func follow_path(s) -> String:
 			s.unstick_t = 0.6 + 0.3 * s.stuck_n
 			if s.stuck_n >= 3:
 				s.stuck_n = 0
+				StuckLog.soldier(s)
 				s.bad_spot = s.move_target
 				s.bad_t = G.sim_time + 12.0
 				# stuck over and over in the same spot: step out to the nearest open ground

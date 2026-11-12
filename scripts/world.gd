@@ -1370,9 +1370,33 @@ func find_path(from: Vector3, to: Vector3) -> Array:
 		i = j
 	if out.is_empty():
 		out.append(nav_pos(ids[ids.size() - 1]))
+	# corners are where men snag: ease each turning point out from the wall it bends round
+	for k in range(out.size() - 1):
+		out[k] = _off_walls(out[k])
 	if ids[ids.size() - 1] == t and not astar.is_point_solid(nav_cell(to.x, to.z)):
 		out[out.size() - 1] = Vector3(to.x, ground_y(to.x, to.z), to.z)
 	return out
+
+# a point moved up to 40 cm away from whatever solid is right beside it
+func _off_walls(p: Vector3) -> Vector3:
+	var c = nav_cell(p.x, p.z)
+	var push = Vector2.ZERO
+	for dz in range(-2, 3):
+		for dx in range(-2, 3):
+			if dx == 0 and dz == 0:
+				continue
+			var q = Vector2i(c.x + dx, c.y + dz)
+			if q.x < 0 or q.y < 0 or q.x >= NW or q.y >= NH:
+				continue
+			if astar.is_point_solid(q):
+				push -= Vector2(dx, dz) / float(dx * dx + dz * dz)
+	if push.length_squared() < 0.01:
+		return p
+	push = push.normalized() * 0.4
+	var np = Vector3(p.x + push.x, p.y, p.z + push.y)
+	if astar.is_point_solid(nav_cell(np.x, np.z)):
+		return p
+	return np
 
 # ---------------------------------------------------------------- cover points
 const CGRID = 8.0

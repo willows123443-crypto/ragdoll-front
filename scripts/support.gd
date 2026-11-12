@@ -168,7 +168,9 @@ static func step(dt: float) -> void:
 					points[t] += 1
 			else:
 				points[t] += 1
-	# AI sides spend what they have
+	# AI sides spend what they have (once the battle's actually under way)
+	if G.builder or Prep.active() or G.sim_time < 20.0:
+		return
 	for t in range(points.size()):
 		if t == 0 and (not G.ai_runs(0) or G.mode == "horde"):
 			continue        # the player's own purse
@@ -202,7 +204,8 @@ static func _ai_spend(t: int) -> void:
 	if tgt != null:
 		opts.append("artillery")
 		opts.append("airstrike")
-	elif AI.team_intel_center(t) == null:
+	elif AI.team_intel_center(t) == null and G.sim_time > 120.0 and not G.attract and not Prep.active() and not (G.get("builder") == true):
+		# (not in the opening minutes, before anyone's had a chance to meet, nor before the battle's begun)
 		opts.append("recon")      # no idea where they are: send a plane to look
 	var veh = 0
 	for v in G.vehicles:

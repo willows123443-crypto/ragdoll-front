@@ -1823,6 +1823,9 @@ func _fill_title() -> void:
 		_title_button("Campaign", "twelve regions, one battle at a time", func(): _show_campaign())
 		_title_button("Daily challenge", "the same battle for everyone today", func(): _show_daily())
 		_title_button("Zombie horde", "hold out against the waves", func(): _quick("horde"))
+		_title_button("Battle builder", "set out both armies yourself, then press Start and watch", func():
+			builder_next = true
+			_quick("sandbox"))
 		_title_header("CREATE")
 		_title_button("Map editor", "build, paint and script your own maps", func():
 			G.main.stop_attract()
@@ -2467,6 +2470,27 @@ func _show_teams() -> void:
 	v.add_child(b)
 	teams_panel.add_child(v)
 	root.add_child(teams_panel)
+
+# ---------------------------------------------------------------- battle builder
+var builder_next = false
+var builder_bar: PanelContainer = null
+
+func builder_bar_show(on: bool) -> void:
+	if builder_bar == null:
+		builder_bar = _panel(Color(0.1, 0.12, 0.14, 0.92))
+		var v = VBoxContainer.new()
+		v.add_theme_constant_override("separation", 4)
+		v.add_child(_label("Battle builder", 16, Color(0.96, 0.85, 0.5)))
+		var t = _label("Set out squads, vehicles and defences for both sides (Units, Vehicles, Build tabs; switch side with 'For:'). Everyone holds still until you start.", 12, Color(0.85, 0.86, 0.82))
+		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		t.custom_minimum_size = Vector2(420, 0)
+		v.add_child(t)
+		var b = _button("▶  Start the battle", func(): G.main.builder_start())
+		v.add_child(b)
+		builder_bar.add_child(v)
+		root.add_child(builder_bar)
+		_place(builder_bar, Control.PRESET_CENTER_TOP, -225, 64, 450, 110)
+	builder_bar.visible = on
 
 # ---------------------------------------------------------------- settings
 var binding = ""          # an action waiting for its new key

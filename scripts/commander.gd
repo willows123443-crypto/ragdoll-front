@@ -17,17 +17,31 @@ static var held: Array = []          # how long a cautious side has been sitting
 const STYLES = ["reckless", "cautious", "cunning"]
 const STYLE_TEXT = {"reckless": "reckless: attacks at once and keeps coming", "cautious": "cautious: digs in and waits for the numbers", "cunning": "cunning: probes with scouts and hits weak spots"}
 
+static var feints: Array = []       # per side: a feint in progress, or null
+static var feint_cd: Array = []
+static var regroup: Array = []      # per side: the second line it has pulled back to, or null
+static var events = {"feint": 0, "feint_go": 0, "regroup": 0, "counter": 0}
+
 static func reset() -> void:
 	timers = []
 	style = []
 	sightings = []
 	scout_t = []
+	held = []
+	feints = []
+	feint_cd = []
+	regroup = []
+	for k in events:
+		events[k] = 0
 	for t in range(G.team_count()):
 		timers.append(randf_range(6.0, 10.0))
 		style.append(STYLES[randi() % STYLES.size()])
 		sightings.append([])
 		scout_t.append(3.0)
 		held.append(0.0)
+		feints.append(null)
+		feint_cd.append(randf_range(45.0, 90.0))
+		regroup.append(null)
 
 static func style_of(t: int) -> String:
 	return style[t] if t >= 0 and t < style.size() else "cunning"
@@ -105,6 +119,8 @@ static func step(dt: float) -> void:
 		return
 	for t in range(timers.size()):
 		timers[t] -= dt
+		if t < feints.size() and feints[t] != null:
+			_feint_tick(t)
 		if timers[t] > 0.0:
 			continue
 		if (G.mode == "horde" and t == 1) or not G.ai_runs(t):
@@ -116,6 +132,7 @@ static func step(dt: float) -> void:
 			timers[t] *= 0.75
 		_keep_scouts(t)
 		_move_command_post(t)
+		VehExt.send_fuel(t)
 		if VehExt.has_radar(t):
 			timers[t] *= 0.6       # the command truck keeps the picture fresh
 		_plan(t, off)
@@ -163,6 +180,12 @@ static func _plan(team: int, off) -> void:
 		return
 	var said = false
 	var home: Vector3 = G.world.spawn[team]
+	# a feint going on: the plan is already made, leave the squads to it until it's played out
+	if feints[team] != null:
+		return
+	# badly beaten: pull back to a second line and gather there rather than feed men in a few at a time
+	if _regroup_check(team, qs, home):
+		return
 	if G.mode == "destroy" or G.mode == "commander":
 		_base_plan(team, qs, home)
 		return
@@ -210,6 +233,12 @@ static func _plan(team: int, off) -> void:
 # keep a light hold on the rest, and never send everyone to the same place
 static func _spread_over_points(team: int, qs: Array, home: Vector3) -> void:
 	var pts = Obj.points
+	var cand = []
+	for i in range(pts.size()):
+		if pts[i]["owner"] != team and Obj.capturable(i, team):
+			cand.append(pts[i]["p"])
+	if _try_feint(team, qs, home, cand):
+		return
 	var vals = []
 	for i in range(pts.size()):
 		var pt = pts[i]
@@ -285,6 +314,8 @@ static func _base_plan(team: int, qs: Array, home: Vector3) -> void:
 	if targets.is_empty():
 		return
 	targets.sort_custom(func(a, b): return G.dist2d(a["p"], home) < G.dist2d(b["p"], home))
+	if _try_feint(team, qs, home, targets.map(func(st): return st["p"])):
+		return
 	var mine = Build.hq(team)
 	Ops.plan_lane(team, home, targets[0]["p"])
 	var k = 0
@@ -315,6 +346,129 @@ static func _raid_plan(team: int, qs: Array, home: Vector3) -> void:
 			else:
 				_assign(q, "attack", ec, home)
 		k += 1
+
+# ---------------------------------------------------------------- feints
+# One squad (with a barrage and smoke to sell it) goes noisily for one objective; the rest wait out of
+# sight behind another. Once the defenders have shifted toward the noise, the main body goes in.
+static func _try_feint(team: int, qs: Array, home: Vector3, cand: Array) -> bool:
+	if qs.size() < 2 or G.sim_time < feint_cd[team] or G.mode in ["horde", "laststand", "sabotage"]:
+		return false
+	var st = style_of(team)
+	if st == "reckless" or randf() > (0.6 if st == "cunning" else 0.3):
+		feint_cd[team] = G.sim_time + 30.0
+		return false
+	if cand.is_empty():
+		return false
+	# the real target: where they're thinnest. The decoy: something else well away from it
+	var real: Vector3 = cand[0]
+	var best = 1e9
+	for p in cand:
+		var e = strength(team, p, 30.0) + G.dist2d(p, home) / 200.0
+		if e < best:
+			best = e
+			real = p
+	var decoy = null
+	var far = 45.0
+	for p in cand:
+		var d = G.dist2d(p, real)
+		if d > far:
+			far = d
+			decoy = p
+	if decoy == null:
+		var to = G.flat(real - home).normalized()
+		decoy = real + Vector3(to.z, 0, -to.x) * (50.0 if randf() < 0.5 else -50.0)
+		decoy.x = clampf(decoy.x, G.world.bounds.position.x + 8.0, G.world.bounds.end.x - 8.0)
+		decoy.z = clampf(decoy.z, G.world.bounds.position.y + 8.0, G.world.bounds.end.y - 8.0)
+	# the squad nearest the decoy makes the noise; everyone else stages behind the real target
+	var near_q = qs[0]
+	var nd = 1e9
+	for q in qs:
+		var L = Squad.leader_of(q)
+		if L != null and G.dist2d(L.pos, decoy) < nd:
+			nd = G.dist2d(L.pos, decoy)
+			near_q = q
+	var stage: Vector3 = real + G.flat(home - real).normalized() * 55.0
+	var main = []
+	for q in qs:
+		if q == near_q:
+			_assign(q, "attack", decoy, home)
+		else:
+			_assign(q, "defend", stage, home)
+			q["dig"] = false
+			main.append(q)
+	feints[team] = {"real": real, "decoy": decoy, "go": G.sim_time + randf_range(30.0, 45.0), "main": main, "home": home}
+	feint_cd[team] = G.sim_time + randf_range(200.0, 320.0)
+	Ops.coordinated(team, decoy, home)
+	events["feint"] += 1
+	G.ui.radio(team, "Command: second squad, make a lot of noise at %s. Everyone else, hold back at %s and wait for my word" % [AI.grid_ref(decoy), AI.grid_ref(stage)])
+	return true
+
+static func _feint_tick(t: int) -> void:
+	var f = feints[t]
+	if G.sim_time < f["go"]:
+		return
+	if not f.get("went", false):
+		f["went"] = true
+		for q in f["main"]:
+			if Squad.leader_of(q) != null:
+				_assign(q, "attack", f["real"], f["home"])
+		var op: Dictionary = Ops.ops[t]
+		op["next"] = 0.0
+		Ops.coordinated(t, f["real"], f["home"])
+		events["feint_go"] += 1
+		G.ui.radio(t, "Command: they've taken the bait. All squads, go! Go! Hit %s" % AI.grid_ref(f["real"]))
+		f["end"] = G.sim_time + 40.0
+	elif G.sim_time > f["end"]:
+		feints[t] = null
+
+# ---------------------------------------------------------------- falling back to a second line
+static func _regroup_check(team: int, qs: Array, home: Vector3) -> bool:
+	if G.mode in ["horde", "laststand", "sabotage", "breakthrough"] or G.sim_time < 60.0:
+		return false
+	var mine = G.alive_count(team)
+	var theirs = 0
+	for t in range(G.team_count()):
+		if t != team:
+			theirs = maxi(theirs, G.alive_count(t))
+	var r = regroup[team]
+	if r == null:
+		if mine >= 3 and theirs > 0 and mine < theirs * 0.5 and G.sim_time > float(Ops.ops[team].get("regroup_cd", 0.0)):
+			var p = _second_line(team, home)
+			regroup[team] = {"p": p, "t": G.sim_time}
+			events["regroup"] += 1
+			G.ui.radio(team, "Command: we can't hold here. All squads fall back to the second line at %s and regroup!" % AI.grid_ref(p))
+			r = regroup[team]
+		else:
+			return false
+	# strong enough again (reinforcements in), or waited long enough: go back in together
+	if mine >= theirs * 0.8 or G.sim_time - r["t"] > 150.0:
+		regroup[team] = null
+		Ops.ops[team]["regroup_cd"] = G.sim_time + 120.0
+		events["counter"] += 1
+		G.ui.radio(team, "Command: we're back up to strength. All squads together, counter-attack!")
+		return false
+	for q in qs:
+		_assign(q, "defend", r["p"], home)
+		q["dig"] = true
+	return true
+
+# somewhere back toward home that can be held: the nearest point we still own on that side, else a
+# line a quarter of the way out from base
+static func _second_line(team: int, home: Vector3) -> Vector3:
+	var best = null
+	var bd = 1e9
+	for pt in Obj.points:
+		if pt["owner"] == team:
+			var d = G.dist2d(pt["p"], home)
+			if d < bd:
+				bd = d
+				best = pt["p"]
+	if best != null and bd > 25.0:
+		return best + G.flat(home - best).normalized() * 6.0
+	var hq = Build.hq(team)
+	if hq != null and Build.alive(hq):
+		return hq["p"] + G.flat(G.world.capture - hq["p"]).normalized() * 18.0
+	return home + G.flat(G.world.capture - home) * 0.25
 
 # dig in around what we hold (or in front of the base) and wait: the troops hold fire for an ambush
 static func _hold_ground(team: int, qs: Array, home: Vector3) -> void:

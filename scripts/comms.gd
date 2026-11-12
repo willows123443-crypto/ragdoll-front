@@ -93,6 +93,8 @@ static func step(dt: float) -> void:
 			wait_t[t] += 1.0
 		if has != had[t]:
 			had[t] = has
+			if G.mode == "sandbox" or G.alive_count(t) == 0:
+				continue        # nothing to report: nobody was relying on it
 			if not has:
 				G.ui.radio(t, "We've lost the radio! Messages to HQ go by runner now")
 			else:

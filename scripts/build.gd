@@ -481,6 +481,9 @@ static func _lose(st: Dictionary, loud: bool) -> void:
 	if st["ammo"] != null:
 		G.world.ammo_points.erase(st["ammo"])
 		st["ammo"] = null
+	# the stores go up: shells, fuel and ammunition cooking off for a few seconds
+	if loud and st["kind"] in ["supply", "depot", "fob", "fob2", "mortarpit"]:
+		Combat.cook_off(st["p"], 3 if st["kind"] in ["supply", "depot"] else 2, 0.7, 3.0)
 	if loud and st["kind"] in ["hq", "fob", "fob2", "hospital", "radio", "depot", "bunker", "tower"]:
 		G.ui.radio(st["team"], "%s at %s has been destroyed!" % [st["name"], AI.grid_ref(st["p"])])
 		for t in range(G.team_count()):

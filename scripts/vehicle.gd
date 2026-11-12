@@ -438,6 +438,14 @@ func _suspension(dt: float) -> void:
 	sus_speed = speed
 	var yr = G.wrap_a(yaw - sus_yaw) / dt
 	sus_yaw = yaw
+	# too fast across a steep slope, or flung round a tight turn: over it goes
+	if not tracked and absf(speed) > 4.0 and can_flip() and G.started:
+		var lean = absf(roll)
+		var lat = absf(yr * speed)
+		var limit = 0.55 if kind in ["jeep", "motorbike", "technical"] else 0.62
+		if (lean > limit and randf() < dt * (lean - limit) * 25.0) or (lat > 14.0 and randf() < dt * (lat - 14.0) * 0.6):
+			flip_over(signf(roll) if lean > limit else -signf(yr), randf() < 0.25, "")
+			return
 	var tgt_p = clampf(-acc * 0.014 * soft, -0.07, 0.07)
 	var tgt_r = clampf(-yr * speed * 0.012 * soft, -0.06, 0.06)
 	# rough ground off the road: little kicks, more the faster it goes
@@ -487,6 +495,7 @@ func step(dt: float) -> void:
 	if dead:
 		dead_t += dt
 		speed = move_toward(speed, 0.0, 10.0 * dt)
+		_flip_tick(dt)
 		# wrecks stay where they died, smouldering, for a few minutes; ones blocking a road or a spawn
 		# (or one too many on the map) get towed away sooner
 		if not spec.get("plane", false):
@@ -539,7 +548,9 @@ func step(dt: float) -> void:
 		else:
 			# the AI driver thinks every other tick (twice the time step when it does): a big saving with
 			# a lot of vehicles about, and nobody can tell
-			if _drive_cache.is_empty() or (Engine.get_physics_frames() + get_instance_id()) % 2 == 0:
+			if G.builder:
+				_drive_cache = [0.0, 0.0]
+			elif _drive_cache.is_empty() or (Engine.get_physics_frames() + get_instance_id()) % 2 == 0:
 				_drive_cache = _ai_drive(dt * (1.0 if _drive_cache.is_empty() else 2.0))
 			thr = _drive_cache[0]
 			steer = _drive_cache[1]
@@ -706,6 +717,8 @@ func muzzle() -> Vector3:
 	return gun_pivot.global_transform * Vector3(0, 0.02, {"jeep": 1.45, "nest": 1.3, "mortar": 1.15, "halftrack": 1.35, "motorbike": 0.65, "armoredcar": 1.7, "artillery": 3.4, "gunship": 0.95, "atgun": 2.7, "technical": 1.45}.get(kind, 3.7))
 
 func _weapons(dt: float) -> void:
+	if G.builder:
+		return
 	fire_cd -= dt
 	cannon_cd -= dt
 	if turret == null:
@@ -1211,6 +1224,14 @@ func destroy(attacker) -> void:
 	_wreck_paint(self)
 	if kind in ["tank", "armoredcar"] and randf() < 0.45:
 		VehExt.blow_turret(self)
+	# what it was carrying goes up after it: a tank's shells, a truck's fuel and crates
+	if not has_meta("flipped") and not spec.get("air", false):
+		if kind in ["tank", "halftrack", "spg"] and randf() < 0.6:
+			Combat.cook_off(center(), randi_range(1, 2), 0.55, 1.0, randf_range(1.5, 3.5))
+		elif kind in ["supplytruck", "ammotruck"]:
+			Combat.cook_off(center(), 3, 0.65, 2.0, 1.0)
+		elif kind in ["truck", "technical", "jeep"] and randf() < 0.35:
+			Combat.cook_off(center(), 1, 0.5, 0.8, randf_range(1.0, 2.5))
 	if towing != null and is_instance_valid(towing):
 		towing.towed_by = null
 		towing = null
@@ -1250,6 +1271,69 @@ func destroy(attacker) -> void:
 	if attacker != null and is_instance_valid(attacker) and attacker.team != team:
 		G.ui.feed(attacker, null, false, spec["name"])
 	Stats.vehicle_lost(team)
+
+# ---------------------------------------------------------------- rolling over
+# a light vehicle thrown by a blast, or anything taken too fast across a steep slope, goes over onto
+# its side (or right onto its roof). It's out of the fight; the crew crawl out, shaken and hurt.
+var flip_k = -1.0
+var flip_ang = 0.0
+var flip_base = Transform3D()
+var flip_rise = 0.0
+
+const FLIPPABLE = ["jeep", "truck", "technical", "motorbike", "supplytruck", "ammotruck", "ambulance", "radar", "armoredcar", "halftrack", "bridger"]
+
+func can_flip() -> bool:
+	return not dead and kind in FLIPPABLE and towed_by == null and not has_meta("flipped")
+
+func flip_over(side: float, roof: bool, why: String = "") -> void:
+	if not can_flip():
+		return
+	set_meta("flipped", true)
+	flip_ang = signf(side if side != 0.0 else 1.0) * (PI if roof else PI * 0.5)
+	flip_base = global_transform
+	flip_rise = 1.6 if roof else spec["wid"] * 0.5
+	flip_k = 0.0
+	dead = true
+	speed = 0.0
+	if towing != null and is_instance_valid(towing):
+		towing.towed_by = null
+		towing = null
+	G.fx.dust_cloud(pos + Vector3(0, 0.5, 0), spec["len"] * 0.6)
+	G.audio.play(G.audio.s_crash if "s_crash" in G.audio else G.audio.s_hit, center(), 2.0, 0.6)
+	set_meta("wreck_life", randf_range(150.0, 200.0))
+	var who = []
+	for i in range(seats.size()):
+		var c = seats[i]
+		if c != null and is_instance_valid(c):
+			who.append(c)
+	for c in who:
+		c.dismount(true)
+		c.hp -= randf_range(10.0, 45.0)
+		c.no_board_t = G.sim_time + 60.0
+		if c.hp <= 0.0:
+			Combat.kill(c, null, false)
+			continue
+		c.fall(randf_range(1.5, 3.0))
+		if not c.is_player:
+			_scatter(c, pos - forward() * 10.0 if why == "" else hit_from)
+			if randf() < 0.5:
+				G.fx.callout(c, G.pick(["We're over! Get out, get out!", "Is everyone alright?", "Crawl out, quick!", "My head... where's my rifle?"]))
+	if team == 0 and G.mode == "commander":
+		G.ui.radio(team, "%s has rolled over at %s" % [spec["name"], AI.grid_ref(pos)])
+	Stats.vehicle_lost(team)
+
+func _flip_tick(dt: float) -> void:
+	if flip_k < 0.0 or flip_k >= 1.0:
+		return
+	flip_k = minf(1.0, flip_k + dt / 1.1)
+	var e = flip_k * flip_k * (3.0 - 2.0 * flip_k)
+	var axis = flip_base.basis.z.normalized()
+	var hop = sin(flip_k * PI) * 0.6
+	global_transform = Transform3D(Basis(axis, flip_ang * e) * flip_base.basis, flip_base.origin + Vector3(0, flip_rise * e + hop, 0))
+	body.global_transform = global_transform
+	if flip_k >= 1.0:
+		G.fx.dust_cloud(pos + Vector3(0, 0.3, 0), spec["len"] * 0.7)
+		G.audio.boom(center())
 
 # a crewman out of a knocked-out vehicle: away from whoever did it, into cover, ready to fight on foot
 func _scatter(guy, threat: Vector3) -> void:
@@ -1575,6 +1659,9 @@ func _drives_through(c) -> bool:
 		return false
 	if c.prop == 2:
 		return true
+	# a fallen log or a fuel drum: a tank rolls over it, anything on wheels has to go round
+	if c.has_meta("log") or c.has_meta("boom"):
+		return spec["tracked"]
 	if c.has_meta("tree"):
 		return spec["tracked"] or (spec["len"] >= 4.5 and float(c.get_meta("tree")) < 5.5)
 	return c.prop == 1 and spec["len"] >= 3.5

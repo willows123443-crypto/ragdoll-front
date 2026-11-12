@@ -221,7 +221,13 @@ static func fire_ray(shooter, o: Vector3, d: Vector3, W: Dictionary, vis: bool, 
 				if randf() < 0.25 and ev["p"].y > G.world.ground_y(ev["p"].x, ev["p"].z) + 0.1:
 					G.audio.ricochet(ev["p"])
 				var col = ev["col"]
-				if col != null and col.alive and col.dest and col.hp < 100.0 and not col.has_meta("built"):
+				if col != null and col.alive and col.has_meta("boom"):
+					# a fuel drum holed: a few rounds and it goes up
+					col.hp -= W["dmg"] * (0.5 if W.get("ap", false) else 0.3)
+					G.fx.flame_puff(ev["p"], ev["n"] * 1.5, 0.3)
+					if col.hp <= 0.0:
+						G.world.destroy_col(col)
+				elif col != null and col.alive and col.dest and col.hp < 100.0 and not col.has_meta("built"):
 					col.hp -= W["dmg"] * 0.08
 					if col.hp <= 0.0:
 						G.world.destroy_col(col)
@@ -365,6 +371,8 @@ static func kill(s, attacker, head: bool) -> void:
 		G.fx.smoke_screen(bp, 6.0, Color(0.55, 0.62, 0.3), 0.6)
 		(func(): Combat.explode(bp, null, 0.55)).call_deferred()
 	s.go_dead()
+	if attacker == null or attacker.team != s.team:
+		Ops.note_loss(s, attacker, cause if cause != "" else ("arty" if arty else ""))
 	if attacker != null and attacker.team != s.team:
 		attacker.kills += 1
 	Stats.killed(s, attacker, head)
@@ -409,6 +417,19 @@ static func knife(s, t) -> void:
 	else:
 		hit_soldier(t, 1, t.chest(), G.flat(t.pos - s.pos).normalized(), 110.0, s, 1.5)
 	s.fire_cd = 0.9
+
+# stored ammunition or fuel going up after the first blast: a string of bangs over a few seconds,
+# each one able to set off the next drum, dump or vehicle along
+static func cook_off(p: Vector3, n: int, power: float, spread: float, delay: float = 0.6) -> void:
+	for k in range(n):
+		var t = G.main.get_tree().create_timer(delay + k * randf_range(0.35, 0.9) + randf() * 0.4, false)
+		t.timeout.connect(func():
+			if not G.started:
+				return
+			var q = p + Vector3(randf_range(-spread, spread), randf_range(0.2, 1.0), randf_range(-spread, spread))
+			explode(q, null, power * randf_range(0.6, 1.1))
+			for j in range(4):
+				G.fx.flame_puff(q, Vector3(randf_range(-3, 3), randf_range(3, 8), randf_range(-3, 3)), 1.1))
 
 # a bayonet thrust: a lunge forward, and it goes in hard from any side
 static func bayonet(s, t) -> void:
@@ -991,6 +1012,12 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 		var dv = v.center().distance_to(pos)
 		if dv < R * 1.2:
 			v.take_damage(300.0 * power * (1.0 - dv / (R * 1.2)) * (0.3 if v.spec["tracked"] else 1.0), owner_s, pos)
+			# a big blast right beside a light vehicle throws it over (if it's still in one piece)
+			if not v.dead and not v.spec["tracked"] and power >= 0.9 and dv < R * 0.55 and v.can_flip() and randf() < 0.45 * power:
+				var side = G.flat(v.pos - pos)
+				var rgt = Vector3(v.forward().z, 0, -v.forward().x)
+				v.hit_from = pos
+				v.flip_over(signf(side.dot(rgt)) * -1.0, randf() < 0.3, "blast")
 	for s in G.soldiers:
 		if s.state == "riding" and s.hidden_in_vehicle:
 			continue

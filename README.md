@@ -264,6 +264,18 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Title screen battle:** a small battle plays out behind the main menu while the camera circles it
 - **Rebindable keys:** Settings → Controls. Click an action, then press the new key (Default keys puts them back)
 - **Fixed:** a stream of errors from wounded men being helped along, and from smoke being thrown for a crossing
+- **Ammo sharing at range:** a man out of magazines shouts for ammo and a squadmate up to 13 m away lobs one across (the hand-to-hand pass is still there up close)
+- **Falling trees:** a tree hit by a shell or rammed by a tank tips over and crashes down, knocking flat anyone underneath; the trunk then lies there as a log that wheeled vehicles have to go round (tanks roll over it)
+- **Rolling over:** a big blast right beside a light vehicle throws it onto its side or roof, and jeeps and lorries taken too fast across a steep slope or round a tight turn go over; the crew crawl out hurt and dazed
+- **Roofs cave in** under shellfire: slabs and beams crash into the rooms, dust boils out, and anyone upstairs is hurt. Fences splinter
+- **Chain reactions:** fuel drums (by camps, crates and some houses) go up a moment after they're shot or blasted and set off whatever's next to them; supply dumps, depots and FOBs cook off for a few seconds when destroyed, and tanks and lorries can cook off after they're knocked out
+- **Fuel matters:** tanks burn fuel fast (about four minutes of hard driving) and engines use a little idling. Refuel at your own base crates, FOBs, depots and dumps (not at stray crates), or park a supply or ammo truck alongside. Vehicle cards show a fuel gauge, and commander mode warns you when one runs low or dry; the AI sends its supply trucks out to vehicles that have run dry
+- **AI feints:** a cunning (sometimes a cautious) AI commander sends one squad, with a barrage and smoke, noisily at one objective while the rest wait out of sight behind another, then sends them in once your squads have shifted
+- **AI learns:** the AI watches what keeps killing its men and answers it: more anti-tank teams against armour, counter-snipers against snipers, assault teams against machine guns, more MGs against rushes, digging in against shelling. You get an intel message when it adapts
+- **AI regroups:** a badly beaten AI pulls back to a second line and gathers its reinforcements there, then counter-attacks together once it's back up to strength
+- **Where's the fighting?** in commander mode press Home (or the button under the map) to jump the camera to the heaviest fighting; press again for the next spot
+- **Battle builder** (title screen): an empty battlefield where you set out squads, vehicles and defences for both sides (defences go up at once, free). Everyone holds still until you press Start the battle, then you watch
+- **Fixed:** "We've lost the radio" messages at the start of a sandbox
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

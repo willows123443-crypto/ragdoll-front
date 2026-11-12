@@ -846,7 +846,64 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if lk != KEY_NONE:
 			_key(lk)
 
+# the camera jumps to where the fighting is heaviest; press again within a few seconds for the next
+var hot_list: Array = []
+var hot_i = 0
+var hot_t = -99.0
+
+func hot_spots() -> Array:
+	var cells = {}
+	for s in G.soldiers:
+		if s.state == "dead" or s.zombie:
+			continue
+		var w = 0.0
+		if s.vis_t != null:
+			w += 1.0
+		w += clampf(s.supp, 0.0, 2.0)
+		if w <= 0.0:
+			continue
+		var key = Vector2i(floori(s.pos.x / 30.0), floori(s.pos.z / 30.0))
+		if not cells.has(key):
+			cells[key] = [0.0, Vector3.ZERO]
+		cells[key][0] += w
+		cells[key][1] += s.pos * w
+	for v in G.vehicles:
+		if not v.dead and G.sim_time - v.hit_t < 5.0:
+			var key2 = Vector2i(floori(v.pos.x / 30.0), floori(v.pos.z / 30.0))
+			if not cells.has(key2):
+				cells[key2] = [0.0, Vector3.ZERO]
+			cells[key2][0] += 3.0
+			cells[key2][1] += v.pos * 3.0
+	var out = []
+	for k in cells:
+		if cells[k][0] >= 2.0:
+			out.append([cells[k][0], cells[k][1] / cells[k][0]])
+	out.sort_custom(func(a, b): return a[0] > b[0])
+	return out
+
+func jump_to_fight() -> void:
+	if G.sim_time - hot_t > 6.0 or hot_list.is_empty():
+		hot_list = hot_spots()
+		hot_i = 0
+	else:
+		hot_i += 1
+		if hot_i >= mini(hot_list.size(), 4):
+			hot_i = 0
+	hot_t = G.sim_time
+	if hot_list.is_empty():
+		G.ui.message("It's quiet: no fighting anywhere right now")
+		return
+	var p: Vector3 = hot_list[hot_i][1]
+	if rts:
+		rts_focus = p
+	else:
+		free_pos = p + Vector3(-12, 10, -12)
+	G.ui.message("Heavy fighting at grid %s%s" % [AI.grid_ref(p), "  ·  press again for the next" if hot_list.size() > 1 else ""])
+
 func _key(k: int) -> void:
+	if k == KEY_HOME and G.player == null:
+		jump_to_fight()
+		return
 	# a blueprint in hand: R, E or Q turn it (instead of turning the camera)
 	if (k == KEY_R or k == KEY_E or k == KEY_Q) and G.player == null and G.ui.tool.begins_with("b:"):
 		rotate_place(-1 if k == KEY_Q else 1)
@@ -1148,7 +1205,13 @@ func use_tool(screen: Vector2) -> void:
 		if Build.too_near_hq(kind, team, p):
 			G.ui.message("Supply dumps go at least %d m out from HQ: the trucks have to earn it" % int(Build.SUPPLY_MIN))
 			return
-		var c = Build.cost(kind)
+		var c = Build.cost(kind) if not G.builder else 0
+		if G.builder:
+			# battle builder: defences go up at once, no engineers or points needed
+			Build.place(kind, team, p, to, true, true)
+			G.audio.radio_click()
+			G.ui.message("%s placed for %s" % [Build.KINDS[kind]["name"], G.TEAM_NAMES[team]])
+			return
 		if c > 0:
 			if Support.points[team] < c:
 				G.ui.message("Not enough supply points: a %s costs %d, you have %d" % [Build.KINDS[kind]["name"], c, Support.points[team]])

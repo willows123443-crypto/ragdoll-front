@@ -1562,8 +1562,12 @@ func destroy_col(c, depth: int = 0) -> void:
 		_tree_down(c)
 	_ladder_check(c)
 	var size: Vector3 = c.hi - c.lo
-	if c.has_meta("furn") and c.prop == 1:
+	if (c.has_meta("furn") and c.prop == 1) or c.has_meta("fence"):
 		_splinter(c)
+	if c.has_meta("roof"):
+		_roof_cave(c)
+	if c.has_meta("boom"):
+		_drum_blow(c)
 	var n = clampi(roundi(size.x * size.y * size.z * 3.0), 4, 14)
 	for i in range(n):
 		var p = Vector3(randf_range(c.lo.x, c.hi.x), randf_range(c.lo.y, c.hi.y), randf_range(c.lo.z, c.hi.z))
@@ -1618,6 +1622,63 @@ func _splinter(c) -> void:
 				var px = mid.x + randf_range(-ext.x, ext.x) * 0.45
 				var pz = mid.z + randf_range(-ext.z, ext.z) * 0.45
 				add_box(px, y0 + 0.01 * k, pz, randf_range(0.12, 0.2), 0.04, randf_range(0.5, 1.1), wc.darkened(randf_range(0.05, 0.2)), {"collide": false, "ry": randf_range(0, 3)}))).call_deferred()
+
+# a roof hit hard enough falls in: slabs of tiles and beams crash down into the rooms, the dust boils
+# out of the windows, and anyone upstairs under it is hurt
+func _roof_cave(c) -> void:
+	var mid = (c.lo + c.hi) * 0.5
+	var col: Color = c.color
+	for i in range(8):
+		var p = Vector3(randf_range(c.lo.x, c.hi.x), c.hi.y + 0.2, randf_range(c.lo.z, c.hi.z))
+		G.fx.debris(p, Vector3(randf_range(-1.0, 1.0), randf_range(-1.0, 1.5), randf_range(-1.0, 1.0)), 0.5, col,
+			Vector3(randf_range(0.6, 1.3), 0.08, randf_range(0.5, 1.1)))
+	for i in range(4):
+		var p2 = Vector3(randf_range(c.lo.x, c.hi.x), c.lo.y, randf_range(c.lo.z, c.hi.z))
+		G.fx.debris(p2, Vector3(0, -1.0, 0), 0.5, Color(0.35, 0.27, 0.19), Vector3(0.12, 0.12, randf_range(1.2, 2.2)))
+	G.fx.dust_cloud(Vector3(mid.x, c.gy + 1.5, mid.z), maxf(c.hi.x - c.lo.x, c.hi.z - c.lo.z))
+	if G.started:
+		Combat.dust_at(Vector3(mid.x, c.gy + 1.0, mid.z), maxf(c.hi.x - c.lo.x, c.hi.z - c.lo.z) * 0.9)
+	for sd in G.soldiers:
+		if sd.state != "dead" and sd.vehicle == null and sd.pos.x > c.lo.x and sd.pos.x < c.hi.x and sd.pos.z > c.lo.z and sd.pos.z < c.hi.z \
+				and sd.pos.y > c.gy + 1.5 and sd.pos.y < c.hi.y:
+			sd.hp -= 40.0
+			if sd.hp <= 0.0:
+				Combat.kill(sd, null, false)
+			else:
+				sd.fall(1.5)
+
+# fuel drums: shoot them or blow them up and they go off a moment later, setting off whatever's next to them
+func fuel_drums(x: float, z: float, n: int) -> void:
+	# their own dice, so adding them doesn't reshuffle the rest of the map
+	var dr = RandomNumberGenerator.new()
+	dr.seed = hash(Vector2i(int(x * 10.0), int(z * 10.0)))
+	for i in range(n):
+		var a = dr.randf() * TAU
+		var r = 0.0 if i == 0 else dr.randf_range(0.6, 1.1)
+		var dx = x + cos(a) * r
+		var dz = z + sin(a) * r
+		if inside_any(dx, dz, 0.4) or on_road(dx, dz):
+			continue
+		var tone = Color(0.55, 0.15, 0.1) if dr.randf() < 0.5 else Color(0.28, 0.32, 0.2)
+		var dc = add_col(dx, ground_y(dx, dz), dz, 0.58, 0.9, 0.58, 1)
+		piece_start()
+		add_box(dx, 0.0, dz, 0.58, 0.9, 0.58, tone, {"collide": false, "shape": "cyl"})
+		for yy in [0.28, 0.6]:
+			add_box(dx, yy, dz, 0.61, 0.04, 0.61, tone.darkened(0.3), {"collide": false, "shape": "cyl"})
+		add_box(dx + 0.15, 0.9, dz, 0.08, 0.03, 0.08, Color(0.2, 0.2, 0.2), {"collide": false, "shape": "cyl"})
+		piece_end(dc, tone, 35.0)
+		dc.set_meta("boom", 0.75)
+
+func _drum_blow(c) -> void:
+	var p = (c.lo + c.hi) * 0.5
+	var pw: float = c.get_meta("boom")
+	var t = G.main.get_tree().create_timer(randf_range(0.15, 0.6), false)
+	t.timeout.connect(func():
+		if not G.started:
+			return
+		Combat.explode(p, null, pw)
+		for k in range(6):
+			G.fx.flame_puff(p + Vector3(randf_range(-0.6, 0.6), randf_range(0.0, 1.2), randf_range(-0.6, 0.6)), Vector3(randf_range(-2, 2), randf_range(3, 7), randf_range(-2, 2)), 1.3))
 
 # a blast nearby shoves furniture over: a wardrobe or dresser goes down on its side, a table goes up on its edge
 func knock_over(c, dir: Vector3) -> void:
@@ -2743,6 +2804,39 @@ func _tree_down(c) -> void:
 	var dead = c.has_meta("dead_tree")
 	var trunk = Color(0.24, 0.2, 0.16) if dead else Color(0.29, 0.23, 0.16)
 	var sh = randf_range(0.35, 0.9)
+	# the tree doesn't vanish: it tips over and crashes down (in the direction it was pushed), and the
+	# trunk then lies there as a log that blocks wheeled vehicles until something blows it apart
+	if G.started and not G.attract:
+		var falling = Node3D.new()
+		var gy0 = ground_y(x, z)
+		falling.position = Vector3(x, gy0 + sh, z)
+		geo_root.add_child(falling)
+		var tm = MeshInstance3D.new()
+		tm.mesh = VModel.cyl_mesh(0.2, h - sh, -1.0, 8)
+		tm.material_override = VModel.mat(trunk)
+		tm.position = Vector3(0, (h - sh) * 0.5, 0)
+		falling.add_child(tm)
+		if not dead:
+			var lm = VModel.mat(Color(0.27, 0.35, 0.18))
+			for k in range(4):
+				var b = MeshInstance3D.new()
+				var sm = SphereMesh.new()
+				sm.radius = randf_range(0.9, 1.4)
+				sm.height = sm.radius * 1.7
+				sm.radial_segments = 8
+				sm.rings = 4
+				b.mesh = sm
+				b.material_override = lm
+				b.position = Vector3(randf_range(-0.6, 0.6), h - sh - 0.8 + randf_range(-0.4, 0.5), randf_range(-0.6, 0.6))
+				falling.add_child(b)
+		var axis = Vector3.UP.cross(dir).normalized()
+		var tw = falling.create_tween()
+		tw.tween_method(func(k: float): falling.basis = Basis(axis, k * k * PI * 0.5), 0.0, 1.0, randf_range(1.0, 1.5))
+		tw.tween_callback(func():
+			falling.queue_free()
+			_tree_landed(x, z, h, sh, dir, dead, trunk))
+		_tree_stump(x, z, sh, trunk)
+		return
 	build_now(func():
 		add_box(x, 0.0, z, 0.46, sh, 0.46, trunk.darkened(0.15), {"collide": false, "shape": "cyl"})
 		for k in range(4):
@@ -2756,6 +2850,47 @@ func _tree_down(c) -> void:
 				var tip = Vector3(x, 0, z) + dir * (L + 0.8)
 				for k in range(3):
 					add_box(tip.x + randf_range(-0.9, 0.9), 0.0, tip.z + randf_range(-0.9, 0.9), randf_range(1.4, 2.2), randf_range(1.0, 1.5), randf_range(1.4, 2.2), Color(0.27, 0.34, 0.18), {"collide": false, "shape": "blob", "ry": randf() * 3.0}))
+
+func _tree_stump(x: float, z: float, sh: float, trunk: Color) -> void:
+	build_now(func():
+		add_box(x, 0.0, z, 0.46, sh, 0.46, trunk.darkened(0.15), {"collide": false, "shape": "cyl"})
+		for k in range(4):
+			var a = k * PI / 2.0 + randf_range(-0.4, 0.4)
+			add_box(x + cos(a) * 0.13, sh - 0.05, z + sin(a) * 0.13, 0.08, randf_range(0.2, 0.45), 0.08, Color(0.62, 0.52, 0.36), {"collide": false, "rz": cos(a) * 0.35, "rx": -sin(a) * 0.35}))
+
+# the crash: dust, a thump, anyone underneath knocked flat (or worse), and the log left lying
+func _tree_landed(x: float, z: float, h: float, sh: float, dir: Vector3, dead: bool, trunk: Color) -> void:
+	var L = maxf(1.5, h - sh)
+	var base = Vector3(x, ground_y(x, z), z)
+	var tip = base + dir * (L + 0.5)
+	G.fx.dust_cloud(base.lerp(tip, 0.6), 2.5)
+	G.audio.boom(base.lerp(tip, 0.5))
+	for sd in G.soldiers:
+		if sd.state == "dead" or sd.vehicle != null:
+			continue
+		var t = clampf(G.flat(sd.pos - base).dot(dir) / maxf(L, 0.1), 0.0, 1.0)
+		if G.dist2d(sd.pos, base + dir * (L * t)) < 0.8 and absf(sd.pos.y - base.y) < 1.5:
+			sd.hp -= 45.0
+			if sd.hp <= 0.0:
+				Combat.kill(sd, null, false)
+			else:
+				sd.fall(2.0)
+	build_now(func():
+		var mid = Vector3(x, 0, z) + dir * (L * 0.5 + 0.3)
+		add_box(mid.x, 0.05, mid.z, 0.38, 0.38, L, trunk, {"collide": false, "ry": atan2(dir.x, dir.z)})
+		if not dead:
+			var tp = Vector3(x, 0, z) + dir * (L + 0.8)
+			for k in range(3):
+				add_box(tp.x + randf_range(-0.9, 0.9), 0.0, tp.z + randf_range(-0.9, 0.9), randf_range(1.4, 2.2), randf_range(1.0, 1.5), randf_range(1.4, 2.2), Color(0.27, 0.34, 0.18), {"collide": false, "shape": "blob", "ry": randf() * 3.0})
+		# the log itself: a run of low blocks along the trunk (boxes can't lie at an angle)
+		var n = maxi(2, int(L / 0.9))
+		for k in range(n):
+			var q = Vector3(x, 0, z) + dir * (0.6 + (L - 0.3) * (float(k) + 0.5) / n)
+			var lc = add_col(q.x, ground_y(q.x, q.z), q.z, 0.55, 0.42, 0.55, 0)
+			lc.dest = true
+			lc.hp = 140.0
+			lc.color = trunk
+			lc.set_meta("log", true))
 
 func live_tree(x: float, z: float) -> void:
 	var h = rnd(3.0, 5.0)
@@ -2837,6 +2972,7 @@ func camp(t: int, p: Vector3) -> void:
 			ridge_tent(hx, hz, hut)
 	for k in [-1.0, 1.0]:
 		sandbags(p.x + k * 9.0, p.z + inward * 8.0, 5.0, true)
+	fuel_drums(p.x + 13.0, p.z - inward * 3.0, 3)
 
 # a canvas ridge tent: sloping sides down to the ground, a pole at each end, a darker door flap and pegged guy lines
 func ridge_tent(x: float, z: float, col: Color) -> void:
@@ -2869,6 +3005,9 @@ func ammo_crate(x: float, z: float, team: int, base_crate: bool = false) -> void
 	# crates at a side's own base never run out; ones lying around the map do
 	var at_base = base_crate
 	ammo_points.append({"p": Vector3(x, ground_y(x, z), z), "team": team, "stock": 1e9 if at_base else 60.0})
+	# crates lying out on the map often have a few fuel drums stacked by them
+	if not at_base and team < 0 and absi(hash(Vector2i(int(x), int(z)))) % 10 < 6:
+		fuel_drums(x + 1.9, z + 0.3, 2 + absi(hash(Vector2i(int(z), int(x)))) % 2)
 
 # where a beaten soldier runs back to
 # where a beaten soldier falls back to: the nearest held point behind him, or a line 40 m back toward base
@@ -3533,6 +3672,8 @@ func _village_build(placed: Array, towers_: int) -> void:
 					fence_row(q[0], q[1] + side * (q[3] / 2.0 + 2.2), q[2] + 2.0, true)
 				else:
 					fence_row(q[0] + side * (q[2] / 2.0 + 2.2), q[1], q[3] + 2.0, false)
+			if absi(hash(Vector2i(int(q[0] * 3.0), int(q[1] * 3.0)))) % 10 < 2:
+				fuel_drums(q[0] + q[2] / 2.0 + 1.0, q[1] - q[3] / 2.0 - 1.0, 2)
 		else:
 			building(q[0], q[1], q[2], q[3], rnd(3.5, 6.0))
 		i += 1

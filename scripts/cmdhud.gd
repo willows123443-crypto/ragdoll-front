@@ -14,6 +14,7 @@ var ping_cd = {}                # soldier/squad -> next time
 var alert_cd = {}               # key -> next time
 var earn_hist: Array = []       # [time, earned]
 var mm_rect = Rect2()
+var hot_btn: Button = null
 var hp_seen = {}                # site/vehicle -> hp last tick (for "under fire")
 var tick_t = 0.0
 const MMS = 250.0
@@ -31,6 +32,14 @@ func _ready() -> void:
 	alerts_box.add_theme_constant_override("separation", 4)
 	alerts_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(alerts_box)
+	# a button under the map: jump to the heaviest fighting (Home key)
+	hot_btn = Button.new()
+	hot_btn.text = "Where's the fighting?  (Home)"
+	hot_btn.focus_mode = Control.FOCUS_NONE
+	hot_btn.add_theme_font_size_override("font_size", 11)
+	hot_btn.tooltip_text = "Jump the camera to the heaviest fighting on the map; click again for the next spot"
+	hot_btn.pressed.connect(func(): G.pc.jump_to_fight())
+	add_child(hot_btn)
 
 func active() -> bool:
 	return G.started and G.mode == "commander" and G.player == null and G.pc.rts and G.ui.visible and not G.ui.menu_open() \
@@ -53,7 +62,10 @@ func _process(dt: float) -> void:
 	mm_rect = Rect2(vs.x - MMS - 12.0, 30.0, MMS, mh)
 	click.position = mm_rect.position
 	click.size = mm_rect.size
-	alerts_box.position = Vector2(vs.x - 252.0, mm_rect.end.y + 10.0)
+	hot_btn.visible = on
+	hot_btn.position = Vector2(mm_rect.position.x, mm_rect.end.y + 4.0)
+	hot_btn.size = Vector2(mm_rect.size.x, 22.0)
+	alerts_box.position = Vector2(vs.x - 252.0, mm_rect.end.y + 32.0)
 	alerts_box.size.x = 240.0
 	tick_t -= dt
 	if tick_t <= 0.0:
@@ -169,6 +181,18 @@ func _watch() -> void:
 				"We've lost a %s, grid %s" % [v.spec["name"].to_lower(), AI.grid_ref(v.pos)])
 		elif not v.dead and v.hp < was2 - 40.0:
 			alert("vh" + str(v.get_instance_id()), "%s taking hits" % v.spec["name"], v.pos, 25.0)
+		# running dry: send a supply or ammo truck alongside to fill it up
+		if not v.dead and not v.spec.get("static", false) and not v.spec.get("air", false):
+			if v.fuel <= 0.0 and not v.has_meta("dry_said"):
+				v.set_meta("dry_said", true)
+				alert("vf" + str(v.get_instance_id()), "%s out of fuel" % v.spec["name"], v.pos, 60.0, Color(1.0, 0.6, 0.3),
+					"%s is out of fuel at grid %s, send a supply truck" % [v.spec["name"], AI.grid_ref(v.pos)])
+			elif v.fuel < 0.15 and v.fuel > 0.0 and not v.has_meta("low_said"):
+				v.set_meta("low_said", true)
+				alert("vl2" + str(v.get_instance_id()), "%s low on fuel" % v.spec["name"], v.pos, 60.0, Color(1.0, 0.8, 0.35))
+			elif v.fuel > 0.5:
+				v.remove_meta("dry_said")
+				v.remove_meta("low_said")
 	# enemy armour or aircraft coming into view: called out over the radio
 	for v in G.vehicles:
 		if v.team == 0 or v.dead or not v.visible or v.has_meta("spotted_said"):

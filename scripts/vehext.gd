@@ -442,16 +442,32 @@ static func aa_vs_plane(at: Vector3, team: int, dt: float) -> bool:
 static func fuel_tick(v, dt: float, thr: float) -> float:
 	if v.spec.get("static", false):
 		return thr
-	v.fuel = maxf(0.0, v.fuel - absf(v.speed) / maxf(v.spec["speed"], 1.0) * dt / 420.0)
-	# topping up at crates, FOBs, depots and supply dumps
+	# tanks are thirsty: a full tank lasts about four minutes of hard driving, a lorry about seven, and
+	# the engine idling burns a little too
+	var burn = 240.0 if v.spec["tracked"] else 420.0
+	var idle = 1.0 / (1500.0 if v.spec["tracked"] else 3000.0) if v.driver() != null else 0.0
+	v.fuel = maxf(0.0, v.fuel - absf(v.speed) / maxf(v.spec["speed"], 1.0) * dt / burn - idle * dt)
+	# topping up: at your own base crates, FOBs, depots and supply dumps (not at crates lying about the
+	# map), or from a supply or ammo truck parked alongside
 	v.supply_t += dt
 	if v.supply_t > 2.0:
 		v.supply_t = 0.0
 		if v.fuel < 1.0 or v.hp < v.spec["hp"]:
 			for a in G.world.ammo_points:
-				if (a["team"] == v.team or a["team"] < 0) and G.dist2d(a["p"], v.pos) < 18.0:
+				if a["team"] == v.team and G.dist2d(a["p"], v.pos) < 18.0:
 					v.fuel = minf(1.0, v.fuel + 0.15)
 					break
+			if v.fuel < 1.0 and not (v.kind in ["supplytruck", "ammotruck"]):
+				for o in G.vehicles:
+					if o.kind in ["supplytruck", "ammotruck"] and o.team == v.team and not o.dead and absf(o.speed) < 1.0 and G.dist2d(o.pos, v.pos) < 12.0:
+						if v.fuel < 0.95 and not v.has_meta("refuel_said"):
+							v.set_meta("refuel_said", true)
+							if o.driver() != null:
+								G.fx.callout(o.driver(), G.pick(["Filling you up, hold still.", "Jerrycans coming over!", "Fuel's here!"]))
+						v.fuel = minf(1.0, v.fuel + 0.12)
+						break
+			if v.fuel >= 0.95 and v.has_meta("refuel_said"):
+				v.remove_meta("refuel_said")
 			for st in Build.sites:
 				if st["kind"] == "depot" and st["team"] == v.team and Build.alive(st) and G.dist2d(st["p"], v.pos) < 16.0:
 					v.fuel = minf(1.0, v.fuel + 0.2)
@@ -470,17 +486,43 @@ static func fuel_tick(v, dt: float, thr: float) -> float:
 	v.fuel_said = false
 	return thr
 
-# where an AI driver low on fuel should head
+# where an AI driver low on fuel should head: the nearest base crate, FOB or dump, or a supply truck
 static func fuel_stop(v):
 	var best = null
 	var bd = 1e9
 	for a in G.world.ammo_points:
-		if a["team"] == v.team or a["team"] < 0:
+		if a["team"] == v.team:
 			var d = G.dist2d(a["p"], v.pos)
 			if d < bd:
 				bd = d
 				best = a["p"]
+	for o in G.vehicles:
+		if o.kind in ["supplytruck", "ammotruck"] and o.team == v.team and not o.dead and o != v:
+			var d2 = G.dist2d(o.pos, v.pos) * 0.8
+			if d2 < bd:
+				bd = d2
+				best = o.pos + G.flat(v.pos - o.pos).normalized() * 6.0
 	return best
+
+# the AI's answer to a vehicle sitting dry: the nearest supply truck that isn't on a run drives out to it
+static func send_fuel(t: int) -> void:
+	for v in G.vehicles:
+		if v.team != t or v.dead or v.fuel > 0.05 or v.spec.get("static", false) or v.spec.get("air", false) or v.kind in ["supplytruck", "ammotruck"]:
+			continue
+		if v.has_meta("fuel_coming") and G.sim_time < v.get_meta("fuel_coming"):
+			continue
+		var best = null
+		var bd = 160.0
+		for o in G.vehicles:
+			if o.kind in ["supplytruck", "ammotruck"] and o.team == t and not o.dead and o.driver() != null and o.mission == null:
+				var d = G.dist2d(o.pos, v.pos)
+				if d < bd:
+					bd = d
+					best = o
+		if best != null:
+			v.set_meta("fuel_coming", G.sim_time + 60.0)
+			best.command(v.pos + G.flat(best.pos - v.pos).normalized() * 6.0)
+			G.ui.radio(t, "%s heading out with fuel for the %s at %s" % [best.spec["name"], v.spec["name"].to_lower(), AI.grid_ref(v.pos)])
 
 # ---------------------------------------------------------------- towing
 static func try_tow(v) -> String:

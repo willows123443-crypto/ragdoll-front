@@ -18,7 +18,15 @@ static var raids: Array = [null, null, null, null]
 static var raid_cd: Array = [0.0, 0.0, 0.0, 0.0]
 static var events = {"weak": 0, "barrage": 0, "smoke": 0, "escort": 0, "tank_wait": 0, "raid": 0}
 
+# what's been killing this side's men, and what it has started doing about it
+static var losses: Array = [{}, {}, {}, {}]
+static var answered: Array = [{}, {}, {}, {}]
+static var bias: Array = [{}, {}, {}, {}]
+
 static func reset() -> void:
+	losses = [{}, {}, {}, {}]
+	answered = [{}, {}, {}, {}]
+	bias = [{}, {}, {}, {}]
 	lane_off = [Vector3.ZERO, Vector3.ZERO, Vector3.ZERO, Vector3.ZERO]
 	ops = [{}, {}, {}, {}]
 	seen_armour = [0, 0, 0, 0]
@@ -209,6 +217,8 @@ static func tank_may_enter(v) -> bool:
 
 # notice what the other side leans on and answer it
 static func _learn(team: int) -> void:
+	if ai_side(team):
+		_adapt(team)
 	var armour = 0
 	for v in G.vehicles:
 		if v.team != team and v.team >= 0 and not v.dead and (v.spec["tracked"] or v.kind == "armoredcar"):
@@ -223,6 +233,67 @@ static func _learn(team: int) -> void:
 		seen_armour[team] = armour
 		if armour >= 2 and ai_side(team):
 			G.ui.radio(team, "Command: they're leaning on armour. More anti-tank weapons forward")
+
+# one of ours is down: what got him?
+static func note_loss(s, attacker, cause_: String) -> void:
+	var t: int = s.team
+	if t < 0 or t >= losses.size() or s.zombie:
+		return
+	var kind = "infantry"
+	if cause_ in ["arty", "mortar", "barrage", "shell"]:
+		kind = "arty"
+	elif attacker != null and is_instance_valid(attacker):
+		if attacker.vehicle != null and is_instance_valid(attacker.vehicle):
+			var v = attacker.vehicle
+			kind = "air" if v.spec.get("air", false) else ("armour" if v.spec["tracked"] or v.kind in ["armoredcar", "halftrack"] else ("mg" if v.kind in ["nest", "technical", "jeep"] else "armour"))
+		elif attacker.wid in ["sniper", "dmr"]:
+			kind = "sniper"
+		elif attacker.wid in ["lmg", "hmg", "bar"]:
+			kind = "mg"
+		elif attacker.wid in ["smg", "shotgun", "flamer"] and G.dist2d(attacker.pos, s.pos) < 20.0:
+			kind = "rush"
+	losses[t][kind] = losses[t].get(kind, 0) + 1
+
+# the side keeps losing men the same way: it changes what it sends and how it fights
+const ANSWERS = {
+	"armour": ["at", 0.18, "they're leaning on armour. More anti-tank teams forward", "the enemy is bringing up more anti-tank teams"],
+	"sniper": ["sniper", 0.14, "their snipers are bleeding us. Counter-snipers up, smoke before open ground", "enemy counter-snipers are moving up"],
+	"mg": ["assault", 0.14, "their machine guns have us pinned. Assault teams with grenades and smoke to knock them out", "the enemy is sending assault teams at your machine guns"],
+	"rush": ["mg", 0.16, "they keep rushing us. More machine guns on the line", "the enemy is putting more machine guns on the line"],
+	"arty": ["engineer", 0.1, "their guns are murdering us. Spread out and dig in deep", "the enemy is digging in against your shelling"],
+	"air": ["at", 0.05, "their planes are hammering us. Get the AA up", "the enemy is bringing up anti-aircraft"],
+}
+
+static func _adapt(team: int) -> void:
+	var L: Dictionary = losses[team]
+	var tot = 0
+	for k in L:
+		tot += L[k]
+	if tot < 10:
+		return
+	for k in L:
+		if L[k] >= tot * 0.35 and L[k] >= 6 and not answered[team].has(k) and ANSWERS.has(k):
+			answered[team][k] = true
+			var a: Array = ANSWERS[k]
+			bias[team][a[0]] = bias[team].get(a[0], 0.0) + a[1]
+			if k == "sniper" or k == "mg":
+				ops[team]["smoke_more"] = true
+			G.ui.radio(team, "Command: " + a[2])
+			# the side you're fighting gets a hint that its tactic is being answered
+			for o in range(G.team_count()):
+				if o != team and not ai_side(o):
+					G.ui.message("Intel: %s" % a[3])
+			events["adapt"] = events.get("adapt", 0) + 1
+			return
+
+# spawn time: the chance a rifleman joins as something else, because of what the side has learned
+static func class_swap(team: int, cl: String) -> String:
+	if cl != "rifleman" or team < 0 or team >= bias.size():
+		return cl
+	for k in bias[team]:
+		if randf() < bias[team][k]:
+			return k
+	return cl
 
 # called when this side gets shelled
 static func note_shelled(team: int) -> void:

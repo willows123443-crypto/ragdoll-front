@@ -1718,6 +1718,36 @@ static func _help_walk(s) -> bool:
 	G.fx.callout(best, G.pick(["I've got you, lean on me.", "Arm over my shoulder, come on.", "Let's get you to the doc."]))
 	return true
 
+# an underarm lob: a magazine spinning across in an arc, and the rounds are his when it lands
+static func toss_mag(s, o) -> void:
+	if s.reserve < s.W["mag"]:
+		return
+	s.throw_t = 0.45
+	s.body_yaw = atan2(o.pos.x - s.pos.x, o.pos.z - s.pos.z)
+	s.aim_yaw = s.body_yaw
+	G.fx.callout(s, G.pick(["Catch!", "Here! Heads up!", "Mag, coming over!"]))
+	var mg = MeshInstance3D.new()
+	var bm = BoxMesh.new()
+	bm.size = Vector3(0.05, 0.16, 0.09)
+	mg.mesh = bm
+	mg.material_override = VModel.mat(Color(0.15, 0.15, 0.14))
+	G.fx.add_child(mg)
+	var a: Vector3 = s.chest() + Vector3(0, 0.1, 0)
+	var dur = 0.35 + G.dist2d(o.pos, s.pos) * 0.04
+	var tw = mg.create_tween()
+	tw.tween_method(func(k: float):
+		if not is_instance_valid(o):
+			return
+		var b: Vector3 = o.chest()
+		mg.global_position = a.lerp(b, k) + Vector3(0, sin(k * PI) * (0.6 + a.distance_to(b) * 0.12), 0)
+		mg.rotation = Vector3(k * 9.0, k * 4.0, 0), 0.0, 1.0, dur)
+	tw.tween_callback(func():
+		mg.queue_free()
+		if is_instance_valid(s) and is_instance_valid(o) and o.state == "alive" and s.reserve >= s.W["mag"]:
+			s.reserve -= s.W["mag"]
+			o.reserve += o.W["mag"] * 2
+			G.fx.callout(o, G.pick(["Got it!", "Cheers, back in it!", "Thanks!"])))
+
 # Out of magazines next to a mate who has plenty: he passes a couple over, hand to hand.
 static func _ammo_handoff(s) -> bool:
 	if s.is_player or s.state != "alive" or s.vehicle != null:
@@ -1750,6 +1780,22 @@ static func _ammo_handoff(s) -> bool:
 	# I'm the one with plenty: anyone dry right beside me?
 	if s.reserve < s.W["mag"] * 3 or s.supp > 1.0 or s.W["rocket"]:
 		return false
+	# a squadmate a little way off calling for ammo: a magazine tossed across to him, no need to walk over
+	if s.squad != null and s.throw_t <= 0.0:
+		for o in s.squad["members"]:
+			if is_instance_valid(o) and o.state == "alive" and o != s and not o.is_player and o.vehicle == null and o.reserve <= 0 and o.mag < o.W["mag"] * 0.5 and not o.W["rocket"] \
+					and not o.has_meta("handoff") and G.sim_time > o.get_meta("asked_ammo", -99.0) + 8.0:
+				var d = G.dist2d(o.pos, s.pos)
+				if d >= 2.6 and d < 13.0 and absf(o.pos.y - s.pos.y) < 2.5 and not G.blocked(s.chest(), o.chest()):
+					o.set_meta("asked_ammo", G.sim_time)
+					G.fx.callout(o, G.pick(["Mags! I'm out!", "Ammo! Somebody!", "Throw me a mag!"]))
+					var giver = s
+					var taker = o
+					G.main.get_tree().create_timer(0.6, false).timeout.connect(func():
+						if is_instance_valid(giver) and is_instance_valid(taker) and giver.state == "alive" and taker.state == "alive":
+							toss_mag(giver, taker))
+					return false
+	return false
 	for o in G.soldiers_near(s.pos):
 		if o != s and o.team == s.team and o.state == "alive" and not o.is_player and o.vehicle == null and o.reserve <= 0 \
 				and o.mag < o.W["mag"] * 0.5 and not o.W["rocket"] and G.dist2d(o.pos, s.pos) < 2.6 and not o.has_meta("handoff"):
@@ -1856,6 +1902,13 @@ static func _off_the_roof(s) -> bool:
 static func update(s) -> void:
 	if s.zombie:
 		Modes.zombie_tick(s)
+		return
+	# battle builder: everyone stands where he was put until the battle starts
+	if G.builder and not s.is_player:
+		s.want = Vector3.ZERO
+		s.ready_ = false
+		s.target = null
+		stance(s)
 		return
 	if _off_the_roof(s):
 		return

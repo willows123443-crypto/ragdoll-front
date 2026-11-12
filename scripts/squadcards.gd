@@ -99,6 +99,10 @@ static func doing(q: Dictionary) -> Array:
 	if cv != null:
 		if cv.spec.get("static", false):
 			return ["Manning", Color(0.75, 0.85, 0.75)]
+		if cv.fuel <= 0.0:
+			return ["Out of fuel", Color(1.0, 0.45, 0.35)]
+		if cv.fuel < 0.2:
+			return ["Low fuel", Color(1.0, 0.75, 0.3)]
 		if absf(cv.speed) > 1.0:
 			return ["Driving", Color(0.75, 0.9, 1.0)]
 		return ["Parked", Color(0.8, 0.82, 0.78)]
@@ -285,3 +289,11 @@ func _draw_men(c: Control) -> void:
 			c.draw_rect(Rect2(x + 1, 8, 13.0 * clampf(m.hp / 100.0, 0.05, 1.0), 3), pip)
 		x += 16.5
 		n += 1
+	# a vehicle crew's card has a fuel gauge on the right
+	var cv = crew_vehicle(q)
+	if cv != null and not cv.spec.get("static", false) and not cv.spec.get("air", false):
+		var fx = c.size.x - 30.0
+		var fc = Color(0.95, 0.75, 0.3) if cv.fuel > 0.2 else Color(1.0, 0.35, 0.3)
+		c.draw_string(ThemeDB.fallback_font, Vector2(fx - 9.0, 9.0), "F", HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.85, 0.85, 0.8))
+		c.draw_rect(Rect2(fx, 4, 28, 4), Color(0, 0, 0, 0.5))
+		c.draw_rect(Rect2(fx, 4, 28.0 * clampf(cv.fuel, 0.0, 1.0), 4), fc)

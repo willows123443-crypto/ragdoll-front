@@ -114,6 +114,10 @@ func _ready() -> void:
 			_load_test(a.substr(11))
 		if a == "--recruittest":
 			_recruit_test()
+		if a.begins_with("--buildertest="):
+			_builder_test(a.substr(14))
+		if a.begins_with("--physshot="):
+			_phys_shot(a.substr(11))
 		if a == "--towtest":
 			_tow_test()
 		if a.begins_with("--attractshot="):
@@ -374,6 +378,7 @@ func preview_map(id: String) -> void:
 	_clear()
 	G.started = false
 	G.attract = false
+	G.builder = false
 	G.world.load_map(id)
 	refresh_markers()
 
@@ -393,6 +398,20 @@ func stop_attract() -> void:
 
 func start_game(o: Dictionary) -> void:
 	G.attract = false
+	# the battle builder: an empty sandbox where both sides are set out by hand
+	var bld = G.ui.builder_next
+	G.ui.builder_next = false
+	G.builder = false
+	if G.ui.builder_bar != null:
+		G.ui.builder_bar.visible = false
+	if bld:
+		o = o.duplicate()
+		o["mode"] = "sandbox"
+		o["size"] = 0
+		o["reinforce"] = false
+		o["armor"] = "none"
+		o["teams"] = 2
+		o["armies"] = false
 	_clear()
 	spawn_q.clear()
 	Prep.reset()
@@ -496,6 +515,27 @@ func start_game(o: Dictionary) -> void:
 	G.pc.free_yaw = PI / 2.0 + 0.12
 	G.pc.free_pitch = -0.12
 	G.started = true
+	if bld:
+		G.builder = true
+		G.ui.builder_bar_show(true)
+		G.pc.set_rts(true)
+		G.ui.tab = "units"
+		G.ui.tool = G.ui._cards("units")[0][0]
+		G.ui._render_tools()
+
+# the battle builder's Start: everybody goes at it
+func builder_start() -> void:
+	if not G.builder:
+		return
+	G.builder = false
+	G.ui.builder_bar_show(false)
+	for t in range(G.team_count()):
+		G.orders[t] = {"mode": "free"}
+	for s in G.soldiers:
+		s.decide_t = 0.0
+	Commander.timers = Commander.timers.map(func(x): return 1.0)
+	G.audio.radio_click()
+	G.ui.message("Battle on!")
 
 func spawn_soldier(team: int, x: float, z: float, wid: String):
 	var cap = mini(int(G.settings["max_soldiers"]), maxi(160, G.team_size * G.teams + 60))
@@ -511,6 +551,8 @@ func spawn_soldier(team: int, x: float, z: float, wid: String):
 	# a side that keeps meeting enemy armour sends more anti-tank men
 	if wid == "" and cl == "rifleman" and randf() < Ops.at_bias(team):
 		cl = "at"
+	if wid == "":
+		cl = Ops.class_swap(team, cl)
 	if wid == "":
 		wid = Faction.weapon_for(team, cl)
 	s.setup(team, p.x, p.z, wid)
@@ -673,7 +715,8 @@ func _sim_step() -> void:
 	Fog.step(G.DT)
 	Prod.step(G.DT)
 	if not Prep.active():
-		Commander.step(G.DT)
+		if not G.builder:
+			Commander.step(G.DT)
 		Ops.step(G.DT)
 	Stretcher.step(G.DT)
 	if not Prep.active():
@@ -1917,6 +1960,10 @@ func _mode_test(mode: String) -> void:
 	else:
 		start_game({"map": _arg("map", "field"), "mode": mode, "size": int(_arg("size", "10")), "limit": 100, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2,
 			"factions": (_arg("fac", "army,army") + ",army,army").split(",")})
+	if _arg("style", "") != "":
+		for t in range(Commander.style.size()):
+			Commander.style[t] = _arg("style", "cunning")
+			Commander.feint_cd[t] = 20.0
 	if _arg("noradio", "") != "":
 		for v in G.vehicles.duplicate():
 			if v.kind == "radar":
@@ -2063,7 +2110,7 @@ func _mode_test(mode: String) -> void:
 		for v in G.vehicles:
 			if v.kind == "atgun":
 				pz += " at[%s %.1f]" % ["dead" if v.dead else ("crew" if v.gunner() != null else "nocrew"), G.sim_time - v.get_meta("fire_t", -99.0)]
-		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " raze %d hq %s" % [G.soldiers.filter(func(x): return x.state == "alive" and x.task == "raze").size(), str(Build.sites.filter(func(x): return x["kind"] == "hq").map(func(x): return "%d/%d%s" % [x["cols"].filter(func(c): return c.alive).size(), x["cols"].size(), "X" if x["dead"] else ""]))] + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()] + " route %s stuck %d" % [str(G.world.route_stats), _stuck_count()] + " pts %s earned %s" % [str(Support.points), str(Support.earned)] + " cveh %d/%d depots %d" % [G.vehicles.filter(func(v): return v.team == 0 and not v.dead and v.kind in Support.AI_VEH).size(), G.vehicles.filter(func(v): return v.team == 1 and not v.dead and v.kind in Support.AI_VEH).size(), Build.sites.filter(func(x): return x["kind"] == "depot" and not x["dead"]).size()]])
+		print("MODETEST %s %ds | %s | alive %d v %d zombies %d | over %s | score %s%s" % [G.mode, (k + 1) * 8, Obj.status_text(), G.alive_count(0), G.alive_count(1), z, G.over, G.cap_score, pz + " tac" + str(Tactics.events) + " ops" + str(Ops.events) + " cmd" + str(Commander.events) + " losses" + str(Ops.losses.slice(0, 2)) + " flips %d logs %d drums %d" % [G.vehicles.filter(func(v): return v.has_meta("flipped")).size(), G.world.cols.filter(func(c): return c.alive and c.has_meta("log")).size(), G.world.cols.filter(func(c): return c.alive and c.has_meta("boom")).size()] + " fuel %s" % str(G.vehicles.filter(func(v): return not v.dead and not v.spec.get("static", false) and not v.spec.get("air", false)).map(func(v): return snappedf(v.fuel, 0.01))) + " raze %d hq %s" % [G.soldiers.filter(func(x): return x.state == "alive" and x.task == "raze").size(), str(Build.sites.filter(func(x): return x["kind"] == "hq").map(func(x): return "%d/%d%s" % [x["cols"].filter(func(c): return c.alive).size(), x["cols"].size(), "X" if x["dead"] else ""]))] + " fleet %d/%d runs %s dumps %d" % [Logistics.count(0), Logistics.count(1), str(Logistics.delivered), Build.sites.filter(func(x): return x["kind"] == "supply" and not x["dead"]).size()] + " salvage %d/%d radio %d/%d" % [Salvage.claimed, Salvage.wrecks.size(), RadioPack.taken, RadioPack.dropped.size()] + " inside %d/%d" % [_inside_count(), G.soldiers.filter(func(x): return x.state == "alive").size()] + " route %s stuck %d" % [str(G.world.route_stats), _stuck_count()] + " pts %s earned %s" % [str(Support.points), str(Support.earned)] + " cveh %d/%d depots %d" % [G.vehicles.filter(func(v): return v.team == 0 and not v.dead and v.kind in Support.AI_VEH).size(), G.vehicles.filter(func(v): return v.team == 1 and not v.dead and v.kind in Support.AI_VEH).size(), Build.sites.filter(func(x): return x["kind"] == "depot" and not x["dead"]).size()]])
 		if G.over:
 			break
 	get_tree().quit()
@@ -2636,6 +2683,86 @@ func _at_test(dir: String) -> void:
 	get_tree().quit()
 
 # vehicles with their headlights on at night, from the side, from in front and from above
+# the battle builder: squads put down for both sides hold still, then fight once Start is pressed
+func _builder_test(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	await _wait(0.3)
+	G.ui.builder_next = true
+	start_game({"map": _arg("map", "field"), "mode": "capture", "size": 8, "limit": 999, "reinforce": true, "armor": "heavy", "teams": 2})
+	await _wait(0.5)
+	var c: Vector3 = G.world.capture
+	var men = []
+	for t in [0, 1]:
+		var side = -1.0 if t == 0 else 1.0
+		for k in range(6):
+			var p = _free_spot(c + Vector3(side * 35.0, 0, -10.0 + k * 4.0))
+			var sx = spawn_soldier(t, p.x, p.z, "")
+			if sx != null:
+				men.append(sx)
+		var mg = Build.find_spot(c + Vector3(side * 30.0, 0, 8.0), "mgnest", 10.0, 20, true)
+		if mg != null:
+			Build.place("mgnest", t, mg, Vector3(-side, 0, 0), true)
+	var p0 = men.map(func(m): return m.pos)
+	print("BUILDERTEST builder ", G.builder, " soldiers ", G.soldiers.size(), " size_mode ", G.mode, " bar ", G.ui.builder_bar != null and G.ui.builder_bar.visible)
+	await _wait(10.0)
+	var moved = 0.0
+	for i in range(men.size()):
+		if is_instance_valid(men[i]):
+			moved = maxf(moved, G.dist2d(men[i].pos, p0[i]))
+	print("BUILDERTEST held: kills ", G.score, " max moved ", moved)
+	await _snap(dir, "builder_set")
+	builder_start()
+	await _wait(35.0)
+	var dead = G.soldiers.filter(func(x): return x.state == "dead").size()
+	print("BUILDERTEST after start: builder ", G.builder, " dead ", dead, " score ", G.score)
+	await _snap(dir, "builder_fight")
+	get_tree().quit()
+
+# a jeep thrown over by a shell, fuel drums going up one after another, a tree crashing down
+func _phys_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.3)
+	start_game({"map": _arg("map", "field"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2, "armies": false})
+	await _wait(0.5)
+	G.pc.force_free = true
+	var c: Vector3 = _free_spot(G.world.capture + Vector3(10, 0, 10))
+	var jeep = spawn_vehicle("jeep", 0, c, 0.0, true)
+	var dp = _free_spot(c + Vector3(9, 0, 3))
+	G.world.build_now(func(): G.world.fuel_drums(dp.x, dp.z, 3))
+	G.world.build_now(func(): G.world.fuel_drums(dp.x + 2.4, dp.z + 0.5, 2))
+	var tree = null
+	var td = 1e9
+	for col in G.world.cols:
+		if col.alive and col.has_meta("tree"):
+			var d = G.dist2d((col.lo + col.hi) * 0.5, c)
+			if d < td:
+				td = d
+				tree = col
+	await _wait(1.0)
+	var drums0 = G.world.cols.filter(func(x): return x.alive and x.has_meta("boom")).size()
+	await _look(c + Vector3(-14, 6, -10), c + Vector3(3, 1, 2))
+	Combat.explode(jeep.pos + Vector3(-2.0, 0.3, 0.5), null, 1.3)
+	Combat.explode(dp, null, 0.8)
+	await _wait(0.6)
+	await _snap(dir, "flip_mid")
+	await _wait(2.5)
+	await _snap(dir, "flip_after")
+	var drums1 = G.world.cols.filter(func(x): return x.alive and x.has_meta("boom")).size()
+	print("PHYSSHOT jeep flipped ", jeep.has_meta("flipped"), " dead ", jeep.dead, " drums ", drums0, "->", drums1, " tree at ", td)
+	if tree != null:
+		var tp: Vector3 = (tree.lo + tree.hi) * 0.5
+		tree.set_meta("fall", Vector3(1, 0, 0.3).normalized())
+		await _look(tp + Vector3(-3, 4, -12), tp + Vector3(2, 1.5, 0))
+		G.world.destroy_col(tree)
+		await _wait(0.6)
+		await _snap(dir, "tree_falling")
+		await _wait(2.0)
+		await _snap(dir, "tree_down")
+		print("PHYSSHOT logs ", G.world.cols.filter(func(x): return x.alive and x.has_meta("log")).size())
+	get_tree().quit()
+
 # a truck sent to hitch up an anti-tank gun, then driven off with it
 func _tow_test() -> void:
 	G.settings["time"] = "day"

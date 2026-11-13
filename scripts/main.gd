@@ -3064,7 +3064,7 @@ func _tutorial_test() -> void:
 				set_meta("tpic0", true)
 				await RenderingServer.frame_post_draw
 				get_viewport().get_texture().get_image().save_png(pic + "/tut_panel.png")
-			if Tutorial.step_i == 3 and Tutorial.t_step > 3.0:
+			if Tutorial.step_i == 3 and Tutorial.t_step > 3.0 and (mine.any(func(s): return G.sim_time - s.fired_t < 2.0) or Tutorial.t_step > 40.0):
 				if mine.size() > 0:
 					G.pc.rts_focus = mine[0].pos
 					G.pc.rts_dist = 34.0

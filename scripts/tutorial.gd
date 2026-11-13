@@ -167,7 +167,8 @@ static func _spawn_foes(p: Vector3, n: int, dug: bool) -> void:
 			foes.append(s)
 
 static func _mine() -> Array:
-	return G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive")
+	# (a man knocked off his feet is still one of yours: only the dead and the wounded are out of it)
+	return G.soldiers.filter(func(s): return s.team == 0 and s.state in ["alive", "down", "getup", "riding"])
 
 static func _next() -> void:
 	if not on:

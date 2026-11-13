@@ -1773,14 +1773,18 @@ func lod_unglide() -> void:
 # far-off men don't cast shadows (dozens of little shadow casters were a big part of the frame cost)
 func _far_shadows(on: bool) -> void:
 	var mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if on else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var off = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for b in parts:
 		for c in b.get_children():
 			if c is GeometryInstance3D:
-				c.cast_shadow = mode
+				# (a pouch or a helmet strap never casts one: it can't be seen, and it's a draw each)
+				var sz: Vector3 = c.get_aabb().size * c.scale.abs()
+				c.cast_shadow = mode if maxf(sz.x, maxf(sz.y, sz.z)) >= 0.2 else off
 	if gun_node != null:
 		for c in gun_node.get_children():
 			if c is GeometryInstance3D:
-				c.cast_shadow = mode
+				var sz2: Vector3 = c.get_aabb().size * c.scale.abs()
+				c.cast_shadow = mode if maxf(sz2.x, maxf(sz2.y, sz2.z)) >= 0.3 else off
 
 # A man is some fifty separate pieces (pouches, canteen, belt, the bits of his helmet and rifle...), and
 # every piece is a draw: far off, where they can't be told apart, only the big ones are drawn (the limbs
@@ -1880,7 +1884,13 @@ func _smooth_targets() -> void:
 		sm_rot[i] = q0.slerp(q, a).normalized()
 		targets[i] = Transform3D(Basis(sm_rot[i]), pos + sm_off[i])
 
+var shadow_init = false
+
 func drive() -> void:
+	if not shadow_init:
+		shadow_init = true
+		if not lod_frozen:
+			_far_shadows(true)
 	_compute_targets()
 	var far = _lod_far()
 	if (state == "alive" or state == "riding" or state == "getup") and not far:

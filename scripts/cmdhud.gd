@@ -137,6 +137,21 @@ func _watch() -> void:
 		if pinned * 2 >= men.size():
 			alert("pin%d" % q["id"], "Squad %d pinned down" % (q["id"] + 1), men[0].pos, 40.0, Color(1.0, 0.55, 0.4),
 				G.pick(["%s squad pinned! We need support!", "%s squad, we're pinned down!", "This is %s squad, taking heavy fire!"]) % ORD[mini(q["id"], ORD.size() - 1)])
+	# a squad coming into contact: said once, with a ring on the map where it is (not again until it's
+	# been out of the fight for a while)
+	for q in G.squads:
+		if q["team"] != 0:
+			continue
+		var men2 = q["members"].filter(func(m): return is_instance_valid(m) and m.state == "alive" and m.vehicle == null)
+		if men2.is_empty():
+			continue
+		var d: Array = SquadCards.doing(q)
+		var hot = d[0] == "Fighting" or d[0] == "Pinned!"
+		if hot:
+			if G.sim_time - float(q.get("contact_t", -999.0)) > 40.0:
+				alert("con%d" % q["id"], "Squad %d in contact" % (q["id"] + 1), men2[0].pos, 20.0, Color(1.0, 0.75, 0.35), "")
+				pings.append([men2[0].pos, G.sim_time])
+			q["contact_t"] = G.sim_time
 	# men under fire: pings on the map
 	for s in G.soldiers:
 		if s.team == 0 and s.state == "alive" and s.supp > 1.1 and G.sim_time > ping_cd.get(s, 0.0):
@@ -210,10 +225,50 @@ func _watch() -> void:
 			earn_hist.pop_front()
 
 # ---------------------------------------------------------------- drawing
+# what each of your squads is up to, written over it: only when it's something you'd want to know at a
+# glance (in a fight, pinned, out of ammunition, clearing a building, building, with a tank); a squad
+# that's just walking or waiting gets nothing. From high up it shrinks to a coloured dot.
+const SHOWN = ["Fighting", "Pinned!", "Out of ammo", "Clearing rooms", "Building", "With the tank"]
+func _status_pills() -> void:
+	var cam: Camera3D = G.pc.cam
+	if cam == null:
+		return
+	var high = G.pc.rts and G.pc.rts_dist > 140.0
+	for q in G.squads:
+		if q["team"] != 0:
+			continue
+		var men = q["members"].filter(func(m): return is_instance_valid(m) and m.state == "alive" and m.vehicle == null)
+		if men.is_empty():
+			continue
+		var st: Array = SquadCards.doing(q)
+		if not (st[0] in SHOWN):
+			continue
+		var c = Vector3.ZERO
+		for m in men:
+			c += m.pos
+		c /= men.size()
+		var top = c + Vector3(0, 4.4, 0)
+		if cam.is_position_behind(top):
+			continue
+		var p = cam.unproject_position(top)
+		var col: Color = st[1]
+		if high:
+			draw_circle(p, 5.0, Color(0, 0, 0, 0.6))
+			draw_circle(p, 3.5, col)
+			continue
+		var txt: String = st[0]
+		var w = font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 16.0
+		var box = Rect2(p.x - w * 0.5, p.y - 9.0, w, 18.0)
+		# a pinned squad's tag pulses so it catches the eye
+		var a = 0.86 if st[0] != "Pinned!" else 0.6 + 0.3 * absf(sin(G.sim_time * 5.0))
+		draw_style_box(Hud.pill(Color(0.06, 0.07, 0.08, 0.86), col), box)
+		draw_string(font, box.position + Vector2(8, 13), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(col.r, col.g, col.b, a + 0.14))
+
 func _draw() -> void:
 	if not active():
 		return
 	_order_icons()
+	_status_pills()
 	_truck_tags()
 	_minimap(mm_rect)
 	_hover_bar()

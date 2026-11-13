@@ -23,6 +23,8 @@ var KNEE_SIGN = 1.0
 # does an AI commander run this side (orders, building, buying troops)? Your own side only if you asked
 # for one in the setup screen; in sandbox every side runs itself
 func ai_runs(t: int) -> bool:
+	if tutorial:
+		return false          # the first battle: nobody commands the enemy, and you command yours
 	if t != 0:
 		return true
 	return mode == "sandbox" or settings.get("ai_side", false)
@@ -65,6 +67,8 @@ var game_time = 0.0
 var view_range = 150.0
 var path_budget = 0
 var storm = false          # campaign weather: rain and low cloud, nothing flies
+var tutorial = false       # the guided first battle is running
+var merge_boxes = true     # map boxes drawn in a few big batches (off only to compare)
 var orders = [{"mode": "free", "point": null}, {"mode": "free", "point": null}, {"mode": "free", "point": null}, {"mode": "free", "point": null}]
 var squads: Array = []
 var grenades: Array = []
@@ -92,7 +96,7 @@ func soldiers_near(p: Vector3) -> Array:
 			if a != null:
 				out.append_array(a)
 	return out
-var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day", "weather": "clear", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true, "ai_side": false, "keys": {}}
+var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day", "weather": "clear", "difficulty": "normal", "ai_style": "random", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true, "ai_side": false, "keys": {}}
 
 # ---------------------------------------------------------------- teams: names, armband colours and uniforms
 const UNIFORMS = {

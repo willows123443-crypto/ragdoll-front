@@ -52,9 +52,12 @@ func set_rts(on: bool) -> void:
 		leave_soldier()
 	var W = G.world
 	var home = W.rally_point(0) if W.spawn.size() > 0 else W.capture
-	rts_focus = home.lerp(W.capture, 0.45)
+	# (over your own men and HQ, looking toward the enemy: it used to open on the empty middle of the map)
+	var toc = G.flat(W.capture - home)
+	rts_focus = home + (toc.normalized() * minf(22.0, toc.length() * 0.3) if toc.length() > 1.0 else Vector3.ZERO)
 	rts_yaw = atan2(W.capture.x - home.x, W.capture.z - home.z)
-	rts_dist = 75.0
+	rts_dist = 62.0
+	rcam_ok = false
 	G.ui.tab = "command"
 	G.ui.tool = "sel"
 	G.ui._render_tools()

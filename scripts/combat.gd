@@ -26,6 +26,8 @@ static func fire_weapon(s, origin: Vector3, dir: Vector3, spread: float) -> void
 	var W = s.W
 	if not s.zombie:
 		spread *= s.steady()
+		if s.team > 0 and not s.is_player:
+			spread *= float(Commander.handicap(s.team)["aim"])
 	s.fired_t = G.sim_time
 	if s.cls == "sniper":
 		s.shots_here += 1
@@ -502,6 +504,7 @@ static func step_rockets() -> void:
 					hs.hp -= 60.0
 					if hs.hp <= 0.0:
 						kill(hs, r["owner"], false)
+			G.bal_add("boom: " + (("shell from a " + r["veh"].kind) if r.get("veh") != null and is_instance_valid(r["veh"]) else ("rocket" if r.get("power", 1.25) > 0.8 else "rifle grenade")))
 			explode(at - stepv.normalized() * 0.1, r["owner"] if is_instance_valid(r["owner"]) else null, r.get("power", 1.25))
 			r["mesh"].queue_free()
 			rockets.remove_at(i)
@@ -683,6 +686,7 @@ static func step_strikes() -> void:
 				if st["kind"] == "hq" and not st["dead"] and st["team"] != s.get("team", -1) and G.dist2d(st["p"], s["p"]) < 50.0:
 					st["shelled_t"] = G.sim_time
 			arty = true
+			G.bal_add("boom: " + str(s.get("src", "artillery")))
 			explode(s["p"], ow if (ow != null and is_instance_valid(ow)) else null, s.get("power", 1.35))
 			arty = false
 			strikes.remove_at(i)
@@ -834,6 +838,7 @@ static func step_grenades() -> void:
 				smoke_at(g.global_position, 18.0, Color(0.85, 0.22, 0.18), 0.45)
 				_marker_popped(g.global_position, owner_s)
 			elif gtype == "satchel":
+				G.bal_add("boom: satchel")
 				explode(g.global_position, owner_s, 2.1)
 			elif gtype == "molotov":
 				molotov(g.global_position, owner_s)
@@ -843,6 +848,7 @@ static func step_grenades() -> void:
 					sv.take_damage(1100.0, owner_s, g.global_position)
 				explode(g.global_position, owner_s, 0.9)
 			else:
+				G.bal_add("boom: grenade")
 				explode(g.global_position, owner_s, 1.0)
 			g.queue_free()
 			G.grenades.remove_at(i)

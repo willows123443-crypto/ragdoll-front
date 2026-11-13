@@ -67,9 +67,9 @@ static func build(world) -> void:
 	var fcol = [Color(0.55, 0.53, 0.5), Color(0.47, 0.36, 0.26), Color(0.4, 0.43, 0.47), Color(0.35, 0.35, 0.36)]
 	for k in range(1, NL + 1):
 		for r in _cut_holes([-HX, HX, -HZ, HZ], holes[k]):
-			w.add_box((r[0] + r[1]) / 2.0, k * FH - 0.3, (r[2] + r[3]) / 2.0, r[1] - r[0], 0.3, r[3] - r[2], fcol[k] if k < NL else Color(0.38, 0.38, 0.39), {"dest": false})
+			w.add_box((r[0] + r[1]) / 2.0, k * FH - 0.3, (r[2] + r[3]) / 2.0, r[1] - r[0], 0.3, r[3] - r[2], fcol[k] if k < NL else Color(0.38, 0.38, 0.39), {"dest": false, "lit": 0.34} if k < NL else {"dest": false})
 		if k < NL:
-			w.add_box(0, k * FH + 0.01, 0, HX * 2.0 - 1.0, 0.02, CORR * 2.0 - 0.4, [Color(0.42, 0.24, 0.2), Color(0.25, 0.32, 0.25), Color(0.24, 0.27, 0.36)][k], {"collide": false})
+			w.add_box(0, k * FH + 0.01, 0, HX * 2.0 - 1.0, 0.02, CORR * 2.0 - 0.4, [Color(0.42, 0.24, 0.2), Color(0.25, 0.32, 0.25), Color(0.24, 0.27, 0.36)][k], {"collide": false, "lit": 0.7})
 	# the outside: a band at each floor, a parapet and plant on the roof
 	var oc = Color(0.62, 0.55, 0.47)
 	for k in range(1, NL + 1):
@@ -156,18 +156,22 @@ static func _solid(horiz: bool, fixed: float, a: float, b: float, y0: float, dy:
 		var c = a + (i + 0.5) * L / n
 		# (the building itself can't be knocked down: its walls, floors and roof stand whatever lands on
 		# them, so the fight for it happens inside it; the furniture and barricades still break)
+		# (inside walls are lit: the corridor ones more than the partitions between offices)
+		var o2 = {"dest": false, "hp": hp}
+		if t < T_OUT:
+			o2["lit"] = 0.42
 		if horiz:
-			w.add_box(c, y0 + dy, fixed, L / n, h, t, color, {"dest": false, "hp": hp})
+			w.add_box(c, y0 + dy, fixed, L / n, h, t, color, o2)
 		else:
-			w.add_box(fixed, y0 + dy, c, t, h, L / n, color, {"dest": false, "hp": hp})
+			w.add_box(fixed, y0 + dy, c, t, h, L / n, color, o2)
 
 static func _frame(horiz: bool, fixed: float, g0: float, g1: float, y0: float, t: float) -> void:
 	var fc = Color(0.36, 0.27, 0.18)
 	for e in [g0 + 0.05, g1 - 0.05]:
 		if horiz:
-			w.add_box(e, y0, fixed, 0.1, 2.3, t + 0.1, fc, {"collide": false})
+			w.add_box(e, y0, fixed, 0.1, 2.3, t + 0.1, fc, {"collide": false, "lit": 0.7})
 		else:
-			w.add_box(fixed, y0, e, t + 0.1, 2.3, 0.1, fc, {"collide": false})
+			w.add_box(fixed, y0, e, t + 0.1, 2.3, 0.1, fc, {"collide": false, "lit": 0.7})
 
 static func _sill(horiz: bool, fixed: float, g0: float, g1: float, y: float, t: float, c: Color) -> void:
 	if horiz:
@@ -287,7 +291,7 @@ static func _storey(k: int, wells: Array) -> void:
 					near = true
 			if not near:
 				var e2 = 1.0 if w.rng.randf() < 0.5 else -1.0
-				w.add_box(x, k * FH, e2 * 1.1, 1.6, 0.8, 0.75, Color(0.4, 0.3, 0.22), {"dest": true, "hp": 90.0, "mat": 1})
+				w.add_box(x, k * FH, e2 * 1.1, 1.6, 0.8, 0.75, Color(0.4, 0.3, 0.22), {"dest": true, "hp": 90.0, "mat": 1, "lit": 0.7})
 	# a sign at each stairwell door: which floor this is
 	for wl in wells:
 		var cr: Array = wl["col"]
@@ -303,7 +307,7 @@ const FLOOR_C = [Color(0.55, 0.53, 0.5), Color(0.47, 0.36, 0.26), Color(0.4, 0.4
 static func _room_shade(k: int, x0: float, x1: float, za: float, zb: float, dark: float) -> void:
 	var z0 = minf(za, zb)
 	var z1 = maxf(za, zb)
-	w.add_box((x0 + x1) / 2.0, k * FH + 0.01, (z0 + z1) / 2.0, x1 - x0 - 0.32, 0.02, z1 - z0 - 0.32, FLOOR_C[k].darkened(dark), {"collide": false, "no_shadow": true})
+	w.add_box((x0 + x1) / 2.0, k * FH + 0.01, (z0 + z1) / 2.0, x1 - x0 - 0.32, 0.02, z1 - z0 - 0.32, FLOOR_C[k].darkened(dark), {"collide": false, "no_shadow": true, "lit": 0.85})
 
 # daylight through a window in an outside wall: a pale wash on the floor under it, and on the sunny side
 # of the building a bright patch where the sun itself comes in, thrown across the floor at the sun's angle
@@ -356,11 +360,11 @@ static func _furnish(k: int, x0: float, x1: float, za: float, zb: float, sz: flo
 		var x = w.rnd(x0 + 2.0, x1 - 2.0)
 		var z = w.rnd(z0 + 2.2, z1 - 2.2)
 		var rot = w.rng.randf() < 0.5
-		w.add_box(x, y, z, 1.7 if not rot else 0.85, 0.78, 0.85 if not rot else 1.7, desk, {"dest": true, "hp": 80.0, "mat": 1})
-		w.add_box(x + w.rnd(-0.3, 0.3), y + 0.78, z + w.rnd(-0.2, 0.2), 0.45, 0.04, 0.32, Color(0.85, 0.83, 0.78), {"collide": false, "ry": w.rnd(-0.5, 0.5)})
+		w.add_box(x, y, z, 1.7 if not rot else 0.85, 0.78, 0.85 if not rot else 1.7, desk, {"dest": true, "hp": 80.0, "mat": 1, "lit": 0.7})
+		w.add_box(x + w.rnd(-0.3, 0.3), y + 0.78, z + w.rnd(-0.2, 0.2), 0.45, 0.04, 0.32, Color(0.85, 0.83, 0.78), {"collide": false, "ry": w.rnd(-0.5, 0.5), "lit": 0.7})
 		var ch = Vector3(x + (0.0 if not rot else 0.85), 0, z + (0.85 if not rot else 0.0))
-		w.add_box(ch.x, y, ch.z, 0.45, 0.45, 0.45, Color(0.2, 0.2, 0.22), {"collide": false})
-		w.add_box(ch.x, y + 0.45, ch.z + (0.2 if not rot else 0.0), 0.45, 0.5, 0.06, Color(0.2, 0.2, 0.22), {"collide": false})
+		w.add_box(ch.x, y, ch.z, 0.45, 0.45, 0.45, Color(0.2, 0.2, 0.22), {"collide": false, "lit": 0.7})
+		w.add_box(ch.x, y + 0.45, ch.z + (0.2 if not rot else 0.0), 0.45, 0.5, 0.06, Color(0.2, 0.2, 0.22), {"collide": false, "lit": 0.7})
 	# cabinets along the outside wall (back offices) or the end of a front office, clear of the doors
 	var along_z = sz * (HZ - 0.55) if not front else sz * (MIDZ - 0.5)
 	var key = "m%d" % k
@@ -380,7 +384,7 @@ static func _furnish(k: int, x0: float, x1: float, za: float, zb: float, sz: flo
 		if blocked:
 			continue
 		var tall = w.rng.randf() < 0.5
-		w.add_box(x, y, along_z, 0.9, 1.9 if tall else 1.25, 0.5, metal if tall else desk.darkened(0.2), {"dest": true, "hp": 120.0, "mat": 0 if tall else 1})
+		w.add_box(x, y, along_z, 0.9, 1.9 if tall else 1.25, 0.5, metal if tall else desk.darkened(0.2), {"dest": true, "hp": 120.0, "mat": 0 if tall else 1, "lit": 0.7})
 
 # ---------------------------------------------------------------- stairwells
 # Two flights in a U: the first rises away from the corridor to a far landing on the floor above, the
@@ -441,7 +445,7 @@ static func _flight(r: Array, k: int, rise_dir: float, c: Color) -> void:
 	for i in range(steps):
 		var sh = (i + 1) * FH / steps
 		var zc = z0 + (i + 0.5) * L / steps if rise_dir > 0 else z1 - (i + 0.5) * L / steps
-		w.add_box((x0 + x1) / 2.0, base, zc, x1 - x0, sh, L / steps, c.darkened(0.03 * (i % 2)), {"collide": false})
+		w.add_box((x0 + x1) / 2.0, base, zc, x1 - x0, sh, L / steps, c.darkened(0.03 * (i % 2)), {"collide": false, "lit": 0.42})
 	# what's walked on: a smooth ramp
 	var ramp = StaticBody3D.new()
 	ramp.collision_layer = G.L_WORLD

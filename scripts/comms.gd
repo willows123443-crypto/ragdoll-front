@@ -30,6 +30,9 @@ static func reset() -> void:
 	delivered = 0
 
 static func ok(t: int) -> bool:
+	# (the first battle is about giving orders: losing the radio and waiting on runners isn't part of it)
+	if G.tutorial and t == 0:
+		return true
 	for s in G.soldiers:
 		if s.team == t and s.cls == "radio" and s.state == "alive":
 			return true

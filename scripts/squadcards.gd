@@ -116,6 +116,7 @@ static func doing(q: Dictionary) -> Array:
 	var building = 0
 	var riding = 0
 	var cover = 0
+	var dry = 0
 	for m in q["members"]:
 		if not is_instance_valid(m) or m.state == "dead":
 			continue
@@ -128,10 +129,14 @@ static func doing(q: Dictionary) -> Array:
 			continue
 		if m.supp > 0.9:
 			pinned += 1
-		if m.vis_t != null or G.sim_time - m.seen_t < 3.0:
+		# (really fighting: an enemy in view within range, shooting, or being shot at. Knowing where the
+		# enemy is across the map isn't a fight, and the cards said "Fighting" from the first second)
+		if (m.vis_t != null and is_instance_valid(m.vis_t) and m.vis_t.state == "alive" and G.dist2d(m.vis_t.pos, m.pos) < 160.0) or G.sim_time - m.fired_t < 4.0 or m.supp > 0.3:
 			fighting += 1
 		if m.task in ["construct", "repair"]:
 			building += 1
+		if m.reserve <= 0 and m.mag <= 0:
+			dry += 1
 		if m.move_target != null and m.want.length_squared() > 0.5:
 			moving += 1
 		if m.in_cover:
@@ -142,8 +147,15 @@ static func doing(q: Dictionary) -> Array:
 		return ["Mounted", Color(0.7, 0.8, 1.0)]
 	if pinned * 2 >= n:
 		return ["Pinned!", Color(1.0, 0.45, 0.35)]
+	# nothing left to shoot with matters more than anything else that's going on
+	if dry * 2 >= n:
+		return ["Out of ammo", Color(1.0, 0.5, 0.75)]
+	if q.get("room") != null:
+		return ["Clearing rooms", Color(1.0, 0.75, 0.4)]
 	if fighting > 0:
 		return ["Fighting", Color(1.0, 0.7, 0.35)]
+	if q.get("tank") != null and is_instance_valid(q["tank"]) and not q["tank"].dead and G.sim_time < q.get("tank_t", 0.0):
+		return ["With the tank", Color(0.7, 0.85, 1.0)]
 	if building > 0:
 		return ["Building", Color(0.95, 0.85, 0.45)]
 	if moving * 2 >= n:

@@ -572,11 +572,20 @@ func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, colo
 			dc.prop = opt.get("mat", 0)
 		return nref
 	var shp: String = opt.get("shape", "")
-	var key = color.to_html(false) + ("n" if opt.get("no_shadow", false) else "s") + shp + ("g" if opt.get("glow", false) else "")
+	var lit: float = opt.get("lit", 0.0)
+	# Every box of the same kind of surface goes into one batch, each with its own colour, however many
+	# colours there are. (It used to be one batch per colour, and since every house is a slightly
+	# different shade that was hundreds of batches, each drawn again for the shadows: most of what a
+	# frame cost in the browser.) Foliage, sacking and self-lit surfaces keep a batch per colour: their
+	# materials are made for the colour.
+	var special = shp == "blob" or shp == "leaves" or shp == "pillow" or lit > 0.0 or not G.merge_boxes
+	var key = (color.to_html(false) if special else "*" + _surf_kind(color, shp)) + ("n" if opt.get("no_shadow", false) else "s") + shp + ("g" if opt.get("glow", false) else "") + ("L%d" % int(lit * 100.0) if lit > 0.0 else "")
 	if not groups.has(key):
-		groups[key] = {"color": color, "xforms": [], "mm": null, "no_shadow": opt.get("no_shadow", false), "shape": shp, "glow": opt.get("glow", false)}
+		groups[key] = {"color": color, "xforms": [], "colors": null if special else [], "mm": null, "no_shadow": opt.get("no_shadow", false), "shape": shp, "glow": opt.get("glow", false), "lit": lit}
 	var g = groups[key]
 	g["xforms"].append(xf)
+	if not special:
+		g["colors"].append(color)
 	var ref = [g, g["xforms"].size() - 1]
 	if piece != null:
 		piece.append(ref)
@@ -692,21 +701,40 @@ func finalize_static() -> void:
 		var mm = MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.mesh = BoxMesh.new() if g.get("shape", "") == "" else shape_mesh(g["shape"])
+		var cols_: Variant = g.get("colors")
+		if cols_ != null:
+			mm.use_colors = true
 		mm.instance_count = g["xforms"].size()
 		for i in range(g["xforms"].size()):
 			mm.set_instance_transform(i, g["xforms"][i])
+			if cols_ != null:
+				mm.set_instance_color(i, cols_[i])
 		var mi = MultiMeshInstance3D.new()
 		mi.multimesh = mm
 		var mat = StandardMaterial3D.new()
 		mat.albedo_color = g["color"]
+		if cols_ != null:
+			mat.albedo_color = Color.WHITE
+			mat.vertex_color_use_as_albedo = true
+			mat.vertex_color_is_srgb = true
 		mat.roughness = 0.95
 		_surface(mat, g["color"], g.get("shape", ""))
+		# the inside of a lit building: its walls and floors give back some light of their own, so a room
+		# with the sun shut out by the storeys above isn't a black hole (and at night the lights are on)
+		if g.get("lit", 0.0) > 0.0:
+			mat.emission_enabled = true
+			mat.emission = g["color"]
+			mat.emission_energy_multiplier = g["lit"]
 		var pm = Props.mat_for(g["color"], g.get("shape", ""))
 		mi.material_override = pm if pm != null else mat
 		if g.get("glow", false):
 			# a lit thing (a lamp, a patch of light on a floor): it shows at its own brightness in the dark
 			var gm = StandardMaterial3D.new()
 			gm.albedo_color = g["color"]
+			if cols_ != null:
+				gm.albedo_color = Color.WHITE
+				gm.vertex_color_use_as_albedo = true
+				gm.vertex_color_is_srgb = true
 			gm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 			mi.material_override = gm
 		if g["no_shadow"]:
@@ -714,6 +742,16 @@ func finalize_static() -> void:
 		_geo().add_child(mi)
 		g["mm"] = mm
 	_cut_index()
+
+func _surf_kind(c: Color, shape: String) -> String:
+	for rc in ROOFC:
+		if _near_col(c, rc, 0.03) or (shape == "prism"):
+			return "tiles"
+	if c.r > 0.5 and c.g < 0.4 and c.b < 0.35 and c.r - c.g > 0.18:
+		return "brick"
+	if c.g > c.r + 0.05 and c.g > c.b + 0.05:
+		return "plain"
+	return "plaster"
 
 # what a static surface is made of, from its colour: tiled roofs, brick, or weathered plaster and stone
 func _surface(mat: StandardMaterial3D, c: Color, shape: String) -> void:

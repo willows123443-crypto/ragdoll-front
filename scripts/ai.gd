@@ -1538,7 +1538,8 @@ static func decide(s) -> void:
 			if not s.order.has("arrived"):
 				s.order["arrived"] = G.sim_time
 			var quiet = not s.has_seen or G.sim_time - s.seen_t > 15.0
-			if quiet and G.sim_time - s.order["arrived"] > 25.0:
+			# (not in the first battle: there the squad stays where it was put until it's sent on)
+			if quiet and G.sim_time - s.order["arrived"] > 25.0 and not (G.tutorial and s.team == 0):
 				s.order = null
 				s.decide_t = 0.0
 				if randf() < 0.4:

@@ -110,6 +110,10 @@ func _ready() -> void:
 			_perf_run()
 		if a == "--blindtest":
 			_blind_test()
+		if a.begins_with("--merge="):
+			G.merge_boxes = a.substr(8) == "1"
+		if a.begins_with("--rails="):
+			Vehicle.RAILS = a.substr(8) == "1"
 		if a == "--crashtest":
 			_crash_test()
 		if a == "--invtest":
@@ -118,6 +122,10 @@ func _ready() -> void:
 			_ground_test()
 		if a == "--rooftest":
 			_roof_test()
+		if a == "--tutorialtest":
+			_tutorial_test()
+		if a == "--drawtest":
+			_draw_test()
 		if a.begins_with("--weather="):
 			G.settings["weather"] = a.substr(10)
 		if a.begins_with("--polishshot="):
@@ -451,6 +459,7 @@ func _clear() -> void:
 	Engine.time_scale = 1.0
 
 func quit_to_title() -> void:
+	Tutorial.stop()
 	var m = G.map_id if G.map_id != "custom" else "town"
 	Modes.daily = {}
 	Campaign.active = false
@@ -479,6 +488,8 @@ func stop_attract() -> void:
 		preview_map(G.map_id)
 
 func start_game(o: Dictionary) -> void:
+	if not Tutorial.starting:
+		Tutorial.stop()
 	G.attract = false
 	G.bal = {}
 	G.win_team = -2
@@ -587,8 +598,12 @@ func start_game(o: Dictionary) -> void:
 	Ops.reset()
 	Stretcher.reset()
 	Prod.reset()
-	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2:
-		G.ui.radio(0, "Your commander is %s" % Commander.STYLE_TEXT[Commander.style_of(0)])
+	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2 and not G.tutorial:
+		# (your own side's AI commander, when it has one; when you're in command, what's known of theirs)
+		if G.settings.get("ai_side", false):
+			G.ui.radio(0, "Your commander is %s" % Commander.STYLE_TEXT[Commander.style_of(0)])
+		else:
+			G.ui.radio(0, "Intelligence: their commander is %s" % Commander.STYLE_TEXT[Commander.style_of(1)])
 	Scripted.reset()
 	if G.map_id == "custom":
 		Scripted.setup(G.custom_map)
@@ -839,6 +854,7 @@ func _sim_step() -> void:
 	var td = Time.get_ticks_usec()
 	G.fx.step(G.DT)
 	Weather.step(G.DT)
+	Tutorial.step(G.DT)
 	var te = Time.get_ticks_usec()
 	Stats.step(G.DT)
 	Squad.step(G.DT)
@@ -2934,6 +2950,163 @@ func _pose_shot(dir: String) -> void:
 	print("POSESHOT half turn: body turned %.2f rad, steps taken %d, feet end %.2fm and %.2fm from under him" % [absf(G.wrap_a(s.body_yaw - y0)), swings, offL, offR])
 	get_tree().quit()
 
+# --drawtest --map=: what the picture costs to draw in a commander battle: how many separate draws a
+# frame takes, and how many of them go when the soldiers, the vehicles, the shadows or the effects are
+# taken out (needs a display: run it under xvfb)
+func _draw_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(7)
+	start_game({"map": _arg("map", "town"), "mode": "commander", "size": int(_arg("size", "16")), "limit": 999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	await _wait(float(_arg("warm", "25")))
+	G.pc.set_rts(true)
+	var c = Vector3.ZERO
+	var n = 0
+	for s in G.soldiers:
+		if s.state == "alive":
+			c += s.pos
+			n += 1
+	c /= maxf(n, 1.0)
+	G.pc.rts_focus = c
+	G.pc.rts_dist = 75.0
+	get_tree().paused = true
+	var meas = func() -> Array:
+		for i in range(4):
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		return [int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)), int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)), int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))]
+	var all: Array = await meas.call()
+	print("DRAWTEST %s: %d men, %d vehicles in the battle, %d batches of map boxes | whole picture: %d draws, %d objects, %d triangles" % [_arg("map", "town"), G.soldiers.size(), G.vehicles.size(), G.world.groups.size(), all[0], all[1], all[2]])
+	if _arg("pic", "") != "":
+		get_viewport().get_texture().get_image().save_png(_arg("pic", ""))
+	# who the separate pieces belong to: every visible mesh, by what it's part of
+	var census = {}
+	var stack: Array = [self]
+	while not stack.is_empty():
+		var nd = stack.pop_back()
+		for ch in nd.get_children():
+			stack.append(ch)
+		if nd is GeometryInstance3D and nd.is_visible_in_tree():
+			var key = "other"
+			var up = nd
+			while up != null and up != self:
+				if up is Soldier:
+					key = "men"
+					break
+				if up is Vehicle:
+					key = "vehicles"
+					break
+				if up == G.world.dyn_root:
+					key = "things built (bases, HQ, sandbags, works): one mesh a box"
+					break
+				if up == G.fx:
+					key = "effects"
+					break
+				if up == G.world.geo_root:
+					key = "the map (" + ("batched" if nd is MultiMeshInstance3D else "single meshes") + ")"
+					break
+				if up == G.world:
+					key = "the world, other (" + nd.get_class() + ")"
+					break
+				up = up.get_parent()
+			if key == "other":
+				var top = nd
+				while top.get_parent() != null and top.get_parent() != self:
+					top = top.get_parent()
+				key = "other: under " + str(top.name).rstrip("0123456789@")
+			census[key] = census.get(key, 0) + 1
+	var ck = census.keys()
+	ck.sort_custom(func(a, b): return census[a] > census[b])
+	for k in ck.slice(0, 14):
+		print("DRAWTEST   pieces: %5d  %s" % [census[k], k])
+	sun.shadow_enabled = false
+	var a1: Array = await meas.call()
+	print("DRAWTEST   without shadows: %d draws (shadows cost %d)" % [a1[0], all[0] - a1[0]])
+	for s in G.soldiers:
+		s.visible = false
+	var a2: Array = await meas.call()
+	print("DRAWTEST   and without the men: %d draws (men cost %d, %.1f each)" % [a2[0], a1[0] - a2[0], (a1[0] - a2[0]) / maxf(G.soldiers.size(), 1.0)])
+	for v in G.vehicles:
+		v.visible = false
+	var a3: Array = await meas.call()
+	print("DRAWTEST   and without the vehicles: %d draws (vehicles cost %d, %.1f each)" % [a3[0], a2[0] - a3[0], (a2[0] - a3[0]) / maxf(G.vehicles.size(), 1.0)])
+	G.fx.visible = false
+	var a4: Array = await meas.call()
+	print("DRAWTEST   and without effects (smoke, marks, tracers): %d draws (effects cost %d)" % [a4[0], a3[0] - a4[0]])
+	G.ui.root.visible = false
+	var a5: Array = await meas.call()
+	print("DRAWTEST   and without the interface: %d draws (interface cost %d); what's left is the map itself" % [a5[0], a4[0] - a5[0]])
+	get_tree().quit()
+
+# --tutorialtest: the first battle played through by doing what each step asks, the way a player would:
+# does every step notice it's been done and move on, and does the enemy stay put?
+func _tutorial_test() -> void:
+	await _wait(0.5)
+	Tutorial.start()
+	await _wait(1.0)
+	var times = []
+	var last = -1
+	var t = 0.0
+	var acted = -1
+	while t < 400.0 and Tutorial.on and Tutorial.step_i < 6:
+		await _wait(0.5)
+		t += 0.5
+		if Tutorial.step_i != last:
+			times.append("%d at %.0fs" % [Tutorial.step_i + 1, t])
+			if StuckLog.dump:
+				print("TUTORIALDBG sim %.1f step %d t %.1f pts %s pts0 %s men %d men0 %s" % [G.sim_time, Tutorial.step_i + 1, t, str(Support.points), str(Tutorial.d.get("pts0", "-")), G.soldiers.filter(func(s): return s.team == 0).size(), str(Tutorial.d.get("men0", "-"))])
+			last = Tutorial.step_i
+		var mine = G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive")
+		# (pictures, under xvfb: the first panel, and the squad's tag once it's in the fight)
+		var pic = _arg("pic", "")
+		if pic != "":
+			if Tutorial.step_i == 0 and Tutorial.t_step > 1.0 and not has_meta("tpic0"):
+				set_meta("tpic0", true)
+				await RenderingServer.frame_post_draw
+				get_viewport().get_texture().get_image().save_png(pic + "/tut_panel.png")
+			if Tutorial.step_i == 3 and Tutorial.t_step > 3.0:
+				if mine.size() > 0:
+					G.pc.rts_focus = mine[0].pos
+					G.pc.rts_dist = 34.0
+				await _wait(0.6)
+				await RenderingServer.frame_post_draw
+				get_viewport().get_texture().get_image().save_png(pic + "/tut_fight.png")
+				print("TUTORIALTEST pictures saved")
+				get_tree().quit()
+				return
+		acted = Tutorial.step_i
+		match Tutorial.step_i:
+			0:
+				G.pc.selection = mine.duplicate()
+			1, 3:
+				var goal: Vector3 = Tutorial.d["p1"] if Tutorial.step_i == 1 else Tutorial.d["p2"] - Tutorial.d["to"] * 22.0
+				for s in mine:
+					s.order = {"mode": "move", "point": goal}
+					AI.go_to(s, goal + Vector3(randf_range(-3, 3), 0, randf_range(-3, 3)), 4.0)
+			2:
+				G.pc.rts_focus += Vector3(20, 0, 0)
+				G.pc.rts_dist += 14.0
+				G.pc.rts_yaw += 0.6
+			4:
+				Support.call_in(0, "artillery", Tutorial.d["p3"])
+				await _wait(9.0)
+				t += 9.0
+				var goal2: Vector3 = Tutorial.d["p3"] - Tutorial.d["to"] * 24.0
+				for s in mine:
+					s.order = {"mode": "move", "point": goal2}
+					AI.go_to(s, goal2 + Vector3(randf_range(-3, 3), 0, randf_range(-3, 3)), 4.0)
+			5:
+				G.ui._recruit(G.ui.RECRUIT.keys()[0], Tutorial.d["p1"])
+	print("TUTORIALTEST my side: %s" % str(G.soldiers.filter(func(s): return s.team == 0).map(func(s): return "%s %s hp%d at(%.0f,%.0f) %s" % [s.cls, s.state, int(s.hp), s.pos.x, s.pos.z, str(s.get_meta("death_why", ""))])))
+	var foes_moved = 0.0
+	for f in Tutorial.foes:
+		if is_instance_valid(f) and f.state == "alive":
+			foes_moved = maxf(foes_moved, G.dist2d(f.pos, Tutorial.d["p3"]))
+	print("TUTORIALTEST reached step %d of 7 (%s) | my men left %d | enemy on the field %d (furthest from its post %.0fm) | enemy vehicles %d, structures %d" % [Tutorial.step_i + 1, ", ".join(times),
+		G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive").size(), G.soldiers.filter(func(s): return s.team == 1 and s.state == "alive").size(), foes_moved,
+		G.vehicles.filter(func(v): return v.team == 1).size(), Build.sites.filter(func(st): return st["team"] == 1).size()])
+	get_tree().quit()
+
 # --rooftest: twelve heavy shells on the Ministry's roof and four grenades in a corridor: what's left of
 # the walls, the furniture, and the men on the floor below the roof
 func _roof_test() -> void:
@@ -3113,6 +3286,11 @@ func _inv_test() -> void:
 	var keys = bad.keys()
 	keys.sort()
 	print("INVTEST %s/%s %.0fs: %d kinds of trouble; men %d, vehicles %d" % [_arg("map", "town"), _arg("mode", "commander"), secs, keys.size(), G.soldiers.size(), G.vehicles.size()])
+	var booms = {}
+	for k in G.bal.keys():
+		if str(k).begins_with("boom: "):
+			booms[str(k).substr(6)] = G.bal[k]
+	print("INVTEST   explosions: %s" % str(booms))
 	var built = [0, 0]
 	var going = [0, 0]
 	var inside_b = 0
@@ -3165,6 +3343,13 @@ func _crash_test() -> void:
 		await _wait(0.1)
 		t += 0.1
 		var vs = G.vehicles.filter(func(v): return is_instance_valid(v) and not v.spec.get("air", false) and not v.spec.get("static", false) and v.kind != "mortar")
+		if int(t * 10.0 + 0.5) % 600 == 0:
+			var sites = [{}, {}]
+			for st in Build.sites:
+				if st["team"] < 2:
+					var kk = str(st["kind"]) + ("" if Build.alive(st) else "(x)")
+					sites[st["team"]][kk] = sites[st["team"]].get(kk, 0) + 1
+			print("CRASHTEST t=%.0f fleets %d/%d started %s runs %s pts %s alive %d/%d sites %s" % [t, Logistics.count(0), Logistics.count(1), str(Logistics.started), str(Logistics.delivered), str(Support.points), G.alive_count(0), G.alive_count(1), str(sites)])
 		for v in vs:
 			if not v.dead and absf(v.speed) > 0.5:
 				veh_s += 0.1
@@ -3201,6 +3386,11 @@ func _crash_test() -> void:
 									print("CRASHDBG %s yaw %.2f pick %s block %.1f hold %.1f mission %s | %s" % [m.kind, m.yaw, str(m.arc_pick), m.arc_block, m.arc_hold, str(m.mission.get("type", "?")) if m.mission != null else "-", str(m.get_meta("arc_dbg", "")).substr(0, 420)])
 		touching = now
 	print("CRASHTEST %s: %d collisions in %.0f vehicle-seconds of driving (%.1f per 100) | %.0f s spent overlapping | %s" % [_arg("map", "town"), events, veh_s, events * 100.0 / maxf(veh_s, 1.0), stuck_s, str(kinds)])
+	print("CRASHTEST supply runs delivered %s, stuck events: %s" % [str(Logistics.delivered), StuckLog.summary()])
+	for v in G.vehicles:
+		if not v.dead and (v.kind == "supplytruck" or v.kind == "ammotruck"):
+			print("CRASHTEST   lorry t%d %s at (%.0f, %.0f) spd %.1f mission %s rails %s wait %.1f gap %.1f path %d driver %s" % [v.team, v.kind, v.pos.x, v.pos.z, v.speed, str(v.mission.get("type", "?")) + "/" + str(v.mission.get("state", v.mission.get("leg", "?"))) if v.mission != null else "-", v._on_rails(), v.rail_wait, v.rail_gap, v.path.size(), v.driver() != null])
+	print("CRASHTEST   fleets %d/%d points %s" % [Logistics.count(0), Logistics.count(1), str(Support.points)])
 	get_tree().quit()
 
 # --blindtest --map= --mode= --secs= --size=: an AI battle watched for men who have an enemy in plain view

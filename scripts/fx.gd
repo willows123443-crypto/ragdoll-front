@@ -952,6 +952,8 @@ func step(dt: float) -> void:
 	if clod_mm != null:
 		_blast_step(dt)
 	_cut_tick(dt)
+	_idle_hide()
+
 	_ambient_planes(dt)
 	if marks_mat != null:
 		marks_mat.set_shader_parameter("now", G.sim_time)
@@ -1505,3 +1507,25 @@ func toss_mag(from: Vector3, to: Vector3) -> void:
 			m.global_position = from.lerp(to, k) + Vector3(0, sin(k * PI) * 1.2, 0)
 			m.rotation = Vector3(k * 9.0, k * 4.0, 0), 0.0, 1.0, 0.55)
 	tw.tween_callback(m.queue_free)
+
+# The smoke, spark and dust emitters are kept ready in pools, a few hundred of them, and one that's doing
+# nothing was still a draw every frame. They're only shown while they have something in the air.
+var emitters: Array = []
+func _idle_hide() -> void:
+	if not emitters.is_empty() and not is_instance_valid(emitters[0]):
+		emitters = []
+	if emitters.is_empty():
+		for pool in [dust_pool, blood_pool, spark_pool, dirt_pool, ember_pool]:
+			for e in pool:
+				if e is CPUParticles3D:
+					emitters.append(e)
+		if emitters.is_empty():
+			return
+	var now = G.sim_time
+	for e in emitters:
+		if e.emitting:
+			e.set_meta("live_t", now + e.lifetime + 0.4)
+			if not e.visible:
+				e.visible = true
+		elif e.visible and now > float(e.get_meta("live_t", 0.0)):
+			e.visible = false

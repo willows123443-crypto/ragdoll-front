@@ -92,7 +92,7 @@ static func arty_ready(team: int) -> bool:
 
 static func fire_mission(team: int, target: Vector3, caller, shells: int, spread: float, power: float) -> void:
 	if team >= 0 and team < arty_next.size():
-		arty_next[team] = G.sim_time + ARTY_GAP * randf_range(0.9, 1.3)
+		arty_next[team] = G.sim_time + ARTY_GAP * randf_range(0.9, 1.3) * float(Commander.handicap(team)["arty"])
 	var a = randf() * TAU
 	var err = Vector3(cos(a), 0, sin(a)) * randf_range(28.0, 45.0)
 	var op = Build.observer_for(team, target)
@@ -176,11 +176,11 @@ static func step(dt: float) -> void:
 				# (two points every 18 s: a bit more than it was, so a side that's lost its dumps isn't stuck)
 				hq_t[t] = hq_t[t] + 1
 				if hq_t[t] % 3 != 0 and Build.hq(t) != null and Build.alive(Build.hq(t)):
-					points[t] += 1
+					_pay(t, 1)
 			else:
-				points[t] += 1
+				_pay(t, 1)
 	# AI sides spend what they have (once the battle's actually under way)
-	if G.builder or Prep.active() or G.sim_time < 20.0:
+	if G.builder or Prep.active() or G.sim_time < 20.0 or G.tutorial:
 		return
 	for t in range(points.size()):
 		if t == 0 and (not G.ai_runs(0) or G.mode == "horde"):
@@ -190,8 +190,22 @@ static func step(dt: float) -> void:
 		ai_t[t] -= dt
 		if ai_t[t] > 0.0:
 			continue
-		ai_t[t] = randf_range(14.0, 24.0) if G.mode == "commander" else randf_range(25.0, 45.0)
+		ai_t[t] = (randf_range(14.0, 24.0) if G.mode == "commander" else randf_range(25.0, 45.0)) * float(Commander.handicap(t)["spend"])
+		if G.mode == "commander" and G.sim_time < float(Commander.handicap(t)["grace"]):
+			continue
 		_ai_spend(t)
+
+# supply coming in: worth more or less to a hard or an easy enemy (the odd fractions are carried over)
+static var pay_frac = [0.0, 0.0, 0.0, 0.0]
+static func _pay(t: int, n: int) -> void:
+	var k: float = Commander.handicap(t)["income"]
+	if t >= pay_frac.size() or is_equal_approx(k, 1.0):
+		points[t] += n
+		return
+	pay_frac[t] += n * k
+	var whole = int(floor(pay_frac[t]))
+	pay_frac[t] -= whole
+	points[t] += whole
 
 static func _ai_spend(t: int) -> void:
 	# commander mode: the AI buys its troops just like the player does, so its army grows over the battle

@@ -35,9 +35,11 @@ static func reset() -> void:
 	plans = []
 	for k in events:
 		events[k] = 0
+	var want: String = G.settings.get("ai_style", "random")
 	for t in range(G.team_count()):
-		timers.append(randf_range(6.0, 10.0))
-		style.append(STYLES[randi() % STYLES.size()])
+		# (an easy or normal enemy gives you a little while to look round before it moves)
+		timers.append(randf_range(6.0, 10.0) + (float(handicap(t)["grace"]) if G.mode == "commander" else 0.0))
+		style.append(want if (t > 0 and want in STYLES) else STYLES[randi() % STYLES.size()])
 		sightings.append([])
 		scout_t.append(3.0)
 		held.append(0.0)
@@ -45,6 +47,24 @@ static func reset() -> void:
 		feint_cd.append(randf_range(45.0, 90.0))
 		regroup.append(null)
 		plans.append(null)
+
+# How hard the enemy's commander is to beat (the battle setup): easy, normal or hard. It only ever applies
+# to the sides you're up against, never to yours.
+#   income  what its supply is worth      grace  seconds before it makes its first move
+#   spend   how long between purchases    arty   how long between fire missions      aim  how wide its men shoot
+const HANDICAP = {
+	"easy": {"income": 0.7, "grace": 100.0, "spend": 1.5, "arty": 1.6, "aim": 1.3},
+	"normal": {"income": 1.0, "grace": 40.0, "spend": 1.0, "arty": 1.0, "aim": 1.0},
+	"hard": {"income": 1.3, "grace": 0.0, "spend": 0.75, "arty": 0.8, "aim": 0.88}}
+
+const LESSON = {"income": 0.7, "grace": 100.0, "spend": 1.5, "arty": 1.6, "aim": 2.2}
+
+static func handicap(t: int) -> Dictionary:
+	if t <= 0 or G.mode in ["sandbox", "horde"]:
+		return HANDICAP["normal"]
+	if G.tutorial:
+		return LESSON         # (the first battle's enemy is a poor shot: it's there to be beaten)
+	return HANDICAP.get(G.settings.get("difficulty", "normal"), HANDICAP["normal"])
 
 static func style_of(t: int) -> String:
 	return style[t] if t >= 0 and t < style.size() else "cunning"

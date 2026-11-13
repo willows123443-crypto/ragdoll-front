@@ -447,7 +447,7 @@ func _cards(t: String) -> Array:
 			out.append(["sup:ammotruck", "Ammo truck", "%d pts · park it behind the line" % Support.COSTS["ammotruck"]])
 		"recruit":
 			for k in RECRUIT:
-				out.append(["r:" + k, "%s ×%d" % [RECRUIT[k]["name"], RECRUIT[k]["cls"].size()], "%d pts · click where" % recruit_cost(0, k)])
+				out.append(["r:" + k, "%s ×%d" % [RECRUIT[k]["name"], RECRUIT[k]["cls"].size()], "%d pts" % recruit_cost(0, k)])
 			if Faction.militia(0):
 				return out
 			out.append(["sup:paradrop", "Paratroopers ×6", ("%d pts" % Support.COSTS["paradrop"]) if Support.unlocked(0, "paradrop") else Support.need_text("paradrop")])
@@ -473,7 +473,7 @@ func _cards(t: String) -> Array:
 		"armoury":
 			for k in Modes.SHOP:
 				var sh = Modes.SHOP[k]
-				out.append(["h:" + k, sh["name"], "%d pts%s" % [sh["cost"], "" if Modes.shop_instant(k) else " · click where"]])
+				out.append(["h:" + k, sh["name"], "%d pts" % sh["cost"]])
 		"upgrades":
 			for k in Prod.UPGRADES:
 				var u = Prod.UPGRADES[k]
@@ -863,6 +863,16 @@ func _build_center() -> void:
 	_place(msg, Control.PRESET_CENTER_TOP, -260, 200, 520, 40)
 	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# (a dark plate behind it: white words straight over a sunlit wall or a sandy field couldn't be read)
+	var msb = StyleBoxFlat.new()
+	msb.bg_color = Color(0.04, 0.05, 0.06, 0.62)
+	msb.set_corner_radius_all(6)
+	msb.content_margin_left = 12
+	msb.content_margin_right = 12
+	msb.content_margin_top = 6
+	msb.content_margin_bottom = 6
+	msg.add_theme_stylebox_override("normal", msb)
+	msg.visible = false
 	root.add_child(msg)
 	scope = TextureRect.new()
 	scope.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -953,7 +963,9 @@ func damage_indicator(from: Vector3) -> void:
 
 func message(t: String) -> void:
 	msg.text = t
-	msg_t = 2.5
+	msg.visible = t != ""
+	msg.size.y = 0.0          # (shrinks back to fit a shorter message)
+	msg_t = 2.5 + minf(4.0, t.length() * 0.02)
 
 # ---------------------------------------------------------------- player panel
 func _build_player_hud() -> void:
@@ -1077,6 +1089,16 @@ func _build_menu() -> void:
 	opt_cmd = _option(["You command (you build and buy)", "AI commander (watch or help)"], 1 if G.settings.get("ai_side", false) else 0)
 	opt_cmd.item_selected.connect(func(i): G.settings["ai_side"] = i == 1)
 	_row(v, "Who runs your side", opt_cmd)
+	var diffs = ["easy", "normal", "hard"]
+	var opt_diff = _option(["Easy: slower, poorer, worse shots", "Normal", "Hard: quicker, richer, better shots"], maxi(0, diffs.find(G.settings.get("difficulty", "normal"))))
+	opt_diff.item_selected.connect(func(i): G.settings["difficulty"] = diffs[i])
+	opt_diff.tooltip_text = "How good the enemy is. Easy: it earns less supply, buys and shells less often, shoots wider, and gives you about a minute and a half before its first move. Hard: the reverse, and it moves at once."
+	_row(v, "Difficulty", opt_diff)
+	var styles = ["random", "reckless", "cautious", "cunning"]
+	var opt_style = _option(["Any (picked at random)", "Reckless: attacks at once and keeps coming", "Cautious: digs in and waits for the numbers", "Cunning: probes with scouts, hits weak spots"], maxi(0, styles.find(G.settings.get("ai_style", "random"))))
+	opt_style.item_selected.connect(func(i): G.settings["ai_style"] = styles[i])
+	opt_style.tooltip_text = "The enemy commander's temperament"
+	_row(v, "Enemy commander", opt_style)
 	_section(v, "World")
 	opt_time = _option(["Day", "Dusk", "Night", "Dawn till nightfall (time passes)", "Endless day and night cycle"], maxi(0, ["day", "dusk", "night", "dawn", "cycle"].find(G.settings["time"])))
 	opt_time.item_selected.connect(func(i):
@@ -1862,6 +1884,11 @@ func _fill_title() -> void:
 		title_sub.text = "Battles that play themselves, until you step in: drop in soldiers, take over anyone, or command from above."
 		_title_button("▶  Quick battle", "pick a map, a mode and your forces", func(): _open_setup(), true)
 		_title_header("PLAY")
+		_title_button("First battle", "a guided fight: learn to command in five minutes", func():
+			G.main.stop_attract()
+			title.visible = false
+			menu.visible = false
+			Tutorial.start())
 		_title_button("Commander", "fight a battle from above, RTS style", func(): _quick("commander"))
 		_title_button("Campaign", "twelve regions, one battle at a time", func(): _show_campaign())
 		_title_button("Zombie horde", "hold out against the waves", func(): _quick("horde"))
@@ -2056,7 +2083,7 @@ var perf_t = 0.0
 func _perf(dt: float) -> void:
 	if perf_lbl == null:
 		perf_lbl = _label("", 13, Color(0.85, 0.95, 0.8))
-		_place(perf_lbl, Control.PRESET_TOP_RIGHT, -330, 6, 320, 20)
+		_place(perf_lbl, Control.PRESET_TOP_RIGHT, -620, 6, 610, 20)
 		perf_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		root.add_child(perf_lbl)
 	perf_lbl.visible = G.settings["fps"] and G.started
@@ -2074,7 +2101,7 @@ func _perf(dt: float) -> void:
 			if s.lod_frozen:
 				far += 1
 	var fps = Engine.get_frames_per_second()
-	perf_lbl.text = "%d fps · %d soldiers (%d simplified) · %d vehicles · sim %.1f ms" % [fps, n, far, G.vehicles.size(), G.main.sim_ms]
+	perf_lbl.text = "%d fps · %d soldiers (%d simplified) · %d vehicles · sim %.1f ms · %d draws" % [fps, n, far, G.vehicles.size(), G.main.sim_ms, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))]
 	perf_lbl.add_theme_color_override("font_color", Color(0.85, 0.95, 0.8) if fps >= 45 else (Color(1.0, 0.85, 0.4) if fps >= 25 else Color(1.0, 0.45, 0.4)))
 
 var attract_hud = false
@@ -2290,6 +2317,7 @@ func update_hud(dt: float) -> void:
 		msg_t -= dt
 		if msg_t <= 0.0:
 			msg.text = ""
+			msg.visible = false
 
 # ---------------------------------------------------------------- after-action report
 func _build_report() -> void:

@@ -218,6 +218,7 @@ var life_t = -1.0             # gunships called in for a while
 var ramp: Node3D = null
 var doors: Array = []          # {"n", "open"/"shut" or "slide", "t", "c"}
 var shells = 20                # mortar and field-gun rounds
+var burst_n = 0                # rounds fired in this little shoot
 var fuel = 1.0
 var towing = null              # the vehicle we're pulling
 var tracer_n = 0
@@ -355,6 +356,7 @@ func _build() -> void:
 	body.set_meta("vehicle", self)
 	G.main.add_child(body)
 	VModel.build(self)
+	_lod_scan()
 	for s in spec["seats"]:
 		seats.append(null)
 
@@ -369,6 +371,48 @@ func seat_xform(i: int) -> Transform3D:
 
 func forward() -> Vector3:
 	return Vector3(sin(yaw), 0, cos(yaw))
+
+# A vehicle is well over a hundred separate pieces (rivets, handles, lamps, tools, track links...), every
+# one a draw, and every one drawn again for the shadows. The small ones never cast a shadow (nobody can
+# see a door handle's), and a long way from the view they aren't drawn at all.
+var lod_small: Array = []
+var lod_hidden: Array = []
+var lod_t = 0.0
+
+func _lod_scan() -> void:
+	lod_small = []
+	var stack: Array = [self]
+	while not stack.is_empty():
+		var nd = stack.pop_back()
+		for ch in nd.get_children():
+			stack.append(ch)
+		if nd is MeshInstance3D and nd.mesh != null:
+			var sz: Vector3 = nd.get_aabb().size * nd.scale.abs()
+			var big = maxf(sz.x, maxf(sz.y, sz.z))
+			if big < 0.7:
+				nd.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			if big < 0.42 and nd.get_child_count() == 0:
+				lod_small.append(nd)
+
+func _lod_tick(dt: float) -> void:
+	lod_t -= dt
+	if lod_t > 0.0 or lod_small.is_empty():
+		return
+	lod_t = 0.5 + randf() * 0.2
+	var cam = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var far = cam.global_position.distance_to(global_position) > float(G.settings["lod_dist"]) * 1.5
+	if far and lod_hidden.is_empty():
+		for m in lod_small:
+			if is_instance_valid(m) and m.visible:
+				m.visible = false
+				lod_hidden.append(m)
+	elif not far and not lod_hidden.is_empty():
+		for m in lod_hidden:
+			if is_instance_valid(m):
+				m.visible = true
+		lod_hidden = []
 
 func driver():
 	return seats[0]
@@ -482,6 +526,7 @@ func _suspension(dt: float) -> void:
 
 # ---------------------------------------------------------------- per physics tick
 func step(dt: float) -> void:
+	_lod_tick(dt)
 	if not doors.is_empty():
 		_doors_tick(dt)
 	gun_heat = maxf(0.0, gun_heat - 0.12 * dt)
@@ -995,6 +1040,8 @@ func _mortar(g, dt: float, want, shoot: bool) -> void:
 				target = o.pos
 	if target == null:
 		return
+	if not g.is_player and ClassAI.roofed(target):
+		return              # they're under a roof: the bombs would only burst on it
 	if not g.is_player:
 		cannon_cd = 0.0     # the search above held it a second; a target found fires now
 	var local = global_transform.affine_inverse() * target
@@ -1013,6 +1060,13 @@ func _mortar(g, dt: float, want, shoot: bool) -> void:
 		return
 	shells -= 1
 	cannon_cd = (9.0 if arty else 5.5) if not g.is_player else (5.0 if arty else 3.0)
+	# an AI crew fires a few rounds and then stops to see what they did (a mortar used to drop a bomb every
+	# five and a half seconds for as long as anyone was in view: half of all the explosions in a battle)
+	if not g.is_player:
+		burst_n += 1
+		if burst_n >= (4 if arty else 3):
+			burst_n = 0
+			cannon_cd = randf_range(38.0, 55.0)
 	if kind == "mortar":
 		# the round goes in by hand: picked from the box, held over the tube, dropped, and the crew ducks
 		load_t = 1.9
@@ -1026,6 +1080,7 @@ func _shoot_shell(g, target: Vector3) -> void:
 	G.fx.muzzle(muzzle(), true)
 	G.audio.boom(muzzle())
 	Combat.shell_at(target, (5.0 + dist * 0.03) if arty else (3.0 + dist * 0.05), (4.0 + dist / 160.0) if arty else (2.5 + dist / 90.0), g, 1.9 if arty else 1.2, team)
+	Combat.strikes[-1]["src"] = "the %s" % kind
 	if not g.is_player and randf() < 0.3:
 		G.fx.callout(g, G.pick(["Round out!", "Shot over!", "Firing for effect!"]))
 
@@ -2136,7 +2191,115 @@ func _ai_drive(dt: float) -> Array:
 static var ARC_DRIVER = true
 var arc_t = 0.0
 
+# ---------------------------------------------------------------- supply lorries keep to their line
+# A supply or ammunition lorry on a run doesn't pick its way like a tank: it follows the route it was given
+# (the right-hand side of the road wherever there is one) like a tram on its rails, slows for bends, and
+# stops for anything on its line and waits for it to clear. It never swerves round things, which is where
+# nearly all the collisions and wedged lorries came from. Only when something has sat on its line for a
+# while (a wreck, a gun parked in the road) does it drive round the ordinary way, then pick its line up again.
+var rail_off_t = 0.0
+var rail_wait = 0.0
+var rail_t = 0.0
+var rail_gap = 1e9
+var rail_static = false
+
+func _on_rails() -> bool:
+	return RAILS and mission != null and mission.get("type", "") == "supply" and (kind == "supplytruck" or kind == "ammotruck") \
+		and G.sim_time >= rail_off_t and path.size() > 0 and not ghosting()
+
+static var RAILS = true
+
+# how many metres of its line ahead are clear (and whether what's on it is standing still)
+func _rail_look() -> void:
+	var W = G.world
+	var half_w: float = spec["wid"] * 0.5
+	var half_l: float = spec["len"] * 0.5
+	var reach = speed * speed / 10.0 + 14.0
+	var g: AStarGrid2D = W.vastar
+	var use_grid = g.region.size.x == W.VW
+	var on_steep = use_grid and W.veh_on_steep(pos.x, pos.z)
+	var near_v: Array = []
+	for o in G.vehicles:
+		if o == self or (o.spec.get("air", false) and o.alt > 3.0) or towing == o:
+			continue
+		if absf(o.pos.x - pos.x) < reach + 8.0 and absf(o.pos.z - pos.z) < reach + 8.0:
+			near_v.append(o)
+	var near_s: Array = []
+	for o in G.soldiers_near(pos):
+		if o.state == "alive" and o.vehicle == null and o.team == team and G.dist2d(o.pos, pos) < reach + 3.0:
+			near_s.append(o)
+	rail_gap = 1e9
+	rail_static = false
+	var d = half_l + 0.6
+	while d < reach + half_l:
+		var q = _path_point(d)
+		for o in near_v:
+			var of: Vector3 = o.forward()
+			var ohl: float = maxf(0.0, o.spec["len"] * 0.5 - o.spec["wid"] * 0.5)
+			var rr: float = half_w + o.spec["wid"] * 0.5 + 0.45
+			for k in [-1.0, 0.0, 1.0]:
+				var c: Vector3 = o.pos + of * ohl * k
+				var dx = c.x - q.x
+				var dz = c.z - q.z
+				if dx * dx + dz * dz < rr * rr:
+					rail_gap = d - half_l
+					rail_static = o.dead or absf(o.speed) < 0.4
+					return
+		for o in near_s:
+			var dx2 = o.pos.x - q.x
+			var dz2 = o.pos.z - q.z
+			if dx2 * dx2 + dz2 * dz2 < (half_w + 0.55) * (half_w + 0.55):
+				rail_gap = d - half_l
+				return
+		if use_grid and d < 16.0 and d > half_l + 1.5 and W.veh_blocked_at(q.x, q.z, half_w + 0.1, g, true, on_steep):
+			rail_gap = d - half_l
+			rail_static = true
+			return
+		d += 1.8
+
+func _rail_drive(final: Vector3, dt: float) -> Array:
+	odo += absf(speed) * dt
+	while path_i < path.size() - 1 and G.dist2d(path[path_i], pos) < 4.5:
+		path_i += 1
+	rail_t -= dt
+	if rail_t <= 0.0:
+		rail_t = 0.13
+		_rail_look()
+	var aim = _path_point(4.0 + absf(speed) * 0.55)
+	var to = G.flat(aim - pos)
+	var herr = wrapf(atan2(to.x, to.z) - yaw, -PI, PI)
+	var top: float = spec["speed"]
+	# slower into a bend, easing down to a stop on the mark, and no faster than it can pull up for what's ahead
+	var v_ok = top * clampf(1.0 - absf(herr) * 0.9, 0.3, 1.0)
+	v_ok = minf(v_ok, sqrt(2.0 * 3.0 * maxf(G.dist2d(final, pos) - 1.5, 0.0)) + 1.2)
+	if rail_gap < 1e8:
+		v_ok = minf(v_ok, sqrt(2.0 * 5.0 * maxf(rail_gap - 3.0, 0.0)))
+	var held = rail_gap < 3.6
+	brake_hard = held and speed > 1.0
+	if held and absf(speed) < 0.5:
+		rail_wait += dt
+	else:
+		rail_wait = maxf(0.0, rail_wait - dt * 2.0)
+	# something's sat on its line and isn't going anywhere, or the line doubles back behind it: round it
+	# the ordinary way for a bit
+	if (rail_wait > (5.0 if rail_static else 12.0)) or (absf(herr) > 1.75 and absf(speed) < 1.5):
+		rail_off_t = G.sim_time + (14.0 if rail_wait > 1.0 else 6.0)
+		rail_wait = 0.0
+		arc_t = 0.0
+		if absf(herr) <= 1.75:
+			_plan_detour()
+	var thr = 0.0 if (held or v_ok < 0.35) else clampf(v_ok / top, 0.12, 1.0)
+	arc_pick = [thr, clampf(herr * 2.4, -1.0, 1.0)]
+	arc_block = 0.0
+	return [arc_pick[0], arc_pick[1]]
+
 func _arc_wrap(aim: Vector3, final: Vector3, dt: float) -> Array:
+	if _on_rails():
+		prog_t = 0.0
+		prog_p = pos
+		stuck_t = 0.0
+		bump_t = 0.0
+		return _rail_drive(final, dt)
 	var r = _arc_drive(aim, final, dt)
 	# with infantry, in close country: wait for them to come up, then go in at their pace
 	if r[0] > 0.0:
@@ -2726,7 +2889,7 @@ func _mission_target(dt: float):
 				if m.get("fleet", false) and team < Logistics.delivered.size():
 					Logistics.delivered[team] += 1
 				if m.get("pts", 0) > 0 and st != null and not st["dead"]:
-					Support.points[team] += m["pts"]
+					Support._pay(team, m["pts"])
 					G.ui.radio(team, "Convoy got through: +%d supply" % m["pts"])
 					m["pts"] = 0
 					if has_meta("cargo"):

@@ -1652,6 +1652,9 @@ func _order_move(screen: Vector2) -> void:
 	var st = Build.site_at(p, 1.5)
 	if st != null and st["team"] == 0 and not st["dead"] and (not st["done"] or Build.needs_repair(st)) and _order_build(st, Input.is_key_pressed(KEY_SHIFT)):
 		return
+	# right-click on a building: the men on foot go in and man it
+	if not patrol_next and not amove_next and not Input.is_key_pressed(KEY_SHIFT) and _garrison(p):
+		return
 	var n = 0
 	var vs = []
 	for s in selection:
@@ -1677,6 +1680,11 @@ func _order_move(screen: Vector2) -> void:
 			G.audio.order_tick(true)
 			continue
 		s.order = {"mode": "move", "point": p + off}
+		if patrol_next:
+			# a beat to walk: from where he stands to the point and back, fighting what he meets
+			s.order["patrol"] = [s.pos, p + off]
+			s.order["attack"] = true
+			s.order["tag"] = "patrol"
 		# Ctrl (or the Attack-move button): fight anything met on the way rather than walk past it
 		if amove_next or Input.is_key_pressed(KEY_CTRL):
 			s.order["attack"] = true
@@ -1684,7 +1692,9 @@ func _order_move(screen: Vector2) -> void:
 		_obey(s, p + off)
 	if amove_next or Input.is_key_pressed(KEY_CTRL):
 		G.ui.message("Attack-move: they'll stop and fight anything they run into on the way")
+	ack("patrol" if patrol_next else ("amove" if (amove_next or Input.is_key_pressed(KEY_CTRL)) else "move"))
 	amove_next = false
+	patrol_next = false
 	var k = 0
 	# several vehicles going a fair way: they drive in a column behind the biggest one
 	vs.sort_custom(func(a, b): return a.rank() > b.rank())
@@ -1706,6 +1716,88 @@ func _order_move(screen: Vector2) -> void:
 	G.ui.message("Moving " + " and ".join(parts))
 
 # drop whatever they were doing and start moving now, instead of at the next decision
+# The squad answers an order: one of the men says so (and there's the click of the order going out), so
+# you know it was heard. Not more than once a second or so, however fast the orders come.
+const ACK = {
+	"move": ["Moving!", "On it!", "On our way!", "Yes sir!", "Right away!"],
+	"amove": ["Advancing, eyes open.", "Moving up, weapons free!"],
+	"hold": ["Holding here.", "Digging in.", "We'll hold."],
+	"cover": ["Taking cover!", "Into cover!"],
+	"charge": ["Charge!", "At them!", "Fix bayonets!"],
+	"fallback": ["Falling back!", "Pulling out!"],
+	"free": ["Using our heads, sir.", "We'll see to it."],
+	"holdfire": ["Holding fire.", "Weapons tight."],
+	"ambush": ["Setting an ambush. Nobody fires till they're close.", "Quiet now. Wait for them."],
+	"garrison": ["Into the building!", "Taking the house!"],
+	"patrol": ["Patrolling.", "We'll walk the line."],
+}
+var ack_ms = -9999
+var patrol_next = false
+
+# Right-click on a building with men selected: they go in and take up the windows and doorways (upstairs
+# too if there is one), instead of standing in a huddle on the spot you clicked.
+func _garrison(p: Vector3) -> bool:
+	var W = G.world
+	var bld = null
+	for c in W.cols_in_rect(p.x - 7.0, p.z - 7.0, p.x + 7.0, p.z + 7.0):
+		if c.has_meta("bld"):
+			var b = c.get_meta("bld")
+			if absf(p.x - b["x"]) < b["w"] * 0.5 + 0.3 and absf(p.z - b["z"]) < b["d"] * 0.5 + 0.3:
+				bld = b
+				break
+	if bld == null:
+		return false
+	var men = selection.filter(func(x): return is_instance_valid(x) and x.state == "alive" and x.vehicle == null)
+	if men.is_empty():
+		return false
+	var mid = Vector3(bld["x"], p.y, bld["z"])
+	var cps = []
+	for cp in W.cover_near(mid, maxf(bld["w"], bld["d"]) * 0.75 + 1.0):
+		if absf(cp.p.x - bld["x"]) < bld["w"] * 0.5 + 0.6 and absf(cp.p.z - bld["z"]) < bld["d"] * 0.5 + 0.6 and cp.ban < G.sim_time and W.cp_ok(cp):
+			cps.append(cp)
+	if cps.is_empty():
+		return false
+	var n = 0
+	for s in men:
+		var best = null
+		var bd = 1e9
+		for cp in cps:
+			if AI.cover_free(cp, s) and cp.p.distance_to(s.pos) < bd:
+				bd = cp.p.distance_to(s.pos)
+				best = cp
+		s.set_meta("hold_fire", 0)
+		AI.release_cover(s)
+		if best == null:
+			# more men than windows: the rest wait inside, out of sight
+			s.order = {"mode": "hold", "point": mid + Vector3(randf_range(-1.2, 1.2), 0, randf_range(-1.2, 1.2)), "tag": "garrison"}
+			AI.go_to(s, s.order["point"], 4.4)
+			continue
+		cps.erase(best)
+		s.order = {"mode": "hold", "point": best.p, "tag": "garrison"}
+		if best.upper:
+			AI.take_post(s, best)
+		else:
+			AI.take_cover(s, best)
+			s.task = "garrison"
+		n += 1
+	G.fx.order_marker(mid)
+	G.ui.message("%d of them into the building: at the windows and doors" % n if n > 0 else "Into the building")
+	ack("garrison")
+	return true
+func ack(kind: String) -> void:
+	if not ACK.has(kind) or Time.get_ticks_msec() - ack_ms < 1100:
+		return
+	var who = null
+	for s in selection:
+		if is_instance_valid(s) and s.state == "alive" and s.vehicle == null:
+			if who == null or Morale.is_leader(s):
+				who = s
+	if who == null:
+		return
+	ack_ms = Time.get_ticks_msec()
+	G.fx.callout(who, G.pick(ACK[kind]))
+	G.audio.order_tick(true)
+
 func _obey(s, to: Vector3) -> void:
 	if s.state != "alive" or s.is_player:
 		return
@@ -1798,6 +1890,7 @@ func sel_vehicles() -> Array:
 	return vs
 
 func order_selected(mode: String) -> void:
+	ack(mode)
 	if mode == "dismount":
 		dismount_selected(true)
 		return
@@ -1829,6 +1922,33 @@ func order_selected(mode: String) -> void:
 	if mode in ["fallback", "smoke", "cover"]:
 		_special_order(mode)
 		return
+	if mode == "holdfire" or mode == "ambush":
+		# hold fire: nobody shoots unless he's shot at or the enemy is on top of him (press it again to let
+		# them fire). Ambush: they go to ground where they are and hold fire until the enemy is close;
+		# the first shot releases the whole squad.
+		var on = selection.any(func(x): return is_instance_valid(x) and x.state != "dead" and int(x.get_meta("hold_fire", 0)) == 0) or mode == "ambush"
+		for s in selection:
+			if not is_instance_valid(s) or s.state == "dead":
+				continue
+			s.set_meta("hold_fire", (2 if mode == "ambush" else 1) if on else 0)
+			if mode == "ambush":
+				s.order = {"mode": "hold", "point": s.pos, "tag": "ambush"}
+				s.prone_t = true
+				s.decide_t = 0.0
+				if s.squad != null:
+					s.squad["ambush_go"] = 0.0
+		G.audio.radio_click()
+		G.ui.message(("Ambush set: they lie low and hold their fire until the enemy is within thirty metres" if mode == "ambush" else
+			"Holding fire: they shoot only if shot at, or at an enemy within fifteen metres (press again to let them fire)") if on else "Weapons free")
+		return
+	if mode == "patrol":
+		patrol_next = true
+		G.audio.radio_click()
+		G.ui.message("Patrol: right-click the far end of the beat. They'll walk between there and here, and fight what they meet")
+		return
+	for s in selection:
+		if is_instance_valid(s) and s.state != "dead":
+			s.set_meta("hold_fire", 0)
 	for s in selection:
 		if is_instance_valid(s) and s.state != "dead":
 			s.order = null if mode == "free" else {"mode": mode, "point": s.pos}

@@ -313,6 +313,14 @@ static func _mat(key: String, col: Color, camo: bool) -> StandardMaterial3D:
 							img.set_pixel(x, y, Color(v, v, v))
 			camo_tex = ImageTexture.create_from_image(img)
 		m.albedo_texture = camo_tex
+	# A man in shadow (the far side of him from the sun, or anywhere indoors) was all but black: there's
+	# little light in the shade here. His clothes and skin give back a little of their own colour, so
+	# he can be made out in a doorway, under a roof or with the sun behind him.
+	m.emission_enabled = true
+	m.emission = col
+	m.emission_energy_multiplier = 0.2
+	if camo:
+		m.emission_texture = camo_tex
 	mats[key] = m
 	return m
 
@@ -3282,6 +3290,14 @@ func _turn_body(goal: float, max_rate: float) -> void:
 		body_yaw += yaw_v * G.DT
 
 func _tick_alive() -> void:
+	# a man on his feet who has ended up under the ground (got up from where a vehicle pushed him through
+	# it, say) is put back on top of it
+	bury_t += 1
+	if bury_t % 30 == 0 and vehicle == null and vault == null and climb == null and not swim and G.world != null:
+		var sy0: float = G.world.surface_y(pos.x, pos.z, pos.y + 0.6)
+		if sy0 - pos.y > 0.9:
+			pos.y = sy0
+			vy = 0.0
 	supp = maxf(0.0, supp - 0.3 * G.DT)
 	radio_cd = maxf(0.0, radio_cd - G.DT) if is_player else radio_cd
 	stun = maxf(0.0, stun - G.DT)

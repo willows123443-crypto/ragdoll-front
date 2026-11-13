@@ -53,6 +53,11 @@ func _process(dt: float) -> void:
 		Tutorial.panel.visible = not in_menu
 	if in_menu and G.ui.order_card != null and G.ui.order_card.visible:
 		G.ui.order_card.visible = false
+	# (the hint line sits where the row of orders goes: it gives way while that row is up)
+	if G.ui.tip != null and G.ui.order_card != null:
+		var want_tip = not G.ui.order_card.visible
+		if G.ui.tip.modulate.a != (1.0 if want_tip else 0.0):
+			G.ui.tip.modulate.a = 1.0 if want_tip else 0.0
 	var on = active()
 	visible = on
 	click.visible = on
@@ -236,6 +241,28 @@ func _watch() -> void:
 # glance (in a fight, pinned, out of ammunition, clearing a building, building, with a tank); a squad
 # that's just walking or waiting gets nothing. From high up it shrinks to a coloured dot.
 const SHOWN = ["Fighting", "Pinned!", "Out of ammo", "Clearing rooms", "Building", "With the tank"]
+# From high up a man is a few pixels of green on green. Each one gets a small dot in his side's colour
+# once the view is far enough out that he can't be made out (your own always; the enemy's where they can
+# be seen).
+func _man_dots() -> void:
+	var cam: Camera3D = G.pc.cam
+	if cam == null or not G.pc.rts or G.pc.rts_dist < 78.0:
+		return
+	var a = clampf((G.pc.rts_dist - 78.0) / 30.0, 0.0, 1.0)
+	var vs = get_viewport_rect().size
+	for s in G.soldiers:
+		if s.state != "alive" or s.vehicle != null or (s.team != 0 and not s.visible):
+			continue
+		var wp: Vector3 = s.pos + Vector3(0, 1.0, 0)
+		if cam.is_position_behind(wp):
+			continue
+		var p = cam.unproject_position(wp)
+		if p.x < 0.0 or p.y < 0.0 or p.x > vs.x or p.y > vs.y or _on_panel(p):
+			continue
+		var col: Color = G.team_color(s.team).lightened(0.25)
+		draw_circle(p, 3.6, Color(0, 0, 0, 0.55 * a))
+		draw_circle(p, 2.5, Color(col.r, col.g, col.b, 0.95 * a))
+
 func _on_panel(p: Vector2) -> bool:
 	for c in [G.ui.dock, G.ui.squad_cards, G.ui.order_card]:
 		if c != null and is_instance_valid(c) and c.is_visible_in_tree() and c.get_global_rect().grow(6.0).has_point(p):
@@ -295,6 +322,7 @@ func _status_pills() -> void:
 func _draw() -> void:
 	if not active():
 		return
+	_man_dots()
 	_order_icons()
 	_status_pills()
 	_truck_tags()

@@ -377,6 +377,18 @@ const BUILD_LIST = [["fob", "FOB"], ["sandbags", "Sandbags"], ["wire", "Barbed w
 	["mortarpit", "Mortar pit"], ["aa", "AA gun"], ["cbgun", "Counter-battery gun"], ["tower", "Watchtower"], ["bunker", "Bunker"], ["hospital", "Field hospital"],
 	["radio", "Radio mast"], ["depot", "Vehicle depot"], ["supply", "Supply dump"], ["observer", "Observer post"]]
 const BASES = ["fob", "hospital", "radio", "depot", "supply", "observer", "tower"]
+# what each body of men is for, and what it shouldn't be asked to do (shown when you hover its card)
+const GOOD_BAD = {
+	"inf": ["holding ground and attacking infantry at any range", "tanks, and machine guns across open ground"],
+	"plt": ["taking and holding a wide front", "artillery, when it bunches up"],
+	"eng": ["building, mines and blowing up structures", "any real firefight"],
+	"atk": ["tanks, vehicles and bunkers", "infantry up close: few rifles among them"],
+	"mgt": ["pinning infantry down from cover", "being flanked, and moving under fire"],
+	"asl": ["clearing buildings and trenches", "anything beyond fifty metres"],
+	"snp": ["picking off men at long range from a roof or a tower", "being rushed: two men and no firepower"],
+	"med": ["keeping a squad alive: they patch up and carry the wounded", "fighting"],
+	"rad": ["calling fire support, paratroops and helicopters", "fighting: guard the set"],
+}
 const RECRUIT = {
 	"inf": {"name": "Rifle squad", "cost": 16, "cls": ["rifleman", "rifleman", "rifleman", "rifleman", "mg", "at", "medic", "rifleman"],
 		"desc": "Eight men: five riflemen, a machine gunner, an anti-tank man and a medic. The backbone of any attack"},
@@ -653,7 +665,9 @@ func _card_desc(id: String) -> String:
 		return "%s: %s. %s" % [u["name"], u.get("long", u["desc"]), st]
 	if id.begins_with("r:"):
 		var r = RECRUIT[id.substr(2)]
-		return "%s (%d pts): %s. Click where you want them dropped off." % [r["name"], recruit_cost(0, id.substr(2)), r.get("desc", "")]
+		var gb: Array = GOOD_BAD.get(id.substr(2), [])
+		return "%s (%d pts): %s.%s Click where you want them dropped off." % [r["name"], recruit_cost(0, id.substr(2)), r.get("desc", ""),
+			(" Good at: %s. Weak against: %s." % [gb[0], gb[1]]) if gb.size() == 2 else ""]
 	if id.begins_with("sup:"):
 		var k2 = id.substr(4)
 		var d = SUP_DESC.get(k2, "")
@@ -964,6 +978,12 @@ func damage_indicator(from: Vector3) -> void:
 	G.pc.kick = minf(0.3, G.pc.kick + 0.1)
 
 func message(t: String) -> void:
+	# (in a narrow window the plate is drawn in to clear the squad cards on the left, which used to cut
+	# the start of every line off)
+	var vw: float = get_viewport().get_visible_rect().size.x
+	var half = clampf(vw * 0.5 - 312.0, 130.0, 260.0)
+	if absf(msg.offset_left + half) > 1.0:
+		_place(msg, Control.PRESET_CENTER_TOP, -half, msg.offset_top, half * 2.0, 40)
 	msg.text = t
 	msg.visible = t != ""
 	msg.size.y = 0.0          # (shrinks back to fit a shorter message)
@@ -995,7 +1015,16 @@ func _option(items: Array, sel: int) -> OptionButton:
 		o.add_item(it)
 	o.select(sel)
 	o.focus_mode = Control.FOCUS_NONE
+	# (picking an item from one list could open the list on the row underneath it with the same click:
+	# a list that tries to open in the instant after another has shut is closed again)
+	var pop = o.get_popup()
+	pop.popup_hide.connect(func(): opt_closed_ms = Time.get_ticks_msec())
+	pop.about_to_popup.connect(func():
+		if Time.get_ticks_msec() - opt_closed_ms < 220:
+			pop.hide.call_deferred())
 	return o
+
+var opt_closed_ms = -9999
 
 func _row(parent: Control, label: String, ctrl: Control) -> void:
 	var h = HBoxContainer.new()
@@ -2736,7 +2765,7 @@ func _show_settings() -> void:
 	sens.custom_minimum_size = Vector2(220, 0)
 	sens.value_changed.connect(func(x): G.settings["sens"] = x)
 	_row(v, "Mouse sensitivity", sens)
-	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Show soldiers' shouts as text"], ["shadows", "Shadows"], ["grass", "Grass (next battle)"], ["fps", "Show frame rate and soldier count"], ["voices", "Spoken callouts"]]:
+	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Show soldiers' shouts as text"], ["grass", "Grass (next battle)"], ["fps", "Show frame rate and soldier count"], ["voices", "Spoken callouts"]]:
 		var key = item[0]
 		var cb = CheckBox.new()
 		cb.button_pressed = G.settings[key]
@@ -2746,6 +2775,14 @@ func _show_settings() -> void:
 			if key == "shadows":
 				G.main.apply_time())
 		_row(v, item[1], cb)
+	var sh_vals = ["auto", "all", "near", "off"]
+	var sh = _option(["Automatic (turned down if the game runs slowly)", "All", "Near the view only", "Off (fastest)"], maxi(0, sh_vals.find(str(G.settings.get("shadow_mode", "auto")))))
+	sh.item_selected.connect(func(i):
+		G.settings["shadow_mode"] = sh_vals[i]
+		G.settings["shadows"] = true
+		G.main.shadow_auto = 2
+		G.main.apply_shadows())
+	_row(v, "Shadows", sh)
 	var ms_vals = [120, 200, 300, 450, 600]
 	var ms = _option(["120", "200", "300", "450", "600"], maxi(0, ms_vals.find(int(G.settings["max_soldiers"]))))
 	ms.item_selected.connect(func(i): G.settings["max_soldiers"] = ms_vals[i])
@@ -2875,6 +2912,7 @@ func _order_card_tick() -> void:
 				items.append(["dismount", "Leave the gun" if guns else "Dismount"])
 		if not on_foot.is_empty():
 			items.append(["amove", "Attack-move"])
+			items += [["holdfire", "Hold fire"], ["ambush", "Ambush"], ["patrol", "Patrol"]]
 			items.append(["free", "Free"])
 			if on_foot.any(func(x): return x.cls == "engineer") or G.mode != "commander":
 				items.append(["build", "Build…"])
@@ -2890,7 +2928,8 @@ func _order_card_tick() -> void:
 			b.add_theme_font_size_override("font_size", 12)
 			b.tooltip_text = {"hold": "Hold here", "cover": "Take cover nearby", "charge": "Charge!", "fallback": "Fall back", "smoke": "Throw a smoke screen",
 				"vstop": "Stop where they are", "vback": "Back to the rally point", "vfree": "Drive freely", "vsmoke": "Pop smoke", "dismount": "Get out", "vtow": "Hitch up the nearest field gun or broken-down vehicle and tow it (press again to unhitch)",
-				"free": "Act freely", "build": "Pick something to build", "clear": "Deselect", "amove": "Move, but stop and fight anything on the way (or Ctrl + right-click)"}.get(id, it[1])
+				"free": "Act freely", "holdfire": "Hold fire: shoot only if shot at, or at an enemy within 15 m (press again to let them fire)", "ambush": "Ambush: lie low here and hold fire until the enemy is within 30 m",
+				"patrol": "Patrol: then right-click the far end of a beat to walk up and down. Right-clicking a building sends the selected men in to man its windows", "build": "Pick something to build", "clear": "Deselect", "amove": "Move, but stop and fight anything on the way (or Ctrl + right-click)"}.get(id, it[1])
 			var acc = id == active
 			b.add_theme_stylebox_override("normal", _dock_style(Color(0.16, 0.18, 0.2, 0.96), Color(0.95, 0.75, 0.25) if acc else Color(0.3, 0.33, 0.36)))
 			b.add_theme_stylebox_override("hover", _dock_style(Color(0.26, 0.29, 0.32, 1.0), Color(1.0, 0.85, 0.35)))

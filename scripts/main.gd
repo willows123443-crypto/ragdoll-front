@@ -64,6 +64,8 @@ func _ready() -> void:
 			_kit_shot(a.substr(10))
 		if a == "--flanktest":
 			_flank_test()
+		if a == "--orderstest":
+			_orders_test()
 		if a == "--bigtest":
 			_big_test()
 		if a == "--doortest":
@@ -313,7 +315,7 @@ func apply_time() -> void:
 	var amb = float(_arg("amb", "0.38"))
 	var ex = float(_arg("exp", "0.68"))
 	var sn = float(_arg("sun", "0.95"))
-	sun.shadow_enabled = G.settings["shadows"]
+	apply_shadows()
 	match t:
 		"dusk":
 			sky_mat.sky_top_color = Color(0.32, 0.36, 0.55)
@@ -422,7 +424,7 @@ func _blend_time(c: float) -> void:
 	if c < 0.08 or c > 0.7:
 		elev = -40.0       # moonlight
 	sun.rotation = Vector3(deg_to_rad(elev), deg_to_rad(-100.0 + day_k * 160.0), 0)
-	sun.shadow_enabled = G.settings["shadows"]
+	apply_shadows()
 	_storm_tint()
 
 func _tod(n: String) -> Array:
@@ -502,6 +504,9 @@ func stop_attract() -> void:
 		preview_map(G.map_id)
 
 func start_game(o: Dictionary) -> void:
+	shadow_ups = 0
+	shadow_low_t = 0.0
+	shadow_high_t = 0.0
 	if not Tutorial.starting:
 		Tutorial.stop()
 	# (what the last battle was saying, the one behind the title screen included, isn't news in this one)
@@ -904,7 +909,42 @@ func _sim_step() -> void:
 	if randf() < 0.05:
 		cleanup_bodies(false)
 
+# Shadows: "all", "near" (only what's close to the view casts one), "off", or "auto", which starts with
+# all of them and turns them down a step when the frame rate stays low (they are about half of everything
+# a frame draws), and back up a step if there's plenty to spare.
+var shadow_auto = 2
+var shadow_low_t = 0.0
+var shadow_high_t = 0.0
+var shadow_ups = 0
+func apply_shadows() -> void:
+	if sun == null:
+		return
+	var mode: String = G.settings.get("shadow_mode", "auto")
+	if not G.settings.get("shadows", true):
+		mode = "off"
+	var lv: int = {"all": 2, "near": 1, "off": 0}.get(mode, shadow_auto)
+	sun.shadow_enabled = lv > 0
+	sun.directional_shadow_max_distance = 140.0 if lv >= 2 else 70.0
+
+func _shadow_auto(dt: float) -> void:
+	if G.settings.get("shadow_mode", "auto") != "auto" or not G.started or get_tree().paused or DisplayServer.get_name() == "headless":
+		return
+	var fps = Engine.get_frames_per_second()
+	shadow_low_t = shadow_low_t + dt if (fps > 1.0 and fps < 38.0) else 0.0
+	shadow_high_t = shadow_high_t + dt if fps >= 57.0 else 0.0
+	if shadow_low_t > 5.0 and shadow_auto > 0:
+		shadow_auto -= 1
+		shadow_low_t = 0.0
+		apply_shadows()
+		G.ui.message("Shadows turned down to keep the frame rate up (Settings, Shadows, to choose for yourself)")
+	elif shadow_high_t > 30.0 and shadow_auto < 2 and shadow_ups < 1:
+		shadow_auto += 1
+		shadow_ups += 1
+		shadow_high_t = 0.0
+		apply_shadows()
+
 func _process(dt: float) -> void:
+	_shadow_auto(dt)
 	if G.started:
 		_cycle_step(dt * Engine.time_scale)
 	G.fx.update_callouts(dt)
@@ -3522,6 +3562,107 @@ func _post_test() -> void:
 	stays.sort()
 	print("POSTTEST %s: %d stays at a post | shortest %.1f s, middle %.1f s, longest %.1f s | under 8 s: %d" % [_arg("map", "town"), stays.size(), stays[0] if not stays.is_empty() else 0.0,
 		stays[stays.size() / 2] if not stays.is_empty() else 0.0, stays[stays.size() - 1] if not stays.is_empty() else 0.0, stays.filter(func(x): return x < 8.0).size()])
+	get_tree().quit()
+
+# --orderstest: the new orders do what they say: hold fire, ambush, patrol, and garrisoning a building
+func _orders_test() -> void:
+	await _wait(0.3)
+	seed(12)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var c: Vector3 = G.main._free_spot(Vector3(0, 0, 0))
+	var men = []
+	for k in range(5):
+		men.append(spawn_soldier(0, c.x + (k - 2) * 2.0, c.z, "rifle"))
+	G.pc.selection = men.duplicate()
+	G.pc.order_selected("holdfire")
+	var foes = []
+	for k in range(2):
+		var e = spawn_soldier(1, c.x + k * 4.0, c.z + 50.0, "rifle")
+		e.order = {"mode": "hold", "point": e.pos}
+		e.set_meta("hold_fire", 1)
+		foes.append(e)
+	var t0 = G.sim_time
+	await _wait(8.0)
+	var early = men.filter(func(m): return m.fired_t > t0).size()
+	G.pc.order_selected("holdfire")
+	await _wait(6.0)
+	var late = men.filter(func(m): return m.fired_t > t0 + 8.0).size()
+	print("ORDERTEST hold fire: %d of 5 fired in 8 s with the enemy in view at 50 m; after weapons free, %d fired within 6 s" % [early, late])
+	# ambush: enemy walks in
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	men = []
+	for k in range(5):
+		men.append(spawn_soldier(0, c.x + (k - 2) * 2.0, c.z, "rifle"))
+	G.pc.selection = men.duplicate()
+	G.pc.order_selected("ambush")
+	foes = []
+	for k in range(3):
+		var e2 = spawn_soldier(1, c.x + (k - 1) * 3.0, c.z + 75.0, "rifle")
+		e2.order = {"mode": "move", "point": Vector3(c.x, 0, c.z - 20.0)}
+		e2.set_meta("hold_fire", 1)
+		AI.go_to(e2, Vector3(c.x + (k - 1) * 3.0, 0, c.z - 20.0), 3.0)
+		foes.append(e2)
+	var first = -1.0
+	var t = 0.0
+	t0 = G.sim_time
+	while t < 40.0 and first < 0.0:
+		await _wait(0.1)
+		t += 0.1
+		if men.any(func(m): return m.fired_t > t0):
+			var near = 1e9
+			for e3 in foes:
+				for m in men:
+					near = minf(near, G.dist2d(e3.pos, m.pos))
+			first = near
+	await _wait(4.0)
+	print("ORDERTEST ambush: first shot when the nearest enemy was %.0f m off (set at 75 m, sprung at 30); %d of 5 firing after it's sprung" % [first, men.filter(func(m): return G.sim_time - m.fired_t < 4.0).size()])
+	# patrol
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	men = []
+	for k in range(4):
+		men.append(spawn_soldier(0, c.x + (k - 2) * 2.0, c.z, "rifle"))
+	var far_end = c + Vector3(34.0, 0, 0)
+	for m in men:
+		m.order = {"mode": "move", "point": far_end, "patrol": [m.pos, far_end], "attack": true, "tag": "patrol"}
+		AI.go_to(m, far_end, 3.2)
+	var seen_far = {}
+	var back = {}
+	t = 0.0
+	while t < 90.0:
+		await _wait(0.5)
+		t += 0.5
+		for m in men:
+			if G.dist2d(m.pos, far_end) < 7.0:
+				seen_far[m.id] = true
+			elif seen_far.has(m.id) and G.dist2d(m.pos, c) < 9.0:
+				back[m.id] = true
+	print("ORDERTEST patrol: %d of 4 reached the far end of a 34 m beat, %d of 4 came back again, in 90 s" % [seen_far.size(), back.size()])
+	# garrison
+	start_game({"map": "town", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var bld = null
+	for col in G.world.cols:
+		if col.has_meta("bld"):
+			var b = col.get_meta("bld")
+			if bld == null or b["w"] * b["d"] > bld["w"] * bld["d"]:
+				bld = b
+	if bld == null:
+		print("ORDERTEST garrison: no building found")
+	else:
+		var mid = Vector3(bld["x"], G.world.ground_y(bld["x"], bld["z"]), bld["z"])
+		men = []
+		for k in range(6):
+			var sp = G.main._free_spot(mid + Vector3(bld["w"] * 0.5 + 8.0 + k * 1.5, 0, 0))
+			men.append(spawn_soldier(0, sp.x, sp.z, "rifle"))
+		G.pc.selection = men.duplicate()
+		var ok = G.pc._garrison(mid)
+		await _wait(30.0)
+		var inside = men.filter(func(m): return m.state == "alive" and absf(m.pos.x - bld["x"]) < bld["w"] * 0.5 + 0.8 and absf(m.pos.z - bld["z"]) < bld["d"] * 0.5 + 0.8).size()
+		print("ORDERTEST garrison: order taken %s; after 30 s %d of 6 are inside the %.0f x %.0f m building, %d at a window or door, %d upstairs" % [ok, inside, bld["w"], bld["d"],
+			men.filter(func(m): return m.cover != null and m.in_cover).size(), men.filter(func(m): return m.pos.y - mid.y > 1.8).size()])
 	get_tree().quit()
 
 # --flanktest --old=1 --runs=: (1) a squad in a firefight to its front has two enemies appear behind it: how

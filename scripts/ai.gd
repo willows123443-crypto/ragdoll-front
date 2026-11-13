@@ -617,6 +617,23 @@ static func _step_for_shot(s, point: Vector3, dir: Vector3) -> void:
 		s.set_meta("noshot_t", G.sim_time + 9.0)
 		s.decide_t = 0.0
 
+# Told to hold fire (1) or lying in ambush (2): no shooting until he's shot at, or the enemy is close.
+# An ambush is sprung for the whole squad by the first man who fires, and then it's over.
+static func _held(s, point: Vector3) -> bool:
+	var hf = int(s.get_meta("hold_fire", 0))
+	if hf == 0:
+		return false
+	var sprung = s.pos.distance_to(point) < (15.0 if hf == 1 else 30.0) or s.hurt_t > 0.0 or s.supp > 0.6
+	if hf == 2:
+		if not sprung and s.squad != null and G.sim_time < float(s.squad.get("ambush_go", 0.0)):
+			sprung = true
+		if sprung:
+			if s.squad != null:
+				s.squad["ambush_go"] = G.sim_time + 20.0
+			s.set_meta("hold_fire", 0)
+			return false
+	return not sprung
+
 static var react_fix = true       # (--flanktest --old=1 switches the new reactions off, to compare)
 static var pace_dbg = false       # (--pacetest: who sent each man where)
 static func go_to(s, point: Vector3, speed: float) -> void:
@@ -1605,6 +1622,20 @@ static func decide(s) -> void:
 			s.prone_t = false
 			route_to(s, goal, 4.4)
 			return
+		# a patrol: at the end of the beat he waits a few seconds, and if it's quiet walks back the other way
+		if s.order != null and s.order.has("patrol"):
+			if not s.order.has("arrived"):
+				s.order["arrived"] = G.sim_time
+			if (not s.has_seen or G.sim_time - s.seen_t > 6.0) and G.sim_time - float(s.order["arrived"]) > 5.0:
+				var pr: Array = s.order["patrol"]
+				var nxt: Vector3 = pr[0] if G.dist2d(s.pos, pr[1]) < G.dist2d(s.pos, pr[0]) else pr[1]
+				s.order["point"] = nxt
+				s.order.erase("arrived")
+				if s.cover != null:
+					release_cover(s)
+				s.task = "move"
+				go_to(s, nxt, 3.2)
+			return
 		# more waypoints queued with Shift: on to the next one
 		if s.order != null and not s.order.get("queue", []).is_empty():
 			s.order["point"] = s.order["queue"].pop_front()
@@ -2569,7 +2600,9 @@ static func aim_and_fire(s) -> void:
 					var sd2 = Vector3(-ad.z, 0, ad.x) * (1.0 if randf() < 0.5 else -1.0)
 					go_to(s, s.pos - ad * 1.2 + sd2 * 1.2, 3.0)
 		elif s.reload_t <= 0.0 and err < 0.12 and exposed_for_shot(s) and not s.gun_blocked:
-			if s.burst > 0:
+			if s.burst > 0 and _held(s, point):
+				s.burst = 0
+			elif s.burst > 0:
 				if s.fire_cd <= 0.0:
 					var dist = s.pos.distance_to(point)
 					var dvec: Vector3 = point - s.muzzle

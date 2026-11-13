@@ -247,6 +247,7 @@ func _status_pills() -> void:
 	if cam == null:
 		return
 	var high = G.pc.rts and G.pc.rts_dist > 140.0
+	var card_order: Array = G.pc.my_squads()
 	for q in G.squads:
 		if q["team"] != 0:
 			continue
@@ -260,10 +261,18 @@ func _status_pills() -> void:
 		for m in men:
 			c += m.pos
 		c /= men.size()
-		var top = c + Vector3(0, 4.4, 0)
-		if cam.is_position_behind(top):
+		# The tag hangs on one of the squad's men, the one nearest its middle. (It used to sit over the
+		# middle itself, and when a squad was strung out or split in two that was a patch of empty
+		# ground: a word floating over nothing.)
+		var anchor = men[0]
+		for m in men:
+			if m.pos.distance_squared_to(c) < anchor.pos.distance_squared_to(c):
+				anchor = m
+		var foot: Vector3 = anchor.pos + Vector3(0, 1.9, 0)
+		if cam.is_position_behind(foot):
 			continue
-		var p = cam.unproject_position(top)
+		var head_p = cam.unproject_position(foot)
+		var p = head_p - Vector2(0, 22.0)
 		# (not on top of the buttons, the squad cards or the map)
 		if _on_panel(p):
 			continue
@@ -272,7 +281,10 @@ func _status_pills() -> void:
 			draw_circle(p, 5.0, Color(0, 0, 0, 0.6))
 			draw_circle(p, 3.5, col)
 			continue
-		var txt: String = st[0]
+		# (the squad's number, the same one as on its card, and a stem down to the man it's pinned to)
+		var num = card_order.find(q) + 1
+		var txt: String = ("%d  %s" % [num, st[0]]) if num >= 1 and num <= 9 else str(st[0])
+		draw_line(head_p - Vector2(0, 2.0), p + Vector2(0, 9.0), Color(col.r, col.g, col.b, 0.7), 1.5)
 		var w = font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 16.0
 		var box = Rect2(p.x - w * 0.5, p.y - 9.0, w, 18.0)
 		# a pinned squad's tag pulses so it catches the eye

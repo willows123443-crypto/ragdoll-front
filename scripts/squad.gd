@@ -179,6 +179,13 @@ static func _bounding(q) -> void:
 			Voice.say(L, "bound")
 
 # ---------------------------------------------------------------- flanking a pinned enemy
+# Men the squad's manoeuvres leave where they are: anyone up at a lookout post (a roof, a tower, an
+# upstairs window), and the sniper and his spotter wherever they are. A flanking run or a room to clear
+# is a job for the riflemen; pulling the sniper off his roof to do it threw away the best position the
+# squad had.
+static func posted(m) -> bool:
+	return m.task == "post" or m.cls == "sniper" or m.cls == "spotter" or m.climb != null
+
 static func _flank(q) -> void:
 	if G.sim_time < q.get("flank_cd", 0.0) or q["members"].size() < 3:
 		return
@@ -199,7 +206,7 @@ static func _flank(q) -> void:
 		spot = tgt.pos + perp * 14.0
 	var n = 0
 	for m in q["members"]:
-		if m != L and not m.is_player and m.state == "alive" and fireteam(m) == 1 - q.get("bound", 0) and n < 2:
+		if m != L and not m.is_player and m.state == "alive" and fireteam(m) == 1 - q.get("bound", 0) and n < 2 and not posted(m):
 			AI.release_cover(m)
 			m.task = "flank_move"
 			AI.go_to(m, spot + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2)), 5.2)
@@ -380,7 +387,7 @@ static func _breach(q) -> void:
 		var door = q.get("breach_door")
 		var k = 0
 		for m in q["members"]:
-			if not m.is_player and m.state == "alive" and m.vehicle == null and G.dist2d(m.pos, p) < 30.0:
+			if not m.is_player and m.state == "alive" and m.vehicle == null and G.dist2d(m.pos, p) < 30.0 and not posted(m):
 				AI.release_cover(m)
 				m.task = "clear"
 				var to = p + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5))

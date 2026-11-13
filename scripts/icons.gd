@@ -114,6 +114,25 @@ static func get_icon(kind: String) -> ImageTexture:
 				var a = k * TAU / 10.0
 				_ln(img, Vector2(22, 8), Vector2(22 + cos(a) * 9.0, 8 + sin(a) * 7.0), 1.0)
 			_disc(img, 22, 8, 4.5)
+		"truck":
+			_r(img, 5, 3, 21, 9)        # the load
+			_r(img, 27, 6, 8, 6)        # cab
+			_r(img, 35, 9, 4, 3)        # bonnet
+			_r(img, 5, 12, 34, 1)       # chassis
+			_disc(img, 11.0, 13.5, 2.4)
+			_disc(img, 32.0, 13.5, 2.4)
+		"car":
+			_r(img, 8, 8, 28, 4)        # body
+			_r(img, 16, 4, 1, 4)        # windscreen post
+			_r(img, 16, 4, 9, 1)        # hood frame
+			_r(img, 6, 6, 2, 4)         # spare wheel
+			_disc(img, 13.0, 13.0, 2.6)
+			_disc(img, 30.0, 13.0, 2.6)
+		"gun":
+			_r(img, 16, 7, 26, 2)       # barrel
+			_r(img, 13, 3, 3, 10)       # shield
+			_ln(img, Vector2(13, 10), Vector2(2, 15), 1.0)   # trail
+			_disc(img, 15.0, 12.5, 3.0)
 		"vehicle":
 			_r(img, 6, 9, 30, 5)        # hull
 			_r(img, 12, 4, 13, 5)       # turret

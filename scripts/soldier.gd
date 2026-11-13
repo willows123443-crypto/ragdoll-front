@@ -2182,7 +2182,7 @@ func _ladder_check() -> void:
 func start_climb(T: Dictionary, up: bool) -> void:
 	if climb != null or state != "alive":
 		return
-	climb = {"T": T, "up": up, "t": 0.0, "dur": 2.6}
+	climb = {"T": T, "up": up, "t": 0.0, "dur": 2.6, "p0": pos}
 	_tr_begin(0.3, 3)
 	release_ladder_gun(true)
 
@@ -2208,6 +2208,11 @@ func _tick_climb() -> void:
 		pos = Vector3(foot.x, lerpf(lo.y, hi.y, (kk - 0.12) / 0.7), foot.z)
 	else:
 		pos = Vector3(foot.x, hi.y, foot.z).lerp(hi, (kk - 0.82) / 0.18)
+	# (he walks the last step to the ladder: he used to be put at its foot, or at its head, the instant
+	# the climb began, from up to a metre off)
+	if c["t"] < 0.14 and c.has("p0"):
+		var k0: float = c["t"] / 0.14
+		pos = (c["p0"] as Vector3).lerp(pos, k0 * k0 * (3.0 - 2.0 * k0))
 	vel = Vector3.ZERO
 	want = Vector3.ZERO
 	vy = 0.0
@@ -2811,8 +2816,38 @@ var _full_mask = true
 # a man down (dead, wounded, knocked flat) is a ragdoll and collides with everything again. If he goes
 # down overlapping a vehicle or wreck, the physics shoves him out of it hard enough to throw him across
 # the map: ignore the vehicle he's in for a moment, and never let a limb fly faster than a real fall
+# A man who's gone down with part of him under the ground (a leg or his whole lower half through the
+# surface, which a fast fall or a shove from a vehicle can do: the earth is a thin skin with nothing
+# underneath) is lifted until the deepest part of him is back on top of it.
+var bury_t = 0
+var bury_n = 0
+func _unbury() -> bool:
+	# (a handful of tries, then he's left be: where the ground he's lying in isn't where the map says
+	# it is, lifting him again and again would only keep him twitching)
+	if G.world == null or parts.is_empty() or state == "riding" or state == "chute" or bury_n >= 6:
+		return false
+	var deep = 0.0
+	for b in parts:
+		var bp: Vector3 = b.global_position
+		deep = maxf(deep, G.world.ground_y(bp.x, bp.z) - 0.1 - bp.y)
+	if deep < 0.08:
+		return false
+	bury_n += 1
+	var up = Vector3(0, deep + 0.12, 0)
+	for b in parts:
+		b.global_position += up
+		if not b.freeze:
+			var lv: Vector3 = b.linear_velocity
+			b.linear_velocity = Vector3(lv.x * 0.3, maxf(lv.y, 0.0), lv.z * 0.3)
+	return true
+
 func _ragdoll_guard() -> void:
-	if state == "alive" or parts.is_empty() or parts[0].freeze:
+	if state == "alive" or parts.is_empty():
+		return
+	bury_t += 1
+	if bury_t % 20 == 0:
+		_unbury()
+	if parts[0].freeze:
 		return
 	# pushed down through the ground (a lorry driving over a man who's been knocked flat does it: the
 	# earth is a surface with nothing under it, and once a body was through it fell for ever and the man
@@ -3029,6 +3064,9 @@ func _settle() -> void:
 		for b in parts:
 			if b.linear_velocity.length_squared() > 0.02 or b.angular_velocity.length_squared() > 0.1:
 				return
+		# (not left half in the ground: lifted clear first, and given another moment to come to rest)
+		if _unbury():
+			return
 		settled = true
 		for b in parts:
 			b.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC

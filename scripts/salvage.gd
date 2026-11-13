@@ -78,7 +78,11 @@ static func step() -> void:
 		for o in G.soldiers:
 			if o.state != "alive" or o.is_player or o.vehicle != null or o.vis_t != null or o.broken or o.zombie:
 				continue
-			if o.order != null or ClassAI.busy(o) or o.task in ["stretcher", "get_radio", "charge", "medic", "board", "salvage"]:
+			if o.order != null or ClassAI.busy(o) or o.task in ["stretcher", "get_radio", "charge", "medic", "board", "salvage", "post", "scout", "clear", "flank_move"]:
+				continue
+			# (a scout has his own errand, and it kept calling him back from the wreck: he went to and fro
+			# between the two; snipers and spotters aren't sent either)
+			if o.has_meta("scout") or o.cls == "sniper" or o.cls == "spotter":
 				continue
 			var d = G.dist2d(o.pos, v.pos) - (12.0 if o.cls == "engineer" else 0.0)
 			if d < bd:

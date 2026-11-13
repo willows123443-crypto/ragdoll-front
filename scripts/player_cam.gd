@@ -1336,6 +1336,13 @@ func use_tool(screen: Vector2) -> void:
 		if Build.too_near_hq(kind, team, p):
 			G.ui.message("Supply dumps go at least %d m out from HQ: the trucks have to earn it" % int(Build.SUPPLY_MIN))
 			return
+		# (a campaign defence: the stock of defences you were given goes up at once, and costs nothing)
+		if Campaign.take_free(kind):
+			Build.place(kind, team, p, to, true, true)
+			G.audio.radio_click()
+			var left = Campaign.free_left()
+			G.ui.message("%s up. %s" % [Build.KINDS[kind]["name"], ("Still to place: " + left) if left != "" else "That's the last of the free defences."])
+			return
 		var c = Build.cost(kind) if not G.builder else 0
 		if G.builder:
 			# battle builder: defences go up at once, no engineers or points needed

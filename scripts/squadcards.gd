@@ -81,7 +81,15 @@ static func kind_of(q: Dictionary) -> String:
 	return "Rifles"
 
 static func icon_of(q: Dictionary) -> String:
-	if crew_vehicle(q) != null:
+	var cv = crew_vehicle(q)
+	if cv != null:
+		# (a lorry isn't a tank: each sort of vehicle gets its own outline)
+		if cv.spec.get("static", false):
+			return "gun"
+		if cv.kind in ["truck", "supplytruck", "ammotruck", "ambulance", "radar", "bridger"]:
+			return "truck"
+		if cv.kind in ["jeep", "technical", "motorbike"]:
+			return "car"
 		return "vehicle"
 	match kind_of(q):
 		"Snipers":

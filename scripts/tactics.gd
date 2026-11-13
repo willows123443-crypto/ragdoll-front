@@ -106,7 +106,7 @@ static func _pinned(q, L) -> void:
 		var spot = shooter.pos + perp * 16.0 - to * 5.0
 		var n = 0
 		for m in q["members"]:
-			if m != L and not m.is_player and m.state == "alive" and m.supp < 1.0 and n < 2:
+			if m != L and not m.is_player and m.state == "alive" and m.supp < 1.0 and n < 2 and not Squad.posted(m):
 				AI.release_cover(m)
 				m.task = "flank_move"
 				m.prone_t = false
@@ -245,7 +245,7 @@ static func _stack_up(q, L) -> void:
 	var men = []
 	var side: Vector3 = door["along"]
 	for m in q["members"]:
-		if m.state == "alive" and not m.is_player and m.vehicle == null and men.size() < 4:
+		if m.state == "alive" and not m.is_player and m.vehicle == null and men.size() < 4 and not Squad.posted(m):
 			AI.release_cover(m)
 			m.task = "clear"
 			var k = men.size()

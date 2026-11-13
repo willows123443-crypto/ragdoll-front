@@ -551,6 +551,10 @@ static func _sticky(s) -> void:
 static func _sniper_move(s) -> void:
 	if s.cls != "sniper" or s.shots_here < (1 if Faction.militia(s.team) else 3):
 		return
+	# up on a roof or a tower with nobody shooting back, he has the best seat in the house and keeps it:
+	# he only gives the post up once they've found him
+	if s.task == "post" and s.supp < 0.45 and s.hp > 55.0:
+		return
 	s.shots_here = 0
 	var from: Vector3 = s.pos
 	var best = null

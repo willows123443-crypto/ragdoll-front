@@ -54,8 +54,12 @@ func _ready() -> void:
 			_base_test()
 		if a == "--vehtest":
 			_veh_test()
-		if a == "--camptest":
-			_camp_test()
+		if a == "--warptest":
+			_war_test()
+		if a.begins_with("--warshot="):
+			_war_shot(a.substr(10))
+		if a == "--warfight":
+			_war_fight()
 		if a == "--bigtest":
 			_big_test()
 		if a == "--doortest":
@@ -110,6 +114,12 @@ func _ready() -> void:
 			_perf_run()
 		if a == "--blindtest":
 			_blind_test()
+		if a == "--pacetest":
+			_pace_test()
+		if a == "--posttest":
+			_post_test()
+		if a == "--camptest":
+			_camp_test()
 		if a.begins_with("--merge="):
 			G.merge_boxes = a.substr(8) == "1"
 		if a.begins_with("--rails="):
@@ -3422,6 +3432,264 @@ func _crash_test() -> void:
 
 # --blindtest --map= --mode= --secs= --size=: an AI battle watched for men who have an enemy in plain view
 # close by and either haven't noticed him or aren't shooting: man-seconds of each, and what those men were doing
+# --pacetest --map= --mode= --secs= --size=: men who walk a long way and get nowhere. Every half-minute,
+# anyone who covered more than 22 m but never got 7 m from where he started, with no enemy in sight and
+# without firing, is counted as pacing, and the last places he was sent (and by what) are printed.
+func _pace_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = _arg("aiside", "1") == "1"
+	seed(int(_arg("seed", "5")))
+	AI.pace_dbg = true
+	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "commander"), "size": int(_arg("size", "14")), "limit": 999, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2})
+	var secs = float(_arg("secs", "240"))
+	var win = {}
+	var t = 0.0
+	var paced = 0
+	var man_windows = 0
+	var shown = 0
+	var by_who = {}
+	while t < secs:
+		await _wait(0.5)
+		t += 0.5
+		for s in G.soldiers:
+			if s.state != "alive" or s.vehicle != null or s.is_player:
+				win.erase(s.id)
+				continue
+			if not win.has(s.id):
+				win[s.id] = {"p0": s.pos, "last": s.pos, "len": 0.0, "far": 0.0, "busy": false, "t": 0.0, "in": 0}
+			var w = win[s.id]
+			w["len"] += G.dist2d(s.pos, w["last"])
+			w["last"] = s.pos
+			w["far"] = maxf(w["far"], G.dist2d(s.pos, w["p0"]))
+			w["t"] += 0.5
+			if s.vis_t != null or G.sim_time - s.fired_t < 3.0 or s.supp > 0.3:
+				w["busy"] = true
+			if G.world.inside_any(s.pos.x, s.pos.z, 0.2):
+				w["in"] += 1
+			if w["t"] >= 30.0:
+				man_windows += 1
+				if w["len"] > float(_arg("len", "22")) and w["far"] < float(_arg("far", "7")) and (not w["busy"] or _arg("busy", "") != "") and (w["in"] >= 30 or _arg("anywhere", "") != ""):
+					paced += 1
+					var lg: Array = s.get_meta("pace_log", [])
+					var key = ""
+					if not lg.is_empty():
+						key = str(lg[lg.size() - 1]).split(" ")[1]
+					by_who[key] = by_who.get(key, 0) + 1
+					if shown < 8:
+						shown += 1
+						print("PACE t=%.0f team %d %s walked %.0f m inside %.0f m (indoors %d%%) task %s order %s cover %s | %s" % [t, s.team, s.cls, w["len"], w["far"], int(100.0 * w["in"] / 60.0), str(s.task),
+							str(s.order.get("tag", s.order.get("mode", "?"))) if s.order != null else "free", s.cover != null, " | ".join(lg.slice(maxi(0, lg.size() - 8)))])
+				win.erase(s.id)
+	print("PACETEST %s/%s: %d pacing half-minutes out of %d (%.1f%%) | sent by: %s" % [_arg("map", "town"), _arg("mode", "commander"), paced, man_windows, 100.0 * paced / maxf(1.0, man_windows), str(by_who)])
+	get_tree().quit()
+
+# --posttest --map= --secs=: how long men stay at a lookout post (a roof, a tower, an upstairs window) once
+# they've reached it, and what they were doing when they left
+func _post_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(int(_arg("seed", "9")))
+	AI.pace_dbg = true
+	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "capture"), "size": int(_arg("size", "16")), "limit": 999, "reinforce": true, "armor": "none", "reinf_mode": "truck", "teams": 2,
+		"cls": [["sniper", "spotter", "sniper", "spotter", "sniper", "rifleman", "rifleman", "mg", "sniper", "rifleman", "rifleman", "mg", "sniper", "spotter", "rifleman", "rifleman"], ["sniper", "spotter", "sniper", "spotter", "sniper", "rifleman", "rifleman", "mg", "sniper", "rifleman", "rifleman", "mg", "sniper", "spotter", "rifleman", "rifleman"]]})
+	var secs = float(_arg("secs", "240"))
+	var at = {}
+	var stays = []
+	var shown = 0
+	var t = 0.0
+	while t < secs:
+		await _wait(0.25)
+		t += 0.25
+		for s in G.soldiers:
+			var up = s.state == "alive" and s.task == "post" and s.in_cover and s.pos.y - G.world.ground_y(s.pos.x, s.pos.z) > 1.8
+			if up and not at.has(s.id):
+				at[s.id] = t
+			elif not up and at.has(s.id):
+				var d: float = t - at[s.id]
+				at.erase(s.id)
+				if s.state == "alive":
+					stays.append(d)
+					if d < 8.0 and shown < 6:
+						shown += 1
+						var lg: Array = s.get_meta("pace_log", [])
+						print("POST t=%.0f %s (team %d) left after %.1f s: task %s order %s supp %.2f hp %d sees %s | %s" % [t, s.cls, s.team, d, str(s.task), str(s.order.get("mode", "?")) if s.order != null else "free", s.supp, int(s.hp), s.vis_t != null, " | ".join(lg.slice(maxi(0, lg.size() - 3)))])
+	for id in at:
+		stays.append(t - at[id])
+	stays.sort()
+	print("POSTTEST %s: %d stays at a post | shortest %.1f s, middle %.1f s, longest %.1f s | under 8 s: %d" % [_arg("map", "town"), stays.size(), stays[0] if not stays.is_empty() else 0.0,
+		stays[stays.size() / 2] if not stays.is_empty() else 0.0, stays[stays.size() - 1] if not stays.is_empty() else 0.0, stays.filter(func(x): return x < 8.0).size()])
+	get_tree().quit()
+
+# --warfight: the three ways into a campaign battle really start one, and each ends back on the map:
+# an attack fought as a soldier, a defence commanded from above (with free defences), the Ministry stage
+func _war_fight() -> void:
+	await _wait(0.5)
+	seed(6)
+	var out = []
+	Campaign.new_campaign()
+	var a1 = Campaign.army_at(1, 0)
+	Campaign.move(a1, 3)
+	Campaign.start_battle("soldier")
+	await _wait(8.0)
+	out.append("attack as a soldier: map %s mode %s, in a man %s (%s), objective '%s'" % [G.map_id, G.mode, G.player != null, G.player.sname if G.player != null else "-", Campaign.objective_text().substr(0, 30)])
+	end_game(0)
+	await _wait(3.5)
+	out.append("  after: Valley Road owner %d, battle pending %s, headline %s" % [Campaign.data["owner"][3], Campaign.pending_battle() != null, Campaign.data["headline"]["head"]])
+	# a defence
+	var mine = Campaign.army_at(3, 0)
+	var foe = Campaign.army_at(6, 1) if Campaign.army_at(6, 1) != null else Campaign.data["armies"].filter(func(x): return x["team"] == 1)[0]
+	if mine != null:
+		Campaign.data["battle"] = {"region": 3, "attacker": 1, "army": mine["id"], "foe": foe["id"], "from": foe["region"], "stage": 1, "obj": ""}
+		Campaign._pick_objective()
+		Campaign.start_battle("command")
+		await _wait(3.0)
+		var free0 = Campaign.free_left()
+		var took = Campaign.take_free("sandbags")
+		out.append("defence from above: mode %s, free defences [%s], took one %s, now [%s], player in a man %s" % [G.mode, free0, took, Campaign.free_left(), G.player != null])
+		end_game(0)
+		await _wait(3.5)
+		out.append("  after: held owner %d, turn %d, plan %d" % [Campaign.data["owner"][3], Campaign.data["turn"], Campaign.data["plan"].size()])
+	# the Ministry
+	var us = Campaign.data["armies"].filter(func(x): return x["team"] == 0)[0]
+	var guard = Campaign.army_at(11, 1)
+	Campaign.data["battle"] = {"region": 11, "attacker": 0, "army": us["id"], "foe": guard["id"], "from": us["region"], "stage": 1, "obj": "swift"}
+	Campaign.auto_resolve()
+	var b2 = Campaign.pending_battle()
+	if b2 == null or int(b2.get("stage", 1)) != 2:
+		# (lost the city on paper: set the second stage up by hand so the Ministry start is still tested)
+		Campaign.data["battle"] = {"region": 11, "attacker": 0, "army": us["id"], "foe": guard["id"], "from": us["region"], "stage": 2, "obj": "light"}
+	Campaign.start_battle("command")
+	await _wait(6.0)
+	out.append("the Ministry: map %s mode %s, men %d v %d, storeys %s" % [G.map_id, G.mode, G.alive_count(0), G.alive_count(1), Levels.on])
+	end_game(0)
+	await _wait(3.5)
+	out.append("  after: Capital owner %d, campaign over %d, headline %s" % [Campaign.data["owner"][11], Campaign.over(), Campaign.data["headline"]["head"]])
+	for l in out:
+		print("WARFIGHT ", l)
+	get_tree().quit()
+
+# --warshot=DIR: pictures of the campaign screen (a turn with a question and Bravo's plan, a battle waiting
+# to be fought, the roll of the fallen)
+func _war_shot(dir: String) -> void:
+	await _wait(0.5)
+	seed(4)
+	G.ui.visible = true
+	G.ui.title.visible = false
+	Campaign.new_campaign(_arg("short", "") != "")
+	var a1 = Campaign.army_at(1, 0)
+	Campaign.data["choice"] = {"kind": "volunteers", "army": a1["id"], "default": 1, "text": "Lads from Old Town want to join up.",
+		"opts": ["Take them into the %s (+5 riflemen)" % a1["name"], "Send them to the workshops (+6 to the war chest)"]}
+	Campaign.selected = a1["id"]
+	G.ui._show_campaign()
+	await _wait(0.6)
+	await _snap(dir, "camp_turn")
+	Campaign.choose(0)
+	Campaign.selected = -1
+	Campaign.move(a1, 3)
+	G.ui._show_campaign()
+	await _wait(0.6)
+	await _snap(dir, "camp_battle")
+	Campaign.auto_resolve()
+	Campaign.end_turn()
+	while Campaign.pending_battle() != null:
+		Campaign.auto_resolve()
+	G.ui.camp_fallen = true
+	G.ui._show_campaign()
+	await _wait(0.6)
+	await _snap(dir, "camp_fallen")
+	get_tree().quit()
+
+# --warptest --turns= --short=1 --seed=: plays the campaign map on paper (every battle auto-resolved, moves
+# and answers picked at random) and checks nothing is left in a state it shouldn't be
+func _war_test() -> void:
+	await _wait(0.3)
+	seed(int(_arg("seed", "3")))
+	var D
+	var bad = []
+	var battles = 0
+	var choices = 0
+	var plans = 0
+	var called_off = 0
+	var finale = 0
+	var turns = int(_arg("turns", "40"))
+	Campaign.new_campaign(_arg("short", "") != "")
+	for turn in range(turns):
+		D = Campaign.data
+		if Campaign.over() >= 0:
+			break
+		plans += D["plan"].size()
+		if D.get("choice") != null:
+			choices += 1
+			Campaign.choose(randi() % 2)
+		for a in D["armies"].duplicate():
+			if a["team"] != 0 or a["moved"] or not (a in D["armies"]):
+				continue
+			var opts = Campaign.neighbours(a["region"]).filter(func(j): return Campaign.can_move(a, j))
+			# (--strong=1: our armies are kept at full strength and always push east, to reach the Capital)
+			if _arg("strong", "") != "":
+				var more = []
+				for k in range(Campaign.MAX_STR - a["men"].size()):
+					more.append("rifleman")
+				Campaign.add_men(a, more, 2)
+				opts.sort_custom(func(x, y): return Campaign.REGIONS[x]["p"].x > Campaign.REGIONS[y]["p"].x)
+				opts = opts.slice(0, 1)
+			if opts.is_empty() or (randf() < 0.25 and _arg("strong", "") == ""):
+				continue
+			# buy something now and then
+			if randf() < 0.5:
+				for pk in ["rifle", "mg", "jeep", "tank"]:
+					if Campaign.can_buy(a, pk) == "":
+						Campaign.buy(a, pk)
+						break
+			var res = Campaign.move(a, opts[randi() % opts.size()])
+			var guard = 0
+			while Campaign.pending_battle() != null and guard < 3:
+				guard += 1
+				battles += 1
+				if int(Campaign.pending_battle().get("stage", 1)) == 2:
+					finale += 1
+				if Campaign.objective_text() == "" or Campaign.battle_text() == "" or Campaign.odds().size() != 2:
+					bad.append("battle with no text at turn %d" % turn)
+				Campaign.auto_resolve()
+			if Campaign.over() >= 0:
+				break
+		if Campaign.over() >= 0:
+			break
+		var lines = Campaign.end_turn()
+		for l in lines:
+			if str(l).find("calls off") >= 0:
+				called_off += 1
+		var guard2 = 0
+		while Campaign.pending_battle() != null and guard2 < 3:
+			guard2 += 1
+			battles += 1
+			Campaign.auto_resolve()
+		# what must always be true
+		D = Campaign.data
+		for a in D["armies"]:
+			if a["str"] != a["men"].size() or a["str"] <= 0 and a["team"] == 0:
+				bad.append("army %s strength %d but %d men" % [a["name"], a["str"], a["men"].size()])
+			if D["owner"][a["region"]] != a["team"]:
+				bad.append("army %s (team %d) stands on ground held by %d at turn %d" % [a["name"], a["team"], D["owner"][a["region"]], turn])
+			if a["veh"].size() > Campaign.MAX_VEH + 1 or a["men"].size() > Campaign.MAX_STR:
+				bad.append("army %s over strength" % a["name"])
+		for i in range(D["owner"].size()):
+			var here = D["armies"].filter(func(x): return x["region"] == i)
+			if here.size() > 1:
+				bad.append("%d armies in %s at turn %d" % [here.size(), Campaign.REGIONS[i]["name"], turn])
+			if D["short"] and not (i in Campaign.SHORT_REGIONS) and D["owner"][i] != -1:
+				bad.append("region %d out of play but owned" % i)
+		if D["funds"][0] < 0 or D["funds"][1] < 0:
+			bad.append("war chest below nothing at turn %d" % turn)
+		if not D["headline"].has("head") or str(D["headline"]["head"]) == "":
+			bad.append("no headline at turn %d" % turn)
+	D = Campaign.data
+	print("CAMPTEST %s: ended turn %d, result %d | %d battles (%d at the Ministry), %d questions, %d planned moves seen, %d called off | regions %d:%d | armies %d:%d | fallen %d | last headline: %s" % [
+		"short" if D["short"] else "full", D["turn"], Campaign.over(), battles, finale, choices, plans, called_off, D["owner"].count(0), D["owner"].count(1),
+		D["armies"].filter(func(x): return x["team"] == 0).size(), D["armies"].filter(func(x): return x["team"] == 1).size(), D["fallen"].size(), str(D["headline"]["head"])])
+	print("CAMPTEST trouble: %s" % (str(bad.slice(0, 6)) if not bad.is_empty() else "none"))
+	get_tree().quit()
+
 func _blind_test() -> void:
 	await _wait(0.5)
 	G.settings["ai_side"] = true

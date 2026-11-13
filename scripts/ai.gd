@@ -583,7 +583,52 @@ static func go_downstairs(s) -> void:
 	s.task = "descend"
 
 # ---------------------------------------------------------------- movement
+# Something is in the way of the shot (a wall, a window frame, the corner of a house). He used to take a
+# step and a half to one side, left or right at random, and try again: a man in a room with the enemy the
+# other side of the wall did that for minutes, back and forth, and never fired. Now he looks first: the
+# nearest spot to either side that really has a clear line is where he goes, and if there isn't one he
+# stops trying to shoot through the wall for a while and gets on with what he was doing.
+static func _step_for_shot(s, point: Vector3, dir: Vector3) -> void:
+	if G.sim_time < float(s.get_meta("noshot_t", 0.0)):
+		return
+	# (a man with a wound to dress does that first: he isn't sent out of his cover and back again)
+	if s.bleed > 0.35 and s.dressings > 0:
+		return
+	var side = Vector3(-dir.z, 0, dir.x)
+	var mh: float = s.muzzle.y - s.pos.y
+	var best = null
+	for d in [1.5, -1.5, 3.0, -3.0]:
+		var q: Vector3 = s.pos + side * d
+		var from: Vector3 = q + Vector3(0, mh, 0)
+		# (he has to be able to walk there, and to see the target from there)
+		if not G.ray(s.pos + Vector3(0, 0.9, 0), q + Vector3(0, 0.9, 0), G.L_WORLD).is_empty():
+			continue
+		if G.ray(from, point, G.L_WORLD).is_empty():
+			best = q
+			break
+	if best != null:
+		s.set_meta("side_n", 0)
+		go_to(s, best, 3.0)
+		return
+	var n = int(s.get_meta("side_n", 0)) + 1
+	s.set_meta("side_n", n)
+	if n >= 2:
+		s.set_meta("side_n", 0)
+		s.set_meta("noshot_t", G.sim_time + 9.0)
+		s.decide_t = 0.0
+
+static var pace_dbg = false       # (--pacetest: who sent each man where)
 static func go_to(s, point: Vector3, speed: float) -> void:
+	if pace_dbg:
+		var st = get_stack()
+		var who = ""
+		for k in range(1, mini(st.size(), 4)):
+			who += "%s:%d<" % [st[k]["function"], st[k]["line"]]
+		var lg: Array = s.get_meta("pace_log", [])
+		lg.append("%.0fs %s task=%s to(%.0f,%.0f)" % [G.sim_time, who, str(s.task), point.x, point.z])
+		if lg.size() > 14:
+			lg.pop_front()
+		s.set_meta("pace_log", lg)
 	if s.move_target != null and s.move_target.distance_squared_to(point) < 0.25 and not s.path.is_empty():
 		s.speed_t = speed
 		return
@@ -837,7 +882,7 @@ static func follow_route(s) -> void:
 	var T = s.tower
 	if T != null and T.get("ladder", false) and R["i"] <= 1 and R["pts"].size() > 1:
 		var end0: Vector3 = R["pts"][0]
-		if G.dist2d(end0, s.pos) < 1.3 and absf(end0.y - s.pos.y) < 1.2:
+		if G.dist2d(end0, s.pos) < 0.7 and absf(end0.y - s.pos.y) < 1.2:
 			s.start_climb(T, R["pts"][1].y > end0.y + 1.0)
 			R["i"] = 2 if R["pts"].size() > 2 else 1
 			return
@@ -1386,7 +1431,30 @@ static func decide(s) -> void:
 			if s.order != null and not s.order.has("arrived"):
 				s.order["arrived"] = G.sim_time
 			return
-		if s.task == "post" and s.cover != null and s.cover_bad < 2 and order["mode"] != "move" and order["mode"] != "charge":
+		if s.task == "post" and s.cover != null and order["mode"] != "move" and order["mode"] != "charge":
+			if s.cover_bad < 2:
+				return
+			# The enemy has turned up on a side his parapet doesn't face. He used to climb straight down
+			# again (a sniper would get onto a roof and be off it two seconds later, with the whole
+			# street under his rifle). Now he crosses to a parapet on the same roof that does face them;
+			# if there isn't one free he still keeps the height, and only comes down once they've found
+			# his range.
+			if s.tower is Dictionary:
+				for cp in s.tower.get("cps", []):
+					if cp != s.cover and cover_free(cp, s) and cp.ban < G.sim_time and G.world.cp_ok(cp) and cover_safe(cp, s.threat):
+						release_cover(s)
+						cp.owner_s = s
+						s.cover = cp
+						s.cover_bad = 0
+						s.task = "post"
+						s.route = {"pts": [cp.p], "i": 0, "nav": false}
+						return
+			if s.supp < 0.7 and s.hp > 50.0:
+				s.cover_bad = 0
+				return
+		# (an AI-run side's man with a target under his sights from up here finishes the job before he
+		# answers a move order; your own orders are obeyed at once)
+		if s.task == "post" and s.cover != null and order["mode"] == "move" and s.vis_t != null and s.supp < 0.7 and G.ai_runs(s.team) and not s.is_player:
 			return
 		if s.cover != null and s.cover_bad >= 2:
 			s.cover.ban = G.sim_time + 20.0
@@ -2011,6 +2079,11 @@ static func _mousehole(s) -> bool:
 static func _off_the_roof(s) -> bool:
 	if s.vehicle != null or s.state != "alive" or G.world.roof_cols.is_empty():
 		return false
+	# (a man who climbed up there on purpose, to a post on the roof, stays: this is for the ones who
+	# were thrown up by a blast)
+	if s.task == "post" or s.tower != null or s.climb != null or s.route != null:
+		s.remove_meta("roof_go")
+		return false
 	if G.sim_time < s.get_meta("roof_chk", 0.0):
 		return s.has_meta("roof_go")
 	s.set_meta("roof_chk", G.sim_time + 1.0)
@@ -2489,7 +2562,7 @@ static func aim_and_fire(s) -> void:
 						s.force_peek = true
 						if s.block_t > 1.0 and not s.in_cover and s.move_target == null:
 							s.block_t = 0.0
-							go_to(s, s.pos + Vector3(-dir.z, 0, dir.x) * (1.5 if randf() < 0.5 else -1.5), 3.0)
+							_step_for_shot(s, point, dir)
 						if s.block_t > 2.5 and s.in_cover:
 							s.block_t = 0.0
 							s.cover.ban = G.sim_time + 10.0

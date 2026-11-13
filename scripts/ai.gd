@@ -617,6 +617,7 @@ static func _step_for_shot(s, point: Vector3, dir: Vector3) -> void:
 		s.set_meta("noshot_t", G.sim_time + 9.0)
 		s.decide_t = 0.0
 
+static var react_fix = true       # (--flanktest --old=1 switches the new reactions off, to compare)
 static var pace_dbg = false       # (--pacetest: who sent each man where)
 static func go_to(s, point: Vector3, speed: float) -> void:
 	if pace_dbg:
@@ -939,7 +940,17 @@ static func perceive(s) -> void:
 		if o.team != s.team and o.state != "dead" and (o != Modes.pilot or o.state != "wounded"):
 			var d2 = o.pos.distance_squared_to(s.pos)
 			if d2 < 160.0 * 160.0:
-				cand.append([d2 * (0.5 if o == s.target else 1.0) * (6.0 if o == Modes.pilot else 1.0), o])
+				# (the one who's just hit him, or who's firing at him now, comes first even if he's further
+				# off or behind: a man used to keep shooting at the enemy in front while another shot him
+				# in the back)
+				var wt = (0.5 if o == s.target else 1.0) * (6.0 if o == Modes.pilot else 1.0)
+				if not react_fix:
+					pass
+				elif o == s.last_attacker and s.hurt_t > 0.0:
+					wt *= 0.3
+				elif o.target == s and G.sim_time - o.fired_t < 1.5:
+					wt *= 0.6
+				cand.append([d2 * wt, o])
 	cand.sort_custom(func(a, b): return a[0] < b[0])
 	# (the nearest six that could be in view, and more than six if none of those is: indoors the nearest
 	# enemies are often through a wall or on the floor above, and men were walking past the one enemy
@@ -1564,7 +1575,21 @@ static func decide(s) -> void:
 				return
 			# attack-move: an enemy in sight on the way, so get into cover near here and fight it out;
 			# once it's been quiet for a few seconds, carry on to the point
-			if s.order != null and s.order.get("attack", false) and s.has_seen and G.sim_time - s.seen_t < 4.0 and G.dist2d(s.last_seen, s.pos) < 80.0:
+			# Any other move: he still defends himself. An AI-run side's men treat every move as an
+			# attack-move; yours stop for an enemy close by, or for anyone who's shooting at them, and go
+			# on when it's quiet. (They used to walk on to the point past enemies in plain sight.) Only
+			# "Fall back" keeps them moving whatever happens.
+			var recent = s.has_seen and G.sim_time - s.seen_t < 4.0
+			var d_seen = G.dist2d(s.last_seen, s.pos)
+			var engage = false
+			if s.order != null and s.order.get("attack", false):
+				engage = recent and d_seen < 80.0
+			elif react_fix and not (s.order != null and str(s.order.get("tag", "")) == "fallback") and not s.broken:
+				if G.ai_runs(s.team):
+					engage = recent and d_seen < 70.0
+				else:
+					engage = recent and (d_seen < 40.0 or ((s.hurt_t > 0.0 or s.supp > 0.5) and d_seen < 90.0))
+			if engage:
 				if s.cover == null or s.cover_bad >= 2:
 					var ca = find_cover(s, s.last_seen, "hold")
 					if ca != null and G.dist2d(ca.p, s.pos) < 14.0:

@@ -1268,18 +1268,20 @@ func flame_puff(pos: Vector3, vel: Vector3, size: float) -> void:
 			var p = CPUParticles3D.new()
 			p.emitting = false
 			p.one_shot = true
-			p.amount = 6
-			p.lifetime = 0.55
-			p.explosiveness = 0.85
-			p.spread = 12.0
+			p.amount = 5
+			p.lifetime = 0.6
+			p.explosiveness = 0.6
+			p.spread = 20.0
 			p.gravity = Vector3(0, 3.0, 0)
 			p.mesh = QuadMesh.new()
 			p.material_override = flame_mat
 			var g = Gradient.new()
-			g.set_color(0, Color(1.0, 0.85, 0.4, 0.95))
-			g.set_color(1, Color(0.6, 0.12, 0.02, 0.0))
+			# (deep orange and thin, so a fire is tongues of flame: bright yellow at full strength, a dozen
+			# of them on top of each other, added up to one white ball of light)
+			g.set_color(0, Color(1.0, 0.56, 0.16, 0.5))
+			g.set_color(1, Color(0.55, 0.08, 0.02, 0.0))
 			p.color_ramp = g
-			p.scale_amount_curve = _grow_curve(0.6, 2.2)
+			p.scale_amount_curve = _grow_curve(0.55, 1.5)
 			p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(p)
 			flame_pool.append(p)

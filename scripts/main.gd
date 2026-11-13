@@ -60,6 +60,10 @@ func _ready() -> void:
 			_war_shot(a.substr(10))
 		if a == "--warfight":
 			_war_fight()
+		if a.begins_with("--kitshot="):
+			_kit_shot(a.substr(10))
+		if a == "--flanktest":
+			_flank_test()
 		if a == "--bigtest":
 			_big_test()
 		if a == "--doortest":
@@ -3518,6 +3522,134 @@ func _post_test() -> void:
 	stays.sort()
 	print("POSTTEST %s: %d stays at a post | shortest %.1f s, middle %.1f s, longest %.1f s | under 8 s: %d" % [_arg("map", "town"), stays.size(), stays[0] if not stays.is_empty() else 0.0,
 		stays[stays.size() / 2] if not stays.is_empty() else 0.0, stays[stays.size() - 1] if not stays.is_empty() else 0.0, stays.filter(func(x): return x < 8.0).size()])
+	get_tree().quit()
+
+# --flanktest --old=1 --runs=: (1) a squad in a firefight to its front has two enemies appear behind it: how
+# long until one of its men fires at them, and who's left; (2) a squad sent across the front of an enemy
+# section on a plain move order: do they stop and fight, or walk on past
+func _flank_test() -> void:
+	await _wait(0.3)
+	AI.react_fix = _arg("old", "") == ""
+	var runs = int(_arg("runs", "4"))
+	var react = []
+	var never = 0
+	var left = 0
+	var fl_dead = 0
+	var walked = 0
+	var fought = 0
+	var mv_left = 0
+	for run in range(runs):
+		seed(100 + run)
+		start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+		await _wait(0.5)
+		var c: Vector3 = G.main._free_spot(Vector3(0, 0, 0))
+		var mine = []
+		for k in range(5):
+			var s = spawn_soldier(0, c.x + (k - 2) * 2.0, c.z, "rifle")
+			s.order = {"mode": "hold", "point": s.pos}
+			mine.append(s)
+		for k in range(4):
+			var e = spawn_soldier(1, c.x + (k - 1.5) * 3.0, c.z + 62.0, "rifle")
+			e.order = {"mode": "hold", "point": e.pos}
+		await _wait(7.0)
+		var fl = []
+		for k in range(2):
+			var e2 = spawn_soldier(1, c.x + (k - 0.5) * 5.0, c.z - 36.0, "rifle")
+			e2.order = {"mode": "hold", "point": e2.pos}
+			fl.append(e2)
+		var t0 = -1.0
+		var t = 0.0
+		var got = -1.0
+		while t < 30.0:
+			await _wait(0.1)
+			t += 0.1
+			if t0 < 0.0 and fl.any(func(x): return G.sim_time - x.fired_t < 0.2):
+				t0 = t
+			if t0 >= 0.0 and got < 0.0 and mine.any(func(m): return m.state == "alive" and m.target in fl and G.sim_time - m.fired_t < 0.2):
+				got = t - t0
+		if got >= 0.0:
+			react.append(got)
+		else:
+			never += 1
+		left += mine.filter(func(m): return m.state == "alive").size()
+		fl_dead += fl.filter(func(x): return x.state != "alive").size()
+		# (2) the walk-past
+		start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+		await _wait(0.5)
+		var movers = []
+		for k in range(5):
+			var s2 = spawn_soldier(0, c.x - 60.0 + (k - 2) * 1.5, c.z, "rifle")
+			movers.append(s2)
+		for k in range(3):
+			var e3 = spawn_soldier(1, c.x + (k - 1) * 3.0, c.z + 30.0, "rifle")
+			e3.order = {"mode": "hold", "point": e3.pos}
+		await _wait(1.0)
+		var dest = Vector3(c.x + 70.0, 0, c.z)
+		for s2 in movers:
+			s2.order = {"mode": "move", "point": dest}
+			AI.go_to(s2, dest, 4.4)
+		var stopped = false
+		var t2 = 0.0
+		while t2 < 40.0:
+			await _wait(0.2)
+			t2 += 0.2
+			if movers.any(func(m): return m.state == "alive" and m.task == "hold" and m.pos.x < c.x + 40.0):
+				stopped = true
+		if stopped:
+			fought += 1
+		else:
+			walked += 1
+		mv_left += movers.filter(func(m): return m.state == "alive").size()
+	react.sort()
+	print("FLANKTEST %s: shot from behind, first return fire after %s s (never in %d of %d) | squad left %.1f of 5, flankers down %.1f of 2 | on a move order across the enemy's front: stopped to fight %d, walked on %d, left %.1f of 5" % [
+		"old" if not AI.react_fix else "new", str(react.map(func(x): return snappedf(x, 0.1))), never, runs, float(left) / runs, float(fl_dead) / runs, fought, walked, float(mv_left) / runs])
+	get_tree().quit()
+
+# --kitshot=DIR: close-ups of how the kit sits on a man: each side's helmet, the officer's cap, and a
+# rifle in the hands of a man who's aiming
+func _kit_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	G.ui.visible = false
+	G.pc.force_free = true
+	await _wait(0.3)
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var p0: Vector3 = G.main._free_spot(Vector3(0, 0, 60))
+	var men = []
+	for k in range(4):
+		var s = spawn_soldier(0, p0.x + k * 1.1, p0.z, "rifle")
+		s.order = {"mode": "hold", "point": s.pos}
+		s.body_yaw = 0.0
+		s.aim_yaw = 0.0
+		s.set_meta("frozen_ai", true)
+		men.append(s)
+	men[2].set_class("officer")
+	men[3].set_class("sniper")
+	await _wait(1.2)
+	for s in men:
+		s.pos = Vector3(s.pos.x, s.pos.y, p0.z)
+		s.body_yaw = 0.0
+		s.aim_yaw = 0.0
+	await _wait(0.4)
+	var mid: Vector3 = Vector3(p0.x + 1.65, men[1].pos.y + 1.72, p0.z)
+	await _look(mid + Vector3(0.2, 0.12, 1.75), mid)
+	await _snap(dir, "kit_front")
+	await _look(mid + Vector3(-0.2, 0.2, -1.75), mid)
+	await _snap(dir, "kit_side")
+	# a man aiming: an enemy out in front of him
+	var foe = spawn_soldier(1, p0.x, p0.z + 45.0, "rifle")
+	foe.order = {"mode": "hold", "point": foe.pos}
+	await _wait(1.6)
+	var a = men[0]
+	var hp: Vector3 = a.pos + Vector3(0, 1.35, 0)
+	var f = Vector3(sin(a.aim_yaw), 0, cos(a.aim_yaw))
+	var r = Vector3(f.z, 0, -f.x)
+	await _look(hp + f * 1.3 + r * 1.3 + Vector3(0, 0.25, 0), hp + f * 0.25)
+	await _snap(dir, "kit_aim_front")
+	await _look(hp - r * 1.7 + f * 0.3 + Vector3(0, 0.15, 0), hp + f * 0.3)
+	await _snap(dir, "kit_aim_left")
 	get_tree().quit()
 
 # --warfight: the three ways into a campaign battle really start one, and each ends back on the map:

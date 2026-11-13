@@ -1604,6 +1604,9 @@ func ruin_col(c) -> void:
 		if is_instance_valid(mk):
 			mk.queue_free()
 	_drop_resting_on(c)
+	# (a wall knocked down to a ruin holds nothing up either)
+	if c.has_meta("bld") and G.sim_time > 1.0:
+		_support_check(c.get_meta("bld"))
 	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
 	for r in c.vis:
 		if r[1] == -2:
@@ -2594,12 +2597,36 @@ func _claim(bld: Dictionary, c0: int) -> void:
 			if c.lo.y - c.gy < 0.5 and not c.has_meta("furn"):
 				bld["walls0"] += 1
 
+# Nothing hangs in the air: a roof, an upper floor or an upstairs wall with no standing wall left under
+# it comes down. (The count of fallen walls further down brought a house down once most of it had gone,
+# but a floor slab and a few odd pieces that can't be destroyed kept that count low, and a roof was left
+# floating over bare ground.)
+func _support_check(bld: Dictionary) -> void:
+	var walls = []
+	for o in bld["cols"]:
+		if o.alive and o.lo.y - o.gy < 1.0 and o.hi.y - o.gy > 1.7 and not o.has_meta("furn"):
+			walls.append(o)
+	for o in bld["cols"].duplicate():
+		if not o.alive or o.lo.y - o.gy <= 1.5:
+			continue
+		var n = 0
+		for w in walls:
+			if w.hi.x > o.lo.x - 0.4 and w.lo.x < o.hi.x + 0.4 and w.hi.z > o.lo.z - 0.4 and w.lo.z < o.hi.z + 0.4:
+				n += 1
+				if n >= 2:
+					break
+		# (a wide roof or floor needs two walls under it; a small piece, a balcony say, hangs on by one)
+		var big = (o.hi.x - o.lo.x) * (o.hi.z - o.lo.z) > 12.0
+		if n == 0 or (big and n < 2):
+			destroy_col(o, 3)
+
 func _collapse_check(c) -> void:
 	if not c.has_meta("bld"):
 		return
 	var bld = c.get_meta("bld")
 	if c.lo.y - c.gy < 0.5 and not c.has_meta("furn"):
 		bld["fallen"] += 1
+	_support_check(bld)
 	if bld.get("down", 0) >= 2 or bld["walls0"] == 0:
 		return
 	var frac = float(bld["fallen"]) / float(bld["walls0"])

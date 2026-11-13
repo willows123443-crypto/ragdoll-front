@@ -207,6 +207,7 @@ var cmd_near_t = 0.0
 var squeal_t = 0.0
 var mark_d = 0.0
 var burning = false
+var burn_smoke = 0
 var burn_fx = 0.0
 var bailed = false
 # aircraft
@@ -3002,7 +3003,15 @@ func _burn_tick(dt: float) -> void:
 	burn_fx -= dt
 	if burn_fx <= 0.0:
 		burn_fx = 0.15
-		G.fx.flame_puff(center() + Vector3(randf_range(-0.6, 0.6), 0.9, spec["len"] * 0.25), Vector3(0, 3.0, 0), 1.2)
+		# flames licking up from where the engine is (not one big ball of light over the bonnet), and
+		# black smoke rolling off them
+		var fwd = forward()
+		var at: Vector3 = pos + fwd * spec["len"] * 0.28 + Vector3(randf_range(-0.45, 0.45), (center().y - pos.y) + 0.45 + randf_range(-0.1, 0.15), randf_range(-0.45, 0.45))
+		G.fx.flame_puff(at, Vector3(randf_range(-0.3, 0.3), 2.4, randf_range(-0.3, 0.3)), 0.55)
+		burn_smoke -= 1
+		if burn_smoke <= 0:
+			burn_smoke = 4
+			G.fx._one_shot_smoke(at + Vector3(0, 0.7, 0), Color(0.1, 0.095, 0.09, 0.55), 2, 2.6, 0.7, 2.4, false)
 	burn_t += dt
 	if not bailed and (hp < spec["hp"] * 0.4 or (spec["tracked"] and burn_t > 3.0)):
 		bailed = true

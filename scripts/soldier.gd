@@ -536,23 +536,27 @@ func drop_helmet() -> void:
 func _helmet_parts(head: Node3D, helm: Material, band: Material, cloth: Material) -> void:
 	# The heads are boxes, so the helmets are shells shaped to fit them: a rounded-off square crown sitting
 	# down over the top of the head, just clear of the brows, with each side's own brim or skirt.
-	var by = 0.08
-	var bs = 0.296
+	var by = 0.072
+	var bs = 0.308
 	match team % 4:
-		0:  # a deep, well-rounded steel pot that comes down over the sides, with a narrow rolled rim
-			_hbox(head, Vector3(0.292, 0.17, 0.298), Vector3(0, 0.122, 0.004), helm, 0.075)
-			_hbox(head, Vector3(0.312, 0.016, 0.318), Vector3(0, 0.042, 0.004), helm, 0.007)
-		1:  # a high crown, a short peak over the eyes, and a skirt flaring out over the ears and the back of the neck
-			_hbox(head, Vector3(0.288, 0.175, 0.298), Vector3(0, 0.125, 0.01), helm, 0.072)
+		0:  # a steel pot pulled well down: low over the top of the head, round the sides over the ears and
+			# down the back of the neck, with a short rolled rim over the brow
+			_hbox(head, Vector3(0.298, 0.135, 0.304), Vector3(0, 0.106, 0.004), helm, 0.058)
+			_hbox(head, Vector3(0.292, 0.016, 0.03), Vector3(0, 0.044, -0.146), helm, 0.007)
+			_hbox(head, Vector3(0.298, 0.1, 0.02), Vector3(0, 0.012, 0.15), helm, 0.008)
+			for e in [-1.0, 1.0]:
+				_hbox(head, Vector3(0.02, 0.085, 0.235), Vector3(e * 0.147, 0.02, 0.035), helm, 0.008)
+		1:  # a crown, a short peak over the eyes, and a skirt flaring out over the ears and the back of the neck
+			_hbox(head, Vector3(0.294, 0.14, 0.302), Vector3(0, 0.108, 0.01), helm, 0.058)
 			_hbox(head, Vector3(0.25, 0.016, 0.05), Vector3(0, 0.05, -0.15), helm, 0.006, Vector3(0.28, 0, 0))
 			_hbox(head, Vector3(0.26, 0.075, 0.018), Vector3(0, 0.035, 0.16), helm, 0.006, Vector3(-0.38, 0, 0))
 			for e in [-1.0, 1.0]:
 				_hbox(head, Vector3(0.018, 0.07, 0.21), Vector3(e * 0.148, 0.036, 0.035), helm, 0.006, Vector3(0, 0, e * 0.36))
 		2:  # a bowl pulled down on the head with a wide flat brim
-			_hbox(head, Vector3(0.28, 0.12, 0.28), Vector3(0, 0.14, 0.0), helm, 0.05)
-			_hbox(head, Vector3(0.38, 0.014, 0.38), Vector3(0, 0.088, 0.0), helm, 0.007)
-			by = 0.1
-			bs = 0.284
+			_hbox(head, Vector3(0.288, 0.11, 0.288), Vector3(0, 0.118, 0.0), helm, 0.048)
+			_hbox(head, Vector3(0.37, 0.014, 0.37), Vector3(0, 0.07, 0.0), helm, 0.007)
+			by = 0.084
+			bs = 0.292
 		_:  # a soft field cap with a peak
 			_hbox(head, Vector3(0.268, 0.09, 0.268), Vector3(0, 0.15, 0.0), cloth, 0.03)
 			_hbox(head, Vector3(0.2, 0.014, 0.085), Vector3(0, 0.112, -0.165), cloth, 0.006, Vector3(0.12, 0, 0))
@@ -1962,14 +1966,17 @@ func set_class(c: String) -> void:
 	dressings = 6 if c == "medic" else 2
 	if c == "officer" and parts.size() > 2:
 		# officers wear a peaked cap instead of a helmet
+		# (every piece of the helmet goes, its rim and skirt too: the rim used to be left round his head
+		# under the cap)
 		for m in parts[2].get_children():
-			if m is MeshInstance3D and m.position.y > 0.05:
+			if m is MeshInstance3D and (m.has_meta("helmet") or m.position.y > 0.05):
 				m.visible = false
+				m.remove_meta("helmet")
 		var capm = _mat("cap", Color(0.42, 0.12, 0.1), false)
-		_hpart(parts[2], "cyl", Vector3(0.3, 0.09, 0.31), Vector3(0, 0.12, 0), capm)
-		_hpart(parts[2], "cyl", Vector3(0.36, 0.03, 0.37), Vector3(0, 0.17, -0.01), capm)
-		_hpart(parts[2], "cyl", Vector3(0.2, 0.015, 0.14), Vector3(0, 0.075, -0.13), _mat("boot", Color(0.16, 0.14, 0.12), false))
-		_hpart(parts[2], "cyl", Vector3(0.31, 0.03, 0.32), Vector3(0, 0.09, 0), _mat("band" + G.TEAM_BAND[team].to_html(), G.TEAM_BAND[team], false))
+		_hpart(parts[2], "cyl", Vector3(0.3, 0.085, 0.31), Vector3(0, 0.1, 0), capm)
+		_hpart(parts[2], "cyl", Vector3(0.35, 0.028, 0.36), Vector3(0, 0.15, -0.01), capm)
+		_hpart(parts[2], "cyl", Vector3(0.2, 0.015, 0.14), Vector3(0, 0.062, -0.135), _mat("boot", Color(0.16, 0.14, 0.12), false))
+		_hpart(parts[2], "cyl", Vector3(0.31, 0.03, 0.32), Vector3(0, 0.074, 0), _mat("band" + G.TEAM_BAND[team].to_html(), G.TEAM_BAND[team], false))
 	if not zombie and parts.size() > 6 and not has_meta("kit_" + c):
 		set_meta("kit_" + c, true)
 		_class_kit(c)
@@ -2490,12 +2497,16 @@ func compute_muzzle() -> void:
 		if d.length() > 0.05:
 			gun_dir = d.normalized()
 		grip = hand_r()
-	muzzle = grip + gun_dir * (W["len"] - 0.24)
 	var u: Vector3 = (parts[1].global_basis.y)
 	u = u - gun_dir * u.dot(gun_dir)
 	if u.length_squared() < 1e-4:
 		u = Vector3.UP - gun_dir * gun_dir.y
 	u = u.normalized()
+	# The weapon rides on top of the hands, not through the middle of them: the hand on the fore-end
+	# cups it from underneath and the other is down on the pistol grip. (It used to be threaded through
+	# both fists like a spit.)
+	grip += u * 0.052
+	muzzle = grip + gun_dir * (W["len"] - 0.24)
 	var want_xf = Transform3D(Basis(u.cross(gun_dir), u, gun_dir), grip)
 	if state == "alive" and not is_player and not lod_frozen:
 		# AI hands wobble with the ragdoll; ease the gun toward where it should be so it doesn't shake

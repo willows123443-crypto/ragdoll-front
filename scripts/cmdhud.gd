@@ -229,6 +229,12 @@ func _watch() -> void:
 # glance (in a fight, pinned, out of ammunition, clearing a building, building, with a tank); a squad
 # that's just walking or waiting gets nothing. From high up it shrinks to a coloured dot.
 const SHOWN = ["Fighting", "Pinned!", "Out of ammo", "Clearing rooms", "Building", "With the tank"]
+func _on_panel(p: Vector2) -> bool:
+	for c in [G.ui.dock, G.ui.squad_cards, G.ui.order_card]:
+		if c != null and is_instance_valid(c) and c.is_visible_in_tree() and c.get_global_rect().grow(6.0).has_point(p):
+			return true
+	return mm_rect.grow(6.0).has_point(p)
+
 func _status_pills() -> void:
 	var cam: Camera3D = G.pc.cam
 	if cam == null:
@@ -251,6 +257,9 @@ func _status_pills() -> void:
 		if cam.is_position_behind(top):
 			continue
 		var p = cam.unproject_position(top)
+		# (not on top of the buttons, the squad cards or the map)
+		if _on_panel(p):
+			continue
 		var col: Color = st[1]
 		if high:
 			draw_circle(p, 5.0, Color(0, 0, 0, 0.6))

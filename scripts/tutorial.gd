@@ -180,6 +180,13 @@ static func _frame(p: Vector3) -> void:
 	G.pc.rts_yaw = atan2(p.x - c.x, p.z - c.z) if gap > 2.0 else G.pc.rts_yaw
 	G.pc.rts_dist = clampf(gap * 1.6 + 24.0, 46.0, 150.0)
 
+# (the lesson's panel gets out of the way of the menu and the battle setup screen)
+static func _panel_show() -> void:
+	if panel != null and is_instance_valid(panel):
+		var want = not G.ui.menu_open()
+		if panel.visible != want:
+			panel.visible = want
+
 static func _mine() -> Array:
 	# (a man knocked off his feet is still one of yours: only the dead and the wounded are out of it)
 	return G.soldiers.filter(func(s): return s.team == 0 and s.state in ["alive", "down", "getup", "riding"])

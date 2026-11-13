@@ -598,7 +598,7 @@ func start_game(o: Dictionary) -> void:
 	Ops.reset()
 	Stretcher.reset()
 	Prod.reset()
-	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2 and not G.tutorial:
+	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2 and not Tutorial.starting:
 		# (your own side's AI commander, when it has one; when you're in command, what's known of theirs)
 		if G.settings.get("ai_side", false):
 			G.ui.radio(0, "Your commander is %s" % Commander.STYLE_TEXT[Commander.style_of(0)])
@@ -3064,6 +3064,14 @@ func _tutorial_test() -> void:
 				set_meta("tpic0", true)
 				await RenderingServer.frame_post_draw
 				get_viewport().get_texture().get_image().save_png(pic + "/tut_panel.png")
+			if Tutorial.step_i == 1 and Tutorial.t_step > 0.6 and not has_meta("tpic1"):
+				set_meta("tpic1", true)
+				await RenderingServer.frame_post_draw
+				get_viewport().get_texture().get_image().save_png(pic + "/tut_send.png")
+			if Tutorial.step_i == 3 and Tutorial.t_step > 3.0 and not has_meta("tpic3"):
+				set_meta("tpic3", true)
+				await RenderingServer.frame_post_draw
+				get_viewport().get_texture().get_image().save_png(pic + "/tut_attack.png")
 			if Tutorial.step_i == 3 and Tutorial.t_step > 3.0 and (mine.any(func(s): return G.sim_time - s.fired_t < 2.0) or Tutorial.t_step > 40.0):
 				if mine.size() > 0:
 					G.pc.rts_focus = mine[0].pos

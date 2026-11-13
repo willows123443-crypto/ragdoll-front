@@ -539,7 +539,9 @@ func _render_tools() -> void:
 	var ids = tabs.map(func(x): return x[0])
 	if not (tab in ids):
 		tab = ids[0]
-		tool = "sel" if tab in ["orders", "command"] else _cards(tab)[0][0]
+		# (in command of a battle nothing is armed to begin with: the first click on the map selects, it
+		# doesn't try to buy a rifle squad there)
+		tool = "sel" if (tab in ["orders", "command"] or G.mode == "commander") else _cards(tab)[0][0]
 	for c in dock_tabs.get_children():
 		c.queue_free()
 	for t in tabs:

@@ -166,6 +166,20 @@ static func _spawn_foes(p: Vector3, n: int, dug: bool) -> void:
 			s.aim_yaw = s.body_yaw
 			foes.append(s)
 
+# Bring the squad and the ring it's being sent to into the view together, below the lesson's panel.
+static func _frame(p: Vector3) -> void:
+	var men = _mine()
+	var c: Vector3 = d["home"]
+	if not men.is_empty():
+		c = Vector3.ZERO
+		for s in men:
+			c += s.pos
+		c /= float(men.size())
+	var gap = G.dist2d(c, p)
+	G.pc.rts_focus = c.lerp(p, 0.5)
+	G.pc.rts_yaw = atan2(p.x - c.x, p.z - c.z) if gap > 2.0 else G.pc.rts_yaw
+	G.pc.rts_dist = clampf(gap * 1.6 + 24.0, 46.0, 150.0)
+
 static func _mine() -> Array:
 	# (a man knocked off his feet is still one of yours: only the dead and the wounded are out of it)
 	return G.soldiers.filter(func(s): return s.team == 0 and s.state in ["alive", "down", "getup", "riding"])
@@ -185,6 +199,7 @@ static func _next() -> void:
 			_marker(null, Color.WHITE)
 		1:
 			_marker(d["p1"], Color(1.0, 0.85, 0.2, 0.9))
+			_frame(d["p1"])
 		2:
 			_marker(null, Color.WHITE)
 			d["cam0"] = [G.pc.rts_focus, G.pc.rts_dist, G.pc.rts_yaw]
@@ -192,9 +207,11 @@ static func _next() -> void:
 		3:
 			_spawn_foes(d["p2"], 5, true)
 			_marker(d["p2"], Color(1.0, 0.25, 0.2, 0.9))
+			_frame(d["p2"])
 		4:
 			_spawn_foes(d["p3"], 7, true)
 			_marker(d["p3"], Color(1.0, 0.25, 0.2, 0.9))
+			_frame(d["p3"])
 			Support.points[0] = maxi(Support.points[0], 45)
 			d["strikes0"] = Support.missions.size()
 			d["struck_t"] = -1.0
@@ -245,7 +262,7 @@ static func step(dt: float) -> void:
 			var c0: Array = d["cam0"]
 			var done: Array = d["cam_done"]
 			done[0] = done[0] or G.dist2d(G.pc.rts_focus, c0[0]) > 12.0
-			done[1] = done[1] or absf(G.pc.rts_dist - c0[1]) > 8.0
+			done[1] = done[1] or absf(G.pc.rts_dist - c0[1]) > 4.0
 			done[2] = done[2] or absf(G.wrap_a(G.pc.rts_yaw - c0[2])) > 0.3
 			body.text = STEPS[2][1] + "\n%s pan    %s zoom    %s turn" % ["[done]" if done[0] else "[  ]", "[done]" if done[1] else "[  ]", "[done]" if done[2] else "[  ]"]
 			if done[0] and done[1] and done[2]:

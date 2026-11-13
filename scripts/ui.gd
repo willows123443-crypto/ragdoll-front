@@ -1579,7 +1579,7 @@ func _campaign_info() -> void:
 			camp_info.text = "%s (%d men%s) selected: click a region with a gold border to move there (an enemy army in it means a battle). Recruit on the right." % [a["name"], a["str"], "" if Campaign.supplied(0, a["region"]) else ", cut off"]
 		else:
 			var left = Campaign.data["armies"].filter(func(x): return x["team"] == 0 and not x["moved"]).size()
-			camp_info.text = "Click one of your armies to see its men and recruit for it, and to move it (%d still to move this turn), then End turn. %s (red arrows; it may think again if you move men in the way.)" % [left, Campaign.plan_text()]
+			camp_info.text = "Click one of your armies to see its men and recruit for it, and to move it (%d still to move this turn), then End turn. %s%s" % [left, Campaign.plan_text(), " (The red arrows; it may think again if you move men in the way.)" if not Campaign.data.get("plan", []).is_empty() else ""]
 
 const CAMP_W = 790.0
 const CAMP_H = 404.0

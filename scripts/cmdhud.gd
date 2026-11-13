@@ -281,9 +281,24 @@ func _status_pills() -> void:
 		var men = q["members"].filter(func(m): return is_instance_valid(m) and m.state == "alive" and m.vehicle == null)
 		if men.is_empty():
 			continue
-		var st: Array = SquadCards.doing(q)
-		if not (st[0] in SHOWN):
+		# What a squad is doing can change several times a second (a man loses sight of his target and
+		# finds it again), and the tag came and went with it: words flashing over the squad. A word
+		# that goes up now stays up a couple of seconds, and another doesn't replace it until it has.
+		var now = G.sim_time
+		var cur: Array = SquadCards.doing(q)
+		var h = q.get("pill")
+		if cur[0] in SHOWN:
+			if h == null or (h[0][0] != cur[0] and now >= h[1]):
+				h = [cur, now + 2.5, h[2] if h != null else null]
+			elif h[0][0] == cur[0]:
+				h[1] = maxf(h[1], now + 2.0)
+		elif h != null and now >= h[1]:
+			h = null
+		if h == null:
+			q.erase("pill")
 			continue
+		q["pill"] = h
+		var st: Array = h[0]
 		var c = Vector3.ZERO
 		for m in men:
 			c += m.pos
@@ -291,10 +306,15 @@ func _status_pills() -> void:
 		# The tag hangs on one of the squad's men, the one nearest its middle. (It used to sit over the
 		# middle itself, and when a squad was strung out or split in two that was a patch of empty
 		# ground: a word floating over nothing.)
-		var anchor = men[0]
-		for m in men:
-			if m.pos.distance_squared_to(c) < anchor.pos.distance_squared_to(c):
-				anchor = m
+		# (and it stays on the same man while he's still about the middle of the squad, instead of
+		# hopping from one to another as they move)
+		var anchor = h[2]
+		if anchor == null or not is_instance_valid(anchor) or not (anchor in men) or anchor.pos.distance_to(c) > 12.0:
+			anchor = men[0]
+			for m in men:
+				if m.pos.distance_squared_to(c) < anchor.pos.distance_squared_to(c):
+					anchor = m
+			h[2] = anchor
 		var foot: Vector3 = anchor.pos + Vector3(0, 1.9, 0)
 		if cam.is_position_behind(foot):
 			continue

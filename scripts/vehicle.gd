@@ -2209,6 +2209,9 @@ func _on_rails() -> bool:
 		and G.sim_time >= rail_off_t and path.size() > 0 and not ghosting()
 
 static var RAILS = true
+static var WATCH = true        # (--watch=0 in the crash test: the lorry watchdog off, to compare)
+var rail_man = null
+var rail_ask_t = 0.0
 
 # how many metres of its line ahead are clear (and whether what's on it is standing still)
 func _rail_look() -> void:
@@ -2231,6 +2234,7 @@ func _rail_look() -> void:
 			near_s.append(o)
 	rail_gap = 1e9
 	rail_static = false
+	rail_man = null
 	var d = half_l + 0.6
 	while d < reach + half_l:
 		var q = _path_point(d)
@@ -2251,6 +2255,8 @@ func _rail_look() -> void:
 			var dz2 = o.pos.z - q.z
 			if dx2 * dx2 + dz2 * dz2 < (half_w + 0.55) * (half_w + 0.55):
 				rail_gap = d - half_l
+				rail_static = o.vel.length() < 0.3
+				rail_man = o
 				return
 		if use_grid and d < 16.0 and d > half_l + 1.5 and W.veh_blocked_at(q.x, q.z, half_w + 0.1, g, true, on_steep):
 			rail_gap = d - half_l
@@ -2276,6 +2282,16 @@ func _rail_drive(final: Vector3, dt: float) -> Array:
 	if rail_gap < 1e8:
 		v_ok = minf(v_ok, sqrt(2.0 * 5.0 * maxf(rail_gap - 3.0, 0.0)))
 	var held = rail_gap < 3.6
+	# (a man of ours standing on the line is asked to step off it, rather than waited for)
+	if WATCH and held and rail_man != null and is_instance_valid(rail_man) and rail_wait > 1.0 and G.sim_time > rail_ask_t:
+		rail_ask_t = G.sim_time + 3.0
+		if rail_man.state == "alive" and not rail_man.is_player and rail_man.move_target == null and rail_man.task != "post":
+			var fw = forward()
+			var side = Vector3(fw.z, 0, -fw.x)
+			if side.dot(rail_man.pos - pos) < 0.0:
+				side = -side
+			AI.release_cover(rail_man)
+			AI.go_to(rail_man, rail_man.pos + side * 4.0, 3.5)
 	brake_hard = held and speed > 1.0
 	if held and absf(speed) < 0.5:
 		rail_wait += dt
@@ -2294,7 +2310,33 @@ func _rail_drive(final: Vector3, dt: float) -> Array:
 	arc_block = 0.0
 	return [arc_pick[0], arc_pick[1]]
 
+# A supply lorry that hasn't got anywhere: it's taken off its line and left to the ordinary driver, with
+# its back-out-and-go-round, for a good while; and if that doesn't shift it either, it's let through
+# whatever is holding it. (On its line it would wait for something in the way, be let off for a few
+# seconds, come back, and wait again, for ever.)
+var sup_p = Vector3.ZERO
+var sup_t = 0.0
+var sup_lv = 0
+func _supply_watch(final: Vector3, dt: float) -> void:
+	if mission == null or mission.get("type", "") != "supply" or not WATCH:
+		return
+	sup_t += dt
+	if G.dist2d(pos, sup_p) > 5.0:
+		sup_p = pos
+		sup_t = 0.0
+		sup_lv = 0
+	elif sup_t > (14.0 if sup_lv == 0 else 20.0) and G.dist2d(final, pos) > 10.0:
+		sup_t = 0.0
+		sup_lv += 1
+		rail_off_t = G.sim_time + 45.0
+		rail_wait = 0.0
+		if sup_lv >= 2:
+			set_meta("ghost_t", G.sim_time + 9.0)
+		_unwedge()
+		_plan_detour()
+
 func _arc_wrap(aim: Vector3, final: Vector3, dt: float) -> Array:
+	_supply_watch(final, dt)
 	if _on_rails():
 		prog_t = 0.0
 		prog_p = pos

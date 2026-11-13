@@ -6,8 +6,8 @@ extends RefCounted
 const FIRE = ["artillery", "airstrike", "recon"]
 const TROOPS = ["paradrop", "heli"]
 const AIR = ["gunship", "fighter", "bomber"]
-const LIGHT = ["jeep", "motorbike", "technical", "ambulance", "ammotruck"]
-const ARMOUR = ["halftrack", "armoredcar", "tank", "heavytank", "plough", "atgun", "bridger", "radar"]
+const LIGHT = ["jeep", "motorbike", "technical", "techaa", "ambulance", "ammotruck"]
+const ARMOUR = ["halftrack", "gunbus", "armoredcar", "tank", "oldtank", "heavytank", "plough", "atgun", "bridger", "radar"]
 const BASE = ["fob", "sandbags", "wire", "traps", "mgnest", "mortarpit", "aa", "cbgun", "tower", "bunker", "hospital", "radio", "depot", "supply", "observer"]
 const DIG_IN = ["sandbags", "wire", "traps", "mgnest", "bunker", "tower"]
 

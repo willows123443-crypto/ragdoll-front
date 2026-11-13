@@ -447,6 +447,10 @@ static func fuel_tick(v, dt: float, thr: float) -> float:
 	var burn = 240.0 if v.spec["tracked"] else 420.0
 	var idle = 1.0 / (1500.0 if v.spec["tracked"] else 3000.0) if v.driver() != null else 0.0
 	v.fuel = maxf(0.0, v.fuel - absf(v.speed) / maxf(v.spec["speed"], 1.0) * dt / burn - idle * dt)
+	# (the lorries that carry the fuel don't run out of it: a supply truck that went dry on its rounds
+	# sat where it stopped for the rest of the battle, and the supply with it)
+	if v.kind == "supplytruck" or v.kind == "ammotruck":
+		v.fuel = maxf(v.fuel, 0.3)
 	# topping up: at your own base crates, FOBs, depots and supply dumps (not at crates lying about the
 	# map), or from a supply or ammo truck parked alongside
 	v.supply_t += dt

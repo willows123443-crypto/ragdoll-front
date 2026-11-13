@@ -149,6 +149,15 @@ static func _keep_running(t: int, v, h) -> void:
 		if st != null and st.get("convoy") == v:
 			st["convoy"] = null
 		var was_home = v.mission.get("stage", 0) >= 2
+		# The second time running it hasn't budged from this spot: it's boxed in (parked up against a
+		# tent, or with something built round it since), and no amount of trying again will drive it
+		# out. Its crew manhandle it to the nearest clear ground and it carries on from there.
+		var sp0 = v.get_meta("box_p", Vector3(1e9, 0, 1e9))
+		if G.dist2d(v.pos, sp0) < 8.0:
+			_dig_out(v, v.mission.get("exit", v.pos) if was_home else v.mission.get("drop", v.pos))
+			v.remove_meta("box_p")
+		else:
+			v.set_meta("box_p", v.pos)
 		v.mission = null
 		v.cmd = null
 		v.remove_meta("prog_p")
@@ -162,6 +171,45 @@ static func _keep_running(t: int, v, h) -> void:
 			v.mission = {"type": "supply", "fleet": true, "drop": v.pos, "exit": home, "stage": 2, "wait": 0.0, "site": null, "pts": 0}
 		else:
 			v.set_meta("load_t", 0.0)
+
+static func _dig_out(v, toward: Vector3) -> void:
+	var W = G.world
+	var half: float = v.spec["len"] * 0.5 + 0.8
+	var best = null
+	var bs = 1e9
+	for r in [9.0, 13.0, 18.0, 24.0, 32.0]:
+		for k in range(12):
+			var a = TAU * k / 12.0
+			var q = Vector3(v.pos.x + cos(a) * r, 0, v.pos.z + sin(a) * r)
+			if W.veh_blocked_at(q.x, q.z, half, W.vastar, true):
+				continue
+			var clear = true
+			for o in G.vehicles:
+				if o != v and not o.dead and G.dist2d(o.pos, q) < 7.0:
+					clear = false
+					break
+			if not clear:
+				continue
+			for o in G.soldiers_near(q):
+				if o.state != "dead" and o.vehicle == null and G.dist2d(o.pos, q) < 3.0:
+					clear = false
+					break
+			if not clear:
+				continue
+			var sc = G.dist2d(q, toward) + r * 0.5
+			if sc < bs:
+				bs = sc
+				best = q
+		if best != null:
+			break
+	if best == null:
+		return
+	v.pos = Vector3(best.x, W.ground_y(best.x, best.z), best.z)
+	v.yaw = atan2(toward.x - best.x, toward.z - best.z)
+	v.speed = 0.0
+	v._plan_detour()
+	if v.team == 0:
+		G.ui.radio(0, "A supply truck was boxed in at %s: its crew have manhandled it clear" % AI.grid_ref(v.pos))
 
 # an idle truck back at HQ, loaded: off to whichever dump or FOB needs it most
 static func _dispatch(t: int, v, h) -> void:

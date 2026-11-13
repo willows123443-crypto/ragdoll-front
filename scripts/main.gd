@@ -130,6 +130,7 @@ func _ready() -> void:
 			G.merge_boxes = a.substr(8) == "1"
 		if a.begins_with("--rails="):
 			Vehicle.RAILS = a.substr(8) == "1"
+			Vehicle.WATCH = _arg("watch", "1") != "0"
 		if a == "--crashtest":
 			_crash_test()
 		if a == "--invtest":
@@ -3407,9 +3408,12 @@ func _veh_overlap(a, b, shrink: float) -> bool:
 
 # --crashtest --map= --mode= --secs= --armor=: an AI battle with vehicles, counting every time two of them
 # run into each other (their outlines overlapping), who was moving, and how long they stayed locked together
+var stall = {}
+var stall_max = 0.0
+var stall_at = ""
 func _crash_test() -> void:
 	await _wait(0.5)
-	G.settings["ai_side"] = true
+	G.settings["ai_side"] = _arg("aiside", "1") == "1"
 	seed(int(_arg("seed", "21")))
 	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "commander"), "size": int(_arg("size", "14")), "limit": 999, "reinforce": true, "armor": _arg("armor", "heavy"), "reinf_mode": "truck", "teams": 2})
 	var secs = float(_arg("secs", "240"))
@@ -3424,6 +3428,19 @@ func _crash_test() -> void:
 		await _wait(0.1)
 		t += 0.1
 		var vs = G.vehicles.filter(func(v): return is_instance_valid(v) and not v.spec.get("air", false) and not v.spec.get("static", false) and v.kind != "mortar")
+		# (--dump=1: you're in command and have had a supply dump built 75 m out from your headquarters)
+		if _arg("dump", "") != "" and absf(t - 3.0) < 0.05:
+			var hq0 = Build.hq(0)
+			if hq0 != null:
+				var out: Vector3 = (G.world.capture - hq0["p"])
+				out.y = 0.0
+				var dp = G.main._free_spot(hq0["p"] + out.normalized() * 75.0)
+				Build.place("supply", 0, dp, out.normalized(), true, true)
+		# (--dry=1: every supply lorry's tank is all but empty, twenty seconds in)
+		if _arg("dry", "") != "" and absf(t - 20.0) < 0.05:
+			for v in G.vehicles:
+				if v.kind == "supplytruck" or v.kind == "ammotruck":
+					v.fuel = 0.01
 		if int(t * 10.0 + 0.5) % 600 == 0:
 			var sites = [{}, {}]
 			for st in Build.sites:
@@ -3431,6 +3448,17 @@ func _crash_test() -> void:
 					var kk = str(st["kind"]) + ("" if Build.alive(st) else "(x)")
 					sites[st["team"]][kk] = sites[st["team"]].get(kk, 0) + 1
 			print("CRASHTEST t=%.0f fleets %d/%d started %s runs %s pts %s alive %d/%d sites %s" % [t, Logistics.count(0), Logistics.count(1), str(Logistics.started), str(Logistics.delivered), str(Support.points), G.alive_count(0), G.alive_count(1), str(sites)])
+		for v in vs:
+			if not v.dead and (v.kind == "supplytruck" or v.kind == "ammotruck") and v.mission != null and (v.why == "drive" or _arg("dump", "") != ""):
+				var st0 = stall.get(v.get_instance_id(), [v.pos, 0.0])
+				if G.dist2d(v.pos, st0[0]) > 4.0:
+					st0 = [v.pos, 0.0]
+				else:
+					st0[1] += 0.1
+					if st0[1] > stall_max:
+						stall_max = st0[1]
+						stall_at = "%s t%d at (%.0f, %.0f) rails %s gap %.1f why '%s' driver %s goal %.0f m path %d mission %s" % [v.kind, v.team, v.pos.x, v.pos.z, v._on_rails(), v.rail_gap, v.why, v.driver() != null, G.dist2d(v.goal, v.pos), v.path.size(), str(v.mission).substr(0, 160)]
+				stall[v.get_instance_id()] = st0
 		for v in vs:
 			if not v.dead and absf(v.speed) > 0.5:
 				veh_s += 0.1
@@ -3467,7 +3495,7 @@ func _crash_test() -> void:
 									print("CRASHDBG %s yaw %.2f pick %s block %.1f hold %.1f mission %s | %s" % [m.kind, m.yaw, str(m.arc_pick), m.arc_block, m.arc_hold, str(m.mission.get("type", "?")) if m.mission != null else "-", str(m.get_meta("arc_dbg", "")).substr(0, 420)])
 		touching = now
 	print("CRASHTEST %s: %d collisions in %.0f vehicle-seconds of driving (%.1f per 100) | %.0f s spent overlapping | %s" % [_arg("map", "town"), events, veh_s, events * 100.0 / maxf(veh_s, 1.0), stuck_s, str(kinds)])
-	print("CRASHTEST supply runs delivered %s, stuck events: %s" % [str(Logistics.delivered), StuckLog.summary()])
+	print("CRASHTEST supply runs delivered %s, stuck events: %s | longest a lorry sat still on a run: %.0f s (%s)" % [str(Logistics.delivered), StuckLog.summary(), stall_max, stall_at])
 	for v in G.vehicles:
 		if not v.dead and (v.kind == "supplytruck" or v.kind == "ammotruck"):
 			print("CRASHTEST   lorry t%d %s at (%.0f, %.0f) spd %.1f mission %s rails %s wait %.1f gap %.1f path %d driver %s" % [v.team, v.kind, v.pos.x, v.pos.z, v.speed, str(v.mission.get("type", "?")) + "/" + str(v.mission.get("state", v.mission.get("leg", "?"))) if v.mission != null else "-", v._on_rails(), v.rail_wait, v.rail_gap, v.path.size(), v.driver() != null])

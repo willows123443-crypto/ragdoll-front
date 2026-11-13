@@ -75,7 +75,12 @@ func _process(dt: float) -> void:
 		return
 	# right-hand side, a little above the middle (placed by hand: the HUD root has no size to anchor to)
 	var vs = get_viewport_rect().size
-	panel.position = Vector2(vs.x - 214.0, vs.y * 0.5 - 170.0)
+	var py = vs.y * 0.5 - 170.0
+	# (in command of a battle the map and the alerts are up there too: the floors go underneath them)
+	var ch = G.ui.cmdhud
+	if ch != null and is_instance_valid(ch) and ch.active():
+		py = maxf(py, ch.alerts_box.position.y + (ch.alerts_box.get_combined_minimum_size().y if ch.alerts_box.get_child_count() > 0 else 0.0) + 8.0)
+	panel.position = Vector2(vs.x - 214.0, py)
 	t -= dt
 	if t > 0.0:
 		queue_redraw()

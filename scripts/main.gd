@@ -478,7 +478,7 @@ func start_attract() -> void:
 	if G.started or G.editor.active:
 		return
 	var keep = G.ui.title.visible
-	start_game({"map": G.map_id, "mode": "capture", "size": 6, "limit": 999999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	start_game({"map": G.map_id, "mode": "capture", "size": 6, "limit": 999999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2, "quiet": true})
 	G.attract = true
 	G.ui.title.visible = keep
 	G.ui.menu.visible = false
@@ -490,6 +490,11 @@ func stop_attract() -> void:
 func start_game(o: Dictionary) -> void:
 	if not Tutorial.starting:
 		Tutorial.stop()
+	# (what the last battle was saying, the one behind the title screen included, isn't news in this one)
+	for box in [G.ui.radio_box, G.ui.feed_box]:
+		if box != null and is_instance_valid(box):
+			for c in box.get_children():
+				c.queue_free()
 	G.attract = false
 	G.bal = {}
 	G.win_team = -2
@@ -598,7 +603,7 @@ func start_game(o: Dictionary) -> void:
 	Ops.reset()
 	Stretcher.reset()
 	Prod.reset()
-	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2 and not Tutorial.starting:
+	if G.mode not in ["sandbox", "horde"] and G.team_count() == 2 and not Tutorial.starting and not o.get("quiet", false):
 		# (your own side's AI commander, when it has one; when you're in command, what's known of theirs)
 		if G.settings.get("ai_side", false):
 			G.ui.radio(0, "Your commander is %s" % Commander.STYLE_TEXT[Commander.style_of(0)])
@@ -3047,8 +3052,22 @@ func _draw_test() -> void:
 # does every step notice it's been done and move on, and does the enemy stay put?
 func _tutorial_test() -> void:
 	await _wait(0.5)
+	# (the way the title screen does it: with the little battle behind the menu running first)
+	if _arg("attract", "") != "":
+		start_attract()
+		await _wait(float(_arg("attract", "15")))
+		stop_attract()
+		G.ui.title.visible = false
+		G.ui.menu.visible = false
 	Tutorial.start()
 	await _wait(1.0)
+	if _arg("attract", "") != "":
+		var lines = []
+		if G.ui.radio_box != null:
+			for c in G.ui.radio_box.get_children():
+				if not c.is_queued_for_deletion() and c.get_child_count() > 0:
+					lines.append(c.get_child(0).get_parsed_text())
+		print("TUTORIALTEST radio lines at the start: %s | tool %s | attract %s" % [str(lines), G.ui.tool, G.attract])
 	var times = []
 	var last = -1
 	var t = 0.0

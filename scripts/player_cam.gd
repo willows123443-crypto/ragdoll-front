@@ -221,8 +221,9 @@ func player_update(s) -> void:
 	s.crouch_t = 0.9 if s.p_crouch else 0.0
 	s.prone_t = s.p_prone
 	var lean = 0.0
-	# hold Q for the squad command wheel (a tap still leans left)
-	if Keys.held(KEY_Q) and s.state == "alive" and s.squad != null:
+	# hold ` (the key under Esc) for the squad command wheel. (It was on Q, which is also lean left, so
+	# leaning for more than a moment brought the wheel up.)
+	if Input.is_key_pressed(KEY_QUOTELEFT) and s.state == "alive" and s.squad != null:
 		wheel_hold += G.DT
 		if wheel_hold > 0.28 and not wheel_open:
 			wheel_open = true
@@ -926,6 +927,12 @@ func _unhandled_input(ev: InputEvent) -> void:
 			if ev.pressed:
 				if G.player != null:
 					if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+						Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+					elif _lock_lost():
+						# The browser didn't hand the mouse over (it won't, outside a click, or for a moment
+						# after Esc): the pointer was left on screen and he couldn't be aimed or fired. Ask
+						# again from inside this click.
+						Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 						Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 					else:
 						mouse_down = true
@@ -2475,7 +2482,23 @@ func _covered(q: Vector3) -> bool:
 			return true
 	return false
 
+# in a browser: we asked for the mouse but the page hasn't got it
+func _lock_lost() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	return JavaScriptBridge.eval("document.pointerLockElement == null", true) == true
+
+var lock_hint_t = 0.0
+func _lock_hint(dt: float) -> void:
+	lock_hint_t -= dt
+	if lock_hint_t > 0.0:
+		return
+	lock_hint_t = 1.0
+	if G.player != null and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not G.ui.menu_open() and _lock_lost():
+		G.ui.message("Click once to take hold of the mouse")
+
 func _order_preview_tick() -> void:
+	_lock_hint(get_process_delta_time())
 	var used = 0
 	var show = G.started and G.player == null and not G.ui.menu_open() and not G.editor.active and not G.ui.tool.begins_with("b:")
 	var men = _foot_men() if show else []
@@ -2486,7 +2509,10 @@ func _order_preview_tick() -> void:
 			var r = _line_spots(fdrag_a, fdrag_b, men)
 			spots = r["spots"]
 			face = r["face"]
-		elif drag_from == null:
+		elif drag_from == null and test_mouse != null:
+			# (the rings that followed the pointer about, showing where each man would stand, are gone:
+			# they were never quite where the pointer was. A line dragged with the right button still
+			# shows where everyone will go.)
 			var mp = get_viewport().get_mouse_position() if test_mouse == null else test_mouse
 			var over_ui = get_viewport().has_method("gui_get_hovered_control") and get_viewport().gui_get_hovered_control() != null
 			var p = null if over_ui and test_mouse == null else _ground_at(mp)

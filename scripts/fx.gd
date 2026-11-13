@@ -768,6 +768,12 @@ func decal(pos: Vector3, size: float, scorch: bool) -> void:
 # ---------------------------------------------------------------- tracers
 func tracer(o: Vector3, dir: Vector3, ln: float, speed: float, on_hit: Callable, visible_: bool, bright: bool = false) -> void:
 	var t = {"o": o, "dir": dir, "len": ln, "d": 0.0, "speed": speed, "on_hit": on_hit, "done": false, "mesh": null, "tail": 3.5}
+	# (a tracer round fired from right beside the view, your own machine gun's, is seen end-on, and its
+	# wide glow was a big orange square leaving the muzzle: those are drawn as plain tracers)
+	if bright and G.player != null:
+		var cam0 = get_viewport().get_camera_3d()
+		if cam0 != null and cam0.global_position.distance_to(o) < 5.0:
+			bright = false
 	if visible_ and bright:
 		if bright_pool.is_empty():
 			_make_bright_pool()

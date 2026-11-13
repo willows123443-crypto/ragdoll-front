@@ -2600,7 +2600,8 @@ static func aim_and_fire(s) -> void:
 					var sd2 = Vector3(-ad.z, 0, ad.x) * (1.0 if randf() < 0.5 else -1.0)
 					go_to(s, s.pos - ad * 1.2 + sd2 * 1.2, 3.0)
 		elif s.reload_t <= 0.0 and err < 0.12 and exposed_for_shot(s) and not s.gun_blocked:
-			if s.burst > 0 and _held(s, point):
+			if s.burst > 0 and (_held(s, point) or (s.W["rocket"] and not s.is_player and s.has_meta("launcher") and tgt != null and tgt.vehicle == null)):
+				# (no rockets at a man on foot: that's what the carbine is for)
 				s.burst = 0
 			elif s.burst > 0:
 				if s.fire_cd <= 0.0:

@@ -94,7 +94,7 @@ static func coordinated(team: int, target: Vector3, home: Vector3) -> void:
 	op["target"] = target
 	op["home"] = home
 	var fired = false
-	if Rules.callin_ok(team, "artillery") and Support.points.size() > team and Support.points[team] >= Support.COSTS["artillery"] and Support.arty_ready(team) and not ClassAI.roofed(target):
+	if Rules.ai_callin_ok() and Rules.callin_ok(team, "artillery") and Support.points.size() > team and Support.points[team] >= Support.COSTS["artillery"] and Support.arty_ready(team) and not ClassAI.roofed(target):
 		fired = Support.call_in(team, "artillery", target)
 	if not fired:
 		# no guns of our own to spare: the mortars get the target instead

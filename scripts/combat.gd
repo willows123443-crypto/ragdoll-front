@@ -948,7 +948,7 @@ static func _marker_popped(at: Vector3, owner_s) -> void:
 		if o.team == owner_s.team and o.state == "alive" and o.radio_pack != null and o.radio_cd <= 0.0 \
 				and ((owner_s.squad != null and o.squad == owner_s.squad) or G.dist2d(o.pos, at) < 90.0):
 			best = o
-	if best != null:
+	if best != null and (owner_s.is_player or Rules.ai_callin_ok()):
 		best.radio_cd = 45.0
 		ClassAI.call_artillery(best, at)
 	elif owner_s == G.player:

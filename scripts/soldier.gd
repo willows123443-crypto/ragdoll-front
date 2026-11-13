@@ -1261,14 +1261,23 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 				_show_mag(false)
 			"rocket":
 				# a fresh rocket from over the shoulder slid into the back of the tube
-				var back = rh - g * 0.32 + Vector3(0, 0.06, 0)
-				var over = P[1] - uf * 0.15 + Vector3(0, 0.12, 0) + ur * 0.12
-				if rk < 0.3:
-					lh = home.lerp(over, rk / 0.3)
-				elif rk < 0.65:
-					lh = over.lerp(back, (rk - 0.3) / 0.35)
+				# The tube comes down off the shoulder, muzzle to the ground; a hand goes back over the
+				# shoulder for a rocket from the pack, brings it round and seats it in the tube with a
+				# push; then the tube goes back up. Five seconds, and he's no use to anyone while it lasts.
+				var tip = sin(clampf((rk - 0.04) / 0.9, 0.0, 1.0) * PI)
+				g = (g + Vector3(0, -0.55 * tip, 0)).normalized()
+				var back = rh - g * 0.34 + Vector3(0, 0.05, 0)
+				var over = P[1] - uf * 0.2 + Vector3(0, 0.16, 0) + ur * 0.14
+				if rk < 0.22:
+					lh = home.lerp(over, rk / 0.22)
+				elif rk < 0.36:
+					lh = over + Vector3(0, 0.03 * sin((rk - 0.22) / 0.14 * PI), 0)
+				elif rk < 0.62:
+					lh = over.lerp(back, (rk - 0.36) / 0.26)
+				elif rk < 0.76:
+					lh = back + g * 0.1 * sin((rk - 0.62) / 0.14 * PI)
 				else:
-					lh = back.lerp(home, (rk - 0.65) / 0.35)
+					lh = back.lerp(home, (rk - 0.76) / 0.24)
 				_show_mag(false)
 			_:
 				if rk < 0.25:
@@ -1997,6 +2006,7 @@ func set_class(c: String) -> void:
 		smokes = 3
 		give_radio.call_deferred(true)
 	if c == "at" and wid == "rpg":
+		set_meta("launcher", "rpg")
 		rockets = 6
 	fausts = 0
 	if c == "rifleman" and randf() < 0.35:

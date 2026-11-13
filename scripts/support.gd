@@ -193,6 +193,8 @@ static func step(dt: float) -> void:
 		ai_t[t] = (randf_range(14.0, 24.0) if G.mode == "commander" else randf_range(25.0, 45.0)) * float(Commander.handicap(t)["spend"])
 		if G.mode == "commander" and G.sim_time < float(Commander.handicap(t)["grace"]):
 			continue
+		if not Rules.ai_callin_ok():
+			continue
 		_ai_spend(t)
 
 # supply coming in: worth more or less to a hard or an easy enemy (the odd fractions are carried over)

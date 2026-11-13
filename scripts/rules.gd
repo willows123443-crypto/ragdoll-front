@@ -89,6 +89,11 @@ static func callins(t: int, mode: String = "") -> Array:
 
 const FLYING = ["airstrike", "recon", "paradrop", "heli", "gunship", "fighter", "bomber"]
 
+# Does an AI commander get to call in support, vehicles and troops of its own? Not in a sandbox, where
+# what turns up is up to you, unless you've switched it on in the battle setup.
+static func ai_callin_ok() -> bool:
+	return G.mode != "sandbox" or G.settings.get("sandbox_ai_support", false)
+
 static func callin_ok(t: int, what: String) -> bool:
 	if G.storm and what in FLYING:
 		return false          # storm: nothing flies

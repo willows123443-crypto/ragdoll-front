@@ -1120,6 +1120,12 @@ func _build_menu() -> void:
 	opt_cmd = _option(["You command (you build and buy)", "AI commander (watch or help)"], 1 if G.settings.get("ai_side", false) else 0)
 	opt_cmd.item_selected.connect(func(i): G.settings["ai_side"] = i == 1)
 	_row(v, "Who runs your side", opt_cmd)
+	var opt_ais = _option(["No: only you call things in", "Yes: the AI calls in its own"], 1 if G.settings.get("sandbox_ai_support", false) else 0)
+	opt_ais.item_selected.connect(func(i):
+		G.settings["sandbox_ai_support"] = i == 1
+		G.save_prefs())
+	opt_ais.tooltip_text = "In a sandbox, whether the AI commanders buy vehicles and call in artillery, air strikes, paratroopers and helicopters by themselves. Other modes always allow it."
+	_row(v, "AI support in sandbox", opt_ais)
 	var diffs = ["easy", "normal", "hard"]
 	var opt_diff = _option(["Easy: slower, poorer, worse shots", "Normal", "Hard: quicker, richer, better shots"], maxi(0, diffs.find(G.settings.get("difficulty", "normal"))))
 	opt_diff.item_selected.connect(func(i): G.settings["difficulty"] = diffs[i])

@@ -416,7 +416,9 @@ static func _medic(s, known: bool) -> bool:
 # ---------------------------------------------------------------- radio operators: artillery on enemy clusters
 static func _radio(s) -> void:
 	s.radio_cd -= 2.0
-	if s.radio_cd > 0.0 or not Support.arty_ready(s.team):
+	# (in a sandbox the guns fire when you say so: a radio operator doesn't call a barrage of his own
+	# unless AI support is switched on in the battle setup)
+	if s.radio_cd > 0.0 or not Support.arty_ready(s.team) or not Rules.ai_callin_ok():
 		return
 	var target = artillery_target(s.team, s.pos, 40.0)
 	if target == null:
@@ -598,7 +600,32 @@ static func grenade_structure(s) -> void:
 	Combat.throw_grenade(s, es[1], "frag")
 	s.job_cd = 10.0
 
+# A rocket man carries a carbine as well. The launcher comes off his shoulder when there's armour about or
+# an enemy strongpoint to knock a hole in; the rest of the time he fights with the carbine like anyone
+# else. (He used to have nothing but the launcher, and fired rocket after rocket at single riflemen.)
+static func _launcher_or_carbine(s) -> void:
+	var L = str(s.get_meta("launcher", ""))
+	if L == "" or s.is_player or s.reload_t > 0.0 or G.sim_time < float(s.get_meta("swap_t", 0.0)):
+		return
+	var need = false
+	if s.rockets > 0:
+		for v in G.vehicles:
+			if v.team != s.team and v.team >= 0 and not v.dead and v.kind != "mortar" and G.dist2d(v.pos, s.pos) < 90.0:
+				need = true
+				break
+		if not need and Build.enemy_site_near(s.team, s.pos, 60.0) != null:
+			need = true
+	var want = L if need else "carbine"
+	if s.wid != want:
+		s.set_meta("swap_t", G.sim_time + 5.0)
+		s.set_weapon(want)
+		if want == L:
+			s.mag = 1
+			if randf() < 0.5:
+				G.fx.callout(s, G.pick(["Armour! Getting the tube up!", "Rocket up!", "Loading the launcher!"]))
+
 static func _anti_tank(s) -> bool:
+	_launcher_or_carbine(s)
 	if s.wid != "rpg" and s.wid != "atrifle":
 		return false
 	if s.wid == "rpg" and s.rockets <= 0:

@@ -895,11 +895,6 @@ func _process(dt: float) -> void:
 		_cycle_step(dt * Engine.time_scale)
 	G.fx.update_callouts(dt)
 	G.ui.update_hud(dt)
-	if Tutorial.on:
-		Tutorial._panel_show()      # (every frame, not every tick: the game is paused while a menu is up)
-	# (the row of orders for the selected men was left lying across the menu and the battle setup screen)
-	if G.ui.order_card != null and G.ui.order_card.visible and G.ui.menu_open():
-		G.ui.order_card.visible = false
 	for f in point_flags:
 		if is_instance_valid(f):
 			f.get_child(1).rotation.y = sin(Time.get_ticks_msec() * 0.003 + f.position.x) * 0.3

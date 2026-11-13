@@ -46,6 +46,13 @@ func active() -> bool:
 		and (G.ui.tacmap == null or not G.ui.tacmap.visible)
 
 func _process(dt: float) -> void:
+	# (this runs while the game is paused, which the battle's own frame doesn't: the lesson's panel and
+	# the row of orders get out of the way of the menu and the battle setup screen)
+	var in_menu = G.ui.menu_open()
+	if Tutorial.panel != null and is_instance_valid(Tutorial.panel) and Tutorial.panel.visible == in_menu:
+		Tutorial.panel.visible = not in_menu
+	if in_menu and G.ui.order_card != null and G.ui.order_card.visible:
+		G.ui.order_card.visible = false
 	var on = active()
 	visible = on
 	click.visible = on

@@ -46,8 +46,8 @@ static func start() -> void:
 	d["home"] = home
 	d["to"] = to
 	d["p1"] = G.main._free_spot(home + to * 38.0)
-	d["p2"] = G.main._free_spot(home + to * 104.0)
-	d["p3"] = G.main._free_spot(home + to * 165.0)
+	d["p2"] = G.main._free_spot(home + to * 90.0)
+	d["p3"] = G.main._free_spot(home + to * 148.0)
 	G.pc.selection.clear()
 	# (the view starts on the squad itself, clear of the buttons along the bottom)
 	G.pc.rts_focus = home + to * 12.0
@@ -161,6 +161,11 @@ static func _spawn_foes(p: Vector3, n: int, dug: bool) -> void:
 		var s = G.main.spawn_soldier(1, q.x, q.z, "rifle")
 		if s != null:
 			s.order = {"mode": "hold", "point": s.pos}
+			# (rifles only: one rifle grenade into a squad standing close together ended the lesson's
+			# first fight in a second)
+			s.rgren = 0
+			s.grenades = 0
+			s.fausts = 0
 			s.set_meta("tut_post", s.pos)
 			s.body_yaw = atan2(-to.x, -to.z)
 			s.aim_yaw = s.body_yaw
@@ -176,9 +181,9 @@ static func _frame(p: Vector3) -> void:
 			c += s.pos
 		c /= float(men.size())
 	var gap = G.dist2d(c, p)
-	G.pc.rts_focus = c.lerp(p, 0.5)
+	G.pc.rts_focus = c.lerp(p, 0.46)
 	G.pc.rts_yaw = atan2(p.x - c.x, p.z - c.z) if gap > 2.0 else G.pc.rts_yaw
-	G.pc.rts_dist = clampf(gap * 1.6 + 24.0, 46.0, 150.0)
+	G.pc.rts_dist = clampf(gap * 1.9 + 6.0, 50.0, 135.0)
 
 static func _mine() -> Array:
 	# (a man knocked off his feet is still one of yours: only the dead and the wounded are out of it)

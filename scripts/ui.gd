@@ -2848,7 +2848,7 @@ func _build_order_card() -> void:
 	order_card.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	# one slim strip just above the dock: what's selected, then the orders as small buttons
 	order_grid = HFlowContainer.new()
-	order_grid.add_theme_constant_override("h_separation", 3)
+	order_grid.add_theme_constant_override("h_separation", 2)
 	order_grid.add_theme_constant_override("v_separation", 3)
 	order_title = _label("", 12, Color(0.96, 0.9, 0.75))
 	order_title.custom_minimum_size = Vector2(0, 24)
@@ -2925,7 +2925,7 @@ func _order_card_tick() -> void:
 			b.focus_mode = Control.FOCUS_NONE
 			b.text = it[1]
 			b.custom_minimum_size = Vector2(0, 24)
-			b.add_theme_font_size_override("font_size", 12)
+			b.add_theme_font_size_override("font_size", 11)
 			b.tooltip_text = {"hold": "Hold here", "cover": "Take cover nearby", "charge": "Charge!", "fallback": "Fall back", "smoke": "Throw a smoke screen",
 				"vstop": "Stop where they are", "vback": "Back to the rally point", "vfree": "Drive freely", "vsmoke": "Pop smoke", "dismount": "Get out", "vtow": "Hitch up the nearest field gun or broken-down vehicle and tow it (press again to unhitch)",
 				"free": "Act freely", "holdfire": "Hold fire: shoot only if shot at, or at an enemy within 15 m (press again to let them fire)", "ambush": "Ambush: lie low here and hold fire until the enemy is within 30 m",

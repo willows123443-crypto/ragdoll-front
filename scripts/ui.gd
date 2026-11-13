@@ -2881,6 +2881,9 @@ func radio(team: int, text: String) -> void:
 		radio_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		radio_box.alignment = BoxContainer.ALIGNMENT_END
 		root.add_child(radio_box)
+	# (in command of a battle the hint line and the row of orders run along just above the dock: the
+	# radio's lines sit above those instead of underneath them)
+	_place(radio_box, Control.PRESET_BOTTOM_LEFT, 12, -400 if (G.mode == "commander" and G.player == null) else -330, 420, 180)
 	# a radio line: a dark strip with the side's colour down its edge, the same as the alerts
 	var line = PanelContainer.new()
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE

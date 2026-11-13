@@ -1023,6 +1023,7 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 				v.hit_from = pos
 				G.bal_add("flip_blast")
 				v.flip_over(signf(side.dot(rgt)) * -1.0, randf() < 0.3, "blast")
+	var blast_lv = Levels.storey_of(pos)
 	for s in G.soldiers:
 		if s.state == "riding" and s.hidden_in_vehicle:
 			continue
@@ -1030,6 +1031,11 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 		if owner_s != null and s.state != "dead" and s.team != owner_s.team and d < 60.0:
 			AI.add_intel(s, owner_s, owner_s.pos, 10.0, false)
 		if d > R * 1.7:
+			continue
+		# a solid floor between him and it (a shell on the roof, a grenade on the storey below): he hears it, no more
+		if blast_lv > -99 and Levels.storey_of(s.parts[0].global_position) != blast_lv and Levels.storey_of(s.parts[0].global_position) > -99:
+			if s.state == "alive":
+				s.supp = maxf(s.supp, 0.6)
 			continue
 		var exposed = not G.blocked(pos + Vector3(0, 0.4, 0), s.chest())
 		var f = (1.0 - d / (R * 1.7)) * (1.0 if exposed else 0.35)

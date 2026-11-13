@@ -193,6 +193,18 @@ static func drive_in(t: int, kind: String, dest: Vector3, crew: bool = true, wai
 		var fw = G.flat(G.world.capture - dest).normalized()
 		return G.main.spawn_vehicle(kind, t, G.main._free_spot(dest), atan2(fw.x, fw.z), crew)
 	var e = offmap(edge_near_hq(t))
+	# (not on top of one that's only just arrived and is still sitting there: further back up the road)
+	var outw = G.flat(e - G.world.capture).normalized()
+	for k in range(6):
+		var taken = false
+		for o in G.vehicles:
+			if is_instance_valid(o) and G.dist2d(o.pos, e) < 10.0:
+				taken = true
+				break
+		if not taken:
+			break
+		e += outw * 11.0
+		e.y = G.world.ground_y(e.x, e.z)
 	var v = G.main.spawn_vehicle(kind, t, e, atan2(dest.x - e.x, dest.z - e.z), true)
 	# ours report to the depot or rally point and wait for orders; the AI's just drive on into the fight
 	if v != null and t == 0 and G.mode == "commander" and wait and not G.ai_runs(0):

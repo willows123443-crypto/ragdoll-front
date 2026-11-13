@@ -56,6 +56,7 @@ static var planes: Array = []
 static var air_seen: Array = [-999.0, -999.0, -999.0, -999.0]
 
 static func reset() -> void:
+	arty_next = [0.0, 0.0, 0.0, 0.0]
 	air_seen = [-999.0, -999.0, -999.0, -999.0]
 	earned = [0, 0, 0, 0]
 	last_pts = [-1, -1, -1, -1]
@@ -81,7 +82,17 @@ static func reset() -> void:
 # a second round lands closer, and then the battery fires for effect.
 static var missions: Array = []
 
+# one battery a side: after a fire mission the guns aren't to be had again for a while, whoever asks
+# (the radio operators and the AI commander used to call them down independently, one after another)
+static var arty_next = [0.0, 0.0, 0.0, 0.0]
+const ARTY_GAP = 95.0
+
+static func arty_ready(team: int) -> bool:
+	return team < 0 or team >= arty_next.size() or G.sim_time >= arty_next[team]
+
 static func fire_mission(team: int, target: Vector3, caller, shells: int, spread: float, power: float) -> void:
+	if team >= 0 and team < arty_next.size():
+		arty_next[team] = G.sim_time + ARTY_GAP * randf_range(0.9, 1.3)
 	var a = randf() * TAU
 	var err = Vector3(cos(a), 0, sin(a)) * randf_range(28.0, 45.0)
 	var op = Build.observer_for(team, target)
@@ -200,7 +211,7 @@ static func _ai_spend(t: int) -> void:
 			if Prod.can_research(t, up) and Prod.start_research(t, up):
 				return
 	var opts = []
-	var tgt = ClassAI.artillery_target(t, G.world.spawn[t], 30.0)
+	var tgt = ClassAI.artillery_target(t, G.world.spawn[t], 30.0) if arty_ready(t) else null
 	if tgt != null:
 		opts.append("artillery")
 		opts.append("airstrike")
@@ -318,6 +329,8 @@ static func call_in(team: int, what: String, target: Vector3, relay: bool = fals
 			else:
 				fire_mission(team, target, null, 8, 12.0, 1.6)
 		"airstrike":
+			if team >= 0 and team < arty_next.size():
+				arty_next[team] = maxf(arty_next[team], G.sim_time + ARTY_GAP * 0.7)
 			_air_strike(team, target)
 			G.ui.radio(team, "Air strike inbound on %s" % AI.grid_ref(target))
 		"recon":

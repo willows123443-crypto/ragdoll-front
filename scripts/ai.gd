@@ -896,9 +896,20 @@ static func perceive(s) -> void:
 			if d2 < 160.0 * 160.0:
 				cand.append([d2 * (0.5 if o == s.target else 1.0) * (6.0 if o == Modes.pilot else 1.0), o])
 	cand.sort_custom(func(a, b): return a[0] < b[0])
-	for k in range(mini(6, cand.size())):
+	# (the nearest six that could be in view, and more than six if none of those is: indoors the nearest
+	# enemies are often through a wall or on the floor above, and men were walking past the one enemy
+	# they could see because he was the seventh nearest)
+	var looked = 0
+	var my_lv = Levels.level_of(s.pos) if Levels.on and Levels.inside(s.pos, 0.6) else -1
+	for k in range(cand.size()):
+		if looked >= 6 and (vis != null or looked >= 14):
+			break
 		var o = cand[k][1]
 		var d = sqrt(cand[k][0])
+		# someone on another floor of the building, away from its stairs: can't be seen, don't waste a look
+		if my_lv >= 0 and d < 30.0 and Levels.inside(o.pos, 0.6) and Levels.level_of(o.pos) != my_lv and absf(o.pos.y - s.pos.y) > 2.4:
+			continue
+		looked += 1
 		var rng = G.view_range
 		if rng < 100.0:
 			# in the dark you see what's lit by flares, or the flash of someone firing
@@ -1103,7 +1114,11 @@ static func ambush_hold(s, tgt) -> bool:
 	var d = G.dist2d(tgt.pos, s.pos)
 	var open = not tgt.in_cover and tgt.vehicle == null
 	var spotted = s.supp > 0.15 or s.hurt_t > 0.0
-	if d < 22.0 or (open and d < 38.0) or spotted:
+	# (holding fire is for letting them walk INTO the trap: one who's crossing in front or going away
+	# isn't coming any closer, and gets shot now. Men were letting the enemy walk right past them)
+	var tv = Vector3(tgt.vel.x, 0, tgt.vel.z)
+	var closing = tv.length() > 0.6 and tv.normalized().dot(G.flat(s.pos - tgt.pos).normalized()) > 0.45
+	if d < 34.0 or (open and d < 48.0) or spotted or not closing:
 		q["sprung_t"] = G.sim_time
 		ambushes += 1
 		var L = Squad.leader_of(q)
@@ -1290,6 +1305,11 @@ static func decide(s) -> void:
 			s.flare_cd = randf_range(18.0, 28.0)
 			Combat.flare(s.pos, s.threat)
 			G.fx.callout(s, G.pick(["Flare up!", "Light 'em up!"]))
+	# on his way round a flank or in to clear a building, and there's an enemy right there in plain view:
+	# he doesn't run on past him. The errand's off; what follows is the usual business of a contact
+	if s.task in ["flank_move", "clear"] and s.move_target != null and s.vis_t != null and is_instance_valid(s.vis_t) and s.vis_t.state == "alive" and G.dist2d(s.vis_t.pos, s.pos) < 30.0:
+		s.task = null
+		stop_move(s)
 	if ClassAI.busy(s) or (s.task in ["sapper", "flank_move", "clear"] and s.move_target != null):
 		return
 	if s.task == "fetch" and s.vis_t == null:
@@ -2394,8 +2414,10 @@ static func aim_and_fire(s) -> void:
 	if tgt != null and s.has_meta("knife") and G.main.is_night() and G.dist2d(tgt.pos, s.pos) < 9.0 and tgt.vis_t != s and s.task != "medic":
 		go_to(s, tgt.pos, 4.6)        # creep in for the knife rather than give ourselves away
 		return
-	if tgt != null and s.has_meta("scout") and G.dist2d(tgt.pos, s.pos) > 15.0 and s.supp < 0.3:
-		tgt = null        # scouts don't give themselves away
+	# scouts don't give themselves away: but that means lying low a long way off, not strolling past an
+	# enemy forty metres away in plain view with a slung rifle. Close in, seen or shot at, a scout fights
+	if tgt != null and s.has_meta("scout") and G.dist2d(tgt.pos, s.pos) > 42.0 and s.supp < 0.3 and s.hurt_t <= 0.0 and tgt.vis_t != s:
+		tgt = null
 	if tgt != null and ambush_hold(s, tgt):
 		tgt = null
 		s.want_peek = false

@@ -1298,6 +1298,11 @@ static func too_near_hq(kind: String, team: int, p: Vector3) -> bool:
 	var h: Dictionary = h0
 	return G.dist2d(h["p"], p) < SUPPLY_MIN
 
+# inside a building that has floors and rooms of its own (the Ministry offices): nothing gets built in
+# there by the AI: a depot in a corridor or a gun pit in an office made no sense and blocked the place up
+static func indoors(p: Vector3, r: float) -> bool:
+	return Levels.on and Levels.inside(p, r + 1.5)
+
 static func find_spot(want: Vector3, kind: String, spread: float, tries: int = 14, relaxed: bool = false, team: int = -1):
 	var sz: Vector2 = KINDS[kind]["size"]
 	var r = maxf(sz.x, sz.y) * 0.5
@@ -1315,7 +1320,7 @@ static func find_spot(want: Vector3, kind: String, spread: float, tries: int = 1
 		var p = want if k == 0 else want + Vector3(randf_range(-spread, spread), 0, randf_range(-spread, spread))
 		if p.x < b.position.x + r + 3.0 or p.x > b.end.x - r - 3.0 or p.z < b.position.y + r + 3.0 or p.z > b.end.y - r - 3.0:
 			continue
-		if not clear_at(p, kind, relaxed) or (team >= 0 and too_near_hq(kind, team, p)):
+		if not clear_at(p, kind, relaxed) or (team >= 0 and too_near_hq(kind, team, p)) or indoors(p, r):
 			continue
 		var gp = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
 		if team < 0:

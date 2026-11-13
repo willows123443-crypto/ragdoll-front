@@ -444,9 +444,70 @@ func _blast_setup() -> void:
 	add_child(cmi)
 	_clods_clear()
 
+var clod_xf: Array = []        # where each clod came to rest (null while it's in the air or unused)
+var clod_sz: Array = []
+var clod_chk = 0
+var cut_sig = 0
+var cut_t = 0.0
+
+# is this spot on a part of a building that's been lifted off for the view (a roof, an upper storey)?
+func _cut_away(p: Vector3) -> bool:
+	var cuts: Dictionary = G.world.cut_now
+	if cuts.is_empty():
+		return false
+	var bi: int = G.world.building_index(p, 0.7)
+	return bi >= 0 and cuts.has(bi) and p.y - float(G.world.buildings[bi].get("gy", 0.0)) > float(cuts[bi])
+
+# when the upper storeys or the roof of a building are lifted off to see inside, what's lying on them goes
+# with them (rubble and clods on a floor you couldn't see used to hang in the air over the one you could)
+func _cut_tick(dt: float) -> void:
+	cut_t -= dt
+	if cut_t > 0.0 or G.world == null:
+		return
+	cut_t = 0.25
+	var cuts: Dictionary = G.world.cut_now
+	var sig = cuts.hash()
+	if cuts.is_empty() and sig == cut_sig:
+		return
+	for d in debris_list:
+		var b = d["b"]
+		if is_instance_valid(b):
+			var hide = _cut_away(b.global_position)
+			if b.visible == hide:
+				b.visible = not hide
+	if sig != cut_sig and clod_mm != null:
+		for i in range(clod_xf.size()):
+			if clod_xf[i] != null:
+				_clod_show(i)
+	cut_sig = sig
+
+func _clod_show(i: int) -> void:
+	var xf: Transform3D = clod_xf[i]
+	if _cut_away(xf.origin):
+		clod_mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0)))
+	else:
+		clod_mm.set_instance_transform(i, xf)
+
+# what they were lying on has gone (a desk smashed, a wall blown down): they fall the rest of the way
+func drop_clods(lo: Vector3, hi: Vector3) -> void:
+	if clod_mm == null:
+		return
+	for i in range(clod_xf.size()):
+		if clod_xf[i] == null:
+			continue
+		var o: Vector3 = clod_xf[i].origin
+		if o.x > lo.x and o.x < hi.x and o.z > lo.z and o.z < hi.z and o.y > lo.y and o.y < hi.y:
+			clod_fly.append([i, o, Vector3(randf_range(-0.6, 0.6), 0.5, randf_range(-0.6, 0.6)), clod_xf[i].basis.orthonormalized(), Vector3.UP, randf_range(1.0, 4.0), clod_sz[i], true])
+			clod_xf[i] = null
+
 func _clods_clear() -> void:
 	clod_fly.clear()
 	clod_i = 0
+	clod_xf.resize(CLODS)
+	clod_sz.resize(CLODS)
+	for i in range(CLODS):
+		clod_xf[i] = null
+		clod_sz[i] = Vector3.ONE * 0.1
 	if clod_mm != null:
 		for i in range(CLODS):
 			clod_mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0)))
@@ -498,6 +559,7 @@ func _blast_extras(pos: Vector3, power: float) -> void:
 				clod_fly.remove_at(k)
 				break
 		clod_mm.set_instance_color(slot, col)
+		clod_xf[slot] = null
 		clod_fly.append([slot, Vector3(pos.x, gy + 0.2, pos.z), Vector3(cos(ang) * out, randf_range(5.0, 11.0) * (0.7 + 0.3 * power), sin(ang) * out),
 			Basis.from_euler(Vector3(randf() * 6.0, randf() * 6.0, randf() * 6.0)), Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5).normalized(), randf_range(4.0, 12.0),
 			Vector3(sz * randf_range(0.8, 1.6), sz * randf_range(0.5, 0.9), sz * randf_range(0.8, 1.4)), false])
@@ -522,6 +584,15 @@ func _blast_step(dt: float) -> void:
 			f["mat"].albedo_color.a = (1.0 - k) * (1.0 - k)
 			if k >= 1.0:
 				f["m"].visible = false
+	# a couple of the ones lying about are looked at each frame: still on something? (a door they landed on
+	# has swung open, a wreck has been cleared away...)
+	for k in range(2):
+		clod_chk = (clod_chk + 1) % CLODS
+		if clod_xf[clod_chk] != null:
+			var o: Vector3 = clod_xf[clod_chk].origin
+			if o.y - G.world.surface_y(o.x, o.z, o.y + 0.3) > 0.45:
+				clod_fly.append([clod_chk, o, Vector3.ZERO, clod_xf[clod_chk].basis.orthonormalized(), Vector3.UP, 2.0, clod_sz[clod_chk], true])
+				clod_xf[clod_chk] = null
 	var i = clod_fly.size() - 1
 	while i >= 0:
 		var c = clod_fly[i]
@@ -546,6 +617,9 @@ func _blast_step(dt: float) -> void:
 		c[3] = b
 		clod_mm.set_instance_transform(c[0], Transform3D(b.scaled_local(c[6]), p))
 		if done:
+			clod_xf[c[0]] = Transform3D(b.scaled_local(c[6]), p)
+			clod_sz[c[0]] = c[6]
+			_clod_show(c[0])
 			clod_fly.remove_at(i)
 		i -= 1
 
@@ -686,7 +760,8 @@ func decal(pos: Vector3, size: float, scorch: bool) -> void:
 	decal_i = (decal_i + 1) % decals.size()
 	d.texture_albedo = scorch_tex if scorch else blood_tex
 	d.size = Vector3(size, 3.0, size * randf_range(0.7, 1.3))
-	d.global_position = Vector3(pos.x, G.world.ground_y(pos.x, pos.z) + 0.5, pos.z)
+	# (on the floor it happened on: a shell on a roof used to scorch the ground floor three storeys below)
+	d.global_position = Vector3(pos.x, G.world.surface_y(pos.x, pos.z, pos.y + 0.6) + 0.5, pos.z)
 	d.rotation = Vector3(0, randf() * TAU, 0)
 	d.visible = true
 
@@ -876,6 +951,7 @@ func step(dt: float) -> void:
 	_rain_follow()
 	if clod_mm != null:
 		_blast_step(dt)
+	_cut_tick(dt)
 	_ambient_planes(dt)
 	if marks_mat != null:
 		marks_mat.set_shader_parameter("now", G.sim_time)

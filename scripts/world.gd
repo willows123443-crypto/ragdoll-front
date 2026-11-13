@@ -1605,6 +1605,7 @@ func _drop_resting_on(c) -> void:
 			s.unsettle()
 			for b in s.parts:
 				b.sleeping = false
+	G.fx.drop_clods(lo, hi)
 	for d in G.fx.debris_list:
 		var b = d["b"]
 		if is_instance_valid(b) and inside.call(b.global_position):
@@ -1624,6 +1625,10 @@ func destroy_col(c, depth: int = 0) -> void:
 		_collapse_check(c)
 	if is_instance_valid(c.body):
 		c.body.queue_free()
+	# bodies, rubble and clods of earth lying on it come down with it (this was only ever done for things
+	# removed before the battle began, so in a fight whatever lay on a smashed desk or a blown wall stayed
+	# hanging where it was)
+	_drop_resting_on(c)
 	var zero = Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0))
 	for r in c.vis:
 		if r[1] == -2:
@@ -1911,8 +1916,12 @@ func wall_mark(c, cp: Vector3, from: Vector3, hole: bool) -> void:
 func damage_area(pos: Vector3, R: float, power: float) -> void:
 	# in commander mode the HQ is dug in too deep for shells: it has to be taken on the ground
 	var hq_safe = Combat.arty and G.mode == "commander"
+	# a blast in (or on top of) a building with solid floors stays on its own storey
+	var blast_lv = Levels.storey_of(pos)
 	for c in cols_in_rect(pos.x - R, pos.z - R, pos.x + R, pos.z + R):
 		if not c.dest or not c.alive:
+			continue
+		if blast_lv > -99 and Levels.storey_of(Vector3((c.lo.x + c.hi.x) * 0.5, c.lo.y + 0.3, (c.lo.z + c.hi.z) * 0.5)) != blast_lv:
 			continue
 		if hq_safe and c.has_meta("hq"):
 			continue

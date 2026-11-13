@@ -154,10 +154,12 @@ static func _solid(horiz: bool, fixed: float, a: float, b: float, y0: float, dy:
 	var n = maxi(1, int(ceil(L / 3.0)))
 	for i in range(n):
 		var c = a + (i + 0.5) * L / n
+		# (the building itself can't be knocked down: its walls, floors and roof stand whatever lands on
+		# them, so the fight for it happens inside it; the furniture and barricades still break)
 		if horiz:
-			w.add_box(c, y0 + dy, fixed, L / n, h, t, color, {"dest": true, "hp": hp})
+			w.add_box(c, y0 + dy, fixed, L / n, h, t, color, {"dest": false, "hp": hp})
 		else:
-			w.add_box(fixed, y0 + dy, c, t, h, L / n, color, {"dest": true, "hp": hp})
+			w.add_box(fixed, y0 + dy, c, t, h, L / n, color, {"dest": false, "hp": hp})
 
 static func _frame(horiz: bool, fixed: float, g0: float, g1: float, y0: float, t: float) -> void:
 	var fc = Color(0.36, 0.27, 0.18)

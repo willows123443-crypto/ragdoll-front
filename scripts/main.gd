@@ -108,6 +108,16 @@ func _ready() -> void:
 			_cam_test()
 		if a == "--perfrun":
 			_perf_run()
+		if a == "--blindtest":
+			_blind_test()
+		if a == "--crashtest":
+			_crash_test()
+		if a == "--invtest":
+			_inv_test()
+		if a == "--groundtest":
+			_ground_test()
+		if a == "--rooftest":
+			_roof_test()
 		if a.begins_with("--weather="):
 			G.settings["weather"] = a.substr(10)
 		if a.begins_with("--polishshot="):
@@ -2924,6 +2934,338 @@ func _pose_shot(dir: String) -> void:
 	print("POSESHOT half turn: body turned %.2f rad, steps taken %d, feet end %.2fm and %.2fm from under him" % [absf(G.wrap_a(s.body_yaw - y0)), swings, offL, offR])
 	get_tree().quit()
 
+# --rooftest: twelve heavy shells on the Ministry's roof and four grenades in a corridor: what's left of
+# the walls, the furniture, and the men on the floor below the roof
+func _roof_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "office", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.0)
+	var count = func() -> Array:
+		var walls = 0
+		var furn = 0
+		for c in G.world.cols:
+			if c.alive and Levels.inside(Vector3((c.lo.x + c.hi.x) * 0.5, 0, (c.lo.z + c.hi.z) * 0.5), 0.5):
+				if c.hi.y - c.lo.y > 2.0:
+					walls += 1
+				elif c.dest:
+					furn += 1
+		return [walls, furn]
+	var c0: Array = count.call()
+	var men = []
+	for i in range(4):
+		var m = spawn_soldier(0, -20.0 + i * 6.0, 0.0, "rifle")
+		m.pos.y = Levels.floor_y(2)
+		m.order = {"mode": "hold", "point": m.pos}
+		men.append(m)
+	await _wait(1.0)
+	var roof_y: float = Levels.floor_y(3) + 0.1
+	for i in range(12):
+		Combat.explode(Vector3(-30.0 + i * 5.0, roof_y, randf_range(-8.0, 8.0)), null, 2.0)
+		await _wait(0.2)
+	await _wait(1.0)
+	var c1: Array = count.call()
+	var hurt = men.filter(func(m): return m.hp < 99.0 or m.state != "alive").size()
+	print("ROOFTEST 12 shells on the roof: walls %d -> %d, furniture %d -> %d, men two storeys below the roof hurt %d of 4 (standing at y %.1f)" % [c0[0], c1[0], c0[1], c1[1], hurt, men[0].pos.y])
+	for i in range(4):
+		Combat.explode(Vector3(-20.0 + i * 8.0, Levels.floor_y(1) + 0.2, 0.0), null, 1.0)
+		await _wait(0.2)
+	await _wait(1.0)
+	var c2: Array = count.call()
+	var hurt2 = men.filter(func(m): return m.hp < 99.0 or m.state != "alive").size()
+	print("ROOFTEST 4 grenades in the first-floor corridor: walls %d -> %d, furniture %d -> %d, men standing in that corridor hurt %d of 4" % [c1[0], c2[0], c1[1], c2[1], hurt2])
+	var lo = 0
+	for d in G.fx.decals:
+		if d.visible and Levels.inside(d.global_position, 0.5) and d.global_position.y < Levels.floor_y(1):
+			lo += 1
+	print("ROOFTEST scorch marks left on the ground floor: %d" % lo)
+	get_tree().quit()
+
+# --groundtest --map= --mode=: is the ground the physics knows about the same ground everything else
+# stands on? (where it isn't, anything knocked down sinks into the earth, or lies on thin air)
+func _ground_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(31)
+	start_game({"map": _arg("map", "office"), "mode": _arg("mode", "capture"), "size": 16, "limit": 999, "reinforce": true, "armor": "light", "reinf_mode": "truck", "teams": 2})
+	await _wait(float(_arg("secs", "3")))
+	var b: Rect2 = G.world.bounds
+	var worst = 0.0
+	var n = 0
+	var bad = 0
+	var ex = []
+	var x = b.position.x + 1.0
+	while x < b.end.x:
+		var z = b.position.y + 1.0
+		while z < b.end.y:
+			var g: float = G.world.ground_y(x, z)
+			var hit = G.ray(Vector3(x, g + 60.0, z), Vector3(x, g - 60.0, z), G.L_WORLD)
+			n += 1
+			# the first thing a ray from the sky meets is a roof as often as not: what matters is whether the
+			# terrain itself is where it should be, so ask the terrain body alone
+			var th = G.world.terrain_height_physics(x, z) if G.world.has_method("terrain_height_physics") else (hit.position.y if not hit.is_empty() else -999.0)
+			var d = absf(th - g)
+			if d > 0.35:
+				bad += 1
+				if ex.size() < 8:
+					ex.append("(%.0f, %.0f): stands at %.2f, physics %.2f" % [x, z, g, th])
+			worst = maxf(worst, d)
+			z += 2.0
+		x += 2.0
+	print("GROUNDTEST %s: %d points, %d where the physics ground is more than 35 cm off (worst %.2f m) %s" % [_arg("map", "office"), n, bad, worst, str(ex)])
+	get_tree().quit()
+
+# --invtest --map= --mode= --secs= --armor=: an AI battle watched for things that should never be true:
+# men hanging in the air or sunk in the ground, standing inside a wall, off the map, lying "getting up"
+# for ever, bodies and rubble at rest on nothing, vehicles in the air or under the ground
+func _inv_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(int(_arg("seed", "31")))
+	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "commander"), "size": int(_arg("size", "16")), "limit": 999, "reinforce": true, "armor": _arg("armor", "heavy"), "reinf_mode": "truck", "teams": 2})
+	var secs = float(_arg("secs", "200"))
+	var bad = {}
+	var ex = {}
+	var note = func(k: String, txt: String):
+		bad[k] = bad.get(k, 0) + 1
+		if not ex.has(k):
+			ex[k] = []
+		if ex[k].size() < 3:
+			ex[k].append(txt)
+	var t = 0.0
+	var b: Rect2 = G.world.bounds
+	while t < secs:
+		await _wait(1.0)
+		t += 1.0
+		for s in G.soldiers:
+			if not is_instance_valid(s) or s.parts.is_empty():
+				continue
+			var p: Vector3 = s.pos
+			if is_nan(p.x) or is_nan(p.y) or is_nan(p.z):
+				note.call("man: position not a number", "%s %s" % [s.state, str(s.task)])
+				continue
+			var tag = "%s/%s at (%.0f, %.1f, %.0f) t=%.0f" % [s.state, str(s.task), p.x, p.y, p.z, t]
+			if s.state == "alive" and s.vehicle == null and s.vault == null and s.climb == null and not s.swim:
+				var sy: float = G.world.surface_y(p.x, p.z, p.y + 0.6)
+				var k1 = "air" if p.y - sy > 1.3 and absf(s.vy) < 0.5 else ("sunk" if sy - p.y > 0.7 else "")
+				if k1 != "":
+					var n1: int = s.get_meta("iv_" + k1, 0) + 1
+					s.set_meta("iv_" + k1, n1)
+					if n1 == 3:
+						note.call("man: standing %s for 3 s" % ("in the air" if k1 == "air" else "sunk in the ground"), tag + " surface %.1f" % sy)
+				else:
+					s.set_meta("iv_air", 0)
+					s.set_meta("iv_sunk", 0)
+				if G.world.inside_any(p.x, p.z, -0.12, p.y + 0.9):
+					var n2: int = s.get_meta("iv_wall", 0) + 1
+					s.set_meta("iv_wall", n2)
+					if n2 == 4:
+						note.call("man: inside something solid for 4 s", tag)
+				else:
+					s.set_meta("iv_wall", 0)
+				if not b.grow(8.0).has_point(Vector2(p.x, p.z)):
+					var n3: int = s.get_meta("iv_out", 0) + 1
+					s.set_meta("iv_out", n3)
+					if n3 == 20:
+						note.call("man: off the map for 20 s", tag)
+				if s.hp <= 0.0:
+					note.call("man: alive with no health", tag)
+			if s.state == "getup" or s.state == "down":
+				var n4: int = s.get_meta("iv_down", 0) + 1
+				s.set_meta("iv_down", n4)
+				if n4 == 15:
+					note.call("man: down or getting up for 15 s", tag)
+			else:
+				s.set_meta("iv_down", 0)
+			if s.state == "dead" and s.settled and s.dragger == null and s.carried_by == null:
+				var pp: Vector3 = s.parts[0].global_position
+				var sy2: float = G.world.surface_y(pp.x, pp.z, pp.y + 0.3)
+				if pp.y - sy2 > 1.0 and not s.has_meta("iv_body"):
+					s.set_meta("iv_body", true)
+					note.call("body: at rest in the air", "(%.0f, %.1f, %.0f) surface %.1f t=%.0f" % [pp.x, pp.y, pp.z, sy2, t])
+		for v in G.vehicles:
+			if not is_instance_valid(v):
+				continue
+			var vp: Vector3 = v.pos
+			if is_nan(vp.x) or is_nan(vp.z):
+				note.call("vehicle: position not a number", v.kind)
+				continue
+			if v.spec.get("air", false) or v.spec.get("boat", false):
+				continue
+			var gy: float = G.world.surface_y(vp.x, vp.z, vp.y + 1.0)
+			if (vp.y - gy > 2.0 or gy - vp.y > 1.2) and not v.has_meta("iv_y"):
+				v.set_meta("iv_y", true)
+				note.call("vehicle: %s the ground" % ("above" if vp.y > gy else "under"), "%s%s at (%.0f, %.1f, %.0f) ground %.1f t=%.0f" % [v.kind, " (wreck)" if v.dead else "", vp.x, vp.y, vp.z, gy, t])
+			if not b.grow(40.0).has_point(Vector2(vp.x, vp.z)) and not v.has_meta("iv_o"):
+				v.set_meta("iv_o", true)
+				note.call("vehicle: far off the map", "%s at (%.0f, %.0f) t=%.0f" % [v.kind, vp.x, vp.z, t])
+		for d in G.fx.debris_list:
+			var db = d["b"]
+			if is_instance_valid(db) and d.get("still", false) and not d.has("iv"):
+				var dp: Vector3 = db.global_position
+				if dp.y - G.world.ground_y(dp.x, dp.z) > 0.6 and G.ray(dp + Vector3(0, 0.1, 0), dp - Vector3(0, 0.8, 0), G.L_WORLD).is_empty():
+					d["iv"] = true
+					note.call("rubble: at rest in the air", "(%.0f, %.1f, %.0f) t=%.0f" % [dp.x, dp.y, dp.z, t])
+		for i in range(G.fx.clod_xf.size()):
+			if G.fx.clod_xf[i] != null:
+				var cp3: Vector3 = G.fx.clod_xf[i].origin
+				if cp3.y - G.world.surface_y(cp3.x, cp3.z, cp3.y + 0.3) > 0.5:
+					note.call("clod: at rest in the air (per second)", "(%.0f, %.1f, %.0f) t=%.0f" % [cp3.x, cp3.y, cp3.z, t])
+	var keys = bad.keys()
+	keys.sort()
+	print("INVTEST %s/%s %.0fs: %d kinds of trouble; men %d, vehicles %d" % [_arg("map", "town"), _arg("mode", "commander"), secs, keys.size(), G.soldiers.size(), G.vehicles.size()])
+	var built = [0, 0]
+	var going = [0, 0]
+	var inside_b = 0
+	for st in Build.sites:
+		if st["team"] >= 0 and st["team"] < 2 and not st["dead"]:
+			if st["done"]:
+				built[st["team"]] += 1
+			else:
+				going[st["team"]] += 1
+			if Levels.on and Levels.inside(st["p"], 0.0):
+				inside_b += 1
+	print("INVTEST   structures finished %s, still going up %s, inside the storeyed building %d | fire missions so far: next allowed at %s (now %.0f)" % [str(built), str(going), inside_b, str(Support.arty_next.slice(0, 2).map(func(v): return int(v))), G.sim_time])
+	for k in keys:
+		print("INVTEST   %s x%d  e.g. %s" % [k, bad[k], " | ".join(ex[k])])
+	get_tree().quit()
+
+# do two vehicles' outlines (seen from above, a little inside their real edges) overlap?
+func _veh_overlap(a, b, shrink: float) -> bool:
+	var ca: Vector3 = a.pos
+	var cb: Vector3 = b.pos
+	var fa: Vector3 = a.forward()
+	var fb: Vector3 = b.forward()
+	var axes = [Vector2(fa.x, fa.z), Vector2(fa.z, -fa.x), Vector2(fb.x, fb.z), Vector2(fb.z, -fb.x)]
+	var ha = [a.spec["len"] * 0.5 - shrink, a.spec["wid"] * 0.5 - shrink]
+	var hb = [b.spec["len"] * 0.5 - shrink, b.spec["wid"] * 0.5 - shrink]
+	var d = Vector2(cb.x - ca.x, cb.z - ca.z)
+	for ax in axes:
+		var ra = absf(axes[0].dot(ax)) * ha[0] + absf(axes[1].dot(ax)) * ha[1]
+		var rb = absf(axes[2].dot(ax)) * hb[0] + absf(axes[3].dot(ax)) * hb[1]
+		if absf(d.dot(ax)) > ra + rb:
+			return false
+	return true
+
+# --crashtest --map= --mode= --secs= --armor=: an AI battle with vehicles, counting every time two of them
+# run into each other (their outlines overlapping), who was moving, and how long they stayed locked together
+func _crash_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(int(_arg("seed", "21")))
+	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "commander"), "size": int(_arg("size", "14")), "limit": 999, "reinforce": true, "armor": _arg("armor", "heavy"), "reinf_mode": "truck", "teams": 2})
+	var secs = float(_arg("secs", "240"))
+	var touching = {}
+	var events = 0
+	var stuck_s = 0.0
+	var kinds = {}
+	var veh_s = 0.0
+	var shown = 0
+	var t = 0.0
+	while t < secs:
+		await _wait(0.1)
+		t += 0.1
+		var vs = G.vehicles.filter(func(v): return is_instance_valid(v) and not v.spec.get("air", false) and not v.spec.get("static", false) and v.kind != "mortar")
+		for v in vs:
+			if not v.dead and absf(v.speed) > 0.5:
+				veh_s += 0.1
+		var now = {}
+		for i in range(vs.size()):
+			for j in range(i + 1, vs.size()):
+				var a = vs[i]
+				var b = vs[j]
+				if a.dead and b.dead:
+					continue
+				if a.towing == b or b.towing == a:
+					continue
+				if G.dist2d(a.pos, b.pos) > (a.spec["len"] + b.spec["len"]) * 0.5 + 1.0 or absf(a.pos.y - b.pos.y) > 2.5:
+					continue
+				# (two parked out of sight beyond the edge of the map, waiting to come on, don't count)
+				if not G.world.bounds.has_point(Vector2(a.pos.x, a.pos.z)) and not G.world.bounds.has_point(Vector2(b.pos.x, b.pos.z)):
+					continue
+				if not _veh_overlap(a, b, 0.12):
+					continue
+				var key = "%d_%d" % [a.get_instance_id(), b.get_instance_id()]
+				now[key] = true
+				stuck_s += 0.1
+				if not touching.has(key):
+					events += 1
+					var why = "%s%s" % ["wreck" if (a.dead or b.dead) else ("friends" if a.team == b.team else "enemies"), "/both moving" if (absf(a.speed) > 0.8 and absf(b.speed) > 0.8) else ("/one moving" if (absf(a.speed) > 0.8 or absf(b.speed) > 0.8) else "/neither moving")]
+					kinds[why] = kinds.get(why, 0) + 1
+					if shown < 14:
+						shown += 1
+						print("CRASH t=%.0f %s(%s spd %.1f %s%s) into %s(%s spd %.1f %s%s) %s at (%.0f, %.0f)" % [t, a.kind, "dead" if a.dead else "t%d" % a.team, a.speed, str(a.get_meta("arc_why", "")), " ghost" if (not a.dead and a.ghosting()) else "",
+							b.kind, "dead" if b.dead else "t%d" % b.team, b.speed, str(b.get_meta("arc_why", "")), " ghost" if (not b.dead and b.ghosting()) else "", why, a.pos.x, a.pos.z])
+						if StuckLog.dump:
+							for m in [a, b]:
+								if absf(m.speed) > 0.8:
+									print("CRASHDBG %s yaw %.2f pick %s block %.1f hold %.1f mission %s | %s" % [m.kind, m.yaw, str(m.arc_pick), m.arc_block, m.arc_hold, str(m.mission.get("type", "?")) if m.mission != null else "-", str(m.get_meta("arc_dbg", "")).substr(0, 420)])
+		touching = now
+	print("CRASHTEST %s: %d collisions in %.0f vehicle-seconds of driving (%.1f per 100) | %.0f s spent overlapping | %s" % [_arg("map", "town"), events, veh_s, events * 100.0 / maxf(veh_s, 1.0), stuck_s, str(kinds)])
+	get_tree().quit()
+
+# --blindtest --map= --mode= --secs= --size=: an AI battle watched for men who have an enemy in plain view
+# close by and either haven't noticed him or aren't shooting: man-seconds of each, and what those men were doing
+func _blind_test() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(int(_arg("seed", "11")))
+	start_game({"map": _arg("map", "office"), "mode": _arg("mode", "capture"), "size": int(_arg("size", "16")), "limit": 999, "reinforce": true, "armor": _arg("armor", "none"), "reinf_mode": "truck", "teams": 2})
+	var secs = float(_arg("secs", "150"))
+	var blind = 0.0
+	var idle = 0.0
+	var seen_s = 0.0
+	var why_blind = {}
+	var why_idle = {}
+	var rng_ = float(_arg("range", "15"))
+	var t = 0.0
+	while t < secs:
+		await _wait(0.25)
+		t += 0.25
+		for s in G.soldiers:
+			if s.state != "alive" or s.zombie or s.vehicle != null or s.broken:
+				continue
+			var eye: Vector3 = s.head_pos()
+			var near = null
+			for o in G.soldiers:
+				if o.team == s.team or o.state != "alive" or o.vehicle != null:
+					continue
+				if o.pos.distance_squared_to(s.pos) > rng_ * rng_:
+					continue
+				if not G.blocked(eye, o.chest(), true):
+					near = o
+					break
+			if near == null:
+				s.set_meta("bt_blind", 0.0)
+				s.set_meta("bt_idle", 0.0)
+				continue
+			seen_s += 0.25
+			var key = "%s/%s%s%s" % [str(s.task), str(s.order.get("mode", "-")) if s.order != null else "-", "/cover" if s.in_cover else "", "/moving" if s.move_target != null else ""]
+			if s.vis_t == null:
+				var b: float = s.get_meta("bt_blind", 0.0) + 0.25
+				s.set_meta("bt_blind", b)
+				if b > 1.0:
+					blind += 0.25
+					why_blind[key] = why_blind.get(key, 0.0) + 0.25
+			else:
+				s.set_meta("bt_blind", 0.0)
+				if G.sim_time - s.fired_t > 3.0 and s.reload_t <= 0.0:
+					var i2: float = s.get_meta("bt_idle", 0.0) + 0.25
+					s.set_meta("bt_idle", i2)
+					if i2 > 1.0:
+						idle += 0.25
+						var k2 = key + ("/blocked" if s.gun_blocked else "") + ("/noammo" if s.mag <= 0 else "") + ("/cls:" + s.cls if s.cls in ["medic", "sapper", "engineer"] else "")
+						why_idle[k2] = why_idle.get(k2, 0.0) + 0.25
+				else:
+					s.set_meta("bt_idle", 0.0)
+	var kb = why_blind.keys()
+	kb.sort_custom(func(a, b): return why_blind[a] > why_blind[b])
+	var ki = why_idle.keys()
+	ki.sort_custom(func(a, b): return why_idle[a] > why_idle[b])
+	print("BLINDTEST %s: %.0f man-seconds with an enemy in plain view within %.0fm | not noticed %.1f | noticed but not firing %.1f" % [_arg("map", "office"), seen_s, rng_, blind, idle])
+	print("BLINDTEST not noticed while: %s" % str(kb.slice(0, 8).map(func(k): return "%s %.1f" % [k, why_blind[k]])))
+	print("BLINDTEST not firing while: %s" % str(ki.slice(0, 10).map(func(k): return "%s %.1f" % [k, why_idle[k]])))
+	get_tree().quit()
+
 # --perfrun --map= --size= --secs= --mode= --armor=: a big AI battle, and where each tick's time goes
 func _perf_run() -> void:
 	await _wait(0.5)
@@ -3098,6 +3440,46 @@ func _polish_shot(dir: String) -> void:
 				break
 		await _snap(dir, "cold_breath")
 		print("POLISHSHOT cold: puffs live %d" % Weather.puffs.filter(func(p): return p[0] < p[1]).size())
+	if what == "wall":
+		# a man hard up against a wall with his rifle blocked: where does the rifle go?
+		G.settings["weather"] = "clear"
+		start_game({"map": "town", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+		await _wait(0.5)
+		var wc = null
+		for c in G.world.cols:
+			if c.alive and c.hi.y - c.lo.y > 2.4 and c.hi.x - c.lo.x > 2.0 and c.hi.z - c.lo.z < 0.8 and absf(c.lo.y - c.gy) < 0.3:
+				var mid = Vector3((c.lo.x + c.hi.x) * 0.5, c.gy, c.hi.z + 0.55)
+				if not G.world.inside_any(mid.x, mid.z, 0.3) and G.world.cols_in_rect(mid.x - 1.5, mid.z + 0.4, mid.x + 1.5, mid.z + 3.5).is_empty():
+					wc = c
+					break
+		if wc != null:
+			var sp0 = Vector3((wc.lo.x + wc.hi.x) * 0.5, wc.gy, wc.hi.z + 0.55)
+			var m = spawn_soldier(0, sp0.x, sp0.z, "rifle")
+			m.order = {"mode": "hold", "point": sp0}
+			var hold = func():
+				m.pos = Vector3(sp0.x, m.pos.y, sp0.z)
+				m.vel = Vector3.ZERO
+				m.want = Vector3.ZERO
+				m.move_target = null
+				m.aim_yaw = PI
+				m.body_yaw = PI
+				m.aim_pitch = 0.0
+				m.ready_ = true
+				m.gun_blocked = true
+				m.clip_n = 0
+			for shot_i in range(2):
+				await _look(sp0 + (Vector3(2.4, 1.5, 1.2) if shot_i == 0 else Vector3(0.0, 1.7, 2.6)), sp0 + Vector3(0, 1.25, 0))
+				for i in range(40):
+					hold.call()
+					await get_tree().physics_frame
+				hold.call()
+				await _snap(dir, "wall_side" if shot_i == 0 else "wall_back")
+			var hd: Vector3 = m.parts[2].global_position
+			var gp: Vector3 = m.gun_node.global_position
+			var gdir: Vector3 = -m.gun_node.global_transform.basis.z
+			print("POLISHSHOT wall: blocked %s, rifle axis passes %.2f m from the middle of his head" % [str(m.gun_blocked), (hd - gp).cross(gdir.normalized()).length()])
+		else:
+			print("POLISHSHOT wall: no wall found")
 	if what == "far":
 		G.settings["weather"] = "clear"
 		G.settings["ai_side"] = true

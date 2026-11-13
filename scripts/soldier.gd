@@ -1089,7 +1089,9 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 	if hand_t != null:
 		g = Vector3(uf.x * 0.3, -0.85, uf.z * 0.3).normalized()
 	elif gun_blocked and ready_:
-		g = (aim * 0.3 + Vector3(0, 0.95, 0)).normalized()
+		# hard up against a wall: muzzle up, the rifle upright in front of the right shoulder and tipped a
+		# little outward (it used to stand up through his own head)
+		g = (aim * 0.2 + ur * 0.24 + Vector3(0, 0.95, 0)).normalized()
 	elif sprint:
 		g = (uf * 0.3 - ur * 0.7 + Vector3(0, 0.6, 0)).normalized()
 	elif reloading:
@@ -1113,6 +1115,8 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 	var lh: Vector3
 	if shoulder:
 		rh = rsh + uf * 0.03 - ur * 0.06 + g * 0.24 + Vector3(0, 0.03, 0)
+	elif gun_blocked and ready_ and not reloading:
+		rh = rsh + uf * 0.24 + ur * 0.08 + Vector3(0, -0.26, 0)
 	elif ready_ or reloading or gun_blocked:
 		rh = rsh + g * 0.27 - ur * 0.07 + Vector3(0, -0.09, 0)
 	elif spd < 0.6:
@@ -2800,6 +2804,18 @@ var _full_mask = true
 func _ragdoll_guard() -> void:
 	if state == "alive" or parts.is_empty() or parts[0].freeze:
 		return
+	# pushed down through the ground (a lorry driving over a man who's been knocked flat does it: the
+	# earth is a surface with nothing under it, and once a body was through it fell for ever and the man
+	# never got up): lift him back onto it
+	var p0: Vector3 = parts[0].global_position
+	if G.world != null and state != "riding" and state != "chute":
+		var g0: float = G.world.ground_y(p0.x, p0.z)
+		if p0.y < g0 - 0.45:
+			var up = Vector3(0, g0 + 0.25 - p0.y, 0)
+			for b in parts:
+				b.global_position += up
+				var lv: Vector3 = b.linear_velocity
+				b.linear_velocity = Vector3(lv.x * 0.3, maxf(lv.y, 0.0), lv.z * 0.3)
 	var lim = 7.0
 	for b in parts:
 		var v: Vector3 = b.linear_velocity
@@ -3056,7 +3072,7 @@ func _tick_down() -> void:
 		_brace()
 	supp = maxf(0.0, supp - 0.3 * G.DT)
 	down_t -= G.DT
-	if down_t <= 0.0 and parts[0].linear_velocity.length() < 1.2:
+	if down_t <= 0.0 and (parts[0].linear_velocity.length() < 1.2 or fall_t > 9.0):
 		if hp < 35.0 and randf() < 0.65:
 			make_wounded()
 		else:

@@ -585,9 +585,13 @@ func step(dt: float) -> void:
 	var top = spec["speed"] if thr >= 0.0 else spec["rev"]
 	var target = thr * top
 	if thr == 0.0:
-		speed = move_toward(speed, 0.0, 6.0 * dt)
+		speed = move_toward(speed, 0.0, (12.0 if brake_hard else 6.0) * dt)
 	elif signf(target) != signf(speed) and absf(speed) > 0.3:
 		speed = move_toward(speed, 0.0, 12.0 * dt)
+	elif absf(speed) > absf(target) + 0.5:
+		# easing off for something ahead: that's the brake, not just lifting off (it used to take as long
+		# to slow down as to speed up, and ran into the back of whatever it was slowing for)
+		speed = move_toward(speed, target, maxf(spec["accel"], 5.5) * dt)
 	else:
 		speed = move_toward(speed, target, spec["accel"] * dt)
 	var turn_k = 1.0 if spec["tracked"] or kind == "atgun" else clampf(absf(speed) / 4.0, 0.0, 1.0)
@@ -2156,6 +2160,7 @@ func _arc_wrap(aim: Vector3, final: Vector3, dt: float) -> Array:
 		odo_p = odo
 	return r
 var arc_pick: Array = [0.0, 0.0]
+var brake_hard = false     # every way on is shut and it's still rolling: stand on the brake
 var arc_block = 0.0        # how long every way forward has been shut
 var arc_hold = 0.0         # carrying a reverse through, so it doesn't dither
 
@@ -2198,11 +2203,17 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 			continue
 		if absf(o.pos.x - pos.x) > 34.0 or absf(o.pos.z - pos.z) > 34.0:
 			continue
-		if ghost and o.team == team and not o.dead:
-			continue
 		var of: Vector3 = o.forward()
 		var ohl: float = maxf(0.0, o.spec["len"] * 0.5 - o.spec["wid"] * 0.5)
-		var orad: float = o.spec["wid"] * 0.5 + 0.35
+		# (a bit more room than the bare outline: the discs round off the corners, and passing a wreck at
+		# speed with nothing to spare was clipping them)
+		var orad: float = o.spec["wid"] * 0.5 + (0.6 if absf(speed) > 4.0 else 0.4)
+		if ghost and o.team == team and not o.dead:
+			# squeezing past our own after a long jam: it may brush by closer than it should, but it doesn't
+			# drive straight through the middle of them (it used to ignore them altogether)
+			if absf(o.speed) > 1.0:
+				continue
+			orad = o.spec["wid"] * 0.28
 		for kk in [-1.0, 0.0, 1.0]:
 			var q: Vector3 = o.pos + of * ohl * kk
 			# (one we're already rubbing against doesn't count, or we could never pull away from it)
@@ -2276,6 +2287,7 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	var no_fast = not spins and herr > 0.5 and G.dist2d(pos + rt0 * side0 * r_now, far) < r_now * 0.95
 	var tight = not spins and herr > 0.8 and G.dist2d(pos + rt0 * side0 * r_min, far) < r_min * 0.9
 	var fwd_best = -1e9
+	var best_hit = 1e9         # how far along the chosen way before it would run into something
 	var rev_best = -1e9
 	var rev_cd = null
 	var queued = false     # a way on is shut only by one of our own vehicles or men, who'll move
@@ -2294,12 +2306,16 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 		var dmin = d0
 		var tmin = 0.0
 		var nmin = 1e9
+		var trav = 0.0
 		for i in range(8):
 			var tgt = thr * top
 			if signf(tgt) != signf(sp) and absf(sp) > 0.3:
 				sp = move_toward(sp, 0.0, 12.0 * H)
+			elif absf(sp) > absf(tgt) + 0.5:
+				sp = move_toward(sp, tgt, maxf(spec["accel"], 5.5) * H)
 			else:
 				sp = move_toward(sp, tgt, spec["accel"] * H)
+			trav += absf(sp) * H
 			var tk = 1.0 if spins else clampf(absf(sp) / 4.0, 0.0, 1.0)
 			y += st * turn * tk * (-1.0 if sp < -0.1 else 1.0) * H
 			var fw = Vector3(sin(y), 0, cos(y))
@@ -2312,6 +2328,10 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 			if not hit and inside_map and not b.has_point(Vector2(lead.x, lead.z)) and b.has_point(Vector2(final.x, final.z)):
 				hit = true
 			if not hit:
+				# (nose, middle and tail: on a turn the back end swings out, and it was clipping what the
+				# front had cleared)
+				var tail = p - fw * half_l * 0.7 * (1.0 if sp >= 0.0 else -1.0)
+				var check_tail = half_l > half_w * 1.6 and absf(st) > 0.1 and i >= 1
 				for ob in obs:
 					var op: Vector3 = ob[0]
 					var rr: float = half_w + ob[1]
@@ -2327,6 +2347,14 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 						hit = true
 						by_mover = ob[2]
 						break
+					if check_tail:
+						dx = op.x - tail.x
+						dz = op.z - tail.z
+						rr -= 0.25
+						if dx * dx + dz * dz < rr * rr:
+							hit = true
+							by_mover = ob[2]
+							break
 			if hit:
 				free = i * H
 				break
@@ -2337,6 +2365,15 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 				dmin = df
 				tmin = (i + 1) * H
 			nmin = minf(nmin, G.dist2d(aim, p))
+		# something in the way further on, and it's going too fast to stop short of it: that way's shut too
+		# (it used to count a way as open until the thing was three-quarters of a second off, far too late
+		# for a lorry doing forty)
+		if free < 2.4 and thr > 0.0 and speed > 2.5 and trav < speed * speed / 20.0 + 1.6:
+			if by_mover:
+				queued = true
+			if StuckLog.dump:
+				dbg.append("%.1f/%.1f:B%.1f" % [thr, st, free])
+			continue
 		if free < 0.75 and absf(thr) >= 0.2:
 			if by_mover and thr > 0.0:
 				queued = true
@@ -2367,6 +2404,7 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 		if sc > fwd_best:
 			fwd_best = sc
 			best = cd
+			best_hit = trav if free < 2.4 else 1e9
 	# backing up is for when going forward gets it nowhere: every way on is shut, or the best of them
 	# leaves it pointing the wrong way with no ground made (a turn there's no room for). Once started
 	# it's carried through, and it doesn't go straight back into reverse after
@@ -2406,16 +2444,19 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	# no way on, close to where it's going: near enough will do (the parking rules take it from there)
 	if (best == null or best[0] < 0.0) and G.dist2d(final, pos) < 22.0:
 		stuck_n = maxi(stuck_n, 1)
+	brake_hard = best == null and absf(speed) > 1.0
 	if best == null:
-		# every way is shut: stop, and if it stays shut find another way round (or, among our own, slip by)
+		# every way is shut: stop, and if it stays shut find another way round. One of our own parked in
+		# the road is asked to pull over; only after a long wait does it squeeze by regardless
 		arc_block += 0.13
 		arc_pick = [0.0, 0.0]
 		if arc_block > 2.0 and int(arc_block / 0.13) % 16 == 0:
 			_plan_detour()
-		if arc_block > 3.0:
+			_ask_way()
+		if arc_block > 7.0:
 			for o in G.vehicles:
 				if o != self and o.team == team and not o.dead and G.dist2d(o.pos, pos) < (spec["len"] + o.spec["len"]) * 0.5 + 5.0:
-					set_meta("ghost_t", G.sim_time + 5.0)
+					set_meta("ghost_t", G.sim_time + 4.0)
 					G.bal_add("ghost")
 					arc_block = 0.0
 					break
@@ -2428,6 +2469,13 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 			set_meta("no_rev_t", G.sim_time + 4.0)
 			set_meta("rev_herr", herr_n)
 	arc_pick = [best[0], best[1]]
+	# the way it's taking runs into something further on: no faster than it can pull up short of it
+	if best[0] > 0.0 and best_hit < 1e8:
+		var v_ok = sqrt(2.0 * 5.0 * maxf(best_hit - 2.5, 0.3))
+		arc_pick[0] = minf(arc_pick[0], maxf(0.22, v_ok / maxf(spec["speed"], 1.0)))
+	# slipping past our own in a jam is done at a crawl, not a run
+	if best[0] > 0.0 and ghost:
+		arc_pick[0] = minf(arc_pick[0], 0.3)
 	# nearly there: ease off so it stops on the mark instead of overshooting and turning back
 	var dfin = G.dist2d(final, pos)
 	if dfin < 7.0 and arc_pick[0] > 0.0:
@@ -2469,6 +2517,30 @@ func _arc_out(dt: float) -> Array:
 	return r
 
 var stuck_n = 0
+
+# one of our own standing in the road ahead with its driver aboard and nowhere it has to be: ask it to pull over
+func _ask_way() -> void:
+	var f = forward()
+	var lv = Vector3(f.z, 0, -f.x)
+	var blk = null
+	var bd = 1e9
+	for o in G.vehicles:
+		if o == self or o.dead or o.team != team or (o.spec.get("air", false) and o.alt > 3.0) or o.spec.get("static", false):
+			continue
+		var rel = G.flat(o.pos - pos)
+		var a2 = rel.dot(f)
+		if a2 > -1.0 and a2 < (spec["len"] + o.spec["len"]) * 0.5 + 6.0 and absf(rel.dot(lv)) < (spec["wid"] + o.spec["wid"]) * 0.5 + 1.5 and rel.length() < bd:
+			bd = rel.length()
+			blk = o
+	if blk == null or blk.driver() == null or absf(blk.speed) > 0.3 or blk.mission != null or G.sim_time < blk.detour_t:
+		return
+	if blk.cmd != null and G.dist2d(blk.cmd, blk.pos) > 5.0:
+		return
+	var bl = Vector3(cos(blk.yaw), 0, -sin(blk.yaw))
+	var push = bl * (signf(G.flat(blk.pos - pos).dot(bl)) if absf(G.flat(blk.pos - pos).dot(bl)) > 0.3 else 1.0)
+	blk.detour = G.main._free_spot(blk.pos + push * (blk.spec["wid"] + 5.0) + blk.forward() * 4.0)
+	blk.detour_t = G.sim_time + 8.0
+	blk.path_t = 0.0
 
 func ghosting() -> bool:
 	return has_meta("ghost_t") and G.sim_time < float(get_meta("ghost_t"))

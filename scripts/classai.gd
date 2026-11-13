@@ -32,7 +32,21 @@ static func jobs(s, known: bool, threat: Vector3) -> bool:
 static func busy(s) -> bool:
 	return s.task in ["repair", "build", "mine", "patch", "construct", "defuse", "fixwheel", "sweep", "salvage"]
 
+# is there fighting to be done right here? A man with a job to do (building, mending, digging in) downs
+# tools for any of these: an enemy in view within rifle range, rounds coming his way, a wound, or the
+# enemy known to be close by. (They used to carry on walking to the site with the enemy shooting at them
+# from fifty metres, and only stopped for one inside forty-five.)
+static func threatened(s) -> bool:
+	if s.supp > 0.6 or s.hurt_t > 0.0:
+		return true
+	if s.vis_t != null and is_instance_valid(s.vis_t) and s.vis_t.state == "alive" and G.dist2d(s.vis_t.pos, s.pos) < 120.0:
+		return true
+	return s.has_seen and G.sim_time - s.seen_t < 6.0 and G.dist2d(s.threat, s.pos) < 50.0
+
 static func _start_construct(s, st) -> void:
+	if not s.is_player and threatened(s):
+		s.job_cd = maxf(s.job_cd, 8.0)       # not now: there's a fight on
+		return
 	AI.release_cover(s)
 	s.task = "construct"
 	s.build_site = st
@@ -74,7 +88,7 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 		var r = _satchel_site(s, 26.0)
 		if r >= 0:
 			return r == 1
-	var far_contact = s.vis_t != null and is_instance_valid(s.vis_t) and G.dist2d(s.vis_t.pos, s.pos) > 60.0
+	var far_contact = s.vis_t != null and is_instance_valid(s.vis_t) and G.dist2d(s.vis_t.pos, s.pos) > 130.0 and not threatened(s)
 	if far_contact and s.job_cd <= 0.0 and s.task != "construct":
 		var ws0 = Build.work_site(s.team, s.pos, 120.0)
 		if ws0 != null and ws0["kind"] in ["fob", "hq"] and Build.helpers(ws0) < 3:
@@ -135,7 +149,7 @@ static func _engineer(s, known: bool, threat: Vector3) -> bool:
 		if dir.length_squared() < 0.01:
 			dir = Vector3(0, 0, 1)
 		var at = s.pos + dir.normalized() * 1.5
-		if not G.world.inside_any(at.x, at.z, 0.8) and Build.site_at(at, 1.0) == null:
+		if not G.world.inside_any(at.x, at.z, 0.8) and Build.site_at(at, 1.0) == null and not Build.indoors(at, 1.5):
 			s.kits -= 1
 			var st = Build.place("sandbags", s.team, at, dir)
 			_start_construct(s, st)
@@ -163,6 +177,21 @@ static func work(s) -> void:
 		s.task = null
 		AI.stop_move(s)
 		G.fx.callout(s, G.pick(["Under fire! Sweep's off!", "Can't sweep under this!"]))
+		return
+	# and nobody carries on with any of it with the enemy on top of him: tools down, rifle up
+	if s.task in ["build", "construct", "repair", "fixwheel", "salvage", "mine"] and not s.is_player and threatened(s):
+		var was: String = s.task
+		s.task = null
+		s.build_site = null
+		s.decide_t = 0.0
+		s.think = 0.0
+		s.job_cd = 14.0
+		s.hand_t = null
+		s.hands_t = null
+		s.carry_item(false, "", s.pos)
+		AI.stop_move(s)
+		if was != "mine" and randf() < 0.5:
+			G.fx.callout(s, G.pick(["Contact! Tools down!", "Enemy close, leave it!", "Drop it, they're on us!"]))
 		return
 	match s.task:
 		"build":
@@ -387,12 +416,12 @@ static func _medic(s, known: bool) -> bool:
 # ---------------------------------------------------------------- radio operators: artillery on enemy clusters
 static func _radio(s) -> void:
 	s.radio_cd -= 2.0
-	if s.radio_cd > 0.0:
+	if s.radio_cd > 0.0 or not Support.arty_ready(s.team):
 		return
 	var target = artillery_target(s.team, s.pos, 40.0)
 	if target == null:
 		return
-	s.radio_cd = randf_range(55.0, 75.0)
+	s.radio_cd = randf_range(90.0, 130.0)
 	call_artillery(s, target)
 
 # where enemies bunch up, as far as the team knows, and nowhere near friends
@@ -418,7 +447,8 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 			if f.team == team and f.state != "dead" and G.dist2d(f.pos, o.pos) < 22.0:
 				friends = true
 				break
-		if n > bn and not friends:
+		# (men under a roof aren't a target: the shells only burst on the building over their heads)
+		if n > bn and not friends and not roofed(o.pos):
 			bn = n
 			best = o.pos
 	if best == null:
@@ -442,6 +472,11 @@ static func artillery_target(team: int, from: Vector3, min_d: float):
 			if spotted and not friends2:
 				return _hq_rationed(team, st["p"])
 	return _hq_rationed(team, best)
+
+static func roofed(p: Vector3) -> bool:
+	if Levels.on and Levels.inside(p, 1.0):
+		return true
+	return not G.ray(p + Vector3(0, 1.6, 0), p + Vector3(0, 30.0, 0), G.L_WORLD).is_empty()
 
 # shelling round the enemy HQ is rationed: one barrage there every few minutes, not a constant rain
 static var hq_fire_t = [-999.0, -999.0, -999.0, -999.0]

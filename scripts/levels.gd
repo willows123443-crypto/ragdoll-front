@@ -34,6 +34,13 @@ static func inside(p: Vector3, pad: float = 0.0) -> bool:
 static func floor_y(k: int) -> float:
 	return gy + k * FH
 
+# which storey something is on, for blasts: 0..n-1 inside, n for the roof, and -99 when there's no such
+# building here (or the point is outside it)
+static func storey_of(p: Vector3) -> int:
+	if not on or not rect.grow(0.5).has_point(Vector2(p.x, p.z)):
+		return -99
+	return clampi(int(floor((p.y - gy + 0.35) / FH)), 0, n)
+
 static func level_of(p: Vector3) -> int:
 	if not inside(p, 0.6):
 		return 0

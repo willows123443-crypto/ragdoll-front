@@ -1,4 +1,6 @@
-# Ragdoll Front: Godot 4.6 port (Stage 1)
+# Tin Hat Tactics
+
+A ragdoll soldier battle sandbox with a commander RTS mode, built in Godot 4.6. (Formerly called Ragdoll Front; the repository and web address keep the old name.)
 
 ## Play in the browser
 **https://willows123443-crypto.github.io/ragdoll-front/**
@@ -332,10 +334,22 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Going to ground and getting up:** the body goes down through a crouch over half a second, and comes up a little slower, instead of flicking between poses (the head used to jump up to 0.75 m in one frame; now 0.12 m at most)
 - **Cover that can be reached unseen:** cover a man would have to cross open ground in the enemy's sights to reach now counts against it when he chooses where to go
 - **Fixed:** small vehicles (the anti-tank gun, pushed by its crew) shut in by their own memory of what they'd bumped into, and vehicles that start pressed against something (a gun among its sandbags) unable to pull clear
+- **Better explosions:** a flash, a ring of dust racing out across the ground, sparks, and clods of earth (rubble on a road) thrown out that land round the crater and stay there. A blast near where you're watching from dulls the sound for a moment
+- **Guns by distance:** a hard crack on the front of a shot close by, losing its edge with distance until it's a dull thump that arrives late; in town a shot slaps back off the nearest wall and again off the far end of the street, and indoors it comes straight back off the walls of the room. Explosions do the same, and a far one is a low rumble
+- **Smoother commander camera:** the view eases in and out when you pan, turn or zoom, jumps glide instead of cutting, and the wheel zooms toward what the pointer is on
+- **Squad cards:** one click selects a squad, a double-click takes the view to it; **End** selects and shows the next of your squads that is fighting or pinned
+- **Uniform wear:** mud builds up on the knees, elbows, belly and chest of men who crawl (quicker in rain); a dressing goes round the part that was hit once a wound is seen to; crews who get out of a burning vehicle come out blackened
+- **Weather (in the battle setup, under World):** rain brings streaks through the view, wet shining roads and puddles pocked by the drops; cold brings a pale sky and breath in the air. Looks only: it changes nothing about the fight (a campaign storm still grounds aircraft, and now rains properly)
+- **Light indoors (the Ministry offices):** the offices are dim and the corridors lit, with lamps down the ceilings and pools of light under them; daylight lies on the floor under every window, with bright patches where the sun comes in on the sunny side; a shot fired indoors throws a brighter flash up the walls
+- **Vaulting and ladders:** going over a wall a man puts a hand down on the top, brings his knees up and over, and gives at the knees as he lands; on a ladder he turns to it and his hands and feet go onto the rungs (and come off at the top) over a few frames, instead of snapping between poses
+- **Turning on the spot:** the feet step round as the body turns, and far-off men keep turning and stepping between their full updates instead of in jerks
+- **Faster big battles:** far-off men and settled bodies are drawn with about 23 pieces each instead of 37 (pouches, canteen and the small parts of helmet and rifle are left off beyond the detail distance); far-off men get a fresh pose every other frame and are carried along in between; crews inside vehicles think every third tick; a body at rest costs almost nothing. In a test battle of about 110 men and 15 vehicles the simulation step went from about 14.5 ms to about 11.8 ms
+- **Fixed:** a man getting up off the ground was knocked flat again by his own balance check (so getting up took a couple of seconds on the floor first); the anti-tank gun never noticed it had bumped into something because it is slower than the speed the check was written for
+- **Renamed:** the game is now Tin Hat Tactics
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
-**Command tab:** click a soldier (double-click for his squad) or drag a box to select, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it. In the commander view right-drag draws a line for them to form up on (middle-drag turns the camera), and Shift + right-click adds stops to their route.
+**Command tab:** click a soldier (double-click for his squad) or drag a box to select, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it. In the commander view right-drag draws a line for them to form up on (middle-drag turns the camera), and Shift + right-click adds stops to their route. Home jumps to the heaviest fighting and End to the next of your squads in contact; the wheel zooms toward the pointer.
 **Controlling a soldier:** mouse aim, left-click fire, right mouse aim down sights, Q/E lean, Shift sprint, C crouch, Z prone, R reload, G grenade, V smoke, L flare, 1–5 weapons, Y first person, O squad follows you, F pick up a fallen soldier's gun or get into a vehicle, hold U to help build a friendly site, I to dismantle what you aim at, X leave the soldier.
 **In a vehicle:** WASD drive, mouse aims the turret, left-click fire, 1–4 change seat, F get out.
 **Controlling a soldier (more):** walk into a ladder to climb it, 0 for a panzerfaust.

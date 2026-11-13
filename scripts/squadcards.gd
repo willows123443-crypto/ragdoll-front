@@ -10,6 +10,9 @@ var folded = false
 var head: Button
 const CW = 182
 
+var click_k = -1
+var click_ms = 0
+
 func _ready() -> void:
 	add_theme_constant_override("separation", 2)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -206,8 +209,12 @@ func _card(i: int) -> Dictionary:
 		bar.offset_left = 3
 		b.add_child(bar)
 		b.pressed.connect(func():
-			G.pc.select_squad(k)
-			G.pc.select_squad(k))     # twice: select it and look at it
+			# one click picks the squad; a second click on the same card straight after takes the view to it
+			var now = Time.get_ticks_msec()
+			var dbl = click_k == k and now - click_ms < 420
+			click_k = k
+			click_ms = now
+			G.pc.select_squad(k, 1 if dbl else 0))
 		add_child(b)
 		cards.append({"b": b, "sb": sb, "ic": ic, "top": top, "bar": bar, "act": act, "men": men})
 	return cards[i]
@@ -252,7 +259,7 @@ func _process(dt: float) -> void:
 		c["sb"].border_color = Color(Hud.ACCENT.r, Hud.ACCENT.g, Hud.ACCENT.b, 0.95 if sel else 0.0)
 		c["men"].set_meta("q", q)
 		c["men"].queue_redraw()
-		c["b"].tooltip_text = "Squad %d: click to select it and look at it (or press %d)" % [i + 1, i + 1]
+		c["b"].tooltip_text = "Squad %d: click to select it (or press %d) · double-click to go to it · End cycles through squads in contact" % [i + 1, i + 1]
 	for i in range(n, cards.size()):
 		cards[i]["b"].visible = false
 

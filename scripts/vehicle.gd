@@ -590,7 +590,7 @@ func step(dt: float) -> void:
 		speed = move_toward(speed, 0.0, 12.0 * dt)
 	else:
 		speed = move_toward(speed, target, spec["accel"] * dt)
-	var turn_k = 1.0 if spec["tracked"] else clampf(absf(speed) / 4.0, 0.0, 1.0)
+	var turn_k = 1.0 if spec["tracked"] or kind == "atgun" else clampf(absf(speed) / 4.0, 0.0, 1.0)
 	var dir_k = -1.0 if speed < -0.1 else 1.0
 	yaw += steer * spec["turn"] * turn_k * dir_k * dt
 	var f = forward()
@@ -1286,6 +1286,8 @@ func destroy(attacker) -> void:
 			else:
 				s.hp = minf(s.hp, randf_range(30.0, 55.0))
 				s.no_board_t = G.sim_time + 60.0
+				if not rider:
+					Wear.soot(s)          # out through the smoke: blackened face and hands, a scorched uniform
 				# out of the wreck and into the nearest cover, then back in the fight with his rifle
 				if not s.is_player:
 					var threat: Vector3 = attacker.pos if attacker != null and is_instance_valid(attacker) else hit_from
@@ -2146,7 +2148,7 @@ func _arc_wrap(aim: Vector3, final: Vector3, dt: float) -> Array:
 	prog_t += dt
 	if prog_t > 10.0:
 		prog_t = 0.0
-		if G.dist2d(pos, prog_p) < 3.0 and why == "drive" and G.dist2d(goal, pos) > 12.0 and odo - odo_p < 30.0:
+		if G.dist2d(pos, prog_p) < minf(3.0, spec["speed"] * 1.2) and why == "drive" and G.dist2d(goal, pos) > 12.0 and odo - odo_p < 30.0:
 			StuckLog.vehicle(self)
 			_unwedge()
 			_plan_detour()
@@ -2235,7 +2237,8 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	var start_solid = use_grid and g.is_point_solid(W.vnav_cell(pos.x, pos.z))
 	var turn: float = spec["turn"]
 	var cands: Array = ARC_FWD.duplicate()
-	if tracked:
+	var spins = tracked or kind == "atgun"      # (a gun's crew swing it round by the trail where it stands)
+	if spins:
 		cands.append_array(ARC_PIVOT)
 	cands.append_array(ARC_REV)
 	var best = null
@@ -2270,8 +2273,8 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 	var side0 = 1.0 if to0.dot(rt0) >= 0.0 else -1.0
 	var r_now = maxf(absf(speed), 4.0) / maxf(turn, 0.1)
 	var r_min = 4.0 / maxf(turn, 0.1)
-	var no_fast = not tracked and herr > 0.5 and G.dist2d(pos + rt0 * side0 * r_now, far) < r_now * 0.95
-	var tight = not tracked and herr > 0.8 and G.dist2d(pos + rt0 * side0 * r_min, far) < r_min * 0.9
+	var no_fast = not spins and herr > 0.5 and G.dist2d(pos + rt0 * side0 * r_now, far) < r_now * 0.95
+	var tight = not spins and herr > 0.8 and G.dist2d(pos + rt0 * side0 * r_min, far) < r_min * 0.9
 	var fwd_best = -1e9
 	var rev_best = -1e9
 	var rev_cd = null
@@ -2297,7 +2300,7 @@ func _arc_drive(aim: Vector3, final: Vector3, dt: float) -> Array:
 				sp = move_toward(sp, 0.0, 12.0 * H)
 			else:
 				sp = move_toward(sp, tgt, spec["accel"] * H)
-			var tk = 1.0 if tracked else clampf(absf(sp) / 4.0, 0.0, 1.0)
+			var tk = 1.0 if spins else clampf(absf(sp) / 4.0, 0.0, 1.0)
 			y += st * turn * tk * (-1.0 if sp < -0.1 else 1.0) * H
 			var fw = Vector3(sin(y), 0, cos(y))
 			p += fw * sp * H
@@ -2441,7 +2444,8 @@ func _arc_out(dt: float) -> Array:
 	odo += absf(speed) * dt
 	# foot down and going nowhere: it's up against something. Remember where, so the next look at the
 	# ways on steers round it (or backs off it) instead of pushing at it
-	if absf(r[0]) > 0.3 and absf(speed) < 1.0 and fuel > 0.0 and not tracks_broken:
+	var top_now: float = (spec["speed"] if r[0] > 0.0 else spec["rev"]) * absf(r[0])
+	if absf(r[0]) > 0.3 and absf(speed) < minf(1.0, top_now * 0.3) and fuel > 0.0 and not tracks_broken:
 		bump_t += dt
 		if bump_t > 1.1:
 			bump_t = 0.0

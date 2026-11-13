@@ -1084,6 +1084,14 @@ func _build_menu() -> void:
 		G.main.clock = 0.08 if G.settings["time"] == "dawn" else 0.25
 		G.main.apply_time())
 	_row(v, "Time of day", opt_time)
+	var opt_weather = _option(["Clear", "Rain (puddles, wet roads)", "Cold (breath in the air)"], maxi(0, ["clear", "rain", "cold"].find(G.settings.get("weather", "clear"))))
+	opt_weather.item_selected.connect(func(i):
+		G.settings["weather"] = ["clear", "rain", "cold"][i]
+		if G.started:
+			Weather.apply()
+			G.main.apply_time())
+	opt_weather.tooltip_text = "How the day looks. Rain and cold change nothing about the fighting (a campaign storm still grounds aircraft)."
+	_row(v, "Weather", opt_weather)
 	seed_edit = LineEdit.new()
 	seed_edit.text = str(G.random_seed)
 	seed_edit.custom_minimum_size = Vector2(120, 0)
@@ -1744,13 +1752,13 @@ func _build_title() -> void:
 	v.add_theme_constant_override("separation", 6)
 	_place(v, Control.PRESET_LEFT_WIDE, 56, 30, 380, -20)
 	title.add_child(v)
-	# the name on one line: RAGDOLL in white, FRONT in amber
+	# the name on one line: TIN HAT in white, TACTICS in amber
 	var lh = HBoxContainer.new()
-	lh.add_theme_constant_override("separation", 14)
-	var logo = _label("RAGDOLL", 50, Color(0.97, 0.95, 0.9))
+	lh.add_theme_constant_override("separation", 12)
+	var logo = _label("TIN HAT", 44, Color(0.97, 0.95, 0.9))
 	logo.add_theme_constant_override("outline_size", 10)
 	lh.add_child(logo)
-	var logo2 = _label("FRONT", 50, Color(0.96, 0.74, 0.27))
+	var logo2 = _label("TACTICS", 44, Color(0.96, 0.74, 0.27))
 	logo2.add_theme_constant_override("outline_size", 10)
 	lh.add_child(logo2)
 	v.add_child(lh)

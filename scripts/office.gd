@@ -179,8 +179,9 @@ static func _rnd_door(a0: float, a1: float) -> float:
 # ---------------------------------------------------------------- one storey
 static func _storey(k: int, wells: Array) -> void:
 	var out_c = Color(0.62, 0.55, 0.47)
-	var corr_c = [Color(0.78, 0.74, 0.64), Color(0.72, 0.76, 0.7), Color(0.7, 0.72, 0.78)][k]
-	var room_c = [Color(0.74, 0.7, 0.6), Color(0.7, 0.68, 0.6), Color(0.68, 0.68, 0.66), Color(0.76, 0.72, 0.66)]
+	# the corridors are lit and the offices aren't: paler walls out here, dimmer ones in the rooms
+	var corr_c: Color = [Color(0.78, 0.74, 0.64), Color(0.72, 0.76, 0.7), Color(0.7, 0.72, 0.78)][k].lightened(0.1)
+	var room_c = [Color(0.74, 0.7, 0.6), Color(0.7, 0.68, 0.6), Color(0.68, 0.68, 0.66), Color(0.76, 0.72, 0.66)].map(func(c): return c.darkened(0.24))
 	# outside walls: windows all along; on the ground floor, doors at the ends of the corridors
 	for e in [-1.0, 1.0]:
 		var gaps = []
@@ -195,8 +196,12 @@ static func _storey(k: int, wells: Array) -> void:
 			x += 3.0
 		for cx in CROSS:
 			gaps.append([cx, 2.6, "open" if k == 0 else "win"])
+		for gp in gaps:
+			_window_light(k, true, e * HZ, gp[0], gp[1], -e)
 		_wall(true, e * HZ, -HX, HX, k, out_c, T_OUT, gaps, 420.0)
 		var eg = [[-9.0, 1.4, "win"], [-15.0, 1.4, "win"], [9.0, 1.4, "win"], [15.0, 1.4, "win"], [0.0, 2.8, "open" if k == 0 else "win"]]
+		for gp in eg:
+			_window_light(k, false, e * HX, gp[0], gp[1], -e)
 		_wall(false, e * HX, -HZ + T_OUT / 2.0, HZ - T_OUT / 2.0, k, out_c, T_OUT, eg, 420.0)
 	# the main corridor's walls, wing by wing, a door into every front office
 	for b in range(4):
@@ -260,8 +265,11 @@ static func _storey(k: int, wells: Array) -> void:
 				if wl.is_empty():
 					_furnish(k, cr[0], cr[1], sz * CORR, sz * MIDZ, sz, true)
 					Rooms.add_room(k, cr[0], cr[1], sz * CORR, sz * MIDZ)
+					_room_shade(k, cr[0], cr[1], sz * CORR, sz * MIDZ, 0.5)
 				_furnish(k, cr[0], cr[1], sz * MIDZ, sz * HZ, sz, false)
 				Rooms.add_room(k, cr[0], cr[1], sz * MIDZ, sz * HZ)
+				_room_shade(k, cr[0], cr[1], sz * MIDZ, sz * HZ, 0.36)
+	_corridor_lamps(k)
 	# corridor barricades at the crossings (staggered, so there's always a way past)
 	for cx in CROSS:
 		if w.rng.randf() < 0.65:
@@ -284,6 +292,55 @@ static func _storey(k: int, wells: Array) -> void:
 		var x = (cr[0] + cr[1]) / 2.0 + 1.3
 		var sc = [Color(0.85, 0.75, 0.3), Color(0.35, 0.7, 0.4), Color(0.35, 0.55, 0.85)][k]
 		w.add_box(x, k * FH + 2.0, wl["sz"] * (CORR - 0.18), 0.6, 0.45, 0.04, sc, {"collide": false, "no_shadow": true})
+
+# ---------------------------------------------------------------- light and shade indoors
+# (painted on rather than lit: it costs nothing to draw, and it goes away with its floor in the cutaway view)
+const FLOOR_C = [Color(0.55, 0.53, 0.5), Color(0.47, 0.36, 0.26), Color(0.4, 0.43, 0.47)]
+
+# an office is dimmer than the corridor outside it (the inner ones, with no window of their own, dimmest)
+static func _room_shade(k: int, x0: float, x1: float, za: float, zb: float, dark: float) -> void:
+	var z0 = minf(za, zb)
+	var z1 = maxf(za, zb)
+	w.add_box((x0 + x1) / 2.0, k * FH + 0.01, (z0 + z1) / 2.0, x1 - x0 - 0.32, 0.02, z1 - z0 - 0.32, FLOOR_C[k].darkened(dark), {"collide": false, "no_shadow": true})
+
+# daylight through a window in an outside wall: a pale wash on the floor under it, and on the sunny side
+# of the building a bright patch where the sun itself comes in, thrown across the floor at the sun's angle
+static func _window_light(k: int, horiz: bool, fixed: float, c: float, wd: float, inward: float) -> void:
+	var n = Vector3(0, 0, inward) if horiz else Vector3(inward, 0, 0)
+	var t = Vector3(1, 0, 0) if horiz else Vector3(0, 0, 1)
+	var at = (Vector3(c, 0, fixed) if horiz else Vector3(fixed, 0, c)) + n * (T_OUT / 2.0)
+	var y = k * FH + 0.031
+	var soft = FLOOR_C[k].darkened(0.12)
+	var p = at + n * 1.0
+	w.add_box(p.x, y, p.z, (wd + 0.3) if horiz else 2.0, 0.014, 2.0 if horiz else (wd + 0.3), soft, {"collide": false, "no_shadow": true, "glow": true})
+	var sd: Vector3 = Basis.from_euler(Vector3(deg_to_rad(-52.0), deg_to_rad(-35.0), 0.0)) * Vector3(0, 0, -1)
+	var inn = sd.dot(n)
+	if inn < 0.12 or sd.y > -0.2:
+		return
+	# the sill is a metre up and the top of the window 2.2: where those heights land on the floor
+	var d0 = inn * 1.0 / -sd.y
+	var d1 = inn * 2.2 / -sd.y
+	var sh = sd.dot(t) * 1.6 / -sd.y
+	var q = at + n * ((d0 + d1) / 2.0) + t * sh
+	var dep = maxf(0.4, d1 - d0)
+	var sun_c = Color(1.0, 0.95, 0.8).lerp(FLOOR_C[k], 0.45)
+	w.add_box(q.x, y + 0.015, q.z, wd if horiz else dep, 0.014, dep if horiz else wd, sun_c, {"collide": false, "no_shadow": true, "glow": true})
+
+# lamps down the middle of every corridor ceiling, and the pool of light under each on the floor
+static func _corridor_lamps(k: int) -> void:
+	var lamp = Color(1.0, 0.97, 0.82)
+	var run_c: Color = [Color(0.42, 0.24, 0.2), Color(0.25, 0.32, 0.25), Color(0.24, 0.27, 0.36)][k]
+	var pool = run_c.lerp(Color(0.9, 0.82, 0.6), 0.25)
+	var x = -HX + 4.5
+	while x < HX - 3.0:
+		w.add_box(x, k * FH + FH - 0.38, 0, 1.3, 0.07, 0.28, lamp, {"collide": false, "no_shadow": true, "glow": true})
+		w.add_box(x, k * FH + 0.031, 0, 3.0, 0.014, CORR * 2.0 - 0.5, pool.darkened(0.25), {"collide": false, "no_shadow": true, "glow": true})
+		w.add_box(x, k * FH + 0.046, 0, 1.5, 0.012, CORR * 2.0 - 1.4, pool, {"collide": false, "no_shadow": true, "glow": true})
+		x += 7.0
+	for cx in CROSS:
+		for z in [-17.0, -9.5, 9.5, 17.0]:
+			w.add_box(cx, k * FH + FH - 0.38, z, 0.28, 0.07, 1.3, lamp, {"collide": false, "no_shadow": true, "glow": true})
+			w.add_box(cx, k * FH + 0.031, z, CW * 2.0 - 0.5, 0.014, 2.6, FLOOR_C[k].lerp(Color(0.9, 0.82, 0.6), 0.2).darkened(0.3), {"collide": false, "no_shadow": true, "glow": true})
 
 # desks, chairs, cabinets and shelves in one office, kept out of the doorways
 static func _furnish(k: int, x0: float, x1: float, za: float, zb: float, sz: float, front: bool) -> void:

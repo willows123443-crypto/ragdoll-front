@@ -102,6 +102,16 @@ func _ready() -> void:
 			_cohesion_test()
 		if a.begins_with("--poseshot="):
 			_pose_shot(a.substr(11))
+		if a.begins_with("--vaultshot="):
+			_vault_shot(a.substr(12))
+		if a == "--camtest":
+			_cam_test()
+		if a == "--perfrun":
+			_perf_run()
+		if a.begins_with("--weather="):
+			G.settings["weather"] = a.substr(10)
+		if a.begins_with("--polishshot="):
+			_polish_shot(a.substr(13))
 		if a == "--lanetest":
 			_lane_test()
 		if a == "--tanktest":
@@ -318,6 +328,24 @@ func apply_time() -> void:
 func _storm_tint() -> void:
 	env.fog_density = 0.0016
 	if not G.storm:
+		if Weather.kind == "rain":
+			# a wet day: low grey cloud, flat light, a little haze (looks only: nobody sees any less far)
+			var gr = Color(0.45, 0.48, 0.51)
+			sky_mat.sky_top_color = sky_mat.sky_top_color.lerp(gr * 0.82, 0.6)
+			sky_mat.sky_horizon_color = sky_mat.sky_horizon_color.lerp(gr, 0.55)
+			sky_mat.ground_horizon_color = sky_mat.ground_horizon_color.lerp(gr * 0.85, 0.45)
+			sun.light_energy *= 0.62
+			env.fog_light_color = env.fog_light_color.lerp(gr, 0.5)
+			env.fog_density = 0.0036
+		elif Weather.kind == "cold":
+			# a hard frost: pale sky, thin cold light, breath hanging in the air
+			sky_mat.sky_top_color = sky_mat.sky_top_color.lerp(Color(0.6, 0.7, 0.82), 0.45)
+			sky_mat.sky_horizon_color = sky_mat.sky_horizon_color.lerp(Color(0.87, 0.9, 0.93), 0.6)
+			sun.light_color = sun.light_color.lerp(Color(0.88, 0.94, 1.0), 0.55)
+			sun.light_energy *= 0.9
+			env.ambient_light_color = env.ambient_light_color.lerp(Color(0.68, 0.77, 0.92), 0.5)
+			env.fog_light_color = env.fog_light_color.lerp(Color(0.86, 0.89, 0.93), 0.6)
+			env.fog_density = 0.003
 		return
 	var grey = Color(0.42, 0.45, 0.48)
 	sky_mat.sky_top_color = sky_mat.sky_top_color.lerp(grey * 0.8, 0.75)
@@ -463,6 +491,7 @@ func start_game(o: Dictionary) -> void:
 	Prep.reset()
 	G.storm = false
 	G.fx.set_storm(false)
+	Weather.reset()
 	if G.ui.title != null:
 		G.ui.title.visible = false
 		G.ui.menu.visible = false
@@ -556,6 +585,9 @@ func start_game(o: Dictionary) -> void:
 		if not o.get("armies", true):
 			G.team_size = maxi(Scripted.placed_count(G.custom_map, 0), Scripted.placed_count(G.custom_map, 1))
 	G.started = true
+	if Weather.wanted() != "clear":
+		Weather.apply()
+		apply_time()
 	refresh_markers()
 	G.pc.free_pos = Vector3(-62, G.world.ground_y(-62, -6) + 7.0, -6)
 	G.pc.free_yaw = PI / 2.0 + 0.12
@@ -698,6 +730,8 @@ func clear_bodies() -> void:
 			s.queue_free()
 
 # ---------------------------------------------------------------- simulation
+var prof2 = [0, 0, 0, 0, 0, 0]      # combat steps, effects, squads, support and fog, commander
+
 func _physics_process(_delta: float) -> void:
 	if not G.started:
 		return
@@ -736,17 +770,51 @@ func _sim_step() -> void:
 			# every third tick when they're not in a fight (every other while they are): with their rifles
 			# gliding along with them in between, it doesn't show from the commander view
 			var every = 2 if s.vis_t != null or s.supp > 0.3 else 3
-			if (fr + s.id) % every != 0:
-				s.lod_glide()
+			var rem = (fr + s.id) % every
+			if rem != 0:
+				# (of the in-between frames, one in two gets a fresh pose; on the other he's carried along as he is)
+				if Soldier.PERF:
+					var g0 = Time.get_ticks_usec()
+					s.lod_glide(rem == 1)
+					Soldier.pf[3] += Time.get_ticks_usec() - g0
+				else:
+					s.lod_glide(rem == 1)
 				continue
 			G.DT = float(every) / 60.0
 			s.lod_unglide()
+			var y0: float = s.body_yaw
+			var a0: float = s.aim_yaw
 			s.tick()
+			if is_instance_valid(s):
+				s.yaw_rate = clampf(G.wrap_a(s.body_yaw - y0) / G.DT, -8.0, 8.0)
+				s.aim_rate = clampf(G.wrap_a(s.aim_yaw - a0) / G.DT, -8.0, 8.0)
+			G.DT = 1.0 / 60.0
+		elif big and s.state == "riding" and not s.is_player and s.mount_t <= 0.0 and (s.hidden_in_vehicle or s.lod_frozen):
+			# crews shut inside a vehicle think every third tick; far-off men riding in the open every other
+			# one, carried along with their seats in between
+			var ev = 3 if s.hidden_in_vehicle else 2
+			if (fr + s.id) % ev != 0:
+				if not s.hidden_in_vehicle:
+					s.rider_glide()
+				continue
+			G.DT = float(ev) / 60.0
+			if Soldier.PERF:
+				var r0 = Time.get_ticks_usec()
+				s.tick()
+				AI.pf["state:riding"] = AI.pf.get("state:riding", 0) + Time.get_ticks_usec() - r0
+			else:
+				s.tick()
 			G.DT = 1.0 / 60.0
 		else:
-			if s.glide_off != Vector3.ZERO or s.glide_ph != 0.0:
+			if s.glide_off != Vector3.ZERO or s.glide_ph != 0.0 or s.glide_yaw != 0.0 or s.glide_aim != 0.0:
 				s.lod_unglide()
-			s.tick()
+			if Soldier.PERF and s.state != "alive":
+				var d0 = Time.get_ticks_usec()
+				var st0: String = s.state
+				s.tick()
+				AI.pf["state:" + st0] = AI.pf.get("state:" + st0, 0) + Time.get_ticks_usec() - d0
+			else:
+				s.tick()
 	var tc = Time.get_ticks_usec()
 	prof[0] += tb - ta
 	prof[1] += tc - tb
@@ -758,16 +826,27 @@ func _sim_step() -> void:
 	Combat.step_flares()
 	Combat.step_mines()
 	Combat.step_fires()
+	var td = Time.get_ticks_usec()
 	G.fx.step(G.DT)
+	Weather.step(G.DT)
+	var te = Time.get_ticks_usec()
 	Stats.step(G.DT)
 	Squad.step(G.DT)
+	var tf = Time.get_ticks_usec()
 	Support.step(G.DT)
 	Fog.step(G.DT)
+	var tg = Time.get_ticks_usec()
 	Prod.step(G.DT)
 	if not Prep.active():
 		if not G.builder:
 			Commander.step(G.DT)
 		Ops.step(G.DT)
+	var th = Time.get_ticks_usec()
+	prof2[0] += td - tc
+	prof2[1] += te - td
+	prof2[2] += tf - te
+	prof2[3] += tg - tf
+	prof2[4] += th - tg
 	Stretcher.step(G.DT)
 	if not Prep.active():
 		Obj.step(G.DT)
@@ -2812,6 +2891,8 @@ func _pose_shot(dir: String) -> void:
 			var cur: Vector3 = s.parts[2].global_position - s.pos
 			worst = maxf(worst, cur.distance_to(prev))
 			prev = cur
+			if _arg("dbg", "0") == "1" and i % 6 == 0:
+				print("PH %s i%d st=%s prone=%s pel=%s stun=%.2f" % [ph[0], i, s.state, str(s.prone), str(s.parts[0].global_position - s.pos), s.stun])
 			if shots and i % 9 == 4:
 				await _look(s.pos + Vector3(0.3, 1.0, 4.0), s.pos + Vector3(0, 0.6, 0))
 				await _snap(dir, "%s_%d" % [ph[0], i / 9])
@@ -2831,6 +2912,8 @@ func _pose_shot(dir: String) -> void:
 			if s.foot_sw[k] and not was[k]:
 				swings += 1
 			was[k] = s.foot_sw[k]
+		if _arg("dbg", "0") == "1" and i % 6 == 0:
+			print("TURN i%d sw=%s by=%.2f cr=%.2f ok=%s seen=%.2f now=%.2f fwL=%s fwR=%s spd=%.2f st=%s veh=%s" % [i, str(s.foot_sw), s.body_yaw, s.crouch, str(s.foot_ok), s.foot_seen, G.sim_time, str(s.foot_w[0] - s.pos), str(s.foot_w[1] - s.pos), s.vel.length(), s.state, str(s.stumble)])
 		if shots and i % 15 == 7 and i < 90:
 			await _look(s.pos + Vector3(0.3, 2.2, 3.4), s.pos + Vector3(0, 0.5, 0))
 			await _snap(dir, "turn_%d" % (i / 15))
@@ -2839,6 +2922,368 @@ func _pose_shot(dir: String) -> void:
 	var offL = G.dist2d(s.foot_w[0], s.pos - r * 0.13)
 	var offR = G.dist2d(s.foot_w[1], s.pos + r * 0.13)
 	print("POSESHOT half turn: body turned %.2f rad, steps taken %d, feet end %.2fm and %.2fm from under him" % [absf(G.wrap_a(s.body_yaw - y0)), swings, offL, offR])
+	get_tree().quit()
+
+# --perfrun --map= --size= --secs= --mode= --armor=: a big AI battle, and where each tick's time goes
+func _perf_run() -> void:
+	await _wait(0.5)
+	G.settings["ai_side"] = true
+	seed(7)
+	Soldier.PERF = true
+	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "commander"), "size": int(_arg("size", "40")), "limit": 999, "reinforce": true, "armor": _arg("armor", "light"), "reinf_mode": "truck", "teams": 2})
+	G.pc.free_pos = Vector3(0, 60, 0)
+	await _wait(float(_arg("warm", "40")))
+	var rounds = int(_arg("rounds", "3"))
+	var tot = 0
+	var small = 0
+	var ranged = 0
+	var cnt = 0
+	for s in G.soldiers:
+		if s.state != "alive":
+			continue
+		cnt += 1
+		var nodes = []
+		for b in s.parts:
+			nodes.append_array(b.find_children("*", "GeometryInstance3D", true, false))
+		if s.gun_node != null:
+			nodes.append_array(s.gun_node.find_children("*", "GeometryInstance3D", true, false))
+		for g in nodes:
+			tot += 1
+			if g.visibility_range_end > 0.0:
+				ranged += 1
+			var ab: AABB = g.get_aabb()
+			var sc: Vector3 = g.scale
+			if maxf(ab.size.x * sc.x, maxf(ab.size.y * sc.y, ab.size.z * sc.z)) < 0.17:
+				small += 1
+	var drawn_far = 0
+	var nfar = 0
+	for s in G.soldiers:
+		if s.state == "alive" and s.detail_hidden:
+			nfar += 1
+			for b in s.parts:
+				for g in b.find_children("*", "GeometryInstance3D", true, false):
+					if g.visible and g.visibility_range_end <= 0.0:
+						drawn_far += 1
+			if s.gun_node != null:
+				for g in s.gun_node.find_children("*", "GeometryInstance3D", true, false):
+					if g.visible and g.visibility_range_end <= 0.0:
+						drawn_far += 1
+	print("PERF meshes per man %.1f, of which small (under 17 cm) %.1f, already hidden at range %.1f | far-off men: %d, pieces drawn each %.1f" % [tot / maxf(cnt, 1.0), small / maxf(cnt, 1.0), ranged / maxf(cnt, 1.0), nfar, drawn_far / maxf(nfar, 1.0)])
+	for k in range(rounds):
+		tick_us = 0
+		tick_n = 0
+		prof = [0, 0]
+		prof2 = [0, 0, 0, 0, 0, 0]
+		Soldier.pf = [0, 0, 0, 0]
+		AI.pf = {}
+		await _wait(float(_arg("secs", "20")))
+		var n = maxi(tick_n, 1)
+		var frozen = 0
+		var alive = 0
+		for s in G.soldiers:
+			if s.lod_frozen:
+				frozen += 1
+			if s.state == "alive":
+				alive += 1
+		print("PERF %d: men %d (alive %d, far %d) vehicles %d | tick %.2f ms = vehicles %.2f + soldiers %.2f (think %.2f, pose %.2f, body %.2f, glide %.2f, other %.2f) + combat %.2f + effects %.2f + squads %.2f + support/fog %.2f + commander %.2f" % [k, G.soldiers.size(), alive, frozen, G.vehicles.size(),
+			tick_us / 1000.0 / n, prof[0] / 1000.0 / n, prof[1] / 1000.0 / n, Soldier.pf[0] / 1000.0 / n, Soldier.pf[1] / 1000.0 / n, Soldier.pf[2] / 1000.0 / n,
+			Soldier.pf[3] / 1000.0 / n, (prof[1] - Soldier.pf[0] - Soldier.pf[1] - Soldier.pf[2] - Soldier.pf[3]) / 1000.0 / n,
+			prof2[0] / 1000.0 / n, prof2[1] / 1000.0 / n, prof2[2] / 1000.0 / n, prof2[3] / 1000.0 / n, prof2[4] / 1000.0 / n])
+		var keys = AI.pf.keys()
+		keys.sort_custom(func(a, b): return AI.pf[a] > AI.pf[b])
+		var line = ""
+		for kk in keys.slice(0, 14):
+			line += "%s %.2f  " % [kk, AI.pf[kk] / 1000.0 / n]
+		print("PERF %d think: %s" % [k, line])
+	get_tree().quit()
+
+# somewhere out in the open, with nothing built within r of it
+func _open_spot(r: float) -> Vector3:
+	var b: Rect2 = G.world.bounds
+	for i in range(200):
+		var x = randf_range(b.position.x + 20.0, b.end.x - 20.0)
+		var z = randf_range(b.position.y + 20.0, b.end.y - 20.0)
+		if G.world.cols_in_rect(x - r, z - r, x + r, z + r).is_empty() and not G.world.in_water(x, z):
+			return Vector3(x, G.world.ground_y(x, z), z)
+	return _free_spot(Vector3.ZERO)
+
+# --polishshot=DIR: pictures of the new looks: a shell landing (flash, ring, clods left lying), rain on a
+# town street, breath on a cold morning, mud, dressings and soot on three men, and the office block's rooms
+func _polish_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	var what = _arg("what", "all")
+	if what == "all" or what == "blast":
+		G.settings["weather"] = "clear"
+		apply_time()
+		await _wait(0.3)
+		start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+		await _wait(0.5)
+		var bp = _open_spot(14.0)
+		await _look(bp + Vector3(9, 4.5, 9), bp + Vector3(0, 0.8, 0))
+		Combat.explode(bp, null, 1.4)
+		for i in range(3):
+			await get_tree().physics_frame
+		await _snap(dir, "blast_0")
+		for i in range(7):
+			await get_tree().physics_frame
+		await _snap(dir, "blast_1")
+		await _wait(0.5)
+		await _snap(dir, "blast_2")
+		await _wait(4.0)
+		await _look(bp + Vector3(5, 3.2, 5), bp)
+		await _snap(dir, "blast_after")
+		print("POLISHSHOT clods flying %d, slots used %d" % [G.fx.clod_fly.size(), G.fx.clod_i])
+	if what == "all" or what == "wear":
+		if not G.started:
+			start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+			await _wait(0.5)
+		var wp = _open_spot(8.0)
+		var men = []
+		for i in range(3):
+			var m = spawn_soldier(0, wp.x + i * 1.1, wp.z, "rifle")
+			m.order = {"mode": "hold", "point": m.pos}
+			m.body_yaw = 0.0
+			m.aim_yaw = 0.0
+			men.append(m)
+		await _wait(1.0)
+		men[0].mud = 1.0
+		Wear.mud_tick(men[0], 0.01)
+		print("POLISHSHOT mud stage %d, shin has %d pieces; man 0 at x %.1f, man 2 at x %.1f" % [men[0].mud_stage, men[0].parts[8].get_child_count(), men[0].pos.x, men[2].pos.x])
+		men[1].wound_part = 5
+		Wear.dress(men[1])
+		men[1].wound_part = 2
+		Wear.dress(men[1])
+		men[1].wound_part = 9
+		Wear.dress(men[1])
+		Wear.soot(men[2])
+		for m in men:
+			m.aim_yaw = 0.0
+			m.body_yaw = 0.0
+		await _look(men[1].pos + Vector3(0.0, 1.2, 3.0), men[1].pos + Vector3(0, 0.9, 0))
+		await _wait(0.3)
+		await _snap(dir, "wear")
+	if what == "all" or what == "rain":
+		G.settings["weather"] = "rain"
+		start_game({"map": "town", "mode": "sandbox", "size": 6, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+		await _wait(2.5)
+		var rd = G.world.roads[0]
+		var rc = Vector3((rd[0] + rd[1]) * 0.5, 0, (rd[2] + rd[3]) * 0.5)
+		rc.y = G.world.ground_y(rc.x, rc.z)
+		var along = Vector3(1, 0, 0) if (rd[1] - rd[0]) > (rd[3] - rd[2]) else Vector3(0, 0, 1)
+		await _look(rc - along * 14.0 + Vector3(0, 2.4, 0) + Vector3(along.z, 0, along.x) * 2.0, rc + along * 10.0)
+		await _wait(0.6)
+		await _snap(dir, "rain_street")
+		await _look(rc + Vector3(-30, 45, 30), rc)
+		await _wait(0.4)
+		await _snap(dir, "rain_above")
+		print("POLISHSHOT rain: %d puddles, %d roads" % [Weather.puddles.size(), G.world.roads.size()])
+	if what == "all" or what == "cold":
+		G.settings["weather"] = "cold"
+		start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+		await _wait(0.5)
+		var cp2 = _open_spot(8.0)
+		var cm = []
+		for i in range(4):
+			var m = spawn_soldier(0, cp2.x + i * 1.2, cp2.z, "rifle")
+			m.order = {"mode": "hold", "point": m.pos}
+			cm.append(m)
+		for m in cm:
+			m.aim_yaw = 0.6
+			m.body_yaw = 0.6
+		await _look(cm[1].pos + Vector3(2.2, 2.6, 2.2), cm[1].pos + Vector3(0.6, 1.2, 0))
+		for i in range(40):
+			await get_tree().physics_frame
+			if Weather.puffs.filter(func(p): return p[0] < p[1] and p[0] > 0.3).size() >= 3:
+				break
+		await _snap(dir, "cold_breath")
+		print("POLISHSHOT cold: puffs live %d" % Weather.puffs.filter(func(p): return p[0] < p[1]).size())
+	if what == "far":
+		G.settings["weather"] = "clear"
+		G.settings["ai_side"] = true
+		seed(5)
+		start_game({"map": "town", "mode": "sandbox", "size": 40, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+		await _wait(3.0)
+		var cen = Vector3.ZERO
+		var nn = 0
+		for m in G.soldiers:
+			if m.team == 0 and m.state == "alive" and not m.hidden_in_vehicle:
+				cen += m.pos
+				nn += 1
+		cen /= maxf(nn, 1.0)
+		await _look(cen + Vector3(34, 46, 34), cen)
+		await _wait(0.5)
+		var hid = 0
+		for m in G.soldiers:
+			if m.detail_hidden:
+				hid += 1
+		await _snap(dir, "far_lean")
+		for m in G.soldiers:
+			m._far_detail(false)
+		await get_tree().process_frame
+		await _snap(dir, "far_full")
+		print("POLISHSHOT far: %d men, %d drawn with the small pieces left off" % [G.soldiers.size(), hid])
+	if what == "all" or what == "office":
+		G.settings["weather"] = "clear"
+		start_game({"map": "office", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+		await _wait(1.0)
+		G.ui.floor_view.pick(1)
+		await _look(Vector3(-46, 30, 16), Vector3(-30, 3.6, 2))
+		await _wait(0.4)
+		await _snap(dir, "office_floor1")
+		G.ui.floor_view.pick(0)
+		await _look(Vector3(20, 17, 30), Vector3(14, 0, 8))
+		await _wait(0.4)
+		await _snap(dir, "office_floor0")
+		# inside a back office looking at the window wall, and down the corridor
+		G.ui.floor_view.pick(-1)
+		await _look(Vector3(-40.0, 1.7, 13.2), Vector3(-36.0, 1.0, 21.5))
+		await _wait(0.4)
+		await _snap(dir, "office_room")
+		await _look(Vector3(-44.0, 1.7, 0.0), Vector3(-20.0, 1.2, 0.0))
+		await _wait(0.4)
+		await _snap(dir, "office_corridor")
+		# a shot fired in a room: the flash on the walls
+		G.fx.muzzle(Vector3(-39.0, 1.4, 17.0), true)
+		await _look(Vector3(-41.5, 1.7, 13.2), Vector3(-37.0, 1.2, 20.0))
+		await get_tree().process_frame
+		await _snap(dir, "office_flash")
+	get_tree().quit()
+
+# --camtest: the commander view: does a jump glide instead of cutting, does the spot under the pointer stay
+# under it when you zoom, and does a second click on a squad card take the view to the squad
+func _cam_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "commander", "size": 1, "limit": 60, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(2.0)
+	var pc = G.pc
+	var f0: Vector3 = pc.rts_focus
+	pc.rts_focus = f0 + Vector3(40, 0, 0)
+	var steps = 0
+	var first = 0.0
+	var prev: Vector3 = pc.free_pos
+	for i in range(90):
+		await get_tree().process_frame
+		var mv = pc.free_pos.distance_to(prev)
+		if i == 0:
+			first = mv
+		if mv > 0.02:
+			steps += 1
+		prev = pc.free_pos
+	print("CAMTEST jump of 40m: first frame moved %.1fm, kept moving for %d frames, ended %.2fm from where it was sent" % [first, steps, G.dist2d(pc.rcam_focus, pc.rts_focus)])
+	var vp = get_viewport().get_visible_rect().size
+	var scr = Vector2(vp.x * 0.78, vp.y * 0.3)
+	var g0 = pc._ground_at(scr)
+	var d0: float = pc.rts_dist
+	for k in range(4):
+		var ev = InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_WHEEL_UP
+		ev.pressed = true
+		ev.position = scr
+		pc._unhandled_input(ev)
+		for i in range(8):
+			await get_tree().process_frame
+	for i in range(90):
+		await get_tree().process_frame
+	var g1 = pc._ground_at(scr)
+	if g0 != null and g1 != null:
+		print("CAMTEST zoom %.0fm -> %.0fm at a point off to one side: the ground under the pointer moved %.1fm (the middle of the view moved %.1fm)" % [d0, pc.rts_dist, G.dist2d(g0, g1), G.dist2d(f0 + Vector3(40, 0, 0), pc.rts_focus)])
+	else:
+		print("CAMTEST zoom: no ground under the pointer (%s, %s)" % [str(g0), str(g1)])
+	var qs = pc.my_squads()
+	if qs.size() >= 2:
+		var before: Vector3 = pc.rts_focus
+		pc.select_squad(1, 0)
+		await get_tree().process_frame
+		var moved1 = G.dist2d(before, pc.rts_focus)
+		pc.select_squad(1, 1)
+		var c = Vector3.ZERO
+		for m in pc.selection:
+			c += m.pos
+		c /= maxf(1.0, pc.selection.size())
+		print("CAMTEST squad card: one click moved the view %.1fm (selected %d men), a second click sent it to %.1fm from the squad" % [moved1, pc.selection.size(), G.dist2d(pc.rts_focus, c)])
+	pc.cycle_contact()
+	get_tree().quit()
+
+# --vaultshot=DIR|-: one man sent over a sandbag wall, then up a ladder (on a map that has one): the biggest
+# jump any joint makes in a single frame relative to where he stands (a snap between poses shows as a big
+# one), and pictures of each
+func _vault_shot(dir: String) -> void:
+	var shots = dir != "-"
+	if shots:
+		DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	await _wait(0.3)
+	start_game({"map": _arg("map", "town"), "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var p0 = G.main._free_spot(Vector3(0, 0, 0))
+	G.world.sandbags(p0.x, p0.z + 2.5, 24.0, true, 1.0)
+	G.world.update_nav_area(p0.x - 13.0, p0.z, p0.x + 13.0, p0.z + 5.0)
+	var s = spawn_soldier(0, p0.x, p0.z, "rifle")
+	s.order = {"mode": "hold", "point": s.pos}
+	await _wait(1.0)
+	var worst = 0.0
+	var went = false
+	var prev: Array = []
+	for i in range(15):
+		prev.append(s.P[i] - s.pos)
+	var n = 0
+	for i in range(200):
+		if i == 0:
+			var goal = p0 + Vector3(0, 0, 6.0)
+			s.order = {"mode": "move", "point": goal}
+			AI.go_to(s, goal, 3.0)
+		await get_tree().physics_frame
+		if s.vault != null:
+			went = true
+			n += 1
+			if shots and n % 7 == 3:
+				await _look(s.pos + Vector3(2.6, 1.2, 0.0), s.pos + Vector3(0, 0.8, 0))
+				await _snap(dir, "vault_%d" % (n / 7))
+		if went and n < 76:
+			for k in range(15):
+				var cur: Vector3 = s.P[k] - s.pos
+				worst = maxf(worst, cur.distance_to(prev[k]))
+				if cur.distance_to(prev[k]) > 0.1 and _arg("dbg", "0") == "1":
+					print("VJ i%d joint %d jump %.2f vault=%s t=%.2f plant_ok=%s" % [i, k, cur.distance_to(prev[k]), str(s.vault != null), s.vault["t"] if s.vault != null else 9.0, str(s.foot_ok)])
+		for k in range(15):
+			prev[k] = s.P[k] - s.pos
+		if went and s.vault == null:
+			n += 1
+			if shots and n % 7 == 3 and n < 80:
+				await _look(s.pos + Vector3(2.6, 1.2, 0.0), s.pos + Vector3(0, 0.8, 0))
+				await _snap(dir, "land_%d" % (n / 7))
+	print("VAULTSHOT wall: went over %s, biggest joint jump in one frame %.3fm, state %s" % [str(went), worst, s.state])
+	var lads = G.world.towers.filter(func(T): return T.get("ladder", false))
+	if lads.is_empty():
+		print("VAULTSHOT ladder: none on this map")
+		get_tree().quit()
+		return
+	var T = lads[0]
+	var lo: Vector3 = T["stair_bottom"]
+	var c = spawn_soldier(0, lo.x, lo.z, "rifle")
+	c.body_yaw = atan2(T["n"].x, T["n"].z) + 1.2
+	await _wait(0.6)
+	c.start_climb(T, true)
+	worst = 0.0
+	for k in range(15):
+		prev[k] = c.P[k] - c.pos
+	n = 0
+	while c.climb != null and n < 400:
+		await get_tree().physics_frame
+		n += 1
+		for k in range(15):
+			var cur: Vector3 = c.P[k] - c.pos
+			worst = maxf(worst, cur.distance_to(prev[k]))
+			if cur.distance_to(prev[k]) > 0.1 and _arg("dbg", "0") == "1":
+				print("LJ n%d joint %d jump %.2f t=%.3f" % [n, k, cur.distance_to(prev[k]), c.climb["t"] if c.climb != null else 9.0])
+			prev[k] = cur
+		if shots and n % 20 == 5:
+			var nn: Vector3 = T["n"]
+			await _look(c.pos + nn * 3.0 + Vector3(-nn.z, 0, nn.x) * 2.0 + Vector3(0, 1.4, 0), c.pos + Vector3(0, 0.9, 0))
+			await _snap(dir, "ladder_%d" % (n / 20))
+	print("VAULTSHOT ladder: %d frames, biggest joint jump in one frame %.3fm, state %s" % [n, worst, c.state])
 	get_tree().quit()
 
 # --lanetest: lorries sent both ways along the same road: which side do they pass on, how close, how long

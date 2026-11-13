@@ -572,9 +572,9 @@ func add_box(cx: float, y0: float, cz: float, w: float, h: float, d: float, colo
 			dc.prop = opt.get("mat", 0)
 		return nref
 	var shp: String = opt.get("shape", "")
-	var key = color.to_html(false) + ("n" if opt.get("no_shadow", false) else "s") + shp
+	var key = color.to_html(false) + ("n" if opt.get("no_shadow", false) else "s") + shp + ("g" if opt.get("glow", false) else "")
 	if not groups.has(key):
-		groups[key] = {"color": color, "xforms": [], "mm": null, "no_shadow": opt.get("no_shadow", false), "shape": shp}
+		groups[key] = {"color": color, "xforms": [], "mm": null, "no_shadow": opt.get("no_shadow", false), "shape": shp, "glow": opt.get("glow", false)}
 	var g = groups[key]
 	g["xforms"].append(xf)
 	var ref = [g, g["xforms"].size() - 1]
@@ -703,6 +703,12 @@ func finalize_static() -> void:
 		_surface(mat, g["color"], g.get("shape", ""))
 		var pm = Props.mat_for(g["color"], g.get("shape", ""))
 		mi.material_override = pm if pm != null else mat
+		if g.get("glow", false):
+			# a lit thing (a lamp, a patch of light on a floor): it shows at its own brightness in the dark
+			var gm = StandardMaterial3D.new()
+			gm.albedo_color = g["color"]
+			gm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			mi.material_override = gm
 		if g["no_shadow"]:
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_geo().add_child(mi)

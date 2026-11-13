@@ -997,6 +997,9 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 				shake = maxf(shake, 0.6 + k)
 				G.audio.deafen(k * 1.2)
 				G.ui.dust_hit(k)
+		else:
+			# watching from close by (not through a soldier's eyes): the sound goes dull for a moment
+			G.audio.dull(1.0 - cam.global_position.distance_to(pos) / (24.0 * clampf(power, 0.6, 2.0)))
 	G.world.damage_area(pos, R * 0.75, power)
 	if power >= 1.0:
 		G.world.blast_crater(pos, clampf(1.2 * power, 1.0, 3.2))

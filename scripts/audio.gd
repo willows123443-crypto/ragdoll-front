@@ -219,6 +219,7 @@ func deafen(k: float) -> void:
 
 func _process(dt: float) -> void:
 	_engine_loops()
+	echo_budget = minf(echo_budget + dt * 9.0, 4.0)
 	bark_t -= dt
 	if deaf > 0.0:
 		deaf = maxf(0.0, deaf - dt)
@@ -395,19 +396,28 @@ func _sweep(f0: float, f1: float, len_s: float, vol: float) -> AudioStreamWAV:
 		out[i] = sin(ph) * vol * (1.0 - k) * minf(1.0, k * 50.0)
 	return _wav(out)
 
-func play(stream: AudioStream, pos: Vector3, vol_db: float = 0.0, pitch: float = 1.0, delay: float = 0.0, muffle: bool = false) -> void:
+func play(stream: AudioStream, pos: Vector3, vol_db: float = 0.0, pitch: float = 1.0, delay: float = 0.0, muffle: bool = false, cutoff: float = 5000.0) -> void:
 	if delay > 0.01:
-		get_tree().create_timer(delay, false).timeout.connect(func(): play(stream, pos, vol_db, pitch, 0.0, muffle))
+		get_tree().create_timer(delay, false).timeout.connect(func(): play(stream, pos, vol_db, pitch, 0.0, muffle, cutoff))
 		return
 	var p: AudioStreamPlayer3D = players[pi]
 	pi = (pi + 1) % players.size()
 	p.stream = stream
 	p.global_position = pos
 	p.volume_db = vol_db - (5.0 if muffle else 0.0)
-	# through a wall: dull and low, the top end cut away
-	p.attenuation_filter_cutoff_hz = 800.0 if muffle else 5000.0
+	# through a wall: dull and low, the top end cut away (and the top end goes with distance too)
+	p.attenuation_filter_cutoff_hz = 800.0 if muffle else cutoff
 	p.pitch_scale = pitch * randf_range(0.93, 1.07)
 	p.play()
+
+# a blast near where you're watching from: everything goes dull for a moment and comes back (no ringing:
+# that's for a man caught close to one)
+func dull(k: float) -> void:
+	k = clampf(k, 0.0, 1.0)
+	if k < 0.2 or deaf_fx == null:
+		return
+	deaf = maxf(deaf, 0.3 + 0.9 * k)
+	AudioServer.set_bus_effect_enabled(deaf_bus, AudioServer.get_bus_effect_count(deaf_bus) - 1, true)
 
 func cam_dist(pos: Vector3) -> float:
 	var cam = get_viewport().get_camera_3d()
@@ -423,24 +433,41 @@ func occluded(pos: Vector3) -> bool:
 		return false
 	return G.blocked(a, pos + Vector3(0, 0.8, 0))
 
+# echoes cost voices: only so many shots a second get them, so a big firefight doesn't cut its own sounds off
+var echo_budget = 4.0
+
 func shot(pos: Vector3, w: Dictionary) -> void:
 	var d = cam_dist(pos)
 	notice(pos, 0.08)
-	var delay = minf(d / 343.0, 0.6)
+	var delay = minf(d / 343.0, 0.7)
 	var stream = s_guns.get(w["id"], s_shot)
+	var vol: float = w["snd_vol"]
 	if d > 110.0:
-		# far off, a gun is a dull thud rolling across the field
-		play(s_distant, pos, w["snd_vol"] - 4.0, w["snd_pitch"] * 1.3, delay)
+		# far off, a gun is a dull thump rolling across the field: lower and duller the further away it is
+		var fk = clampf((d - 110.0) / 150.0, 0.0, 1.0)
+		play(s_distant, pos, vol - 4.0, w["snd_pitch"] * lerpf(1.3, 1.0, fk), delay, false, lerpf(1600.0, 650.0, fk))
 		return
 	var muf = occluded(pos)
 	# sharp and cracking up close; from 40 m out it loses its edge and a low thud comes in under it
 	var far_k = clampf((d - 40.0) / 70.0, 0.0, 1.0)
-	play(stream, pos, w["snd_vol"] - far_k * 6.0, randf_range(0.96, 1.04) * (1.0 - far_k * 0.12), delay, muf)
+	play(stream, pos, vol - far_k * 6.0, randf_range(0.96, 1.04) * (1.0 - far_k * 0.12), delay, muf, lerpf(11000.0, 1500.0, clampf((d - 15.0) / 80.0, 0.0, 1.0)))
+	if d < 24.0 and not muf:
+		# right beside it: the hard crack on the front of the bang
+		play(s_crack, pos, vol - 7.0 - d * 0.3, randf_range(0.75, 0.95), delay, false, 16000.0)
 	if far_k > 0.15:
-		play(s_distant, pos, w["snd_vol"] - 10.0 + far_k * 6.0, w["snd_pitch"] * 1.3, delay, muf)
-	# a slap-back echo off walls in town (and a longer one indoors)
-	if d < 90.0 and G.world != null and (indoor > 0.5 or _walls_near(pos)):
-		play(s_slap, pos, w["snd_vol"] - 9.0, 0.85, delay + randf_range(0.09, 0.2) + indoor * 0.08)
+		play(s_distant, pos, vol - 10.0 + far_k * 6.0, w["snd_pitch"] * 1.3, delay, muf, 1400.0)
+	if d < 90.0 and G.world != null and echo_budget >= 1.0:
+		if indoor > 0.5:
+			# in a room the bang comes straight back off the walls, loud and close behind the shot
+			echo_budget -= 1.0
+			play(s_slap, pos, vol - 5.0, 0.7, delay + randf_range(0.03, 0.06))
+			play(s_slap, pos, vol - 11.0, 0.58, delay + randf_range(0.1, 0.17), false, 2500.0)
+		elif _walls_near(pos):
+			# in town it slaps back off the nearest wall, and again, fainter and duller, off the far end of the street
+			echo_budget -= 1.0
+			play(s_slap, pos, vol - 9.0, 0.85, delay + randf_range(0.09, 0.2))
+			if d < 60.0:
+				play(s_slap, pos, vol - 15.0, 0.62, delay + randf_range(0.3, 0.5), false, 1800.0)
 
 func _walls_near(p: Vector3) -> bool:
 	return G.world.cols_in_rect(p.x - 14.0, p.z - 14.0, p.x + 14.0, p.z + 14.0).size() > 6
@@ -484,9 +511,21 @@ func _crack() -> AudioStreamWAV:
 
 func boom(pos: Vector3) -> void:
 	notice(pos, 0.6)
+	var d = cam_dist(pos)
+	var delay = minf(d / 343.0, 0.8)
+	if d > 130.0:
+		# a long way off: a low rumble that arrives late
+		play(s_far, pos, 9.0, randf_range(0.6, 0.8), delay, false, 800.0)
+		return
 	# a blast is felt even through a wall, just deeper
 	var muf = occluded(pos)
-	play(s_boom, pos, 6.0 + (3.0 if muf else 0.0), 0.85 if muf else 1.0, minf(cam_dist(pos) / 343.0, 0.5), muf)
+	var fk = clampf((d - 30.0) / 100.0, 0.0, 1.0)
+	play(s_boom, pos, 6.0 + (3.0 if muf else 0.0), (0.85 if muf else 1.0) * (1.0 - 0.15 * fk), delay, muf, lerpf(7000.0, 1400.0, fk))
+	if d < 20.0 and not muf:
+		play(s_crack, pos, 3.0, 0.55, delay, false, 16000.0)
+	if d < 110.0 and G.world != null and (indoor > 0.5 or _walls_near(pos)):
+		# and it rolls back off the buildings
+		play(s_boom, pos, -5.0, 0.62, delay + randf_range(0.28, 0.5), false, 1100.0)
 
 func rocket(pos: Vector3) -> void:
 	play(s_rocket, pos, 2.0, 0.8)

@@ -259,10 +259,12 @@ func muzzle(pos: Vector3, big: bool) -> void:
 	f["l"].global_position = pos
 	# at night a flash lights up the walls and the men round it
 	# every flash a little different, so a burst flickers on the walls rather than strobing evenly
-	f["l"].light_energy = (3.0 if big else 1.6) * flash_boost * (2.6 if night_now else 1.0) * randf_range(0.65, 1.25)
-	f["l"].omni_range = (13.0 if night_now else 9.0) * randf_range(0.85, 1.1)
+	# indoors, out of the daylight, every shot throws its flash up the walls of the room
+	var inside = G.world != null and G.world.building_index(pos) >= 0
+	f["l"].light_energy = (3.0 if big else 1.6) * flash_boost * (2.6 if night_now else (2.3 if inside else 1.0)) * randf_range(0.65, 1.25)
+	f["l"].omni_range = (13.0 if night_now else (11.0 if inside else 9.0)) * randf_range(0.85, 1.1)
 	f["l"].light_color = Color(1.0, randf_range(0.62, 0.78), randf_range(0.28, 0.42))
-	f["t"] = randf_range(0.035, 0.06)
+	f["t"] = randf_range(0.035, 0.06) + (0.025 if inside else 0.0)
 	var p = _one_shot_smoke(pos, Color(1.0, 0.8, 0.4, 1.0), 3, 0.06, 0.25, 0.5, true)
 	p.initial_velocity_max = 0.5
 
@@ -355,27 +357,197 @@ func explosion(pos: Vector3, power: float) -> void:
 	haze.gravity = Vector3(0, 0.04, 0)
 	haze.initial_velocity_max = 0.8
 	haze.spread = 90.0
-	# a quick shockwave ring across the ground
-	if power >= 0.9:
-		var ring = MeshInstance3D.new()
-		var tm = TorusMesh.new()
-		tm.inner_radius = 0.85
-		tm.outer_radius = 1.0
-		ring.mesh = tm
-		var rm = StandardMaterial3D.new()
-		rm.albedo_color = Color(0.9, 0.85, 0.7, 0.55)
-		rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		ring.material_override = rm
-		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(ring)
-		ring.global_position = pos + Vector3(0, 0.3, 0)
-		ring.scale = Vector3(0.5, 0.15, 0.5)
-		var tw = create_tween()
-		tw.set_parallel(true)
-		tw.tween_property(ring, "scale", Vector3(9.0 * power, 0.4, 9.0 * power), 0.32)
-		tw.tween_property(rm, "albedo_color", Color(0.9, 0.85, 0.7, 0.0), 0.32)
-		tw.chain().tween_callback(ring.queue_free)
+	_blast_extras(pos, power)
+
+# ---------------------------------------------------------------- blasts: flash, ground ring, embers, clods
+var ring_tex: ImageTexture
+var ring_pool: Array = []
+var ring_i = 0
+var flashq_pool: Array = []
+var flashq_i = 0
+var ember_pool: Array = []
+var ember_i = 0
+var clod_mm: MultiMesh = null
+var clod_i = 0
+var clod_fly: Array = []       # the ones still in the air: [slot, pos, vel, basis, spin axis, spin, size, bounced]
+const CLODS = 640
+
+func _blast_setup() -> void:
+	var sz = 128
+	var img = Image.create_empty(sz, sz, false, Image.FORMAT_RGBA8)
+	for y in range(sz):
+		for x in range(sz):
+			var d = Vector2(x - sz / 2.0 + 0.5, y - sz / 2.0 + 0.5).length() / (sz / 2.0)
+			var a = clampf(1.0 - absf(d - 0.84) / 0.13, 0.0, 1.0)
+			a = a * a
+			if d < 0.84:
+				a = maxf(a, clampf((d - 0.35) / 0.49, 0.0, 1.0) * 0.22)   # the dust it drags along behind it
+			img.set_pixel(x, y, Color(1, 1, 1, a))
+	ring_tex = ImageTexture.create_from_image(img)
+	for i in range(6):
+		var m = MeshInstance3D.new()
+		var pm = PlaneMesh.new()
+		pm.size = Vector2(2, 2)
+		m.mesh = pm
+		var mat = StandardMaterial3D.new()
+		mat.albedo_texture = ring_tex
+		mat.albedo_color = Color(0.93, 0.89, 0.8, 0.0)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		m.material_override = mat
+		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		m.visible = false
+		add_child(m)
+		ring_pool.append({"m": m, "mat": mat, "t": 9.0, "dur": 0.4, "r": 6.0})
+	for i in range(4):
+		var m = MeshInstance3D.new()
+		var q = QuadMesh.new()
+		q.size = Vector2(1, 1)
+		m.mesh = q
+		var mat = StandardMaterial3D.new()
+		mat.albedo_texture = soft_tex
+		mat.albedo_color = Color(1.0, 0.95, 0.8, 0.0)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		mat.billboard_keep_scale = true
+		mat.no_depth_test = true
+		m.material_override = mat
+		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		m.visible = false
+		add_child(m)
+		flashq_pool.append({"m": m, "mat": mat, "t": 9.0, "s": 6.0})
+	for i in range(4):
+		var e = _make_burst(Color(1.0, 0.72, 0.3), 26, 0.9, 18.0, 0.07, true)
+		e.spread = 70.0
+		e.direction = Vector3.UP
+		e.gravity = Vector3(0, -16.0, 0)
+		e.color_ramp = _fade_ramp(Color(1, 1, 1, 1))
+		ember_pool.append(e)
+	clod_mm = MultiMesh.new()
+	clod_mm.transform_format = MultiMesh.TRANSFORM_3D
+	clod_mm.use_colors = true
+	clod_mm.instance_count = CLODS
+	var bm = BoxMesh.new()
+	bm.size = Vector3(1, 1, 1)
+	clod_mm.mesh = bm
+	var cm = StandardMaterial3D.new()
+	cm.vertex_color_use_as_albedo = true
+	cm.roughness = 1.0
+	var cmi = MultiMeshInstance3D.new()
+	cmi.multimesh = clod_mm
+	cmi.material_override = cm
+	cmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	cmi.custom_aabb = AABB(Vector3(-600, -50, -600), Vector3(1200, 200, 1200))
+	add_child(cmi)
+	_clods_clear()
+
+func _clods_clear() -> void:
+	clod_fly.clear()
+	clod_i = 0
+	if clod_mm != null:
+		for i in range(CLODS):
+			clod_mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3.ZERO), Vector3(0, -500, 0)))
+
+# the flash, the ring racing out across the ground, the sparks, and the earth and rubble it throws out
+# (which comes down round the crater and stays there)
+func _blast_extras(pos: Vector3, power: float) -> void:
+	if clod_mm == null:
+		_blast_setup()
+	var gy: float = G.world.surface_y(pos.x, pos.z, pos.y + 0.5) if G.world != null else pos.y
+	var low = pos.y - gy < 2.5
+	if power >= 0.45 and low:
+		var r = ring_pool[ring_i]
+		ring_i = (ring_i + 1) % ring_pool.size()
+		r["t"] = 0.0
+		r["dur"] = 0.34 + 0.1 * power
+		r["r"] = 5.5 + 5.5 * power
+		r["m"].global_position = Vector3(pos.x, gy + 0.12, pos.z)
+		r["m"].scale = Vector3(0.4, 1.0, 0.4)
+		r["m"].visible = true
+	var fq = flashq_pool[flashq_i]
+	flashq_i = (flashq_i + 1) % flashq_pool.size()
+	fq["t"] = 0.0
+	fq["s"] = 5.0 + 6.0 * power
+	fq["m"].global_position = pos + Vector3(0, 0.9, 0)
+	fq["m"].visible = true
+	var e: CPUParticles3D = ember_pool[ember_i]
+	ember_i = (ember_i + 1) % ember_pool.size()
+	e.global_position = pos + Vector3(0, 0.3, 0)
+	e.initial_velocity_min = 6.0 * power
+	e.initial_velocity_max = 20.0 * power
+	e.restart()
+	e.emitting = true
+	if not low:
+		return
+	var n = int(clampf(9.0 + 12.0 * power, 10.0, 34.0))
+	var paved = G.world != null and G.world.has_method("on_road") and G.world.on_road(pos.x, pos.z)
+	for i in range(n):
+		var ang = randf() * TAU
+		var out = randf_range(1.2, 7.5) * (0.6 + 0.5 * power)
+		var sz = randf_range(0.1, 0.27) * (0.8 + 0.25 * power)
+		var col = Color(0.27, 0.23, 0.18).lerp(Color(0.12, 0.11, 0.1), randf() * 0.7)
+		if paved and i % 2 == 0:
+			col = Color(0.3, 0.3, 0.31).lerp(Color(0.16, 0.16, 0.16), randf() * 0.6)
+		var slot = clod_i
+		clod_i = (clod_i + 1) % CLODS
+		for k in range(clod_fly.size()):
+			if clod_fly[k][0] == slot:
+				clod_fly.remove_at(k)
+				break
+		clod_mm.set_instance_color(slot, col)
+		clod_fly.append([slot, Vector3(pos.x, gy + 0.2, pos.z), Vector3(cos(ang) * out, randf_range(5.0, 11.0) * (0.7 + 0.3 * power), sin(ang) * out),
+			Basis.from_euler(Vector3(randf() * 6.0, randf() * 6.0, randf() * 6.0)), Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5).normalized(), randf_range(4.0, 12.0),
+			Vector3(sz * randf_range(0.8, 1.6), sz * randf_range(0.5, 0.9), sz * randf_range(0.8, 1.4)), false])
+
+func _blast_step(dt: float) -> void:
+	for r in ring_pool:
+		if r["t"] < r["dur"]:
+			r["t"] += dt
+			var k = clampf(r["t"] / r["dur"], 0.0, 1.0)
+			var e = 1.0 - (1.0 - k) * (1.0 - k)
+			var sc = lerpf(0.4, r["r"], e)
+			r["m"].scale = Vector3(sc, 1.0, sc)
+			r["mat"].albedo_color.a = 0.95 * pow(1.0 - k, 1.3)
+			if k >= 1.0:
+				r["m"].visible = false
+	for f in flashq_pool:
+		if f["t"] < 0.13:
+			f["t"] += dt
+			var k = clampf(f["t"] / 0.13, 0.0, 1.0)
+			var sc = f["s"] * (0.7 + 0.6 * k)
+			f["m"].scale = Vector3(sc, sc, sc)
+			f["mat"].albedo_color.a = (1.0 - k) * (1.0 - k)
+			if k >= 1.0:
+				f["m"].visible = false
+	var i = clod_fly.size() - 1
+	while i >= 0:
+		var c = clod_fly[i]
+		var v: Vector3 = c[2]
+		v.y -= 16.0 * dt
+		var p: Vector3 = c[1] + v * dt
+		var b: Basis = c[3].rotated(c[4], c[5] * dt)
+		var done = false
+		if v.y < 0.0:
+			var gy: float = G.world.surface_y(p.x, p.z, p.y + 0.6)
+			if p.y <= gy + c[6].y * 0.5:
+				p.y = gy + c[6].y * 0.45
+				if not c[7] and v.length() > 5.0:
+					# one skip, then it lies where it lands
+					c[7] = true
+					v = Vector3(v.x * 0.35, -v.y * 0.22, v.z * 0.35)
+					c[5] *= 0.4
+				else:
+					done = true
+		c[1] = p
+		c[2] = v
+		c[3] = b
+		clod_mm.set_instance_transform(c[0], Transform3D(b.scaled_local(c[6]), p))
+		if done:
+			clod_fly.remove_at(i)
+		i -= 1
 
 func dust_cloud(pos: Vector3, size: float) -> void:
 	var d = _one_shot_smoke(pos, Color(0.62, 0.58, 0.5, 0.7), 8, 3.0, 1.2 * clampf(size, 1.0, 3.0), 4.5, false)
@@ -702,6 +874,8 @@ func _rain_follow() -> void:
 
 func step(dt: float) -> void:
 	_rain_follow()
+	if clod_mm != null:
+		_blast_step(dt)
 	_ambient_planes(dt)
 	if marks_mat != null:
 		marks_mat.set_shader_parameter("now", G.sim_time)
@@ -861,6 +1035,10 @@ func clear_all() -> void:
 		if is_instance_valid(d["b"]):
 			d["b"].queue_free()
 	debris_list.clear()
+	_clods_clear()
+	for r in ring_pool:
+		r["m"].visible = false
+		r["t"] = 9.0
 	for c in callouts:
 		if is_instance_valid(c["l"]):
 			c["l"].queue_free()

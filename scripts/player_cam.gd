@@ -25,6 +25,12 @@ var r_press = Vector2.ZERO
 var r_moved = false
 var rts = false            # top-down commander camera
 var rts_focus = Vector3.ZERO
+var rcam_focus = Vector3.ZERO     # where the commander view is right now (it eases after rts_focus / rts_dist / rts_yaw)
+var rcam_dist = 75.0
+var rcam_yaw = 0.0
+var rcam_ok = false
+var pan_v = Vector3.ZERO
+var turn_v = 0.0
 var rts_dist = 75.0
 var rts_yaw = PI / 2.0
 var force_free = false   # development screenshots: keep the free camera while controlling a soldier
@@ -554,7 +560,7 @@ func select_group(i: int) -> void:
 	G.ui.message("Group %d (%d) · press %d again to look at them" % [i + 1, g.size(), i + 1])
 
 # number keys in commander view: pick that squad; press it again to look at it
-func select_squad(i: int) -> void:
+func select_squad(i: int, look: int = -1) -> void:
 	var qs = my_squads()
 	if i >= qs.size():
 		G.ui.message("No squad %d" % (i + 1))
@@ -569,10 +575,43 @@ func select_squad(i: int) -> void:
 	if selection.is_empty():
 		return
 	c /= selection.size()
-	if last_squad_key == i:
-		rts_focus = c
+	if (last_squad_key == i and look < 0) or look == 1:
+		look_at_point(c, look == 1)
 	last_squad_key = i
-	G.ui.message("Squad %d selected (%d men) · right-click to send them · press %d again to look at them" % [i + 1, selection.size(), i + 1])
+	if look != 1:
+		G.ui.message("Squad %d selected (%d men) · right-click to send them · press %d again (or double-click its card) to look at them" % [i + 1, selection.size(), i + 1])
+
+# swing the view over to a place (and in a bit closer, if it was a long way up)
+func look_at_point(p: Vector3, closer: bool = false) -> void:
+	if rts:
+		rts_focus = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
+		if closer and rts_dist > 70.0:
+			rts_dist = 55.0
+	else:
+		free_pos = p + Vector3(-12, 10, -12)
+		free_yaw = PI / 4.0
+		free_pitch = -0.5
+
+# End: the next of your squads that's in a fight (fighting or pinned), selected and on screen
+var contact_i = -1
+func cycle_contact() -> void:
+	var qs = my_squads()
+	var hot = []
+	for i in range(qs.size()):
+		var d = SquadCards.doing(qs[i])
+		if d[0] == "Fighting" or d[0] == "Pinned!":
+			hot.append(i)
+	if hot.is_empty():
+		G.ui.message("None of your squads is in contact right now")
+		return
+	var nxt = hot[0]
+	for i in hot:
+		if i > contact_i:
+			nxt = i
+			break
+	contact_i = nxt
+	select_squad(nxt, 1)
+	G.ui.message("Squad %d: %s  ·  %d of your squads in contact%s" % [nxt + 1, SquadCards.doing(qs[nxt])[0], hot.size(), "  ·  End for the next" if hot.size() > 1 else ""])
 
 func _process(dt: float) -> void:
 	_cut_tick(dt)
@@ -642,26 +681,48 @@ func _process(dt: float) -> void:
 			free_pitch = -0.32
 		if rts and G.started:
 			# commander view: look down on a point on the ground, pan along it, zoom in and out
-			var fw = Vector3(sin(rts_yaw), 0, cos(rts_yaw))
-			var rt = Vector3(-cos(rts_yaw), 0, sin(rts_yaw))
+			# (rts_focus, rts_dist and rts_yaw are where the view is going; cam_* is where it is now, easing after them)
+			if not rcam_ok or rcam_focus.distance_to(rts_focus) > 700.0:
+				rcam_focus = rts_focus
+				rcam_dist = rts_dist
+				rcam_yaw = rts_yaw
+				pan_v = Vector3.ZERO
+				turn_v = 0.0
+				rcam_ok = true
+			var fw = Vector3(sin(rcam_yaw), 0, cos(rcam_yaw))
+			var rt = Vector3(-cos(rcam_yaw), 0, sin(rcam_yaw))
+			var want_v = Vector3.ZERO
+			var want_turn = 0.0
 			if not G.ui.typing():
-				var spd = rts_dist * (1.6 if Input.is_key_pressed(KEY_SHIFT) else 0.75) * dt
-				if Keys.held(KEY_W): rts_focus += fw * spd
-				if Keys.held(KEY_S): rts_focus -= fw * spd
-				if Keys.held(KEY_D): rts_focus += rt * spd
-				if Keys.held(KEY_A): rts_focus -= rt * spd
+				var spd = rts_dist * (1.6 if Input.is_key_pressed(KEY_SHIFT) else 0.75)
+				if Keys.held(KEY_W): want_v += fw * spd
+				if Keys.held(KEY_S): want_v -= fw * spd
+				if Keys.held(KEY_D): want_v += rt * spd
+				if Keys.held(KEY_A): want_v -= rt * spd
 				var turning_bp = G.ui.tool.begins_with("b:")
-				if Keys.held(KEY_Q) and not turning_bp: rts_yaw += 1.4 * dt
-				if Keys.held(KEY_E) and not turning_bp: rts_yaw -= 1.4 * dt
+				if Keys.held(KEY_Q) and not turning_bp: want_turn += 1.4
+				if Keys.held(KEY_E) and not turning_bp: want_turn -= 1.4
+			# ease in and out: the view picks up speed over a fifth of a second and runs on a little when you let go
+			var ek = 1.0 - exp(-dt * 9.0)
+			pan_v = pan_v.lerp(want_v, ek)
+			turn_v = lerpf(turn_v, want_turn, ek)
+			rts_focus += pan_v * dt
+			rts_yaw += turn_v * dt
 			var bb: Rect2 = G.world.bounds
 			rts_focus.x = clampf(rts_focus.x, bb.position.x, bb.end.x)
 			rts_focus.z = clampf(rts_focus.z, bb.position.y, bb.end.y)
 			rts_focus.y = G.world.ground_y(rts_focus.x, rts_focus.z)
-			free_yaw = rts_yaw
-			free_pitch = -0.98 - 0.25 * clampf((rts_dist - 30.0) / 150.0, 0.0, 1.0)
+			var ck = 1.0 - exp(-dt * 11.0)
+			rcam_focus = rcam_focus.lerp(rts_focus, ck)
+			rcam_dist = lerpf(rcam_dist, rts_dist, 1.0 - exp(-dt * 9.0))
+			rcam_yaw += G.wrap_a(rts_yaw - rcam_yaw) * ck
+			free_yaw = rcam_yaw
+			free_pitch = -0.98 - 0.25 * clampf((rcam_dist - 30.0) / 150.0, 0.0, 1.0)
 			var cpr = cos(free_pitch)
 			var dr = Vector3(sin(free_yaw) * cpr, sin(free_pitch), cos(free_yaw) * cpr)
-			free_pos = rts_focus - dr * rts_dist
+			free_pos = rcam_focus - dr * rcam_dist
+		else:
+			rcam_ok = false
 		var cp = cos(free_pitch)
 		var d = Vector3(sin(free_yaw) * cp, sin(free_pitch), cos(free_yaw) * cp)
 		var r = Vector3(-cos(free_yaw), 0, sin(free_yaw))
@@ -890,7 +951,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 			else:
 				G.ui.message("No rifle grenades (riflemen carry them, on the rifle)")
 		elif (ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN) and G.player == null and ev.pressed and rts:
-			rts_dist = clampf(rts_dist * (0.88 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1.14), 14.0, 230.0)
+			# zoom toward what the pointer is on: that spot on the ground stays under the pointer as the view closes in
+			var nd = clampf(rts_dist * (0.86 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1.16), 14.0, 230.0)
+			if absf(nd - rts_dist) > 0.01 and rcam_ok and cam != null:
+				var gp = _ground_at(ev.position)
+				if gp != null and rcam_dist > 1.0:
+					var nf: Vector3 = gp - (gp - rcam_focus) * (nd / rcam_dist)
+					rts_focus = Vector3(nf.x, rts_focus.y, nf.z)
+			rts_dist = nd
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_UP and G.player == null and ev.pressed:
 			free_pos += Vector3(sin(free_yaw) * cos(free_pitch), sin(free_pitch), cos(free_yaw) * cos(free_pitch)) * 2.0
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN and G.player == null and ev.pressed:
@@ -960,6 +1028,9 @@ func _key(k: int) -> void:
 		return
 	if k == KEY_HOME and G.player == null:
 		jump_to_fight()
+		return
+	if k == KEY_END and G.player == null and G.started:
+		cycle_contact()
 		return
 	# a blueprint in hand: R, E or Q turn it (instead of turning the camera)
 	if (k == KEY_R or k == KEY_E or k == KEY_Q) and G.player == null and G.ui.tool.begins_with("b:"):

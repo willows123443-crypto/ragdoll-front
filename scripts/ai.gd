@@ -2011,6 +2011,8 @@ static func _off_the_roof(s) -> bool:
 		G.fx.callout(s, G.pick(["How'd I get up here?!", "Jumping down!", "Off the roof!"]))
 	return true
 
+static var pf = {}
+
 static func update(s) -> void:
 	if s.zombie:
 		Modes.zombie_tick(s)
@@ -2044,11 +2046,25 @@ static func update(s) -> void:
 		Morale.tick(s, 0.5)
 		supply_tick(s, 0.5)
 		pass_ammo(s)
-	if s.think <= 0.0:
-		perceive(s)
-	_watchdog(s)
-	if s.decide_t <= 0.0:
-		decide(s)
+	if Soldier.PERF:
+		var q0 = Time.get_ticks_usec()
+		if s.think <= 0.0:
+			perceive(s)
+		var q1 = Time.get_ticks_usec()
+		_watchdog(s)
+		var q2 = Time.get_ticks_usec()
+		if s.decide_t <= 0.0:
+			decide(s)
+		var q3 = Time.get_ticks_usec()
+		pf["perceive"] = pf.get("perceive", 0) + q1 - q0
+		pf["watchdog"] = pf.get("watchdog", 0) + q2 - q1
+		pf["decide"] = pf.get("decide", 0) + q3 - q2
+	else:
+		if s.think <= 0.0:
+			perceive(s)
+		_watchdog(s)
+		if s.decide_t <= 0.0:
+			decide(s)
 	if s.task == "flee":
 		s.flee_t -= G.DT
 		if s.flee_t <= 0.0 or s.move_target == null:

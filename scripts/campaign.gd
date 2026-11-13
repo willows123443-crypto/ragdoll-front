@@ -590,7 +590,7 @@ static func attack(i: int, mode: String = "", size: int = SQUAD, supply: Array =
 		note += " · %d structures still standing" % kept
 	if data.get("weather", "") == "storm":
 		G.storm = true
-		G.fx.set_storm(true)
+		Weather.apply()
 		G.main.apply_time()
 		note += " · storm: no aircraft"
 	# defending: our men have had time to dig in (sandbags and an MG nest already up), and a longer prep

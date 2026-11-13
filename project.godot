@@ -1,11 +1,11 @@
 ; Engine configuration file.
-; Ragdoll Front - Godot 4.6 port
+; Tin Hat Tactics (formerly Ragdoll Front) - Godot 4.6
 
 config_version=5
 
 [application]
 
-config/name="Ragdoll Front"
+config/name="Tin Hat Tactics"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 

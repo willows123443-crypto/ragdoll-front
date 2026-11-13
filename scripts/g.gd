@@ -92,7 +92,7 @@ func soldiers_near(p: Vector3) -> Array:
 			if a != null:
 				out.append_array(a)
 	return out
-var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true, "ai_side": false, "keys": {}}
+var settings = {"sens": 1.0, "invert_y": false, "volume": 0.8, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "grass": true, "time": "day", "weather": "clear", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true, "ai_side": false, "keys": {}}
 
 # ---------------------------------------------------------------- teams: names, armband colours and uniforms
 const UNIFORMS = {

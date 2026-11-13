@@ -175,6 +175,8 @@ var carrying = null         # a wounded friend over the shoulder
 var carried_by = null
 var crate = false           # lugging an ammo box
 var wound_part = -1         # where they were last hit (they clutch it)
+var mud = 0.0                # how much crawling he's done (it shows on his uniform)
+var mud_stage = 0
 var vet = 0                 # veteran level (campaign): steadier aim and nerves
 var kills = 0
 var crate_mesh: MeshInstance3D = null
@@ -920,6 +922,7 @@ static func gait_k(spd: float) -> float:
 	return PI / step_len(spd) if PLANT else 2.3
 
 var foot_w: Array = [Vector3.ZERO, Vector3.ZERO]      # where each foot is planted, in the world
+var foot_yaw: Array = [0.0, 0.0]                      # which way he faced when it was last put down
 var foot_sw: Array = [false, false]                   # in the air, swinging to its next place
 var foot_from: Array = [Vector3.ZERO, Vector3.ZERO]
 var foot_t0: Array = [0.0, 0.0]
@@ -940,6 +943,7 @@ func _plant_foot(side: int, hip: Vector3, base: Vector3, f: Vector3, r: Vector3,
 	if not foot_ok or now - foot_seen > 0.4 or G.dist2d(foot_w[side], neutral) > 1.25 or absf(foot_w[side].y - gy) > 1.1:
 		foot_w[side] = Vector3(neutral.x, G.world.surface_y(neutral.x, neutral.z, gy + 0.3) + 0.07, neutral.z)
 		foot_sw[side] = false
+		foot_yaw[side] = body_yaw
 	var other = 1 - side
 	var moving = spd > 0.3
 	var ph = wrapf(phase + (PI if side == 1 else 0.0), -PI, PI)
@@ -953,7 +957,8 @@ func _plant_foot(side: int, hip: Vector3, base: Vector3, f: Vector3, r: Vector3,
 		else:
 			# standing: step it back under him if it's been left behind (one foot at a time)
 			var off = G.dist2d(foot_w[side], neutral)
-			lift_off = (off > 0.17 or stretched) and not foot_sw[other] and now - maxf(foot_t0[0] + foot_dur[0], foot_t0[1] + foot_dur[1]) > 0.06
+			# (and when he's turned on the spot: the feet step round with him, they don't swivel)
+			lift_off = (off > 0.17 or stretched or (off > 0.07 and absf(G.wrap_a(body_yaw - foot_yaw[side])) > 0.55)) and not foot_sw[other] and now - maxf(foot_t0[0] + foot_dur[0], foot_t0[1] + foot_dur[1]) > 0.06
 		if lift_off:
 			foot_sw[side] = true
 			foot_from[side] = foot_w[side]
@@ -983,6 +988,7 @@ func _plant_foot(side: int, hip: Vector3, base: Vector3, f: Vector3, r: Vector3,
 	if u >= 1.0:
 		foot_sw[side] = false
 		foot_w[side] = tgt
+		foot_yaw[side] = body_yaw
 	return p
 
 func _reach(from: Vector3, to: Vector3, max_l: float) -> Vector3:
@@ -1569,7 +1575,8 @@ func kick(dir: Vector3) -> void:
 # far from the camera in a big battle, a healthy soldier's body just follows its pose
 # instead of being simulated: the physics only runs for the people you can actually see
 func _lod_far() -> bool:
-	if G.soldiers.size() < 36 or is_player or state != "alive" or vault != null or dragging != null:
+	# (men riding on a lorry or serving a gun count too: a far-off crew is posed, not simulated)
+	if G.soldiers.size() < 36 or is_player or (state != "alive" and state != "riding") or vault != null or dragging != null:
 		return false
 	var cam = get_viewport().get_camera_3d()
 	var ld: float = G.settings["lod_dist"]
@@ -1585,43 +1592,131 @@ var pose_mode = ""
 var tr_from: Array = []
 var tr_t0 = -9.0
 var tr_dur = 0.5
+var tr_kind = 0              # 0 going to ground / getting up, 1 into a vault, 2 landing from one
+var pose_pos = Vector3.ZERO  # where he stood when the joints were last worked out
 
 func _pose_now() -> void:
-	var mode = "prone" if prone else "stand"
+	var mode = "vault" if vault != null else ("prone" if prone else "stand")
 	if mode != pose_mode:
-		if pose_mode != "" and state == "alive" and vault == null and not zombie and PLANT:
-			tr_from = []
-			for i in range(15):
-				tr_from.append(P[i] - pos)
-			tr_t0 = G.sim_time
-			tr_dur = 0.5 if prone else 0.62
+		if pose_mode != "":
+			if mode == "vault":
+				_tr_begin(0.2, 1)
+			elif pose_mode == "vault":
+				_tr_begin(0.3, 2)
+			else:
+				_tr_begin(0.5 if prone else 0.62, 0)
 		pose_mode = mode
-	if prone and (zombie or Vector2(vel.x, vel.z).length() > 0.25):
+	if prone and vault == null and (zombie or Vector2(vel.x, vel.z).length() > 0.25):
 		crawl_pose()          # moving while down: elbows and knees, not sliding on his belly
-	elif prone:
+	elif prone and vault == null:
 		prone_pose()
 	else:
 		stand_pose()
+		if vault != null and not zombie and PLANT:
+			_vault_pose()
+	_tr_apply()
+
+# start easing from the pose he's in now to whatever he does next
+func _tr_begin(dur: float, kind: int) -> void:
+	if state != "alive" or zombie or not PLANT or P.size() < 15:
+		return
+	tr_from = []
+	for i in range(15):
+		tr_from.append(P[i] - pose_pos)
+	tr_t0 = G.sim_time
+	tr_dur = dur
+	tr_kind = kind
+
+func _tr_apply() -> void:
 	var u = (G.sim_time - tr_t0) / tr_dur
 	if u < 1.0 and tr_from.size() == 15:
 		var e = u * u * (3.0 - 2.0 * u)
-		# through a crouch on the way: the hips lead going down, the head and chest lead coming up
-		var dip = sin(PI * u) * 0.12
-		for i in range(15):
-			var k = e
-			if i == 2 or i == 9 or i == 12:
-				k = clampf(e * (1.25 if prone else 0.85), 0.0, 1.0)
-			elif i <= 1:
-				k = clampf(e * (0.85 if prone else 1.2), 0.0, 1.0)
-			P[i] = (pos + tr_from[i]).lerp(P[i], k)
-			if i <= 8 and i != 2:
-				P[i].y -= dip * (1.0 if not prone else 0.4)
+		if tr_kind == 0:
+			# through a crouch on the way: the hips lead going down, the head and chest lead coming up
+			var dip = sin(PI * u) * 0.12
+			for i in range(15):
+				var k = e
+				if i == 2 or i == 9 or i == 12:
+					k = clampf(e * (1.25 if prone else 0.85), 0.0, 1.0)
+				elif i <= 1:
+					k = clampf(e * (0.85 if prone else 1.2), 0.0, 1.0)
+				P[i] = (pos + tr_from[i]).lerp(P[i], k)
+				if i <= 8 and i != 2:
+					P[i].y -= dip * (1.0 if not prone else 0.4)
+		else:
+			# into the jump, or coming down off it: the knees give as he lands and he straightens up again
+			var dip = sin(PI * u) * (0.11 if tr_kind == 2 else (0.05 if tr_kind == 1 else 0.0))
+			for i in range(15):
+				P[i] = (pos + tr_from[i]).lerp(P[i], e)
+				if i <= 9 or i == 12:
+					P[i].y -= dip
+			if tr_kind == 2:
+				var f = Vector3(sin(body_yaw), 0, cos(body_yaw))
+				for hip in [9, 12]:
+					P[hip + 1] = P[hip + 1].lerp(_ik(P[hip], P[hip + 2], 0.45, 0.45, f + Vector3(0, 0.2, 0)), e)
+	pose_pos = pos
 
-func lod_glide() -> void:
+# going over a wall: a hand down on the top of it, the knees brought up and swung over to one side, and
+# the feet out in front again to land (instead of running through the air in a crouch)
+func _vault_pose() -> void:
+	var vt = clampf(vault["t"], 0.0, 1.0)
+	var a: Vector3 = vault["a"]
+	var b: Vector3 = vault["b"]
+	var fl = G.flat(b - a)
+	if fl.length() < 0.05 or vault.get("dive", false):
+		return
+	var f = fl.normalized()
+	var r = Vector3(-f.z, 0, f.x)
+	var w = pow(maxf(sin(PI * vt), 0.0), 0.7)
+	if w <= 0.0:
+		return
+	# the body leans over the hand he's put down
+	var lean_v = (f * 0.1 - r * 0.07 - Vector3(0, 0.05, 0)) * w
+	for i in [0, 1, 3, 6]:
+		P[i] = P[i] + lean_v
+	if vault.has("top"):
+		var mid = a.lerp(b, 0.5)
+		var hp = Vector3(mid.x, vault["top"] + 0.04, mid.z) - r * 0.24
+		var hand = _reach(P[3], hp, 0.59)
+		P[5] = P[5].lerp(hand, w)
+		P[4] = P[4].lerp(_ik(P[3], P[5], 0.3, 0.3, Vector3(0, -1, 0) - r * 0.5 - f * 0.3), w)
+	for side in range(2):
+		var sd = 1.0 if side == 1 else -1.0
+		var hip = 12 if side == 1 else 9
+		var foot = P[hip] + Vector3(0, -0.4, 0) + r * (0.24 + 0.07 * sd) + f * lerpf(-0.28, 0.4, vt)
+		P[hip + 2] = P[hip + 2].lerp(_reach(P[hip], foot, 0.88), w)
+		P[hip + 1] = _ik(P[hip], P[hip + 2], 0.45, 0.45, f + Vector3(0, 0.7, 0) + r * 0.5)
+
+# a far-off man turning on the spot between his full updates: how fast his body and his aim are coming round
+var yaw_rate = 0.0
+var aim_rate = 0.0
+var glide_yaw = 0.0
+var glide_aim = 0.0
+
+static var PERF = false
+static var pf = [0, 0, 0, 0]      # microseconds: thinking, posing, driving the body, gliding
+
+func lod_glide(cheap: bool = false) -> void:
 	if not lod_frozen or hidden_in_vehicle or state != "alive":
 		return
 	var d = Vector3(vel.x, 0, vel.z) * G.DT
-	if d.length_squared() < 1e-8:
+	var turns = absf(yaw_rate) > 0.2 or absf(aim_rate) > 0.2
+	if d.length_squared() < 1e-8 and not turns and not foot_sw[0] and not foot_sw[1]:
+		return
+	if cheap:
+		# every other in-between frame he's just carried along as he is (body, rifle and all): from where
+		# far-off men are seen, a pose that's a sixtieth of a second old can't be told from a fresh one
+		if d.length_squared() >= 1e-8:
+			pos += d
+			glide_off += d
+			var gs0 = Vector2(vel.x, vel.z).length()
+			var dph0 = gs0 * (5.0 if prone else (2.3 if zombie else gait_k(gs0))) * G.DT
+			phase += dph0
+			glide_ph += dph0
+			for b in parts:
+				b.global_position += d
+			if gun_node != null and gun_body == null and vehicle == null:
+				gun_node.global_position += d
 		return
 	# (always, however far off: skipping it made men stutter along when the commander view was zoomed out)
 	# the legs keep stepping too, not just the body sliding: move him on, step the walk cycle on, and
@@ -1632,6 +1727,12 @@ func lod_glide() -> void:
 	glide_off += d
 	phase += dph
 	glide_ph += dph
+	# and he keeps coming round (with his feet stepping round under him) instead of turning in jerks
+	if turns:
+		body_yaw += yaw_rate * G.DT
+		glide_yaw += yaw_rate * G.DT
+		aim_yaw += aim_rate * G.DT
+		glide_aim += aim_rate * G.DT
 	# a fresh pose from where he is now (the joints were last worked out where he was on the full update)
 	_pose_now()
 	_compute_targets()
@@ -1641,11 +1742,29 @@ func lod_glide() -> void:
 	if gun_node != null and gun_body == null and vehicle == null:
 		compute_muzzle()
 
+# a far-off man riding: between his full updates he's just carried along with his seat
+func rider_glide() -> void:
+	if vehicle == null or not is_instance_valid(vehicle) or parts.is_empty() or mount_t > 0.0:
+		return
+	var p0 = pos
+	_place_in_seat()
+	var d = pos - p0
+	if d.length_squared() < 1e-8:
+		return
+	for b in parts:
+		b.global_position += d
+	if gun_node != null and gun_body == null:
+		gun_node.global_position += d
+
 func lod_unglide() -> void:
 	pos -= glide_off
 	phase -= glide_ph
+	body_yaw -= glide_yaw
+	aim_yaw -= glide_aim
 	glide_off = Vector3.ZERO
 	glide_ph = 0.0
+	glide_yaw = 0.0
+	glide_aim = 0.0
 
 # far-off men don't cast shadows (dozens of little shadow casters were a big part of the frame cost)
 func _far_shadows(on: bool) -> void:
@@ -1659,12 +1778,71 @@ func _far_shadows(on: bool) -> void:
 			if c is GeometryInstance3D:
 				c.cast_shadow = mode
 
+# A man is some fifty separate pieces (pouches, canteen, belt, the bits of his helmet and rifle...), and
+# every piece is a draw: far off, where they can't be told apart, only the big ones are drawn (the limbs
+# and body, the helmet's crown and band, the vest, boots, hands and the body of the rifle).
+var detail_list = null
+var detail_hidden = false
+
+func _detail_scan() -> void:
+	detail_list = []
+	for pi2 in range(parts.size()):
+		var kids: Array = parts[pi2].find_children("*", "GeometryInstance3D", true, false)
+		var best = null
+		var best_v = 0.0
+		var extra: Array = []
+		for k in range(kids.size()):
+			var g: GeometryInstance3D = kids[k]
+			if k == 0:
+				continue                  # the limb itself
+			if g.visibility_range_end > 0.0:
+				continue                  # (already only drawn close up)
+			var ab: AABB = g.get_aabb()
+			var sz: Vector3 = ab.size * g.scale
+			var vol = sz.x * sz.y * sz.z
+			var mat = g.material_override
+			var keep = false
+			if mat is StandardMaterial3D:
+				var c: Color = mat.albedo_color
+				# hands and faces, and anything in the side's own colour (the band round the helmet and arm)
+				keep = c.is_equal_approx(skin) or c.is_equal_approx(G.TEAM_BAND[team])
+			if keep:
+				continue
+			if vol > best_v:
+				if best != null:
+					extra.append(best)
+				best = g
+				best_v = vol
+			else:
+				extra.append(g)
+		# (the biggest thing on each part stays: the helmet, the vest, the boot)
+		if best != null and best_v < 0.0025:
+			extra.append(best)
+		detail_list.append_array(extra)
+	if gun_node != null:
+		var gk: Array = gun_node.find_children("*", "GeometryInstance3D", true, false)
+		gk.sort_custom(func(a, b): return a.get_aabb().get_volume() * a.scale.x * a.scale.y * a.scale.z > b.get_aabb().get_volume() * b.scale.x * b.scale.y * b.scale.z)
+		for k in range(2, gk.size()):
+			if gk[k].visibility_range_end <= 0.0:
+				detail_list.append(gk[k])
+
+func _far_detail(hide: bool) -> void:
+	if hide == detail_hidden or parts.is_empty():
+		return
+	if detail_list == null:
+		_detail_scan()
+	detail_hidden = hide
+	for g in detail_list:
+		if is_instance_valid(g):
+			g.visible = not hide
+
 # back to a real simulated body (falling, dying, climbing aboard)
 func lod_wake() -> void:
 	if not lod_frozen:
 		return
 	lod_frozen = false
 	_far_shadows(true)
+	_far_detail(false)
 	for b in parts:
 		b.freeze = false
 		b.linear_velocity = vel
@@ -1712,12 +1890,14 @@ func drive() -> void:
 				b.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
 				b.freeze = true
 			_far_shadows(false)
+			_far_detail(true)
 		for i in range(parts.size()):
 			parts[i].global_transform = targets[i]
 		return
 	elif lod_frozen:
 		lod_frozen = false
 		_far_shadows(true)
+		_far_detail(false)
 		if not hidden_in_vehicle:
 			for b in parts:
 				b.freeze = false
@@ -1989,6 +2169,7 @@ func start_climb(T: Dictionary, up: bool) -> void:
 	if climb != null or state != "alive":
 		return
 	climb = {"T": T, "up": up, "t": 0.0, "dur": 2.6}
+	_tr_begin(0.3, 3)
 	release_ladder_gun(true)
 
 func release_ladder_gun(hide: bool) -> void:
@@ -2016,12 +2197,18 @@ func _tick_climb() -> void:
 	vel = Vector3.ZERO
 	want = Vector3.ZERO
 	vy = 0.0
-	body_yaw = atan2(-n.x, -n.z)
-	aim_yaw = body_yaw
-	crouch = 0.0
+	# he turns to the ladder as he steps up to it, and his hands and feet go onto the rungs (and come off
+	# them at the top) over a few frames rather than all at once
+	var lyaw = atan2(-n.x, -n.z)
+	body_yaw = G.turn_to(body_yaw, lyaw, 8.0 * G.DT)
+	aim_yaw = G.turn_to(aim_yaw, lyaw, 8.0 * G.DT)
+	aim_pitch = lerpf(aim_pitch, 0.0, 0.2)
+	crouch = move_toward(crouch, 0.0, 3.5 * G.DT)
 	ready_ = false
 	stand_pose()
-	if kk > 0.1 and kk < 0.86:
+	var cw = smoothstep(0.05, 0.17, kk) * (1.0 - smoothstep(0.7, 0.83, kk))
+	if cw > 0.0:
+		var P0 = P.duplicate()
 		var f = -n
 		var r = Vector3(-f.z, 0, f.x)
 		var ph = pos.y * 5.2
@@ -2039,13 +2226,18 @@ func _tick_climb() -> void:
 			var ft = rail + r * sd * 0.12 + n * 0.05 + Vector3(0, fy, 0)
 			P[hip + 2] = _reach(P[hip], ft, 0.88)
 			P[hip + 1] = _ik(P[hip], P[hip + 2], 0.45, 0.45, n + Vector3(0, 0.3, 0))
-		if sin(ph) * sin(ph - 5.2 * 0.9 * G.DT) < 0.0:
+		if cw < 1.0:
+			for i in [4, 5, 7, 8, 10, 11, 13, 14]:
+				P[i] = P0[i].lerp(P[i], cw)
+		if cw > 0.5 and sin(ph) * sin(ph - 5.2 * 0.9 * G.DT) < 0.0:
 			G.audio.step(pos)
+	_tr_apply()
 	strength = 0.5
 	drive()
 	if c["t"] >= 1.0:
 		pos = hi if c["up"] else lo
 		climb = null
+		_tr_begin(0.3, 3)
 		release_ladder_gun(false)
 
 # into or out of deep water: the rifle goes over the shoulder, and comes back out on the far bank
@@ -2511,7 +2703,7 @@ func start_vault(c) -> bool:
 	var cz = (c.lo.z + c.hi.z) * 0.5
 	# a window: dive through low, and the glass goes if it's still in
 	var win = G.world.inside_at(cx, c.hi.y + 1.4, cz)
-	vault = {"a": pos, "b": Vector3(tx, ty, tz), "h": maxf(0.2, c.hi.y - maxf(pos.y, ty) + (0.02 if win else 0.15)), "t": -0.45 if turn_first else 0.0, "dive": win}
+	vault = {"a": pos, "b": Vector3(tx, ty, tz), "h": maxf(0.2, c.hi.y - maxf(pos.y, ty) + (0.02 if win else 0.15)), "t": -0.45 if turn_first else 0.0, "dive": win, "top": c.hi.y}
 	if win:
 		var pane = Doors.pane_near(Vector3(cx, c.hi.y + 0.6, cz), 1.4)
 		if pane != null:
@@ -2642,6 +2834,20 @@ func _sync_mask() -> void:
 			b.collision_mask = (G.L_WORLD | G.L_BODY | G.L_DEBRIS | G.L_VEH) if full else (G.L_WORLD | G.L_BODY)
 
 func tick() -> void:
+	# a body that's come to rest has nothing left to work out but whether what it lies on is still there
+	if state == "dead" and settled and pooled and dragger == null and carried_by == null and glint == null and flashlight == null and tool_node == null and carried == null and detector == null:
+		dead_t += G.DT
+		if (int(dead_t * 60.0) + id) % 120 == 0:
+			_check_support()
+			# and the dead, far from the view, are drawn as plainly as the far-off living (and cast no shadow)
+			var cam = get_viewport().get_camera_3d()
+			if cam != null and parts.size() > 0:
+				var ld: float = G.settings["lod_dist"]
+				var far_b = cam.global_position.distance_squared_to(parts[0].global_position) > ld * ld
+				if far_b != detail_hidden:
+					_far_detail(far_b)
+					_far_shadows(not far_b)
+		return
 	_sync_mask()
 	_exc_tick()
 	_ragdoll_guard()
@@ -3017,6 +3223,10 @@ func _tick_alive() -> void:
 		G.pc.player_update(self)
 		if bandage_t > 0.0:
 			Medical.bandage_tick(self)
+	elif PERF:
+		var pt0 = Time.get_ticks_usec()
+		AI.update(self)
+		pf[0] += Time.get_ticks_usec() - pt0
 	else:
 		AI.update(self)
 	if state != "alive":
@@ -3156,6 +3366,8 @@ func _tick_alive() -> void:
 			yaw_v = lerpf(yaw_v, 0.0, minf(1.0, G.DT * 10.0))
 			if absf(dd) < 0.12:
 				turning = false
+	if prone and spd > 0.25 and not zombie and mud_stage < 3 and not swim:
+		Wear.mud_tick(self, G.DT)
 	var ph0 = sin(phase)
 	phase += (spd * (5.0 if prone else (2.3 if zombie else gait_k(spd))) * (zgait if zombie else 1.0) + (6.0 if turning and zombie else 0.0) + (9.0 if stumble > 0.0 else 0.0)) * G.DT
 	# how hard he's speeding up, slowing or swerving: the body leans with it
@@ -3176,11 +3388,22 @@ func _tick_alive() -> void:
 	var far = _lod_far()
 	if not far:
 		check_gun_clip()
-	_pose_now()
-	strength = 0.42 * (1.0 - 0.8 * minf(1.0, stun / 0.25))
-	drive()
+	if PERF:
+		var pt1 = Time.get_ticks_usec()
+		_pose_now()
+		var pt2 = Time.get_ticks_usec()
+		strength = 0.42 * (1.0 - 0.8 * minf(1.0, stun / 0.25))
+		drive()
+		pf[1] += pt2 - pt1
+		pf[2] += Time.get_ticks_usec() - pt2
+	else:
+		_pose_now()
+		strength = 0.42 * (1.0 - 0.8 * minf(1.0, stun / 0.25))
+		drive()
 	# balance: if the body gets pushed away from the legs, step after it or fall
-	if not far and not prone and vault == null and vy == 0.0:
+	# (not while he's still getting up off the ground or landing from a vault: his body is low then because
+	# it's meant to be, and checking it knocked every man flat again the moment he started to rise)
+	if not far and not prone and vault == null and vy == 0.0 and G.sim_time - tr_t0 > tr_dur + 0.3:
 		var pel: Vector3 = parts[0].global_position
 		var tp: Vector3 = targets[0].origin
 		var ex = pel.x - tp.x
@@ -3365,9 +3588,11 @@ func _tick_riding() -> void:
 			aim_yaw = G.turn_to(aim_yaw, body_yaw, 2.0 * G.DT)
 	if hidden_in_vehicle:
 		# inside the hull: keep the frozen body with the vehicle so it's there when they climb out
-		var off: Vector3 = pos - parts[0].global_position + Vector3(0, 0.95, 0)
-		for b in parts:
-			b.global_position += off
+		# (now and then is enough: nobody can see it in there)
+		if (Engine.get_physics_frames() + id) % 12 < 3:
+			var off: Vector3 = pos - parts[0].global_position + Vector3(0, 0.95, 0)
+			for b in parts:
+				b.global_position += off
 		return
 	vel = Vector3.ZERO
 	crouch = 0.0

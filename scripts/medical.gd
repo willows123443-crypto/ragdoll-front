@@ -78,19 +78,7 @@ static func work_hands(s, p: Vector3, how: String) -> void:
 
 # a white field dressing on a man who's been patched up, so you can see who's been seen to
 static func show_dressing(w) -> void:
-	if w.parts.size() < 4 or w.has_meta("dressing_mesh"):
-		return
-	var m = MeshInstance3D.new()
-	var bm = BoxMesh.new()
-	bm.size = Vector3(0.15, 0.07, 0.15)
-	m.mesh = bm
-	var mt = StandardMaterial3D.new()
-	mt.albedo_color = Color(0.93, 0.91, 0.86)
-	m.material_override = mt
-	var part = w.parts[3 + randi() % 2 * 2] if randf() < 0.6 else w.parts[1]
-	part.add_child(m)
-	m.position = Vector3(0, 0.02, 0)
-	w.set_meta("dressing_mesh", m)
+	Wear.dress(w)
 
 static func start(s, who, t: float) -> void:
 	s.bandage_t = t * (0.5 if s.cls == "medic" else 1.0)

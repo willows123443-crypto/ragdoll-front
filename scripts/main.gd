@@ -74,6 +74,10 @@ func _ready() -> void:
 			_wall_test()
 		if a == "--savetest":
 			_save_test()
+		if a == "--baltest":
+			_bal_test()
+		if a == "--difftest":
+			_diff_test()
 		if a.begins_with("--finishshot="):
 			_finish_shot(a.substr(13))
 		if a.begins_with("--casshot="):
@@ -4097,6 +4101,22 @@ func _zed_test() -> void:
 		if s.team == 0 and s.state == "alive":
 			dbg.append("%.0fm %s %s mv=%s" % [G.dist2d(s.pos, Modes.keep_pos()), str(s.task), "ord" if s.order != null else "-", str(s.move_target != null)])
 	print("ZEDTEST 12 s after the order: %d of %d men inside the keep | %s" % [inside, men_n, str(dbg)])
+	# a brute against a line of sandbags with a man behind it
+	var bp: Vector3 = G.main._free_spot(G.world.capture + Vector3(0, 0, 26))
+	var site = Build.place("sandbags", 0, bp, Vector3(0, 0, 1), true)
+	await _wait(0.5)
+	var c0 = site["cols"].filter(func(c): return c.alive).size()
+	var bait2 = spawn_soldier(0, bp.x, bp.z - 3.0, "rifle")
+	bait2.mag = 0
+	bait2.reserve = 0
+	bait2.hp = 5000.0
+	Soldier.zombie_next = "brute"
+	var br = spawn_soldier(1, bp.x, bp.z + 4.0, "pistol")
+	Soldier.zombie_next = ""
+	Modes.make_zombie(br, "brute")
+	br.hp = 99999.0
+	await _wait(8.0)
+	print("ZEDTEST brute at the sandbags: pieces standing %d -> %d, smashed so far this battle %d, brute %.1f m from the man behind them" % [c0, site["cols"].filter(func(c): return c.alive).size(), Modes.smashed, G.dist2d(br.pos, bait2.pos)])
 	print("ZEDTEST over %ds: man-seconds with a zombie within 3 m %d, of which wedged with no way out %d" % [int(secs), int(close_s), int(corner_s)])
 	get_tree().quit()
 
@@ -4155,6 +4175,93 @@ func _finish_shot(dir: String) -> void:
 	await _snap(dir, "finish_result")
 	get_tree().quit()
 
+# --difftest: what the difficulty setting does. The same commander battle, the computer running both
+# sides, at each setting (the setting only handicaps Bravo): who has killed how many after five minutes.
+func _diff_test() -> void:
+	await _wait(0.5)
+	var keep = G.settings["difficulty"]
+	var keep_ai = G.settings["ai_side"]
+	G.settings["ai_side"] = true
+	for dn in ["easy", "normal", "hard"]:
+		var k0 = 0.0
+		var k1 = 0.0
+		var runs = int(_arg("runs", "2"))
+		for r in range(runs):
+			seed(40 + r)
+			G.settings["difficulty"] = dn
+			start_game({"map": _arg("map", "town"), "mode": "commander", "size": 10, "limit": 999, "reinforce": true, "armor": "light", "teams": 2})
+			await _wait(float(_arg("secs", "300")))
+			k0 += G.score[0]
+			k1 += G.score[1]
+			end_game(0)
+			await _wait(0.5)
+		print("DIFFTEST %-6s (aim x%.2f, income x%.2f, waits %.0f s): Alpha kills %.0f, Bravo kills %.0f a battle (mean of %d) -> Bravo's share %.0f%%" % [dn, Commander.HANDICAP[dn]["aim"], Commander.HANDICAP[dn]["income"], Commander.HANDICAP[dn]["grace"], k0 / runs, k1 / runs, runs, 100.0 * k1 / maxf(k0 + k1, 1.0)])
+	G.settings["difficulty"] = keep
+	G.settings["ai_side"] = keep_ai
+	get_tree().quit()
+
+# --baltest: the balance sheet. Every infantry weapon's output on paper, then six men with it against six
+# riflemen in the open at close, middling and long range (several fights each): who's left standing.
+# --only=a,b limits the fights to some weapons; --trials=N.
+func _bal_test() -> void:
+	await _wait(0.5)
+	var ids = ["rifle", "carbine", "smg", "shotgun", "bar", "lmg", "dmr", "sniper", "pistol", "silenced", "atrifle"]
+	print("BALTEST %-9s %5s %4s %5s %4s %5s %6s %8s %8s  %s" % ["weapon", "dmg", "pel", "rof", "mag", "reload", "spread", "burst/s", "sust/s", "range"])
+	for id in ids:
+		if not G.WEAPONS.has(id):
+			continue
+		var W = G.WEAPONS[id]
+		var per = float(W["dmg"]) * float(W.get("pellets", 1))
+		print("BALTEST %-9s %5.0f %4d %5.2f %4d %5.1f %6.3f %8.0f %8.0f  %s" % [id, W["dmg"], int(W.get("pellets", 1)), W["rof"], int(W["mag"]), W["reload"], W["spread"],
+			per / float(W["rof"]), per * float(W["mag"]) / (float(W["mag"]) * float(W["rof"]) + float(W["reload"])), str(W.get("range", ""))])
+	var only = _arg("only", "")
+	var trials = int(_arg("trials", "3"))
+	for id in ids:
+		if (id == "rifle" and only == "") or not G.WEAPONS.has(id) or (only != "" and not (id in only.split(","))):
+			continue
+		var line = "BALTEST %-9s v rifles (6 a side, men left, mean of %d):" % [id, trials]
+		for rng in [12.0, 35.0, 90.0]:
+			var mine = 0.0
+			var theirs = 0.0
+			for tr in range(trials):
+				seed(100 + tr)
+				start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+				await _wait(0.3)
+				var c: Vector3 = G.main._free_spot(Vector3(0, 0, 70))
+				var aa = []
+				var bb = []
+				for k in range(6):
+					# (whoever is put down first sees and fires first, and in an even fight that decides it:
+					# the two sides take turns at being first, and at which end of the field they're on)
+					var flip = tr % 2 == 1
+					var sx = -1.0 if (tr / 2) % 2 == 0 else 1.0
+					var a = null
+					var b = null
+					if flip:
+						b = spawn_soldier(1, c.x + sx * rng * 0.5, c.z + (k - 2.5) * 2.5, "rifle")
+						a = spawn_soldier(0, c.x - sx * rng * 0.5, c.z + (k - 2.5) * 2.5, id)
+					else:
+						a = spawn_soldier(0, c.x - sx * rng * 0.5, c.z + (k - 2.5) * 2.5, id)
+						b = spawn_soldier(1, c.x + sx * rng * 0.5, c.z + (k - 2.5) * 2.5, "rifle")
+					for m in [a, b]:
+						m.grenades = 0
+						m.smokes = 0
+						m.order = {"mode": "hold", "point": m.pos}
+					aa.append(a)
+					bb.append(b)
+				var t0 = G.sim_time
+				while G.sim_time - t0 < 35.0:
+					await _wait(1.0)
+					if aa.filter(func(x): return x.state == "alive").is_empty() or bb.filter(func(x): return x.state == "alive").is_empty():
+						break
+				mine += aa.filter(func(x): return x.state == "alive").size()
+				theirs += bb.filter(func(x): return x.state == "alive").size()
+				end_game(0)
+				await _wait(0.3)
+			line += "  %d m: %.1f v %.1f" % [int(rng), mine / trials, theirs / trials]
+		print(line)
+	get_tree().quit()
+
 # --savetest: a battle saved part way and loaded again: what was there before against what comes back.
 func _save_test() -> void:
 	await _wait(0.5)
@@ -4173,12 +4280,19 @@ func _save_test() -> void:
 			var hp = 0.0
 			var z = 0
 			for s in G.soldiers:
-				if s.state != "dead" and s.vehicle == null:
+				if s.state != "dead":
 					men[mini(s.team, 1)] += 1
 					hp += s.hp
 					if s.zombie:
 						z += 1
-			return [men[0], men[1], int(hp), z, G.vehicles.filter(func(v): return is_instance_valid(v) and not v.dead).size(),
+			var aboard = G.soldiers.filter(func(x): return x.state != "dead" and x.vehicle != null).size()
+			var sq_sizes = []
+			for q in G.squads:
+				var live_m = q["members"].filter(func(x): return is_instance_valid(x) and x.state != "dead").size()
+				if live_m > 0:
+					sq_sizes.append(live_m)
+			sq_sizes.sort()
+			return [men[0], men[1], int(hp), z, aboard, str(sq_sizes), G.vehicles.filter(func(v): return is_instance_valid(v) and not v.dead).size(),
 				G.world.static_cols.filter(func(c): return not c.alive and c.dest).size(), str(G.score), str(Support.points), Build.sites.filter(func(st): return not st["dead"]).size(), Modes.horde_wave]
 		var before: Array = count.call()
 		var named = ""
@@ -4189,7 +4303,7 @@ func _save_test() -> void:
 		var msg = Scenario.save_battle()
 		var saved_names = {}
 		for s in G.soldiers:
-			if s.state != "dead" and s.vehicle == null:
+			if s.state != "dead":
 				saved_names[s.sname] = true
 		end_game(1)
 		await _wait(2.0)
@@ -4204,7 +4318,7 @@ func _save_test() -> void:
 		print("SAVETEST %s/%s: %s | %s" % [cfg[0], cfg[1], msg, msg2])
 		var extra = []
 		for s in G.soldiers:
-			if s.state != "dead" and s.vehicle == null and not saved_names.has(s.sname):
+			if s.state != "dead" and not saved_names.has(s.sname):
 				var nv = 999.0
 				var nk = ""
 				for v in G.vehicles:
@@ -4212,9 +4326,9 @@ func _save_test() -> void:
 						nv = G.dist2d(v.pos, s.pos)
 						nk = v.kind + ("(fleet)" if v.has_meta("fleet") else "")
 				extra.append("%s t%d %s %s near %s %.0fm metas %s" % [s.sname, s.team, s.cls, s.state, nk, nv, str(s.get_meta_list())])
-		print("SAVETEST   on foot now but not saved: %s" % str(extra))
-		print("SAVETEST   before: men on foot %d v %d (hp %d, zombies %d), vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d" % before)
-		print("SAVETEST   after:  men on foot %d v %d (hp %d, zombies %d), vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d" % after)
+		print("SAVETEST   there now but not saved: %s" % str(extra))
+		print("SAVETEST   before: men %d v %d (hp %d, zombies %d), aboard vehicles %d, squads %s, vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d" % before)
+		print("SAVETEST   after:  men %d v %d (hp %d, zombies %d), aboard vehicles %d, squads %s, vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d" % after)
 		print("SAVETEST   one man: %s -> %s | battle running again: %s (mode %s)" % [named, found, G.started and not G.over, G.mode])
 		end_game(1)
 		await _wait(1.0)
@@ -4441,6 +4555,8 @@ func _aud_test() -> void:
 	var wb = AudioServer.get_bus_index("World")
 	while G.sim_time - t0 < secs:
 		await get_tree().process_frame
+		if _arg("hot", "") != "":
+			G.audio.heat = 2.0 if fmod(G.sim_time - t0, 40.0) < 25.0 else 0.0      # (a fight that flares and dies down)
 		var l = maxf(AudioServer.get_bus_peak_volume_left_db(0, 0), AudioServer.get_bus_peak_volume_right_db(0, 0))
 		pk = maxf(pk, l)
 		if wb >= 0:
@@ -4449,6 +4565,8 @@ func _aud_test() -> void:
 		acc += db_to_linear(l)
 		if l > -30.0:
 			loud += 1
+	if not G.audio.mixes.is_empty():
+		print("AUDTEST browser mixes: playing %s (calm, tense, hot), current %d at %.1f dB, switches %d, intensity %.2f" % [str(G.audio.mixes.map(func(m): return m.playing)), G.audio.mix_cur, G.audio.mixes[maxi(G.audio.mix_cur, 0)].volume_db, G.audio.mix_switches, G.audio.intensity])
 	print("AUDTEST music layers playing %s at %s dB, loop restarts %d, title tune playing %s" % [str(G.audio.music.map(func(m): return m.playing)), str(G.audio.music.map(func(m): return snappedf(m.volume_db, 0.1))), G.audio.loop_restarts, G.audio.menu_player != null and G.audio.menu_player.playing])
 	print("AUDTEST driver %s, playback type %s, frames %d: master peak %.1f dB, mean level %.4f (%.1f dB), frames above -30 dB %d%%, world bus peak %.1f dB, music setting %.2f, volume %.2f" % [
 		AudioServer.get_driver_name(), str(ProjectSettings.get_setting("audio/general/default_playback_type", "?")), n, pk, acc / maxf(n, 1), linear_to_db(maxf(acc / maxf(n, 1), 0.00001)), int(100.0 * loud / maxf(n, 1)), wpk, G.settings["music"], G.settings["volume"]])
@@ -4644,6 +4762,21 @@ func _war_shot(dir: String) -> void:
 	seed(4)
 	G.ui.visible = true
 	G.ui.title.visible = false
+	if _arg("islands", "") != "":
+		# (--islands=1: the new-campaign chooser, then the Islands map on Hard with headquarters free to move)
+		Campaign.new_campaign()
+		G.ui.camp_new = true
+		G.ui._show_campaign()
+		await _wait(0.6)
+		await _snap(dir, "camp_new")
+		G.ui.camp_new = false
+		Campaign.new_campaign(false, true, "hard", false)
+		Campaign.selected = Campaign.armies_at(12, 0)[0]["id"]
+		G.ui._show_campaign()
+		await _wait(0.6)
+		await _snap(dir, "camp_islands")
+		get_tree().quit()
+		return
 	Campaign.new_campaign(_arg("short", "") != "")
 	var a1 = Campaign.army_at(1, 0)
 	Campaign.data["choice"] = {"kind": "volunteers", "army": a1["id"], "default": 1, "text": "Lads from Old Town want to join up.",
@@ -4684,7 +4817,7 @@ func _war_test() -> void:
 	var stack_max = [0, 0]
 	var stacked = [0, 0]
 	var held_on = 0
-	Campaign.new_campaign(_arg("short", "") != "")
+	Campaign.new_campaign(_arg("short", "") != "", _arg("islands", "") != "", _arg("diff", "normal"), _arg("iron", "1") != "0")
 	for turn in range(turns):
 		D = Campaign.data
 		if Campaign.over() >= 0:
@@ -4764,6 +4897,8 @@ func _war_test() -> void:
 					stacked[tk] += 1
 				if sides[tk] > Campaign.STACK:
 					bad.append("%d armies of one side in %s at turn %d" % [sides[tk], Campaign.REGIONS[i]["name"], turn])
+			if D["map"] == "islands" and not (i in Campaign.ISLAND_REGIONS) and D["owner"][i] != -1:
+				bad.append("a region off the islands is in play at turn %d" % turn)
 			if D["short"] and not (i in Campaign.SHORT_REGIONS) and D["owner"][i] != -1:
 				bad.append("region %d out of play but owned" % i)
 		if D["funds"][0] < 0 or D["funds"][1] < 0:
@@ -4772,7 +4907,7 @@ func _war_test() -> void:
 			bad.append("no headline at turn %d" % turn)
 	D = Campaign.data
 	print("CAMPTEST %s: ended turn %d, result %d | %d battles (%d at the Ministry), %d questions, %d planned moves seen, %d called off | regions %d:%d | armies %d:%d | fallen %d | last headline: %s" % [
-		"short" if D["short"] else "full", D["turn"], Campaign.over(), battles, finale, choices, plans, called_off, D["owner"].count(0), D["owner"].count(1),
+		str(D["map"]) + "/" + str(D["diff"]) + ("/iron" if D["iron"] else "/hq can move"), D["turn"], Campaign.over(), battles, finale, choices, plans, called_off, D["owner"].count(0), D["owner"].count(1),
 		D["armies"].filter(func(x): return x["team"] == 0).size(), D["armies"].filter(func(x): return x["team"] == 1).size(), D["fallen"].size(), str(D["headline"]["head"])])
 	print("CAMPTEST stacking: most companies in one region ours %d, Bravo's %d | region-turns with a stack ours %d, Bravo's %d | 'still holds' lines seen %d" % [stack_max[0], stack_max[1], stacked[0], stacked[1], held_on])
 	print("CAMPTEST trouble: %s" % (str(bad.slice(0, 6)) if not bad.is_empty() else "none"))

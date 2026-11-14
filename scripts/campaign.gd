@@ -14,7 +14,7 @@ extends RefCounted
 # join the motor pool; ruins and anything built stay as they were left.
 
 const PATH = "user://campaign.dat"
-const VERSION = 5
+const VERSION = 6
 const REGIONS = [
 	{"name": "Westfield", "map": "field", "p": Vector2(0.07, 0.5), "mode": "capture", "hq": 0},
 	{"name": "Old Town", "map": "town", "p": Vector2(0.24, 0.24), "mode": "capture", "bonus": "recruits"},
@@ -28,7 +28,35 @@ const REGIONS = [
 	{"name": "Factory Row", "map": "factory", "p": Vector2(0.77, 0.52), "mode": "capture", "bonus": "factory"},
 	{"name": "Great Forest", "map": "forest", "p": Vector2(0.77, 0.86), "mode": "general", "bonus": "hunters"},
 	{"name": "The Capital", "map": "city", "p": Vector2(0.93, 0.5), "mode": "destroy", "hq": 1},
+	# ---- the second campaign, "The Islands" (12 to 21): a landing. You hold one harbour town on the home
+	# island; everything else is theirs, starting with two beaches, and the Citadel can only be reached
+	# through the Foundry or Pinewatch.
+	{"name": "Port Haven", "map": "town", "p": Vector2(0.07, 0.5), "mode": "capture", "hq": 0},
+	{"name": "North Sound", "map": "beach", "p": Vector2(0.25, 0.22), "mode": "assault", "bonus": "harbour"},
+	{"name": "South Shoal", "map": "beach", "p": Vector2(0.25, 0.78), "mode": "assault", "bonus": "recruits"},
+	{"name": "Lighthouse Rock", "map": "pass", "p": Vector2(0.42, 0.5), "mode": "breakthrough", "bonus": "guns"},
+	{"name": "Saltmarsh", "map": "river", "p": Vector2(0.52, 0.17), "mode": "frontline", "bonus": "hospital"},
+	{"name": "Fisher Row", "map": "town", "p": Vector2(0.52, 0.83), "mode": "capture", "bonus": "depot"},
+	{"name": "The Narrows", "map": "valley", "p": Vector2(0.64, 0.5), "mode": "assault", "bonus": "roads"},
+	{"name": "Foundry Isle", "map": "factory", "p": Vector2(0.79, 0.2), "mode": "capture", "bonus": "factory"},
+	{"name": "Pinewatch", "map": "forest", "p": Vector2(0.79, 0.8), "mode": "general", "bonus": "hunters"},
+	{"name": "The Citadel", "map": "city", "p": Vector2(0.93, 0.5), "mode": "destroy", "hq": 1},
 ]
+const ISLAND_REGIONS = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+const ISLAND_LINKS = [[12, 13], [12, 14], [13, 15], [14, 15], [13, 16], [14, 17], [15, 18], [16, 18], [17, 18], [16, 19], [17, 20], [18, 19], [18, 20], [19, 21], [20, 21]]
+# How hard the campaign is. Easy and hard change what each side starts with and earns, how strong
+# Bravo's companies are and how readily they attack, and how good their soldiers are in a battle.
+const DIFF = {
+	"easy": {"name": "Easy", "funds": [30, 20], "bravo_income": 0.8, "bravo_str": -2, "bold": 1.3, "battle": "easy"},
+	"normal": {"name": "Normal", "funds": [24, 24], "bravo_income": 1.0, "bravo_str": 0, "bold": 1.15, "battle": "normal"},
+	"hard": {"name": "Hard", "funds": [20, 28], "bravo_income": 1.25, "bravo_str": 2, "bold": 1.0, "battle": "hard"},
+}
+
+static func diff() -> Dictionary:
+	return DIFF.get(str(data.get("diff", "normal")), DIFF["normal"])
+
+static func is_hq(i: int) -> bool:
+	return i == HQ[0] or i == HQ[1]
 const LINKS = [[0, 1], [0, 2], [1, 3], [2, 3], [1, 4], [2, 5], [3, 6], [3, 7], [4, 6], [5, 7], [4, 8], [6, 8],
 	[6, 9], [7, 9], [7, 10], [5, 10], [8, 11], [9, 11], [10, 11]]
 # The six-region campaign: the same country with the middle taken out.
@@ -67,7 +95,7 @@ const LAST = ["Adams", "Baker", "Cole", "Dixon", "Evans", "Fisher", "Grant", "Ha
 const SQUAD = 10
 const MAX_STR = 40         # men in one army
 const MAX_VEH = 4
-const HQ = [0, 11]
+static var HQ = [0, 11]            # (the two capitals: set by which map is being played, and ours can move)
 # what an army is made up of when it's raised: a mix of the classes
 const MIX = ["rifleman", "rifleman", "mg", "rifleman", "at", "medic", "rifleman", "engineer", "rifleman", "mg", "rifleman", "radio", "at", "rifleman", "sniper", "spotter"]
 # what you can buy for an army in supply, from the war chest
@@ -96,31 +124,50 @@ static var data = {}
 static var current = -1          # region being fought over
 static var selected = -1         # army id picked on the map
 
-static func new_campaign(short: bool = false) -> void:
-	data = {"version": VERSION, "owner": [], "armies": [], "next_id": 0, "roster": [], "turn": 1, "funds": [24, 24],
+static func new_campaign(short: bool = false, islands: bool = false, difficulty: String = "normal", ironman: bool = false) -> void:
+	HQ = [12, 21] if islands else [0, 11]
+	var D0: Dictionary = DIFF.get(difficulty, DIFF["normal"])
+	data = {"version": VERSION, "owner": [], "armies": [], "next_id": 0, "roster": [], "turn": 1, "funds": D0["funds"].duplicate(), "diff": difficulty, "iron": ironman, "hq": HQ.duplicate(), "map": "islands" if islands else ("short" if short else "main"),
 		"log": ["The campaign begins. Move your armies one region a turn, recruit with the war chest, cut the enemy's supply lines and take the Capital. Up to three companies can share a region: each has to be beaten before the ground changes hands."],
-		"pool": [], "sites": {}, "ruins": {}, "battle": null, "raised": [0, 0], "short": short, "links": SHORT_LINKS if short else LINKS,
+		"pool": [], "sites": {}, "ruins": {}, "battle": null, "raised": [0, 0], "short": short, "links": ISLAND_LINKS if islands else (SHORT_LINKS if short else LINKS),
 		"fallen": [], "plan": [], "choice": null, "pending_ev": null,
-		"headline": {"head": "WAR!", "sub": "The army marches east. The Capital is %s regions away." % ("three" if short else "five"), "turn": 1}}
-	for i in range(REGIONS.size()):
-		var in_play = not short or i in SHORT_REGIONS
-		data["owner"].append(-1 if not in_play else (0 if REGIONS[i]["p"].x < 0.3 else 1))
-	var a0 = _add_army(0, 0, 12)
-	a0["veh"] = ["jeep", "halftrack"]
-	var a1 = _add_army(0, 1, 10)
-	a1["veh"] = ["jeep"]
-	_add_army(0, 2, 8)
-	if short:
-		var s1 = _add_army(1, 3, 11)
-		s1["veh"] = ["jeep"]
-		_add_army(1, 9, 10)
+		"headline": {"head": "WAR!", "sub": "The fleet is in the Sound. The Citadel is four landings away." if islands else "The army marches east. The Capital is %s regions away." % ("three" if short else "five"), "turn": 1}}
+	var bs: int = D0["bravo_str"]
+	if islands:
+		for i in range(REGIONS.size()):
+			data["owner"].append(-1 if not (i in ISLAND_REGIONS) else (0 if i == 12 else 1))
+		var i0 = _add_army(0, 12, 12)
+		i0["veh"] = ["jeep", "halftrack"]
+		var i1 = _add_army(0, 12, 10)
+		i1["veh"] = ["jeep"]
+		_add_army(0, 12, 8)
+		_add_army(1, 15, 11 + bs)
+		_add_army(1, 16, 10 + bs)
+		var ib = _add_army(1, 17, 10 + bs)
+		ib["veh"] = ["jeep"]
+		var ic = _add_army(1, 21, 12 + bs)
+		ic["veh"] = ["armoredcar"]
+		data["log"] = ["The landing begins. All you hold is Port Haven: take a beach, then fight inland. The Citadel can only be reached through Foundry Isle or Pinewatch. Up to three companies can share a region."]
 	else:
-		_add_army(1, 4, 10)
-		var b1 = _add_army(1, 3, 11)
-		b1["veh"] = ["jeep"]
-		_add_army(1, 7, 10)
-	var b3 = _add_army(1, 11, 12)
-	b3["veh"] = ["armoredcar"]
+		for i in range(REGIONS.size()):
+			var in_play = i < 12 and (not short or i in SHORT_REGIONS)
+			data["owner"].append(-1 if not in_play else (0 if REGIONS[i]["p"].x < 0.3 else 1))
+		var a0 = _add_army(0, 0, 12)
+		a0["veh"] = ["jeep", "halftrack"]
+		var a1 = _add_army(0, 1, 10)
+		a1["veh"] = ["jeep"]
+		_add_army(0, 2, 8)
+		if short:
+			var s1 = _add_army(1, 3, 11 + bs)
+			s1["veh"] = ["jeep"]
+			_add_army(1, 9, 10 + bs)
+		else:
+			_add_army(1, 4, 10 + bs)
+			var b1 = _add_army(1, 3, 11 + bs)
+			b1["veh"] = ["jeep"]
+			_add_army(1, 7, 10 + bs)
+		var b3 = _add_army(1, 11, 12 + bs)
+		b3["veh"] = ["armoredcar"]
 	selected = -1
 	data["plan"] = _bravo_plan()
 	data["report"] = null
@@ -411,6 +458,8 @@ static func income(team: int) -> int:
 	var n = 4 + net.size()
 	for i in net:
 		n += int(BONUS_INCOME.get(REGIONS[i].get("bonus", ""), 0))
+	if team == 1:
+		n = int(round(n * float(diff()["bravo_income"])))
 	return n
 
 # does this side hold (and supply) a region with this bonus?
@@ -465,6 +514,12 @@ static func _upgrade() -> void:
 	for a in data["armies"]:
 		if a["team"] == 0 and not a.has("co"):
 			a["co"] = _new_co()
+	while data["owner"].size() < REGIONS.size():
+		data["owner"].append(-1)          # (the regions of maps this campaign isn't being played on)
+	for k2 in [["diff", "normal"], ["iron", true], ["hq", [0, 11]], ["map", "short" if data.get("short", false) else "main"]]:
+		if not data.has(k2[0]):
+			data[k2[0]] = k2[1]
+	HQ = [int(data["hq"][0]), int(data["hq"][1])]
 	if not data.has("report"):
 		data["report"] = null
 	data["version"] = VERSION
@@ -671,7 +726,7 @@ static func _bravo_score(b: Dictionary, j: int, grabs: int, attacked_army: bool,
 		elif not attacked_army:
 			# only attacks it clearly outnumbers: defenders are dug in
 			sc = (b["str"] - foe["str"] * 1.3) * 1.2 + (2.0 if not supplied(0, j) else 0.0) + (10.0 if j == HQ[0] else 0.0)
-			if b["str"] < 5 or b["str"] < foe["str"] * 1.15:
+			if b["str"] < 5 or b["str"] < foe["str"] * float(diff()["bold"]):
 				sc -= 8.0
 			# (more companies behind the first: each one is another battle to win before the place falls)
 			sc -= 2.5 * (armies_at(j, 0).size() - 1)
@@ -781,10 +836,11 @@ static func _new_turn() -> Array:
 	data["report_due"] = true
 	data["plan"] = _bravo_plan()
 	var ours = data["owner"].count(0)
-	if data["owner"][HQ[1]] == 0:
-		lines.append("The Capital has fallen to us. The campaign is won!")
-	elif data["owner"][HQ[0]] == 1 or ours == 0:
-		lines.append("Westfield is lost. The campaign is lost.")
+	var res_now = over()        # (this is also where a lost headquarters falls back, when it can)
+	if res_now == 0:
+		lines.append("%s has fallen to us. The campaign is won!" % REGIONS[HQ[1]]["name"])
+	elif res_now == 1 or ours == 0:
+		lines.append("%s is lost. The campaign is lost." % REGIONS[HQ[0]]["name"])
 	return lines
 
 # most turns something happens: the weather turns, partisans rise behind Bravo's lines, a patrol
@@ -941,8 +997,38 @@ static func over() -> int:
 	if data["owner"][HQ[1]] == 0:
 		return 0
 	if data["owner"][HQ[0]] == 1:
-		return 1
+		# Ironman: headquarters lost is the war lost. Otherwise the staff gets out to the nearest region
+		# still held (once the last one goes, or the last company, it's over all the same).
+		if data.get("iron", true) or not _move_hq():
+			return 1
 	return -1
+
+# headquarters falls back to another region we hold; false if there's nowhere to go
+static func _move_hq() -> bool:
+	if data["armies"].filter(func(a): return a["team"] == 0).is_empty():
+		return false
+	var old = HQ[0]
+	var best = -1
+	var bd = 1e9
+	for i in range(data["owner"].size()):
+		if data["owner"][i] == 0 and i != old:
+			var d = REGIONS[i]["p"].distance_to(REGIONS[old]["p"]) - (0.2 if army_at(i, 0) != null else 0.0)
+			if d < bd:
+				bd = d
+				best = i
+	if best < 0:
+		return false
+	HQ[0] = best
+	data["hq"] = HQ.duplicate()
+	var lost = int(data["funds"][0] / 2)
+	data["funds"][0] -= lost
+	var line = "%s has fallen. Headquarters gets out to %s, leaving half the war chest behind (%d)." % [REGIONS[old]["name"], REGIONS[best]["name"], lost]
+	data["log"] = [line] + data["log"]
+	if not data.has("turn_log"):
+		data["turn_log"] = []
+	data["turn_log"].append(line)
+	data["headline"] = {"head": "%s LOST" % str(REGIONS[old]["name"]).to_upper(), "sub": "Headquarters moves to %s. The war goes on." % REGIONS[best]["name"], "turn": data["turn"]}
+	return true
 
 static func _log(lines: Array) -> void:
 	if not lines.is_empty():
@@ -1125,6 +1211,10 @@ static func attack(i: int, mode: String = "", size: int = SQUAD, supply: Array =
 		mode = r["mode"]
 	# each side fields its army's real strength; a side out of supply gets no reinforcements
 	data["no_reinf"] = [not supply[0], not supply[1]]
+	# (the campaign's difficulty is the battle's too, for as long as the battle lasts)
+	if keep_diff == "":
+		keep_diff = str(G.settings.get("difficulty", "normal"))
+	G.settings["difficulty"] = str(diff()["battle"])
 	G.main.start_game({"map": map_id if map_id != "" else r["map"], "mode": mode, "size": size, "limit": G.default_limit(mode), "reinforce": true,
 		"reinf_mode": "truck", "armor": "heavy" if data["turn"] > 2 else "light", "teams": 2, "caps": sizes, "cls": cls, "armies_veh": true})
 	if not supply[0]:
@@ -1393,10 +1483,15 @@ static func _fell(m: Dictionary, a: Dictionary, kills_now: int) -> void:
 	if data["fallen"].size() > 120:
 		data["fallen"].resize(120)
 
+static var keep_diff = ""
+
 static func battle_over(winner: int) -> String:
 	if not active or current < 0:
 		return ""
 	active = false
+	if keep_diff != "":
+		G.settings["difficulty"] = keep_diff
+		keep_diff = ""
 	var r = REGIONS[current]
 	var lines = []
 	var wrecked = 0
@@ -1494,7 +1589,7 @@ static func _objective_result(b: Dictionary, ours: Dictionary, wrecked: int, foe
 			else:
 				data["funds"][0] += 8
 				got = "the wrecks are stripped for parts: +8 to the war chest"
-	return ["Objective won: %s. %s." % [OBJ[key][0], got.capitalize()]]
+	return ["Objective won: %s. %s." % [OBJ[key][0], got.substr(0, 1).to_upper() + got.substr(1)]]
 
 # who holds the ground now, and where the beaten army goes (shared by a fought battle and an auto-resolved one)
 static func _outcome(b: Dictionary, winner: int, ours, theirs) -> Array:

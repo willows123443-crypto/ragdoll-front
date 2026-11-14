@@ -126,20 +126,31 @@ static func capture_battle() -> Dictionary:
 	d["battle"] = true
 	d["soldiers"] = []
 	d["men"] = []
-	for s in G.soldiers:
-		# (a crew comes back with its vehicle, so the men aboard aren't written down a second time)
-		if s.state == "dead" or s.state == "riding" or s.vehicle != null:
-			continue
-		d["men"].append({"t": s.team, "x": snappedf(s.pos.x, 0.1), "z": snappedf(s.pos.z, 0.1), "y": snappedf(s.pos.y, 0.1), "cls": s.cls, "w": s.wid, "hp": s.hp, "mag": s.mag, "res": s.reserve,
-			"gr": s.grenades, "sm": s.smokes, "name": s.sname, "vet": s.vet, "zk": s.ztype if s.zombie else "",
-			"ord": [s.order["mode"], s.order["point"].x, s.order["point"].z] if s.order != null and s.order.get("point") != null and s.order["mode"] in ["move", "hold"] else null})
 	d["vhp"] = []
-	d["vcrew"] = []
+	d["squads"] = {}
+	# the vehicles first, so a man aboard one can be written down by which it was and which seat
+	var vidx = {}
 	for v in G.vehicles:
 		if v.dead or v.mission != null or v.spec.get("plane", false):
 			continue
+		vidx[v] = d["vhp"].size()
 		d["vhp"].append(v.hp / maxf(v.spec["hp"], 1.0))
-		d["vcrew"].append(v.seats.filter(func(x): return x != null).size())
+	for e in d["vehicles"]:
+		e[5] = false           # (they're put back empty, and the men who were in them are seated one by one)
+	for s in G.soldiers:
+		if s.state == "dead":
+			continue
+		if s.vehicle != null and not vidx.has(s.vehicle):
+			continue           # (aboard something that isn't kept: a lorry on a supply run, an aircraft)
+		var sq = G.squads.find(s.squad) if s.squad != null else -1
+		if sq >= 0 and not d["squads"].has(sq):
+			d["squads"][sq] = {"crew": bool(s.squad.get("crew", false)), "form": str(s.squad.get("form", "wedge")), "guard": bool(s.squad.get("guard", false)), "follow": bool(s.squad.get("follow", false))}
+		var m = {"t": s.team, "x": snappedf(s.pos.x, 0.1), "z": snappedf(s.pos.z, 0.1), "y": snappedf(s.pos.y, 0.1), "cls": s.cls, "w": s.wid, "hp": s.hp, "mag": s.mag, "res": s.reserve,
+			"gr": s.grenades, "sm": s.smokes, "name": s.sname, "vet": s.vet, "zk": s.ztype if s.zombie else "", "sq": sq,
+			"ord": [s.order["mode"], s.order["point"].x, s.order["point"].z] if s.order != null and s.order.get("point") != null and s.order["mode"] in ["move", "hold"] else null}
+		if s.vehicle != null:
+			m["veh"] = [vidx[s.vehicle], s.seat]
+		d["men"].append(m)
 	var ru = []
 	var W = G.world
 	for k in range(W.static_cols.size()):
@@ -193,49 +204,66 @@ static func load_battle() -> String:
 	var nv0 = d.get("vehicles", []).size()
 	apply(d)
 	pending_ruins = []
-	# the vehicles' damage (they were put back in the order they were saved in)
+	# the vehicles' damage (they were put back, empty, in the order they were saved in)
 	var vh: Array = d.get("vhp", [])
 	var live = G.vehicles.filter(func(v): return is_instance_valid(v) and not v.dead)
-	var vc: Array = d.get("vcrew", [])
 	for k in range(mini(mini(vh.size(), nv0), live.size())):
 		live[k].hp = maxf(1.0, float(vh[k]) * live[k].spec["hp"])
-		# (a vehicle is put back with every seat filled: anyone beyond the number that was aboard goes)
-		if k < vc.size():
-			var aboard = 0
-			for i in range(live[k].seats.size()):
-				var m = live[k].seats[i]
-				if m == null:
-					continue
-				aboard += 1
-				if aboard > int(vc[k]):
-					live[k].seats[i] = null
-					G.soldiers.erase(m)
-					m.queue_free()
-	# the men
+	# the men, a squad at a time so each squad comes back as the squad it was; a man who was aboard a
+	# vehicle is put back in his seat
+	var groups = {}
+	var order = []
 	for m in d.get("men", []):
-		if str(m["zk"]) != "":
-			Soldier.zombie_next = str(m["zk"])
-		var s = G.main.spawn_soldier(int(m["t"]), float(m["x"]), float(m["z"]), "pistol" if str(m["zk"]) != "" else str(m["w"]))
-		Soldier.zombie_next = ""
-		if s == null:
-			continue
-		if str(m["zk"]) != "":
-			Modes.make_zombie(s, str(m["zk"]))
-		else:
-			s.set_class(str(m["cls"]))
-			if s.wid != str(m["w"]):
-				s.set_weapon(str(m["w"]))
-			s.mag = int(m["mag"])
-			s.reserve = int(m["res"])
-			s.grenades = int(m["gr"])
-			s.smokes = int(m["sm"])
-			s.sname = str(m["name"])
-			s.set_vet(int(m["vet"]))
-		s.hp = float(m["hp"])
-		if float(m["y"]) > G.world.ground_y(s.pos.x, s.pos.z) + 1.5:
-			s.pos.y = float(m["y"])          # (he was upstairs)
-		if m.get("ord") != null:
-			s.order = {"mode": m["ord"][0], "point": Vector3(m["ord"][1], G.world.ground_y(m["ord"][1], m["ord"][2]), m["ord"][2])}
+		var key = int(m.get("sq", -1))
+		if not groups.has(key):
+			groups[key] = []
+			order.append(key)
+		groups[key].append(m)
+	var sqd: Dictionary = d.get("squads", {})
+	for key in order:
+		var info: Dictionary = sqd.get(key, {})
+		if key >= 0:
+			var extra = {}
+			for flag in ["crew", "guard", "follow"]:
+				if info.get(flag, false):
+					extra[flag] = true
+			AI.batch_begin(extra)
+		var made = null
+		for m in groups[key]:
+			var zk = str(m.get("zk", ""))
+			if zk != "":
+				Soldier.zombie_next = zk
+			var s = G.main.spawn_soldier(int(m["t"]), float(m["x"]), float(m["z"]), "pistol" if zk != "" else str(m["w"]))
+			Soldier.zombie_next = ""
+			if s == null:
+				continue
+			if zk != "":
+				Modes.make_zombie(s, zk)
+			else:
+				s.set_class(str(m["cls"]))
+				if s.wid != str(m["w"]):
+					s.set_weapon(str(m["w"]))
+				s.mag = int(m["mag"])
+				s.reserve = int(m["res"])
+				s.grenades = int(m["gr"])
+				s.smokes = int(m["sm"])
+				s.sname = str(m["name"])
+				s.set_vet(int(m["vet"]))
+			s.hp = float(m["hp"])
+			if float(m["y"]) > G.world.ground_y(s.pos.x, s.pos.z) + 1.5:
+				s.pos.y = float(m["y"])          # (he was upstairs)
+			if m.get("ord") != null:
+				s.order = {"mode": m["ord"][0], "point": Vector3(m["ord"][1], G.world.ground_y(m["ord"][1], m["ord"][2]), m["ord"][2])}
+			if m.has("veh") and int(m["veh"][0]) < live.size():
+				var v = live[int(m["veh"][0])]
+				var seat = int(m["veh"][1])
+				if seat >= 0 and seat < v.seats.size() and v.seats[seat] == null:
+					s.mount(v, seat)
+			made = s
+		if key >= 0:
+			AI.batch_end()
+			if made != null and made.squad != null and info.has("form"):
+				made.squad["form"] = info["form"]
 	if d.has("score"):
 		for k in range(mini(G.score.size(), d["score"].size())):
 			G.score[k] = d["score"][k]

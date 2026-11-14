@@ -189,6 +189,8 @@ func _build_music() -> void:
 			ph += f2 / MRATE
 			var saw = (fmod(ph, 1.0) * 2.0 - 1.0)
 			strings[st3 + k] = saw * 0.22 * minf(1.0, t3 * 60.0) * exp(-t3 / 0.25)
+	if web:
+		_build_mixes(drone, drums, strings, n)
 	for arr in [drone, drums, strings]:
 		var w = _wav_rate(arr, MRATE)
 		w.loop_mode = AudioStreamWAV.LOOP_FORWARD
@@ -297,11 +299,10 @@ func _process(dt: float) -> void:
 	var lv = [0.25 + intensity * 0.5, maxf(0.0, intensity - 0.25) * 1.3, maxf(0.0, intensity - 0.55) * 2.0]
 	for i in range(music.size()):
 		var a = clampf(lv[i], 0.0, 1.0) * mv * (1.0 if on else 0.0)
-		if web:
-			# (kept in step with the first layer when one is brought in part way through)
-			_loop_vol(music[i], linear_to_db(maxf(a, 0.0001)) - 3.0, a > 0.02, music[0].get_playback_position() if i > 0 and music[0].playing else -1.0)
-		else:
+		if not web:
 			music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 3.0
+	if web:
+		_mix_tick(intensity, mv, on)
 	# the wider battle: far-off booms and crackling gunfire while a fight is on
 	if on:
 		rumble_t -= dt
@@ -473,6 +474,68 @@ func _build_menu_music() -> void:
 	menu_player.stream = w
 	menu_player.volume_db = -80.0
 	add_child(menu_player)
+
+# The battle music in a browser. On a desktop three layers play together and each is turned up and down
+# as the fight heats and cools; a browser can't turn a playing sound up or down. So there the same
+# material is made into three finished mixes (calm: the drone; tense: drone and drums; hot: drone, drums
+# and strings) and only one plays at a time. A change is made on a bar line, from the same place in the
+# loop, and not more often than every six seconds, so it comes in on the beat and doesn't chatter.
+const BAR_S = 2.5                 # one bar at 96 to the minute
+var mixes: Array = []             # AudioStreamPlayer for calm, tense, hot
+var mix_cur = -1
+var mix_want = 0
+var mix_ms = 0
+var mix_switches = 0
+
+func _build_mixes(drone: PackedFloat32Array, drums: PackedFloat32Array, strings: PackedFloat32Array, n: int) -> void:
+	for wts in [[0.32, 0.0, 0.0], [0.5, 0.34, 0.0], [0.6, 0.68, 0.55]]:
+		var out = PackedFloat32Array()
+		out.resize(n)
+		for i in range(n):
+			out[i] = drone[i] * wts[0] + drums[i] * wts[1] + strings[i] * wts[2]
+		var w = _wav_rate(out, MRATE)
+		w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		w.loop_begin = 0
+		w.loop_end = n
+		var pl = AudioStreamPlayer.new()
+		pl.stream = w
+		add_child(pl)
+		mixes.append(pl)
+
+func _mix_tick(k: float, mv: float, on: bool) -> void:
+	if mixes.is_empty():
+		return
+	if not on or mv <= 0.0:
+		if mix_cur >= 0:
+			mixes[mix_cur].stop()
+			mix_cur = -1
+		return
+	# which mix the fight calls for (with a margin, so it doesn't flap on the line between two)
+	if mix_want == 0 and k > 0.34:
+		mix_want = 1
+	elif mix_want == 1 and k > 0.64:
+		mix_want = 2
+	elif mix_want == 2 and k < 0.5:
+		mix_want = 1
+	elif mix_want == 1 and k < 0.22:
+		mix_want = 0
+	var db = linear_to_db(maxf(mv * 2.0, 0.001)) - 3.0
+	var now = Time.get_ticks_msec()
+	if mix_cur < 0:
+		mix_cur = mix_want
+		mix_ms = now
+		_loop_vol(mixes[mix_cur], db, true)
+		return
+	if mix_want != mix_cur and now - mix_ms > 6000:
+		var pos: float = mixes[mix_cur].get_playback_position()
+		if fmod(pos, BAR_S) < 0.2:
+			mixes[mix_cur].stop()
+			mix_cur = mix_want
+			mix_ms = now
+			mix_switches += 1
+			_loop_vol(mixes[mix_cur], db, true, pos)
+			return
+	_loop_vol(mixes[mix_cur], db, true)
 
 # Set a looping player's volume, and start or stop it. On a desktop that's all there is to it. In a
 # browser a sound that isn't placed in the world keeps the volume it was started at (turning it up or

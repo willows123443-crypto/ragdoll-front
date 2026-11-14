@@ -52,6 +52,8 @@ static func reset() -> void:
 	horde_t = 10.0
 	horde_spawn_t = 0.0
 	horde_side = -1
+	smashed = 0
+	smash_said = -1
 	clear_drops()
 	keep_b = -1
 	check_t = 0.0
@@ -1184,6 +1186,11 @@ static func zombie_tick(s) -> void:
 		AI.stop_move(s)
 		s.want = Vector3.ZERO
 		return
+	if s.ztype == "brute" and d < 40.0 and G.sim_time > float(s.get_meta("smash_t", 0.0)):
+		s.set_meta("smash_t", G.sim_time + 1.2)
+		if _smash(s, 1.5, 230.0):
+			s.want = Vector3.ZERO
+			return
 	if s.bad_t < G.sim_time and (d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
 		AI.stop_move(s)
 		var dir = to / d
@@ -1221,6 +1228,8 @@ static func zombie_tick(s) -> void:
 						tore = true
 						break
 				if not tore:
+					tore = _smash(s, 1.3, 30.0)
+				if not tore:
 					s.bad_t = G.sim_time + 6.0
 					AI.go_to(s, t.pos, spd)
 			s.prog_t = 0.0
@@ -1234,6 +1243,36 @@ static func zombie_tick(s) -> void:
 			var res = AI.follow_path(s)
 			if res == "stuck" or res == "arrived":
 				AI.stop_move(s)
+
+# The dead against what you've built. A brute doesn't go round or over a barricade: he puts his weight
+# through it (sandbags go in one blow, a concrete wall in two). The others only claw at one when it's
+# what's stopping them, and it takes a pack of them a while.
+static var smashed = 0
+static var smash_said = -1
+
+static func _smash(s, reach: float, dmg: float) -> bool:
+	for st in Build.sites:
+		if st["dead"] or G.dist2d(st["p"], s.pos) > 12.0:
+			continue
+		for c in st["cols"]:
+			if not c.alive or not c.dest or c.lo.y > s.pos.y + 1.6 or c.hi.y < s.pos.y:
+				continue
+			var cx = clampf(s.pos.x, c.lo.x, c.hi.x)
+			var cz = clampf(s.pos.z, c.lo.z, c.hi.z)
+			if Vector2(cx - s.pos.x, cz - s.pos.z).length() > reach:
+				continue
+			c.hp -= dmg
+			s.lunge_t = 0.5
+			s.lunge_dir = G.flat(((c.lo + c.hi) * 0.5) - s.pos).normalized()
+			G.audio.hammer(s.pos)
+			if c.hp <= 0.0:
+				G.world.destroy_col(c)
+				smashed += 1
+				if smash_said != horde_wave:
+					smash_said = horde_wave
+					G.ui.message("The dead are breaking through the barricades at %s" % AI.grid_ref(s.pos))
+			return true
+	return false
 
 static func _vaultable_ahead(s, dir: Vector3) -> bool:
 	for c in G.world.cell_at(s.pos.x + dir.x * 0.7, s.pos.z + dir.z * 0.7):

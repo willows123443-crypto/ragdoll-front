@@ -401,9 +401,9 @@ const RECRUIT = {
 	"plt": {"name": "Rifle platoon", "cost": 30, "cls": ["rifleman", "rifleman", "rifleman", "rifleman", "mg", "at", "medic", "rifleman",
 		"rifleman", "rifleman", "rifleman", "mg", "at", "medic", "radio", "rifleman"],
 		"desc": "Sixteen men in two trucks, with a radio operator. Cheaper than two squads"},
-	"eng": {"name": "Engineers", "cost": 12, "cls": ["engineer", "engineer", "engineer", "engineer"],
+	"eng": {"name": "Engineers", "cost": 10, "cls": ["engineer", "engineer", "engineer", "engineer"],
 		"desc": "Four engineers: they build and repair, lay mines, sweep for them and blow things up with satchels"},
-	"atk": {"name": "Anti-tank team", "cost": 14, "cls": ["at", "at", "at", "rifleman"],
+	"atk": {"name": "Anti-tank team", "cost": 12, "cls": ["at", "at", "at", "rifleman"],
 		"desc": "Three rocket men and a rifleman to cover them. They hunt tanks and blast structures"},
 	"mgt": {"name": "MG team", "cost": 12, "cls": ["mg", "mg", "rifleman", "rifleman"],
 		"desc": "Two machine guns that pin the enemy down while others move"},
@@ -1306,6 +1306,10 @@ func _show_campaign(result: String = "") -> void:
 	for c in camp_box.get_children():
 		camp_box.remove_child(c)
 		c.queue_free()
+	if camp_new:
+		camp_box.add_child(_campaign_new())
+		camp_panel.visible = true
+		return
 	var rep = Campaign.data.get("report")
 	if rep != null and not rep.get("seen", true) and Campaign.pending_battle() == null:
 		camp_box.add_child(_campaign_report(rep))
@@ -1448,18 +1452,72 @@ func _show_campaign(result: String = "") -> void:
 	var sp2 = Control.new()
 	sp2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(sp2)
-	for nc in [["New campaign (12 regions)", false], ["Short campaign (6 regions)", true]]:
-		var sh: bool = nc[1]
-		var nb = _button(nc[0], func():
-			Campaign.new_campaign(sh)
-			camp_result = ""
-			camp_fallen = false
-			_show_campaign())
-		nb.tooltip_text = "Starts again from turn 1: the campaign you have now is lost" + ("; six regions, a few evenings' work" if sh else "")
-		h.add_child(nb)
+	h.add_child(_label("%s%s  " % [Campaign.diff()["name"], " · ironman" if Campaign.data.get("iron", true) else ""], 13, Color(0.75, 0.78, 0.8)))
+	var nb = _button("New campaign…", func():
+		camp_new = true
+		_show_campaign())
+	nb.tooltip_text = "Choose a map and how hard it is. Starts again from turn 1: the campaign you have now is lost"
+	h.add_child(nb)
 	h.add_child(_button("Close", func(): camp_panel.visible = false))
 	camp_box.add_child(h)
 	camp_panel.visible = true
+
+# starting again: which map, how hard, and whether losing headquarters ends it
+var camp_new = false
+var camp_new_diff = "normal"
+var camp_new_iron = false
+
+func _campaign_new() -> Control:
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	v.add_child(_label("New campaign", 26, Color(0.97, 0.93, 0.82)))
+	v.add_child(_label("The campaign you have now is replaced when you pick a map.", 13, Color(0.8, 0.8, 0.78)))
+	var diffs = ["easy", "normal", "hard"]
+	var od = _option(["Easy: a fuller war chest, weaker enemy companies that attack less readily, poorer shots in battle", "Normal", "Hard: a leaner war chest, stronger and bolder enemy companies that earn more, better shots in battle"], diffs.find(camp_new_diff))
+	od.item_selected.connect(func(i): camp_new_diff = diffs[i])
+	_row(v, "Difficulty", od)
+	var cb = CheckBox.new()
+	cb.text = "  Ironman: losing headquarters ends the campaign. (Off: HQ falls back to the nearest region you hold and loses half the war chest.)"
+	cb.add_theme_font_size_override("font_size", 14)
+	cb.button_pressed = camp_new_iron
+	cb.toggled.connect(func(on): camp_new_iron = on)
+	v.add_child(cb)
+	var cols = HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 12)
+	v.add_child(cols)
+	for mp in [["The Mainland", "Twelve regions. March east from Westfield to the Capital.", false, false], ["The Short War", "Six regions of the same country: a few evenings' work.", true, false],
+			["The Islands", "Ten regions. All you hold is Port Haven: land on a beach and fight inland to the Citadel, which has only two ways in.", false, true]]:
+		var pc = PanelContainer.new()
+		var sb = StyleBoxFlat.new()
+		sb.bg_color = Color(0.12, 0.14, 0.15, 1.0)
+		sb.set_corner_radius_all(6)
+		sb.set_content_margin_all(12)
+		pc.add_theme_stylebox_override("panel", sb)
+		pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pc.custom_minimum_size = Vector2(0, 200)
+		var pv = VBoxContainer.new()
+		pv.add_theme_constant_override("separation", 8)
+		pc.add_child(pv)
+		pv.add_child(_label(mp[0], 20, Color(0.96, 0.85, 0.5)))
+		var dl = _label(mp[1], 14, Color(0.9, 0.91, 0.88))
+		dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		dl.custom_minimum_size = Vector2(260, 70)
+		pv.add_child(dl)
+		var short_m: bool = mp[2]
+		var isl_m: bool = mp[3]
+		pv.add_child(_button("  Start  ", func():
+			Campaign.new_campaign(short_m, isl_m, camp_new_diff, camp_new_iron)
+			camp_new = false
+			camp_result = ""
+			camp_fallen = false
+			_show_campaign()))
+		cols.add_child(pc)
+	var hb = HBoxContainer.new()
+	hb.add_child(_button("  Back to the campaign  ", func():
+		camp_new = false
+		_show_campaign()))
+	v.add_child(hb)
+	return v
 
 # the sheet that goes up when a new turn starts: what happened since the last one, in one place
 func _campaign_report(rep: Dictionary) -> Control:
@@ -1670,6 +1728,11 @@ func _campaign_info() -> void:
 
 const CAMP_W = 790.0
 const CAMP_H = 404.0
+
+# Where a region sits on the map panel. The two headquarters are at 0.07 and 0.93 of the width, and a region's
+# box and the army chips under it are wider than that leaves room for: the map is drawn inside a margin.
+func _camp_pt(p: Vector2) -> Vector2:
+	return Vector2(90.0 + (p.x - 0.07) / 0.86 * (CAMP_W - 180.0), p.y * CAMP_H)
 const CAMP_SIDE = 398.0
 
 func _campaign_map() -> Control:
@@ -1685,8 +1748,8 @@ func _campaign_map() -> Control:
 	var sel = Campaign.army(Campaign.selected)
 	# roads between regions
 	for l in Campaign.links():
-		var a: Vector2 = R[l[0]]["p"] * Vector2(CAMP_W, CAMP_H)
-		var b: Vector2 = R[l[1]]["p"] * Vector2(CAMP_W, CAMP_H)
+		var a: Vector2 = _camp_pt(R[l[0]]["p"])
+		var b: Vector2 = _camp_pt(R[l[1]]["p"])
 		var ln = Line2D.new()
 		ln.points = PackedVector2Array([a, b])
 		ln.width = 5.0
@@ -1698,8 +1761,8 @@ func _campaign_map() -> Control:
 	for pl in Campaign.data.get("plan", []):
 		if Campaign.pending_battle() != null or Campaign.army(pl["army"]) == null:
 			continue
-		var pa: Vector2 = R[int(pl["from"])]["p"] * Vector2(CAMP_W, CAMP_H)
-		var pb: Vector2 = R[int(pl["to"])]["p"] * Vector2(CAMP_W, CAMP_H)
+		var pa: Vector2 = _camp_pt(R[int(pl["from"])]["p"])
+		var pb: Vector2 = _camp_pt(R[int(pl["to"])]["p"])
 		var dirv = (pb - pa).normalized()
 		var tip_p = pb - dirv * 74.0
 		var arrow = Line2D.new()
@@ -1716,13 +1779,13 @@ func _campaign_map() -> Control:
 		m.add_child(headp)
 	for i in range(R.size()):
 		var r = R[i]
-		var c: Vector2 = r["p"] * Vector2(CAMP_W, CAMP_H)
+		var c: Vector2 = _camp_pt(r["p"])
 		var o: int = own[i]
 		if o < 0:
 			continue           # (not in the short campaign)
 		var cut = not net[o].has(i)
 		var bk: String = r.get("bonus", "")
-		var txt = "%s%s\n%s" % [r["name"], "  (HQ)" if r.has("hq") else "", Campaign.BONUS[bk][0] if Campaign.BONUS.has(bk) else ("headquarters" if r.has("hq") else r["map"])]
+		var txt = "%s%s\n%s" % [r["name"], "  (HQ)" if Campaign.is_hq(i) else "", ("headquarters" if Campaign.is_hq(i) else (Campaign.BONUS[bk][0] if Campaign.BONUS.has(bk) else r["map"]))]
 		if cut:
 			txt += "\ncut off"
 		var nr = Campaign.ruins(i).size()

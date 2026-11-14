@@ -53,9 +53,9 @@ static func reset() -> void:
 #   income  what its supply is worth      grace  seconds before it makes its first move
 #   spend   how long between purchases    arty   how long between fire missions      aim  how wide its men shoot
 const HANDICAP = {
-	"easy": {"income": 0.7, "grace": 100.0, "spend": 1.5, "arty": 1.6, "aim": 1.3},
+	"easy": {"income": 0.65, "grace": 100.0, "spend": 1.6, "arty": 1.8, "aim": 1.55},
 	"normal": {"income": 1.0, "grace": 40.0, "spend": 1.0, "arty": 1.0, "aim": 1.0},
-	"hard": {"income": 1.3, "grace": 0.0, "spend": 0.75, "arty": 0.8, "aim": 0.88}}
+	"hard": {"income": 1.4, "grace": 0.0, "spend": 0.7, "arty": 0.75, "aim": 0.74}}
 
 const LESSON = {"income": 0.7, "grace": 100.0, "spend": 1.5, "arty": 1.6, "aim": 2.2}
 

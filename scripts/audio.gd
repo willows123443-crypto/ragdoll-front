@@ -211,9 +211,19 @@ var deaf_fx: AudioEffectLowPassFilter = null
 var deaf_bus = -1
 var web = false
 var world_bus = "Master"
-# (measured at the page's output, the music plays about 12 dB lower in a browser than the same build does
-# on a desktop: this makes most of it up, and the page's limiter keeps it from clipping)
-var music_boost = 9.0 if OS.has_feature("web") else 0.0
+# In a browser a sound can't be played louder than it was made (the gain stops at 1) and a centred one
+# reaches each ear at half strength, so the title tune and the horn calls are made at full scale and
+# turned down on a desktop instead of being made quiet and turned up.
+var music_cut = 0.0 if OS.has_feature("web") else -4.0
+
+# scale a waveform so its loudest point is at `peak`
+func _norm(out: PackedFloat32Array, peak: float) -> void:
+	var m = 0.0001
+	for x in out:
+		m = maxf(m, absf(x))
+	var k = peak / m
+	for i in range(out.size()):
+		out[i] *= k
 var world_trim = 0.0        # (browser only: what the World bus's volume does on desktop)
 var deaf = 0.0
 var s_ring: AudioStreamWAV = null
@@ -265,7 +275,7 @@ func _process(dt: float) -> void:
 	var menu_on = (not G.started or G.attract) and G.settings["music"] > 0.0
 	menu_k = move_toward(menu_k, 1.0 if menu_on else 0.0, dt * (0.5 if menu_on else 0.9))
 	if menu_player != null:
-		menu_player.volume_db = linear_to_db(maxf(menu_k * G.settings["music"] * 2.0, 0.0001)) + 3.0 + music_boost
+		menu_player.volume_db = linear_to_db(maxf(menu_k * G.settings["music"] * 2.0, 0.0001)) + music_cut
 		if menu_k > 0.0 and not menu_player.playing:
 			menu_player.play()
 		elif menu_k <= 0.0 and menu_player.playing:
@@ -291,7 +301,7 @@ func _process(dt: float) -> void:
 	var lv = [0.25 + intensity * 0.5, maxf(0.0, intensity - 0.25) * 1.3, maxf(0.0, intensity - 0.55) * 2.0]
 	for i in range(music.size()):
 		var a = clampf(lv[i], 0.0, 1.0) * mv * (1.0 if on else 0.0)
-		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 3.0 + music_boost
+		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) + (3.0 if music_cut == 0.0 else -3.0)
 	# the wider battle: far-off booms and crackling gunfire while a fight is on
 	if on:
 		rumble_t -= dt
@@ -454,6 +464,7 @@ func _build_menu_music() -> void:
 				var t4 = float(k) / MRATE
 				lp += (randf() * 2.0 - 1.0 - lp) * 0.6
 				out[st4 + k] += lp * exp(-t4 / 0.025) * (0.07 if sub == 0.0 else 0.045)
+	_norm(out, 0.92)
 	var w = _wav_rate(out, MRATE)
 	w.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	w.loop_begin = 0
@@ -1056,6 +1067,7 @@ func _fanfare(notes: Array) -> AudioStreamWAV:
 			out[st + k] += (sin(ph) + 0.5 * sin(ph * 2.0) + 0.3 * sin(ph * 3.0) + 0.12 * sin(ph * 4.0)) * 0.2 * env
 			out[st + k] += sin(ph * 0.5) * 0.12 * env
 		at += nt[1]
+	_norm(out, 0.92)
 	return _wav_rate(out, MRATE)
 
 # (Built a sound at a time over the first few seconds, a frame between each: made all at once they held
@@ -1121,6 +1133,7 @@ func _build_voices() -> void:
 		for i in range(d.size() / 2):
 			hb[(st + i) % hn] += d.decode_s16(i * 2) / 32000.0 * 0.4
 		await tree.process_frame
+	_norm(hb, 0.9)
 	s_horde = _wav(hb)
 	s_horde.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	s_horde.loop_begin = 0
@@ -1171,7 +1184,7 @@ func sting(won: bool) -> void:
 	if sting_player == null or G.settings["music"] <= 0.0:
 		return
 	sting_player.stream = s_win if won else s_lose
-	sting_player.volume_db = linear_to_db(maxf(G.settings["music"] * 1.6, 0.001)) - 2.0 + music_boost
+	sting_player.volume_db = linear_to_db(maxf(G.settings["music"] * 2.0, 0.001)) + music_cut + 2.0
 	sting_player.play()
 
 # the moan of the horde: louder the more of them are up and the nearer the nearest is to where you're
@@ -1194,7 +1207,7 @@ func _horde_bed(dt: float) -> void:
 		horde_want = 0.0
 	horde_k = move_toward(horde_k, horde_want, dt * (0.35 if horde_want > horde_k else 0.6))
 	if horde_k > 0.005:
-		horde_player.volume_db = linear_to_db(horde_k) - 7.0 + fx_db()
+		horde_player.volume_db = linear_to_db(horde_k) - 4.0 + (music_cut * 2.0) + fx_db()
 		horde_player.pitch_scale = 0.85 + horde_k * 0.25
 		if not horde_player.playing:
 			horde_player.play()

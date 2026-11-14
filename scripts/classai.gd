@@ -420,6 +420,10 @@ static func _radio(s) -> void:
 	# unless AI support is switched on in the battle setup)
 	if s.radio_cd > 0.0 or not Support.arty_ready(s.team) or not Rules.ai_callin_ok():
 		return
+	# (not against the horde: by the time the shells arrive the dead are among his own men. In a game
+	# played through to wave 10 the operators' barrages killed their own side and flattened the town.)
+	if G.mode == "horde":
+		return
 	var target = artillery_target(s.team, s.pos, 40.0)
 	if target == null:
 		return

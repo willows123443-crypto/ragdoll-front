@@ -771,7 +771,9 @@ static func follow_path(s) -> String:
 				break
 	# someone of ours just ahead, in the way: pass him on the right, early, instead of walking into his back
 	# (and both keeping right means two men meeting in a corridor or a doorway don't dance)
-	if (Engine.get_physics_frames() + s.id) % 3 == 0:
+	# (the dead don't stand aside for anyone: a dozen of them waited their turn at the head of a staircase
+	# for the men on it to come up)
+	if not s.zombie and (Engine.get_physics_frames() + s.id) % 3 == 0:
 		var side = Vector3.ZERO
 		var rt = Vector3(-dir.z, 0, dir.x)
 		for o in G.soldiers_near(s.pos):
@@ -3077,6 +3079,8 @@ static func scavenge(s, body) -> void:
 # would this shot (or its spread, or a rocket's blast) endanger a friend?
 static func friendly_in_line(s, from: Vector3, dir: Vector3, L: float):
 	var rocket = s.W["rocket"]
+	# (a flamethrower's fan is far wider than a bullet's path and reaches 17 m whatever he's aiming at)
+	var flame: bool = s.W["flame"]
 	var end = from + dir * L
 	for o in G.soldiers:
 		if o == s or o.team != s.team or o.state == "dead":
@@ -3086,10 +3090,10 @@ static func friendly_in_line(s, from: Vector3, dir: Vector3, L: float):
 			return o
 		var v = c - from
 		var t = v.dot(dir)
-		if t < 0.0 or t > L + 4.0:
+		if t < 0.0 or t > (17.5 if flame else L + 4.0):
 			continue
 		var perp = (v - dir * t).length()
-		if perp < 0.75 + t * 0.03:
+		if perp < ((1.1 + t * 0.2) if flame else (0.75 + t * 0.03)):
 			return o
 	# our own vehicles in the way (or, for a rocket, near where it'll burst)
 	var own = s.vehicle if s.vehicle != null and is_instance_valid(s.vehicle) else null

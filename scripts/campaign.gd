@@ -325,6 +325,106 @@ static func _co_after(a, hit: bool, won: bool, where: String) -> Array:
 			lines.append("%s %s is promoted %s." % [CO_RANKS[int(c["rank"]) - 1], c["name"], {"Maj.": "Major", "Col.": "Colonel"}[CO_RANKS[int(c["rank"])]]])
 	return lines
 
+# ---------------------------------------------------------------- the dead of this battle
+# Who fell is written down as it happens. (It used to be read off the bodies when the battle ended, so a
+# man whose body had been cleared away by then, or who fell before the battle was saved and loaded, came
+# home with the rest.)
+static var fallen_log: Array = []      # {"kind": "roster" | "reserve" | "co", "k", "army", "kills"}
+
+static func note_death(s) -> void:
+	if not active or s.zombie:
+		return
+	if s.has_meta("co"):
+		fallen_log.append({"kind": "co", "k": 0, "army": -1, "kills": s.kills})
+	elif s.has_meta("reserve"):
+		fallen_log.append({"kind": "reserve", "k": int(s.get_meta("res_k")), "army": int(s.get_meta("reserve")), "kills": s.kills})
+	elif s.team == 0 and s.has_meta("roster"):
+		fallen_log.append({"kind": "roster", "k": int(s.get_meta("roster")), "army": -1, "kills": s.kills})
+
+# ---------------------------------------------------------------- a campaign battle saved part-way
+# What a saved battle needs from the campaign besides the field itself: which battle it is, how long it
+# has run, the reserves still to come, who has fallen so far, and the weather.
+static func battle_state() -> Dictionary:
+	var rs = []
+	for r in reserves:
+		rs.append({"army": r["army"], "team": r["team"], "left": float(r["at"]) - G.sim_time, "n": r["n"], "done": r["done"]})
+	var b = data.get("battle")
+	return {"region": current, "turn": int(data.get("turn", 0)), "battle": b.duplicate(true) if b != null else null,
+		"how": how, "stage2": stage2, "free_def": free_def.duplicate(), "t_run": G.sim_time - t_start, "reserves": rs,
+		"fallen": fallen_log.duplicate(true), "storm": G.storm, "no_reinf": data.get("no_reinf", [false, false])}
+
+# can that battle be carried on? "" if so, otherwise why not
+static func resume_check(c: Dictionary) -> String:
+	if data.is_empty() and not load_saved():
+		return "there is no campaign to go back to"
+	var b = data.get("battle")
+	var sb = c.get("battle")
+	if b == null or sb == null or int(data.get("turn", -1)) != int(c.get("turn", -2)):
+		return "the campaign has moved on since this battle was saved"
+	for key in ["region", "army", "foe", "attacker"]:
+		if int(b.get(key, -1)) != int(sb.get(key, -2)):
+			return "the campaign has moved on since this battle was saved"
+	if int(b.get("stage", 1)) != int(sb.get("stage", 1)):
+		return "the campaign has moved on since this battle was saved"
+	return ""
+
+# before the field is rebuilt...
+static func resume_begin(c: Dictionary) -> void:
+	active = true
+	current = int(c["region"])
+	how = str(c.get("how", "command"))
+	stage2 = bool(c.get("stage2", false))
+	G.settings["ai_side"] = how == "soldier"
+	data["no_reinf"] = c.get("no_reinf", [false, false])
+	if keep_diff == "":
+		keep_diff = str(G.settings.get("difficulty", "normal"))
+	G.settings["difficulty"] = str(diff()["battle"])
+
+# ...and after the men are back on it
+static func resume_end(c: Dictionary) -> void:
+	free_def = c.get("free_def", {})
+	t_start = G.sim_time - float(c.get("t_run", 0.0))
+	reserves = []
+	for r in c.get("reserves", []):
+		reserves.append({"army": r["army"], "team": r["team"], "at": G.sim_time + float(r["left"]), "n": r["n"], "done": r["done"]})
+	fallen_log = c.get("fallen", []).duplicate(true)
+	if c.get("storm", false):
+		G.storm = true
+		Weather.apply()
+		G.main.apply_time()
+
+# a man put back on the field takes up his place in the campaign again
+static func resume_man(s, m: Dictionary) -> void:
+	var b = data.get("battle")
+	if m.get("co", false):
+		s.set_meta("co", true)
+	elif m.has("rs"):
+		s.set_meta("reserve", int(m["rs"][0]))
+		s.set_meta("res_k", int(m["rs"][1]))
+		var ra = army(int(m["rs"][0]))
+		if ra != null and s.team == 0 and int(m["rs"][1]) < ra["men"].size():
+			_reperk(s, str(ra["men"][int(m["rs"][1])].get("perk", "")))
+	elif m.has("ro") and b != null:
+		s.set_meta("roster", int(m["ro"]))
+		var a = army(b["army"])
+		if a != null and int(m["ro"]) < a["men"].size():
+			_reperk(s, str(a["men"][int(m["ro"])].get("perk", "")))
+
+# (his health and grenades were saved as they stood: only what a perk does to the man himself is put back)
+static func _reperk(s, perk: String) -> void:
+	if perk == "":
+		return
+	s.set_meta("perk", perk)
+	if perk == "steady":
+		s.nerve *= 0.7
+
+# leaving a campaign battle without finishing it: the battle's difficulty goes back to the player's own
+static func leave_battle() -> void:
+	active = false
+	if keep_diff != "":
+		G.settings["difficulty"] = keep_diff
+		keep_diff = ""
+
 # ---------------------------------------------------------------- reserves
 # Another of the side's companies in the region (the one being defended, or the one the attack set out
 # from) doesn't stand and watch: part of it comes up as reinforcements a couple of minutes into the
@@ -407,11 +507,13 @@ static func _reserve_losses() -> Array:
 		if a == null:
 			continue
 		var dead_k = {}
-		var dead_n = 0
 		for s in G.soldiers:
 			if s.has_meta("reserve") and int(s.get_meta("reserve")) == int(r["army"]) and s.state == "dead":
 				dead_k[int(s.get_meta("res_k"))] = s.kills
-				dead_n += 1
+		for e in fallen_log:
+			if e["kind"] == "reserve" and int(e["army"]) == int(r["army"]):
+				dead_k[int(e["k"])] = int(e["kills"])
+		var dead_n = dead_k.size()
 		if dead_n == 0:
 			continue
 		if int(r["team"]) == 0:
@@ -1206,6 +1308,7 @@ static func _start_battle() -> void:
 static func attack(i: int, mode: String = "", size: int = SQUAD, supply: Array = [true, true], sizes: Array = [], cls: Array = [], vehs: Array = [], map_id: String = "") -> void:
 	active = true
 	current = i
+	fallen_log = []
 	var r = REGIONS[i]
 	if mode == "":
 		mode = r["mode"]
@@ -1417,6 +1520,9 @@ static func _survivors(a: Dictionary, lost_it: bool) -> Array:
 		elif alive and s.vehicle == null:
 			extra.append(s.cls)
 	if t == 0:
+		for e in fallen_log:
+			if e["kind"] == "roster" and int(e["k"]) < a["men"].size():
+				named[int(e["k"])] = [false, int(e["kills"])]
 		for k in range(a["men"].size()):
 			var m = a["men"][k]
 			var r = named.get(k, [true, 0])     # men who never made it onto the field are safe
@@ -1537,11 +1643,16 @@ static func battle_over(winner: int) -> String:
 		for cs in G.soldiers:
 			if cs.has_meta("co") and cs.state == "dead":
 				co_hit = true
+		for e in fallen_log:
+			if e["kind"] == "co":
+				co_hit = true
 		lines += _co_after(ours, co_hit, winner == 0, r["name"] if not stage2 else "the Ministry")
 		lines += _outcome(b, winner, ours, theirs)
 	_headline(lines)
 	_log(lines)
 	save()
+	Scenario.forget_campaign_save()
+	fallen_log = []
 	return "\n".join(lines)
 
 # did you bring off the extra you were asked for?
@@ -1691,6 +1802,8 @@ static func auto_resolve() -> String:
 	_headline(lines)
 	_log(lines)
 	save()
+	Scenario.forget_campaign_save()
+	fallen_log = []
 	return "\n".join(lines)
 
 static func _auto_losses(a: Dictionary, frac: float, won: bool) -> Array:

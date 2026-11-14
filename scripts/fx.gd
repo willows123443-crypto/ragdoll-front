@@ -1137,6 +1137,8 @@ func clear_all() -> void:
 func callout(s, text: String) -> void:
 	if s.callout_cd > 0.0 or s.zombie or Fog.hidden(s):
 		return
+	if G.mode == "horde":
+		text = Modes.horde_say(text)
 	# text over heads switched off: they still shout (you hear it), you just don't see the words
 	if not G.settings["callouts"]:
 		s.callout_cd = randf_range(4.0, 7.0)

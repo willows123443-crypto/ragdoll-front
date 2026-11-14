@@ -374,6 +374,7 @@ static func kill(s, attacker, head: bool) -> void:
 	if G.mode == "horde" and s.zombie and attacker != null and attacker.team == 0:
 		Support.earn(0, {"brute": 4, "armored": 3, "bloater": 2, "spitter": 2}.get(s.ztype, 1))
 	Tactics.note_death(s)
+	Campaign.note_death(s)
 	if s.squad != null:
 		s.squad["loss_t"] = G.sim_time
 	if s.zombie and s.ztype == "bloater" and not s.has_meta("burst"):
@@ -789,6 +790,12 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 			return
 		if s.has_meta("throw_pending") and s.throw_t > 0.0:
 			return          # one in the hand already
+		# (not where his own side is standing: in a horde battle fifteen of forty-seven dead were killed
+		# by their own, most of them by grenades thrown at a pack that was already among the men)
+		if type == "frag" and friend_near(s, target, 7.0) != null:
+			s.nade_cd = maxf(s.nade_cd, 4.0)
+			held_n += 1
+			return
 		# (a throw cut short when he was knocked down leaves nothing behind)
 		s.set_meta("throw_pending", [target, type, cook])
 		G.audio.pin(s.pos + Vector3(0, 1.2, 0))
@@ -798,6 +805,14 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 		return
 	_throw_now(s, target, type, cook)
 
+# one of his own side (not himself) standing within r of p, or null
+static var held_n = 0          # grenades not thrown because a friend was too close to where they'd land
+static func friend_near(s, p: Vector3, r: float):
+	for o in G.soldiers:
+		if o != s and o.team == s.team and o.state != "dead" and not o.zombie and G.dist2d(o.pos, p) < r and absf(o.pos.y - p.y) < 3.0:
+			return o
+	return null
+
 # the moment of release, from the throw animation (or at once for the player)
 static func release_throw(s) -> void:
 	if not s.has_meta("throw_pending"):
@@ -805,6 +820,12 @@ static func release_throw(s) -> void:
 	var pend: Array = s.get_meta("throw_pending")
 	s.remove_meta("throw_pending")
 	if s.state != "alive":
+		return
+	# (a second look as it leaves his hand: the men he's throwing past have had a second and more to move)
+	if pend[1] == "frag" and not s.is_player and friend_near(s, pend[0], 5.5) != null:
+		s.nade_cd = maxf(s.nade_cd, 4.0)
+		s.throw_t = 0.0
+		held_n += 1
 		return
 	_throw_now(s, pend[0], pend[1], pend[2])
 	if randf() < 0.6:

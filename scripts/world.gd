@@ -5045,14 +5045,15 @@ func load_map(id: String) -> void:
 		camp(t, spawn[t])
 	static_cols = cols.duplicate()
 	ruined_at_start = 0
-	if Campaign.active and Campaign.current >= 0:
-		for i in Campaign.ruins(Campaign.current):
+	if not Scenario.pending_ruins.is_empty():
+		# (a saved battle being loaded: what had been knocked down stays down. In a campaign battle that
+		# list already holds what was in ruins when the battle began.)
+		for i in Scenario.pending_ruins:
 			if i >= 0 and i < static_cols.size():
 				ruin_col(static_cols[i])
 				ruined_at_start += 1
-	elif not Scenario.pending_ruins.is_empty():
-		# (a saved battle being loaded: what had been knocked down stays down)
-		for i in Scenario.pending_ruins:
+	elif Campaign.active and Campaign.current >= 0:
+		for i in Campaign.ruins(Campaign.current):
 			if i >= 0 and i < static_cols.size():
 				ruin_col(static_cols[i])
 				ruined_at_start += 1

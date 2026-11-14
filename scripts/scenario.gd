@@ -74,7 +74,8 @@ static func apply(d: Dictionary) -> void:
 	G.main.apply_time()
 	G.settings["time"] = keep_t
 	G.main.start_game({"map": d["map"], "mode": d["mode"], "size": d.get("size", 10), "limit": d.get("limit", 100),
-		"reinforce": d.get("reinforce", true), "reinf_mode": d.get("reinf_mode", "truck"), "armor": d.get("armor", "light"), "teams": d.get("teams", 2)})
+		"reinforce": d.get("reinforce", true), "reinf_mode": d.get("reinf_mode", "truck"), "armor": d.get("armor", "light"), "teams": d.get("teams", 2),
+		"caps": d.get("caps", [])})
 	# swap the default armies and bases for the saved ones
 	for v in G.vehicles.duplicate():
 		v.remove()
@@ -106,17 +107,16 @@ static func apply(d: Dictionary) -> void:
 # ---------------------------------------------------------------- a battle in progress
 # One slot. What's kept: the map and what's been destroyed on it, every man still standing (his name,
 # rank, weapon, wounds and ammunition), every vehicle and how badly it's hit, what's been built, the
-# orders, the score, the points held, supply, and the wave in a zombie battle. What isn't: shells in
-# the air, fires, bodies, who was in which squad or riding in the back of what (men are put back on
-# foot where they were, and squads form again), and what each man was in the middle of doing.
+# orders, the score, the points held, supply, the squads, who was aboard which vehicle, the battle
+# clock, the wave in a zombie battle, and in a campaign battle each man's place in the campaign, the
+# reserves still to come and who has fallen so far. What isn't: shells in the air, fires, bodies, and
+# what each man was in the middle of doing.
 const SAVE_PATH = "user://battle.save"
 static var pending_ruins: Array = []
 
 static func can_save() -> String:
 	if not G.started or G.over or G.attract:
 		return "there's no battle to save"
-	if Campaign.active:
-		return "not in a campaign battle: the campaign saves itself"
 	if G.tutorial:
 		return "the first battle can't be saved"
 	return ""
@@ -150,13 +150,26 @@ static func capture_battle() -> Dictionary:
 			"ord": [s.order["mode"], s.order["point"].x, s.order["point"].z] if s.order != null and s.order.get("point") != null and s.order["mode"] in ["move", "hold"] else null}
 		if s.vehicle != null:
 			m["veh"] = [vidx[s.vehicle], s.seat]
+		# (his place in the campaign: the company commander, a man come up from reserve, or one of the roster)
+		if s.has_meta("co"):
+			m["co"] = true
+		elif s.has_meta("reserve"):
+			m["rs"] = [int(s.get_meta("reserve")), int(s.get_meta("res_k"))]
+		elif s.has_meta("roster"):
+			m["ro"] = int(s.get_meta("roster"))
 		d["men"].append(m)
 	var ru = []
 	var W = G.world
 	for k in range(W.static_cols.size()):
-		if not W.static_cols[k].alive and W.static_cols[k].dest:
+		var sc = W.static_cols[k]
+		# (a piece knocked down and since rebuilt comes back whole)
+		if not sc.alive and sc.dest and not (sc.has_meta("rebuilt") and sc.get_meta("rebuilt").alive):
 			ru.append(k)
 	d["ruins"] = ru
+	d["caps"] = G.team_caps.duplicate()
+	if Campaign.active:
+		d["camp"] = Campaign.battle_state()
+	d["endless"] = Modes.horde_endless
 	d["score"] = G.score.duplicate()
 	d["sup"] = Support.points.duplicate()
 	d["tickets"] = Obj.tickets.duplicate()
@@ -176,7 +189,26 @@ static func save_battle() -> String:
 	var d = capture_battle()
 	f.store_var(d)
 	f.close()
-	return "Battle saved: %d men, %d vehicles, %d pieces of the map in ruins" % [d["men"].size(), d["vehicles"].size(), d["ruins"].size()]
+	return "%s saved: %d men, %d vehicles, %d pieces of the map in ruins" % ["Campaign battle" if d.has("camp") else "Battle", d["men"].size(), d["vehicles"].size(), d["ruins"].size()]
+
+# the saved battle, if there is one and it can be read
+static func _read_save():
+	if not has_save():
+		return null
+	var f = FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var d = f.get_var() if f != null else null
+	return d if (d is Dictionary and d.get("battle", false)) else null
+
+# is the saved battle the campaign battle that's waiting to be fought?
+static func campaign_save_ok() -> bool:
+	var d = _read_save()
+	return d != null and d.has("camp") and Campaign.resume_check(d["camp"]) == ""
+
+# a campaign battle that has since been fought (or settled some other way) is no longer worth keeping
+static func forget_campaign_save() -> void:
+	var d = _read_save()
+	if d != null and d.has("camp"):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
 
 static func has_save() -> bool:
 	return FileAccess.file_exists(SAVE_PATH)
@@ -191,7 +223,12 @@ static func save_text() -> String:
 	if not (d is Dictionary) or not d.get("battle", false):
 		return ""
 	var mins = int(float(d.get("elapsed", 0.0)) / 60.0)
-	return "%s on %s, %d min in, %d men" % [str(d["mode"]).capitalize(), G.world.MAPS.get(d["map"], {}).get("name", d["map"]) if G.world != null else str(d["map"]), mins, d["men"].size()]
+	var where = G.world.MAPS.get(d["map"], {}).get("name", d["map"]) if G.world != null else str(d["map"])
+	if d.has("camp"):
+		if Campaign.resume_check(d["camp"]) != "":
+			return ""           # (a campaign battle the campaign has left behind isn't offered)
+		return "Campaign: the battle for %s, %d min in, %d men" % [Campaign.REGIONS[int(d["camp"]["region"])]["name"], mins, d["men"].size()]
+	return "%s on %s, %d min in, %d men" % [str(d["mode"]).capitalize(), where, mins, d["men"].size()]
 
 static func load_battle() -> String:
 	if not has_save():
@@ -200,6 +237,14 @@ static func load_battle() -> String:
 	var d = f.get_var() if f != null else null
 	if not (d is Dictionary) or not d.get("battle", false):
 		return "The saved battle couldn't be read"
+	var camp = d.get("camp")
+	if camp != null:
+		var why = Campaign.resume_check(camp)
+		if why != "":
+			return "Not loaded: " + why
+		Campaign.resume_begin(camp)
+	else:
+		Campaign.leave_battle()
 	pending_ruins = d.get("ruins", [])
 	var nv0 = d.get("vehicles", []).size()
 	apply(d)
@@ -254,6 +299,8 @@ static func load_battle() -> String:
 				s.pos.y = float(m["y"])          # (he was upstairs)
 			if m.get("ord") != null:
 				s.order = {"mode": m["ord"][0], "point": Vector3(m["ord"][1], G.world.ground_y(m["ord"][1], m["ord"][2]), m["ord"][2])}
+			if camp != null:
+				Campaign.resume_man(s, m)
 			if m.has("veh") and int(m["veh"][0]) < live.size():
 				var v = live[int(m["veh"][0])]
 				var seat = int(m["veh"][1])
@@ -283,6 +330,9 @@ static func load_battle() -> String:
 		Modes.horde_left = int(d["horde"][1])
 		Modes.horde_side = int(d["horde"][2])
 		Modes.horde_t = Modes.BREAK
+		Modes.horde_endless = bool(d.get("endless", false))
+	if camp != null:
+		Campaign.resume_end(camp)
 	G.game_time = float(d.get("elapsed", 0.0))       # (the battle clock carries on from where it was)
 	G.main.refresh_markers()
 	return "Saved battle loaded: %d men back on the field" % d.get("men", []).size()

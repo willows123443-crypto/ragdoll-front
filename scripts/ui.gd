@@ -491,7 +491,7 @@ func _cards(t: String) -> Array:
 		"armoury":
 			for k in Modes.SHOP:
 				var sh = Modes.SHOP[k]
-				out.append(["h:" + k, sh["name"], ("%d pts" % sh["cost"]) if sh["cost"] > 0 else "free"])
+				out.append(["h:" + k, Modes.shop_name(k), ("%d pts" % sh["cost"]) if sh["cost"] > 0 else "free"])
 		"upgrades":
 			for k in Prod.UPGRADES:
 				var u = Prod.UPGRADES[k]
@@ -614,7 +614,7 @@ func _render_tools() -> void:
 					tip.text = ds)
 			b2.mouse_exited.connect(func():
 				if tip != null:
-					tip.text = TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.SHOP[tool.substr(2)]["tip"])
+					tip.text = TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.shop_tip(tool.substr(2)))
 		dock_cards.add_child(b2)
 		dock_cards_list.append([id, b2])
 		i += 1
@@ -625,15 +625,20 @@ func _render_tools() -> void:
 	var per_row = mini(n, 7)
 	var w = maxf(per_row * 128.0 + 22.0, 640.0)
 	dock_cards.custom_minimum_size = Vector2(w - 16.0, 0)
-	dock.offset_left = -w / 2.0
-	dock.offset_right = w / 2.0
+	# (seven cards wide, the dock ran under the minimap in the corner and hid the end of the supply total)
+	var vw = get_viewport().get_visible_rect().size.x
+	var corner_map = not (cmdhud != null and cmdhud.active())
+	var shift = maxf(0.0, w / 2.0 - (vw / 2.0 - 190.0 - 20.0)) if corner_map else 0.0
+	shift = minf(shift, maxf(0.0, vw / 2.0 - w / 2.0 - 6.0))
+	dock.offset_left = -w / 2.0 - shift
+	dock.offset_right = w / 2.0 - shift
 	var rows = int(ceil(float(n) / 7.0))
 	var h = 40.0 + rows * 55.0 + 14.0
 	dock.offset_top = -h - 8.0
 	dock.offset_bottom = -8.0
 	tip.offset_top = -h - 34.0
 	tip.offset_bottom = -h - 14.0
-	tip.text = TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.SHOP[tool.substr(2)]["tip"]
+	tip.text = TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.shop_tip(tool.substr(2))
 
 const SUP_DESC = {
 	"supplytruck": "Runs supplies from HQ to your supply dumps and FOBs. Points only come in when it gets there. Up to three; lose one and you buy another",
@@ -1420,6 +1425,18 @@ func _show_campaign(result: String = "") -> void:
 		bl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		bl.custom_minimum_size = Vector2(1200, 0)
 		camp_box.add_child(bl)
+		if Scenario.campaign_save_ok():
+			# (this battle was saved part-way: it can be carried on from there)
+			var cb2 = _button("  Continue the saved battle  ", func():
+				camp_panel.visible = false
+				menu.visible = false
+				camp_result = ""
+				_close_title()
+				G.main.stop_attract()
+				message(Scenario.load_battle()))
+			cb2.add_theme_font_size_override("font_size", 17)
+			cb2.tooltip_text = Scenario.save_text()
+			h.add_child(cb2)
 		for opt in [["  Command from above  ", "command", "You give the orders from the commander's view" + (", and place your defences before they arrive" if pend["attacker"] == 1 and not st2 else "")],
 				["  Fight as a soldier  ", "soldier", "The AI commands your side and you go in as one of the men (you can still switch between them)"]]:
 			var hw: String = opt[1]
@@ -1961,7 +1978,7 @@ func _show_scenario() -> void:
 
 func _deploy() -> void:
 	Modes.daily = {}
-	Campaign.active = false
+	Campaign.leave_battle()
 	if seed_edit != null and seed_edit.text.strip_edges() != "":
 		var t = seed_edit.text.strip_edges()
 		G.random_seed = int(t) if t.is_valid_int() else t.hash()
@@ -2192,14 +2209,19 @@ func _fill_title() -> void:
 	for c in title_box.get_children():
 		c.queue_free()
 	if G.started and not G.attract:
-		title_sub.text = "Paused · %s on %s" % [G.mode.capitalize(), G.world.MAPS.get(G.map_id, {}).get("name", G.map_id) if G.world != null else ""]
-		_title_button("Resume", "back to the battle", func(): _close_title(), true)
-		_title_button("Restart this battle", "same map, mode and forces", func():
-			_close_title()
-			_deploy())
-		_title_button("Save this battle", "one slot: it can be carried on later from the title screen" if Scenario.can_save() == "" else Scenario.can_save(), func():
-			message(Scenario.save_battle())
-			_close_title())
+		title_sub.text = "%s · %s on %s" % ["Battle over" if G.over else "Paused", G.mode.capitalize(), G.world.MAPS.get(G.map_id, {}).get("name", G.map_id) if G.world != null else ""]
+		if G.over:
+			_title_button("Back to the field", "the battle is over: look it over", func(): _close_title(), true)
+		else:
+			_title_button("Resume", "back to the battle", func(): _close_title(), true)
+		if not Campaign.active:
+			_title_button("Play it again" if G.over else "Restart this battle", "same map, mode and forces", func():
+				_close_title()
+				_deploy())
+		if not G.over:
+			_title_button("Save this battle", ("one slot: carry on later from the campaign screen or the title" if Campaign.active else "one slot: it can be carried on later from the title screen") if Scenario.can_save() == "" else Scenario.can_save(), func():
+				message(Scenario.save_battle())
+				_close_title())
 		_title_button("New battle…", "pick a map, a mode and your forces", func(): _open_setup())
 		_title_button("Battle report", "who killed whom, and how", func(): show_report())
 	else:
@@ -2218,8 +2240,9 @@ func _fill_title() -> void:
 			menu.visible = false
 			Tutorial.start())
 		_title_button("Commander", "fight a battle from above, RTS style", func(): _quick("commander"))
-		_title_button("Campaign", "twelve regions, one battle at a time", func(): _show_campaign())
-		_title_button("Zombie horde", "hold out against the waves", func(): _quick("horde"))
+		_title_button("Campaign", "three wars to choose from, one battle at a time", func(): _show_campaign())
+		var hb = maxi(Modes.horde_best("town"), Modes.horde_best("office"))
+		_title_button("Zombie horde", "hold the town or the Ministry against the waves" + ((" · best: wave %d" % hb) if hb > 0 else ""), func(): _show_horde())
 		_title_button("Battle builder", "set out both armies yourself, then press Start and watch", func():
 			builder_next = true
 			_quick("sandbox"))
@@ -2254,6 +2277,53 @@ func _close_title() -> void:
 	get_tree().paused = false
 	if G.player != null:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+# Zombie horde: which map to hold, with the furthest wave beaten on each
+var horde_panel: PanelContainer = null
+func _show_horde() -> void:
+	if horde_panel != null:
+		horde_panel.queue_free()
+	horde_panel = _panel(Color(0.1, 0.12, 0.14, 0.98))
+	_place(horde_panel, Control.PRESET_CENTER, -380, -190, 760, 380)
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	v.add_child(_label("Zombie horde", 26, Color(0.97, 0.93, 0.82)))
+	v.add_child(_label("Ten waves, each bigger than the last. Beat them and you can keep going for as long as you can hold.", 13, Color(0.8, 0.8, 0.78)))
+	var cols = HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 12)
+	v.add_child(cols)
+	for mp in [["town", "Town ruins", "Streets and houses round a crossroads. Barricade the roads, board up a house and fall back to it when the streets are lost."],
+			["office", "The Ministry", "One big building, three floors. Get inside and hold it floor by floor: when a floor is lost, fall back up the stairs and hold the head of them."]]:
+		var pc = PanelContainer.new()
+		var sb = StyleBoxFlat.new()
+		sb.bg_color = Color(0.13, 0.15, 0.16, 1.0)
+		sb.set_corner_radius_all(6)
+		sb.set_content_margin_all(12)
+		pc.add_theme_stylebox_override("panel", sb)
+		pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var pv = VBoxContainer.new()
+		pv.add_theme_constant_override("separation", 8)
+		pc.add_child(pv)
+		pv.add_child(_label(mp[1], 20, Color(0.96, 0.85, 0.5)))
+		var dl = _label(mp[2], 14, Color(0.9, 0.91, 0.88))
+		dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		dl.custom_minimum_size = Vector2(300, 84)
+		pv.add_child(dl)
+		var best = Modes.horde_best(mp[0])
+		pv.add_child(_label(("Best: wave %d" % best) if best > 0 else "Not played yet", 14, Color(1.0, 0.86, 0.4) if best > 0 else Color(0.65, 0.66, 0.64)))
+		var mid: String = mp[0]
+		pv.add_child(_button("  Start  ", func():
+			horde_panel.visible = false
+			var mi = MAP_IDS.find(mid)
+			if mi >= 0:
+				opt_map.select(mi)
+			_quick("horde")))
+		cols.add_child(pc)
+	var hb = HBoxContainer.new()
+	hb.add_child(_button("  Back  ", func(): horde_panel.visible = false))
+	v.add_child(hb)
+	horde_panel.add_child(v)
+	root.add_child(horde_panel)
 
 # one click into a mode from the title screen, with sensible settings
 func _quick(mode: String) -> void:
@@ -2338,7 +2408,12 @@ func _build_win() -> void:
 		win.visible = false
 		_deploy()))
 	h.add_child(_button("Keep fighting", func():
-		G.mode = "sandbox"
+		if G.mode == "horde" and G.win_team == 0:
+			# (the ten waves are beaten: they keep coming for as long as you can hold)
+			Modes.horde_endless = true
+			message("Endless: the waves go on, each bigger than the last. Best on this map: wave %d" % Modes.horde_best(G.map_id))
+		else:
+			G.mode = "sandbox"
 		G.over = false
 		win.visible = false))
 	h.add_child(_button("Battle report", func(): show_report()))
@@ -2663,7 +2738,7 @@ func update_hud(dt: float) -> void:
 			p_ammo.text += "     BLEEDING — H to dress it (%d dressing%s)" % [s.dressings, "" if s.dressings == 1 else "s"]
 		tip.text = "" if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else "Click to aim — X to leave this soldier"
 	else:
-		tip.text = (TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.SHOP[tool.substr(2)]["tip"]) if show_game else ""
+		tip.text = (TIPS.get(tool, "") if not tool.begins_with("h:") else Modes.shop_tip(tool.substr(2))) if show_game else ""
 		if show_game and tool.begins_with("sup:"):
 			tip.text = "Click the map where the %s should hit · supply points come over time, for kills and for holding points" % Support.NAMES[tool.substr(4)].to_lower()
 		elif show_game and tool.begins_with("v:"):

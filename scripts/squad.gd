@@ -218,7 +218,10 @@ static func _flank(q) -> void:
 		q["supp_until"] = G.sim_time + 14.0
 		q["supp_tgt"] = tgt
 		Voice.say(L, "flank")
-		G.ui.radio(L.team, "%s: pinned an enemy at %s, flanking %s" % [L.sname, AI.grid_ref(tgt.pos), "right" if side > 0.0 else "left"])
+		if G.mode == "horde":
+			G.ui.radio(L.team, "%s: a pack of them at %s, we're cutting them down" % [L.sname, AI.grid_ref(tgt.pos)])
+		else:
+			G.ui.radio(L.team, "%s: pinned an enemy at %s, flanking %s" % [L.sname, AI.grid_ref(tgt.pos), "right" if side > 0.0 else "left"])
 
 # ---------------------------------------------------------------- base of fire
 # while part of the squad flanks, the rest keep shooting at where the enemy is, seen or not

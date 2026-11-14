@@ -81,6 +81,12 @@ func _ready() -> void:
 			_stack_test()
 		if a == "--restest":
 			_res_test()
+		if a == "--campsave":
+			_camp_save_test()
+		if a.begins_with("--hordeshot="):
+			_horde_shot(a.substr(12))
+		if a == "--hordex":
+			_horde_x_test()
 		if a == "--walltest":
 			_wall_test()
 		if a == "--savetest":
@@ -514,7 +520,7 @@ func quit_to_title() -> void:
 	Tutorial.stop()
 	var m = G.map_id if G.map_id != "custom" else "town"
 	Modes.daily = {}
-	Campaign.active = false
+	Campaign.leave_battle()
 	G.storm = false
 	G.fx.set_storm(false)
 	Weather.reset()
@@ -4461,6 +4467,294 @@ func _res_test() -> void:
 		await _snap(_arg("pic", ""), "camp_commander")
 	get_tree().quit()
 
+# --hordeshot=DIR: pictures of the horde chooser, the Armoury with its new cards, and the menu once a
+# battle is over.
+func _horde_shot(dir: String) -> void:
+	await _wait(1.0)
+	G.settings["horde_best"] = {"town": 12}
+	G.ui.show_menu()
+	G.ui._show_horde()
+	await _wait(0.6)
+	await _snap(dir, "horde_choose")
+	G.ui.horde_panel.visible = false
+	stop_attract()
+	G.ui.title.visible = false
+	start_game({"map": "town", "mode": "horde", "size": 10, "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	await _wait(1.5)
+	Support.points[0] = 64
+	G.ui.tab = "armoury"
+	G.ui.tool = "h:rebuild"
+	G.ui._render_tools()
+	G.pc.free_pos = G.world.capture + Vector3(-18, 30, 22)
+	await _look(G.world.capture + Vector3(-18, 30, 22), G.world.capture)
+	await _wait(1.0)
+	await _snap(dir, "horde_armoury")
+	G.over = true
+	G.win_team = 0
+	G.ui.show_menu()
+	await _wait(0.6)
+	await _snap(dir, "horde_over_menu")
+	get_tree().quit()
+
+# --campsave: a campaign battle saved part-way and carried on. A company in reserve and the commander on
+# the field; two roster men fall before the save and the reserve comes up; after loading, every man has
+# his place in the campaign again, the reserve isn't sent twice, and the dead of before the save are
+# still counted when the battle ends.
+func _camp_save_test() -> void:
+	await _wait(0.5)
+	seed(4)
+	var out = []
+	Campaign.new_campaign()
+	var a0 = Campaign.army_at(0, 0)
+	var a1 = Campaign.army_at(1, 0)
+	Campaign.move(a0, 1)
+	a1["moved"] = false
+	a0["moved"] = false
+	var top = Campaign.army_at(1, 0)
+	var other = a0 if top == a1 else a1
+	Campaign.move(top, 3)
+	var men0 = top["men"].size()
+	var res0 = other["men"].size()
+	Campaign.start_battle("command")
+	await _wait(4.0)
+	Prep.finish()
+	for r in Campaign.reserves:
+		if r["team"] == 0:
+			r["at"] = G.sim_time + 1.0
+	await _wait(3.0)
+	# two of the roster and one of the reserve fall before the save
+	var ro = G.soldiers.filter(func(x): return x.team == 0 and x.state == "alive" and x.has_meta("roster"))
+	var names = []
+	for k in range(mini(2, ro.size())):
+		names.append(ro[k].sname)
+		ro[k].hp = 0.0
+		Combat.kill(ro[k], null, false)
+	var rs = G.soldiers.filter(func(x): return x.team == 0 and x.state == "alive" and x.has_meta("reserve"))
+	if not rs.is_empty():
+		rs[0].hp = 0.0
+		Combat.kill(rs[0], null, false)
+	await _wait(1.0)
+	var count = func() -> Array:
+		var a = [0, 0, 0, 0, 0]
+		for x in G.soldiers:
+			if x.state == "dead":
+				continue
+			if x.team == 0:
+				a[0] += 1
+				if x.has_meta("roster"):
+					a[1] += 1
+				if x.has_meta("reserve"):
+					a[2] += 1
+				if x.has_meta("co"):
+					a[3] += 1
+			else:
+				a[4] += 1
+		return a
+	var c_before: Array = count.call()
+	var t_run = G.sim_time - Campaign.t_start
+	var pend = Campaign.reserves.filter(func(r): return not r["done"]).size()
+	out.append("before the save: ours %d (roster %d, reserve %d, commander %d), theirs %d | fallen so far %d | reserves still to come %d | %.0f s in | ruins %d" % [c_before[0], c_before[1], c_before[2], c_before[3], c_before[4],
+		Campaign.fallen_log.size(), pend, t_run, G.world.static_cols.filter(func(c): return not c.alive and c.dest).size()])
+	out.append("save: " + Scenario.save_battle())
+	out.append("offered on the campaign screen: %s | on the title: '%s'" % [str(Scenario.campaign_save_ok()), Scenario.save_text()])
+	# away to the title, then back
+	quit_to_title()
+	await _wait(1.0)
+	out.append("at the title: campaign battle active %s, difficulty setting back to '%s'" % [str(Campaign.active), str(G.settings.get("difficulty"))])
+	out.append("load: " + Scenario.load_battle())
+	await _wait(0.2)
+	var c_after: Array = count.call()
+	out.append("after loading:   ours %d (roster %d, reserve %d, commander %d), theirs %d | fallen so far %d | reserves still to come %d | %.0f s in | ruins %d | campaign battle active %s, region %d" % [c_after[0], c_after[1], c_after[2], c_after[3], c_after[4],
+		Campaign.fallen_log.size(), Campaign.reserves.filter(func(r): return not r["done"]).size(), G.sim_time - Campaign.t_start, G.world.static_cols.filter(func(c): return not c.alive and c.dest).size(), str(Campaign.active), Campaign.current])
+	out.append("same men: %s" % str(c_before == c_after))
+	await _wait(6.0)
+	var c_later: Array = count.call()
+	out.append("six seconds on: reserve men on the field %d (not sent a second time: %s)" % [c_later[2], str(c_later[2] <= c_after[2])])
+	# the battle is won: the two who fell before the save are still dead
+	for x in G.soldiers:
+		if x.team == 1 and x.state != "dead":
+			x.hp = 0.0
+			Combat.kill(x, null, false)
+	await _wait(1.0)
+	end_game(0)
+	await _wait(3.5)
+	var still = top["men"].filter(func(m): return names.any(func(nm): return nm.ends_with(str(m["name"])))).size()
+	out.append("after the battle: company %d -> %d men (the two who fell before the save still on the roll: %d) | reserve company %d -> %d | saved battle still offered: %s" % [men0, top["men"].size(), still, res0, other["men"].size(), str(Scenario.campaign_save_ok())])
+	for l in Campaign.data["log"].slice(0, 5):
+		out.append("   log: " + str(l).substr(0, 120))
+	# a stale save: a new campaign battle saved, then settled on paper
+	var lines = Campaign.end_turn()
+	for l in out:
+		print("CAMPSAVE ", l)
+	get_tree().quit()
+
+# --hordex: the additions to the zombie battles. Walls knocked down and rebuilt (and kept in a save),
+# remnants of squads closing up, the waves going on past ten with a record kept, five men bought at
+# once, what men say, and the Ministry held a floor at a time.
+func _horde_x_test() -> void:
+	await _wait(0.5)
+	seed(6)
+	var out = []
+	start_game({"map": "town", "mode": "horde", "size": 10, "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	await _wait(2.0)
+	var W = G.world
+	# knock down the walls of the keep
+	var kb = W.buildings[Modes.keep()]
+	var kp = Vector3(kb["x"], 0, kb["z"])
+	var down = 0
+	for c in W.static_cols.duplicate():
+		if c.alive and c.dest and c.has_meta("bld") and is_same(c.get_meta("bld"), kb) and not c.has_meta("furn") and down < 40:
+			W.destroy_col(c)
+			down += 1
+	await _wait(0.5)
+	var ruins0 = Scenario.capture_battle()["ruins"].size()
+	Support.points[0] = 100
+	var msg = Modes.shop("rebuild", kp)
+	var ruins1 = Scenario.capture_battle()["ruins"].size()
+	out.append("rebuild: knocked down %d pieces of the keep (fallen count %d) | '%s' | ruins in a save %d -> %d | points left %d | fallen count now %d" % [down, 0, msg, ruins0, ruins1, Support.points[0], int(kb["fallen"])])
+	var again = Modes.shop("rebuild", kp)
+	out.append("rebuild again with nothing down: '%s'" % again)
+	# a rebuilt piece can be knocked down and rebuilt again
+	var rb = W.static_cols.filter(func(c): return c.has_meta("rebuilt") and c.get_meta("rebuilt").alive)
+	if not rb.is_empty():
+		W.destroy_col(rb[0].get_meta("rebuilt"))
+		out.append("one rebuilt piece knocked down again: '%s'" % Modes.shop("rebuild", kp))
+	# five at once
+	var men0 = G.alive_count(0)
+	var p0 = Support.points[0]
+	out.append("five extra men: '%s' | men %d -> %d | points %d -> %d" % [Modes.shop("men5", kp), men0, G.alive_count(0), p0, Support.points[0]])
+	# remnants close up
+	var mine = G.soldiers.filter(func(x): return x.team == 0 and x.state == "alive")
+	for k in range(mine.size()):
+		if k % 3 != 0:
+			mine[k].hp = 0.0
+			Combat.kill(mine[k], null, false)
+	await _wait(0.5)
+	var sq = func() -> Array:
+		var a = []
+		for q in G.squads:
+			if q["team"] == 0:
+				var n = q["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead").size()
+				if n > 0:
+					a.append(n)
+		return a
+	var sq0: Array = sq.call()
+	var mv = Modes._regroup()
+	out.append("closing up: squads %s -> %s (%d men moved)" % [str(sq0), str(sq.call()), mv])
+	# past the tenth wave
+	Modes.horde_wave = 10
+	Modes.horde_left = 0
+	for z in G.soldiers:
+		if z.zombie and z.state != "dead":
+			z.hp = 0.0
+			Combat.kill(z, null, false)
+	Modes.horde_endless = true
+	Modes.horde_t = 0.5
+	await _wait(2.0)
+	out.append("endless: wave now %d, battle over %s, status '%s' | best on record for this map %d (records are not kept from tests)" % [Modes.horde_wave, str(G.over), Modes.status_text(), Modes.horde_best("town")])
+	out.append("lines: '%s' | '%s' | '%s' | '%s'" % [Modes.horde_say("Suppressing fire, now!"), Modes.horde_say("Bounding, go!"), Modes.horde_say("Contact south, 15m!"), Modes.horde_say("Reloading!")])
+	for l in out:
+		print("HORDEX ", l)
+	# ---- the Ministry
+	out = []
+	start_game({"map": "office", "mode": "horde", "size": 12, "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	var storeys = func() -> String:
+		var a = {}
+		for x in G.soldiers:
+			if x.team == 0 and x.state == "alive":
+				var k = Levels.storey_of(x.pos) if Levels.inside(x.pos, 0.0) else -1
+				a[k] = a.get(k, 0) + 1
+		var ks = a.keys()
+		ks.sort()
+		return ", ".join(ks.map(func(k): return "%s %d" % ["outside" if k < 0 else Levels.names[k].to_lower(), a[k]]))
+	await _wait(25.0)
+	out.append("25 s in: men %s | order card is '%s'" % [storeys.call(), Modes.shop_name("keep")])
+	out.append("order: " + Modes.fall_back())
+	await _wait(30.0)
+	out.append("30 s after the order: men %s" % storeys.call())
+	out.append("order: " + Modes.fall_back())
+	await _wait(30.0)
+	out.append("30 s after that: men %s" % storeys.call())
+	out.append("order: " + Modes.fall_back())
+	# do the dead get up to them, and does a wave end?
+	var t = 0.0
+	var beaten = -1.0
+	var w0 = Modes.horde_wave
+	var zmax = -1
+	var bites_up = 0
+	while t < 240.0:
+		await _wait(5.0)
+		t += 5.0
+		for z in G.soldiers:
+			if z.zombie and z.state != "dead" and Levels.inside(z.pos, 0.0):
+				zmax = maxi(zmax, Levels.storey_of(z.pos))
+		if Modes.horde_wave > maxi(w0, 2) and beaten < 0.0:
+			beaten = t
+			break
+	out.append("highest storey any of the dead reached: %d | crawlers that got to their feet: %d | stragglers that dropped: %d" % [zmax, Modes.risen_n, Modes.stragglers])
+	var zup = 0
+	var zin = {}
+	for z in G.soldiers:
+		if z.zombie and z.state != "dead":
+			zup += 1
+			var k = Levels.storey_of(z.pos) if Levels.inside(z.pos, 0.0) else -1
+			zin[k] = zin.get(k, 0) + 1
+	for z in G.soldiers:
+		if z.zombie and z.state != "dead":
+			var tg = z.target
+			out.append("   left: %s %s at (%.0f, %.1f, %.0f) storey %d, speed %.1f, target %s at (%.0f, %.1f, %.0f), path %d from %d, move_target %s, bad_t in %.0f s, prone %s, vault %s" % [z.ztype, z.state, z.pos.x, z.pos.y, z.pos.z,
+				Levels.storey_of(z.pos), z.zspeed, tg.sname if tg != null and is_instance_valid(tg) else "none", tg.pos.x if tg != null and is_instance_valid(tg) else 0.0, tg.pos.y if tg != null and is_instance_valid(tg) else 0.0,
+				tg.pos.z if tg != null and is_instance_valid(tg) else 0.0, z.path.size(), z.path_i, str(z.move_target), z.bad_t - G.sim_time, str(z.prone_t), str(z.vault != null)])
+	if _arg("dbg", "") != "":
+		out.append("   stairs: " + str(Levels.stairs.map(func(st): return "%d: (%.0f,%.0f)->(%.0f,%.0f)" % [st["k"], st["a"].x, st["a"].z, st["b"].x, st["b"].z])))
+		var shown = 0
+		for z in G.soldiers:
+			if z.zombie and z.state != "dead" and Levels.inside(z.pos, 0.0) and Levels.storey_of(z.pos) >= 1 and z.target != null and is_instance_valid(z.target) and shown < 4:
+				shown += 1
+				var k = Levels.storey_of(z.pos)
+				var g: AStarGrid2D = Levels.grids[k]
+				var a = Levels._nearest(g, Levels.cell(z.pos.x, z.pos.z))
+				var b = Levels._nearest(g, Levels.cell(z.target.pos.x, z.target.pos.z))
+				out.append("   path check: zombie cell %s (solid %s) -> target cell %s (solid %s, target's own cell solid %s): whole path %d cells, partial %d cells | Levels.path %s" % [str(a), str(g.is_point_solid(a)), str(b), str(g.is_point_solid(b)),
+					str(g.is_point_solid(Levels.cell(z.target.pos.x, z.target.pos.z))), g.get_id_path(a, b, false).size(), g.get_id_path(a, b, true).size(), str(Levels.path(z.pos, z.target.pos).slice(0, 4))])
+	if _arg("dbg", "") != "":
+		for z in G.soldiers:
+			if z.zombie and z.state != "dead" and Levels.inside(z.pos, 0.0) and Levels.storey_of(z.pos) >= 1 and z.target != null and is_instance_valid(z.target) and Levels.storey_of(z.target.pos) == Levels.storey_of(z.pos):
+				var k = Levels.storey_of(z.pos)
+				var g: AStarGrid2D = Levels.grids[k]
+				var zc = Levels.cell(z.pos.x, z.pos.z)
+				var tc = Levels.cell(z.target.pos.x, z.target.pos.z)
+				var x0 = mini(zc.x, tc.x) - 14
+				var x1 = maxi(zc.x, tc.x) + 14
+				var y0 = mini(zc.y, tc.y) - 14
+				var y1 = maxi(zc.y, tc.y) + 14
+				var dcell = {}
+				for dd in Doors.doors:
+					if dd["alive"] and absf(dd["c"].y - (Levels.floor_y(k) + 1.1)) < 1.6:
+						dcell[Levels.cell(dd["c"].x, dd["c"].z)] = "o" if dd["goal"] > 0.0 else "D"
+				out.append("   storey %d, cells x %d..%d (west to east), rows z %d..%d: Z the zombie, T his target, # solid, D a closed door, o an open one" % [k, x0, x1, y0, y1])
+				for yy in range(y0, y1 + 1):
+					var row = ""
+					for xx in range(x0, x1 + 1):
+						var c = Vector2i(xx, yy)
+						if c == zc:
+							row += "Z"
+						elif c == tc:
+							row += "T"
+						elif dcell.has(c):
+							row += dcell[c]
+						elif xx < 0 or yy < 0 or xx >= Levels.GW or yy >= Levels.GH or g.is_point_solid(c):
+							row += "#"
+						else:
+							row += "."
+					out.append("   " + row)
+				break
+	out.append("wave %d reached after %s s more | men %s | the dead up %d by storey %s | grenades held back for friends %d | killed by their own side %d of %d dead" % [Modes.horde_wave, ("%.0f" % beaten) if beaten >= 0.0 else "none in 240",
+		storeys.call(), zup, str(zin), Combat.held_n, int(Stats.teams[0]["teamkills"]), int(Stats.teams[0]["deaths"])])
+	for l in out:
+		print("HORDEX ", l)
+	get_tree().quit()
+
 # --stacktest: several companies in one region of the campaign. A region held by two has to be won
 # twice; one of ours beaten where another still stands doesn't lose the ground; and there's a limit.
 func _stack_test() -> void:
@@ -5068,6 +5362,11 @@ func _perf_run() -> void:
 		for zs in G.soldiers:
 			if zs.zombie and zs.state != "dead":
 				zc += 1
+		var kinds = {}
+		for co in get_tree().root.find_children("*", "CollisionObject3D", true, false):
+			var kn = co.get_class()
+			kinds[kn] = kinds.get(kn, 0) + 1
+		print("PERF %d bodies in the scene: %s" % [k, str(kinds)])
 		print("PERF %d engine: whole physics frame %.1f ms | active bodies %d, pairs %d, islands %d | zombies up %d" % [k, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
 			Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS), Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS), Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT), zc])
 	get_tree().quit()

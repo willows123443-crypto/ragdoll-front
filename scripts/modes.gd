@@ -35,6 +35,10 @@ static var gen_search: Array = []        # places each side means to search, in 
 const RESCUE_TIME = 720.0
 const KOTH_EVERY = 90.0
 const HORDE_WIN = 10
+static var horde_endless = false     # the ten waves are beaten and the player chose to keep going
+static var horde_in = false          # (the Ministry: the survivors have been sent inside)
+static var stall_t = 0.0             # how long the last few of a wave have been unable to get at anyone
+static var stragglers = 0            # ...and how many have dropped for it
 
 static func reset() -> void:
 	clear_spits()
@@ -48,6 +52,8 @@ static func reset() -> void:
 	koth_t = KOTH_EVERY
 	koth_moves = 0
 	horde_wave = 0
+	horde_endless = false
+	horde_in = false
 	horde_left = 0
 	horde_t = 10.0
 	horde_spawn_t = 0.0
@@ -660,6 +666,8 @@ static func keep_pos() -> Vector3:
 
 # everyone back to the keep (or to the middle, on a map with no building near it)
 static func fall_back() -> String:
+	if Levels.on:
+		return _fall_back_floor()
 	var k = keep()
 	var c = keep_pos()
 	var n = 0
@@ -677,6 +685,155 @@ static func fall_back() -> String:
 		n += 1
 	G.audio.radio_click()
 	return "%d men falling back to %s" % [n, "the keep" if k >= 0 else "the middle"]
+
+# The Ministry: everyone who is below the next floor up goes to it and holds the heads of the stairs.
+# With nobody inside yet, everyone goes in to the ground floor.
+static func _fall_back_floor() -> String:
+	var low = 99
+	for s in G.soldiers:
+		if s.team == 0 and s.state == "alive" and not s.zombie and Levels.inside(s.pos, 0.0):
+			low = mini(low, Levels.storey_of(s.pos))
+	var top = Levels.n - 1
+	if low != 99 and low >= top:
+		return "Everyone is on the %s already: there is nowhere left to go" % Levels.names[top].to_lower()
+	var k = 0 if low == 99 else low + 1
+	var mid = Vector3(Levels.rect.position.x + Levels.rect.size.x * 0.5, Levels.floor_y(k), Levels.rect.position.y + Levels.rect.size.y * 0.5)
+	var n = 0
+	for s in G.soldiers:
+		if s.team != 0 or s.state != "alive" or s.is_player or s.vehicle != null or s.zombie:
+			continue
+		if Levels.inside(s.pos, 0.0) and Levels.storey_of(s.pos) >= k:
+			continue
+		var near = mid + Vector3(randf_range(-0.3, 0.3) * Levels.rect.size.x, 0, randf_range(-0.25, 0.25) * Levels.rect.size.y)
+		if k > 0:
+			# the head of the nearest staircase that comes up to that floor
+			var bd = 1e9
+			for st in Levels.stairs:
+				if int(st["k"]) == k - 1 and G.dist2d(st["b"], s.pos) < bd:
+					bd = G.dist2d(st["b"], s.pos)
+					near = st["b"]
+		var p = Levels.spot_on(k, near, 5.0 if k > 0 else 4.0)
+		s.order = {"mode": "move", "point": p, "tag": "fallback"}
+		s.decide_t = 0.0
+		n += 1
+	G.audio.radio_click()
+	if n == 0:
+		return "Everyone is on the %s or above already" % Levels.names[k].to_lower()
+	return "%d men falling back to the %s" % [n, Levels.names[k].to_lower()]
+
+# ---------------------------------------------------------------- records, regrouping, rebuilding
+# the furthest wave beaten on each map, kept between sessions
+static func horde_best(map_id: String) -> int:
+	return int(G.settings.get("horde_best", {}).get(map_id, 0))
+
+static func _record_wave() -> void:
+	if G.attract or not OS.get_cmdline_user_args().is_empty() and not ("--keeprecord" in OS.get_cmdline_user_args()):
+		return            # (not from the automatic tests)
+	var hb: Dictionary = G.settings.get("horde_best", {})
+	if horde_wave > int(hb.get(G.map_id, 0)):
+		hb[G.map_id] = horde_wave
+		G.settings["horde_best"] = hb
+		G.save_prefs()
+
+# Between waves the remnants close up: a squad down to one or two men joins the nearest one with room.
+# (Nine squads of one and two men each were a long list to command and no use as squads.)
+static func _regroup() -> int:
+	var mine = []
+	for q in G.squads:
+		if q["team"] != 0 or q.get("crew", false) or q.get("guard", false):
+			continue
+		q["members"] = q["members"].filter(func(m): return is_instance_valid(m) and m.state != "dead")
+		if not q["members"].is_empty():
+			mine.append(q)
+	mine.sort_custom(func(a, b): return a["members"].size() < b["members"].size())
+	var moved = 0
+	for q in mine:
+		if q["members"].size() > 2:
+			continue
+		for m in q["members"].duplicate():
+			if m.is_player:
+				continue
+			var best = null
+			var bd = 1e9
+			for o in mine:
+				if o == q or o["members"].is_empty() or o["members"].size() >= 6:
+					continue
+				var d = G.dist2d(m.pos, o["members"][0].pos)
+				if d < bd:
+					bd = d
+					best = o
+			if best != null:
+				AI._into(m, best)
+				moved += 1
+	return moved
+
+# Walls and roof a building has lost, put back: the pieces of it within 14 m of p (sixty at most), except
+# where somebody is standing. A piece put back can be knocked down again, and counts as standing in a
+# saved battle.
+static func rebuild(p: Vector3) -> int:
+	var W = G.world
+	var b = null
+	for bb in W.buildings:
+		if absf(p.x - bb["x"]) < bb["w"] / 2.0 + 0.8 and absf(p.z - bb["z"]) < bb["d"] / 2.0 + 0.8:
+			b = bb
+			break
+	if b == null:
+		return 0
+	var list = []
+	for c in W.static_cols:
+		if c.alive or not c.dest or not c.has_meta("bld") or c.has_meta("furn") or c.has_meta("tree") or c.has_meta("fence") or c.has_meta("quiet") or c.has_meta("boom"):
+			continue
+		if c.has_meta("rebuilt") and c.get_meta("rebuilt").alive:
+			continue
+		var m: Vector3 = (c.lo + c.hi) * 0.5
+		if absf(m.x - b["x"]) > b["w"] / 2.0 + 0.8 or absf(m.z - b["z"]) > b["d"] / 2.0 + 0.8 or G.dist2d(m, p) > 14.0:
+			continue
+		var clear = true
+		for s in G.soldiers:
+			if s.state != "dead" and s.pos.x > c.lo.x - 0.45 and s.pos.x < c.hi.x + 0.45 and s.pos.z > c.lo.z - 0.45 and s.pos.z < c.hi.z + 0.45 and s.pos.y < c.hi.y and s.pos.y + 1.8 > c.lo.y:
+				clear = false
+				break
+		if clear:
+			list.append(c)
+	if list.is_empty():
+		return 0
+	list.sort_custom(func(x, y): return G.dist2d((x.lo + x.hi) * 0.5, p) < G.dist2d((y.lo + y.hi) * 0.5, p))
+	list = list.slice(0, 60)
+	for c in list:
+		var before = W.cols.size()
+		W.build_now(func():
+			W.add_box((c.lo.x + c.hi.x) * 0.5, c.lo.y, (c.lo.z + c.hi.z) * 0.5, c.hi.x - c.lo.x, c.hi.y - c.lo.y, c.hi.z - c.lo.z, c.color, {"abs": true, "dest": true, "hp": 260.0}))
+		if W.cols.size() > before:
+			var nc = W.cols[W.cols.size() - 1]
+			c.set_meta("rebuilt", nc)
+			var bld = c.get_meta("bld")
+			nc.set_meta("bld", bld)
+			bld["cols"].append(nc)
+			if c.lo.y - c.gy < 0.5:
+				bld["fallen"] = maxi(0, int(bld["fallen"]) - 1)
+	G.audio.hammer(p)
+	return list.size()
+
+# ---------------------------------------------------------------- what men say against the dead
+# The drill for fighting men who shoot back (pin them, flank them, bound forward under covering fire)
+# is the wrong thing to be shouting at a horde. Those lines are swapped for ones that fit.
+const HORDE_FIGHT = ["Aim for the head!", "Don't let them get close!", "Keep shooting, keep shooting!", "Thin them out!", "Stay together!", "Watch your backs!",
+	"They just keep coming!", "Make every round count!"]
+const HORDE_MOVE = ["Back up, back up!", "Move, they're on us!", "Fall back, keep your spacing!", "Don't get cut off!"]
+
+static func horde_say(text: String) -> String:
+	var low = text.to_lower()
+	for w in ["suppress", "base of fire", "keep them down", "everything on that position", "flank", "pinned", "enemy fire", "taking fire", "sniper", "return fire"]:
+		if w in low:
+			return G.pick(HORDE_FIGHT)
+	for w in ["bounding", "leapfrog", "cover and move", "first team", "moving up", "advance", "push forward", "on me"]:
+		if w in low:
+			return G.pick(HORDE_MOVE)
+	# (a sighting keeps its bearing and range: "Contact south, 15m!" becomes "Dead ones south, 15m!")
+	for w in ["Contact", "Enemy", "Tango", "Hostiles", "Target"]:
+		if text.begins_with(w):
+			return "Dead ones" + text.substr(w.length())
+	return text
 
 static func _new_drop() -> void:
 	var c = G.world.capture
@@ -793,6 +950,11 @@ static func _keep_rest(dt: float) -> void:
 
 static func _horde(dt: float) -> void:
 	_step_drops(dt)
+	if Levels.on and not horde_in and G.sim_time > 1.0:
+		# (the Ministry: nobody waits for them in the yard)
+		horde_in = true
+		fall_back()
+		G.ui.message("The Ministry. Get everyone inside and hold it floor by floor: when a floor is lost, \"Up a floor\" (Armoury tab) sends the men up to hold the stairs")
 	var dead_walking = 0
 	for s in G.soldiers:
 		if s.team == 1 and s.state != "dead":
@@ -810,13 +972,44 @@ static func _horde(dt: float) -> void:
 			_spawn_pack(n)
 		return
 	if dead_walking > 0:
+		# The last few of a wave that can't get at anyone (shut in a room, the wrong side of a wall, at the
+		# foot of something they can't climb) don't hold the next wave up for ever: after forty seconds
+		# with none of them within reach of a man, they drop.
+		if dead_walking <= 4:
+			var near_any = false
+			for z in G.soldiers:
+				if z.team != 1 or z.state == "dead":
+					continue
+				for m in G.soldiers:
+					if m.team == 0 and m.state != "dead" and G.dist2d(m.pos, z.pos) < 14.0 and absf(m.pos.y - z.pos.y) < 1.7 and not G.blocked(z.pos + Vector3(0, 1.0, 0), m.pos + Vector3(0, 1.0, 0)):
+						near_any = true
+						break
+				if near_any:
+					break
+			stall_t = 0.0 if near_any else stall_t + dt
+			if stall_t > 40.0:
+				stall_t = 0.0
+				for z in G.soldiers.duplicate():
+					if z.team == 1 and z.state != "dead":
+						z.hp = 0.0
+						Combat.kill(z, null, false)
+						stragglers += 1
+				G.ui.radio(0, "The last of them have dropped. Wave %d is done" % horde_wave)
+		else:
+			stall_t = 0.0
 		return
-	if horde_wave >= HORDE_WIN:
+	stall_t = 0.0
+	if horde_wave >= HORDE_WIN and not horde_endless:
+		_record_wave()
 		G.main.end_game(0)
 		return
 	if horde_t >= BREAK - 0.01 and horde_wave > 0:
-		G.ui.message("Wave %d beaten: %d s to dig in. Build barricades, board up windows, buy weapons (Armoury tab). Men in the keep rest and restock" % [horde_wave, int(BREAK)])
+		var was_best = horde_best(G.map_id)
+		_record_wave()
+		var rec = ("  A new best for this map (it was %d)." % was_best) if (horde_wave > was_best and was_best > 0) else ""
+		G.ui.message("Wave %d beaten: %d s to dig in. Build barricades, board up windows, buy weapons (Armoury tab). Men in the keep rest and restock.%s" % [horde_wave, int(BREAK), rec])
 		G.ui.radio(0, "Wave %d done. Points for kills: %d to spend" % [horde_wave, Support.points[0]])
+		_regroup()
 	horde_t -= dt
 	_keep_rest(dt)
 	if horde_t > 0.0:
@@ -1013,18 +1206,31 @@ const BREAK = 30.0
 
 # the zombie-mode shop: points come from kills and pay for weapons, supplies and boarding up windows
 const SHOP = {
-	"board": {"name": "Board up windows", "cost": 6, "tip": "Click a building: planks go up over every window (the dead have to tear them down)"},
-	"lmg": {"name": "Machine guns ×3", "cost": 12, "tip": "Click near your men: the three closest get machine guns"},
+	"board": {"name": "Board windows", "cost": 6, "tip": "Click a building: planks go up over every window (the dead have to tear them down)"},
+	"lmg": {"name": "Machine guns", "cost": 12, "tip": "Click near your men: the three closest get machine guns"},
 	"shotgun": {"name": "Shotguns ×4", "cost": 8, "tip": "Click near your men: the four closest get shotguns"},
 	"flamer": {"name": "Flamethrower", "cost": 10, "tip": "Click near your men: the closest gets a flamethrower"},
 	"ammo": {"name": "Ammo for all", "cost": 5, "tip": ""},
-	"heal": {"name": "Patch everyone up", "cost": 6, "tip": ""},
+	"heal": {"name": "Patch all up", "cost": 6, "tip": ""},
 	"man": {"name": "Extra man", "cost": 7, "tip": ""},
-	"keep": {"name": "Fall back to the keep", "cost": 0, "tip": "Everyone runs to the building in the middle and holds it"},
+	"men5": {"name": "5 extra men", "cost": 32, "tip": ""},
+	"rebuild": {"name": "Rebuild walls", "cost": 12, "tip": "Click a damaged building: the walls and roof it has lost within 14 m of the click are put back (not where someone is standing)"},
+	"keep": {"name": "To the keep", "cost": 0, "tip": "Everyone runs to the building in the middle and holds it"},
 }
 
 static func shop_instant(k: String) -> bool:
-	return k in ["ammo", "heal", "man", "keep"]
+	return k in ["ammo", "heal", "man", "men5", "keep"]
+
+# (on the Ministry map the free order is a different one)
+static func shop_name(k: String) -> String:
+	if k == "keep" and Levels.on:
+		return "Up a floor"
+	return SHOP[k]["name"]
+
+static func shop_tip(k: String) -> String:
+	if k == "keep" and Levels.on:
+		return "Everyone below moves up to the next floor and holds the head of the stairs (from outside, everyone runs in)"
+	return SHOP[k]["tip"]
 
 # buy something; p is where the player clicked (for the ones that need a place)
 static func shop(k: String, p: Vector3) -> String:
@@ -1069,6 +1275,17 @@ static func shop(k: String, p: Vector3) -> String:
 			Support.points[0] -= c
 			G.main.base_spawn(0)
 			return "A survivor joins you"
+		"men5":
+			Support.points[0] -= c
+			for i in range(5):
+				G.main.base_spawn(0)
+			return "Five survivors join you"
+		"rebuild":
+			var nr = rebuild(p)
+			if nr == 0:
+				return "Nothing to rebuild there: click a building that has lost walls"
+			Support.points[0] -= c
+			return "%d pieces of wall and roof put back" % nr
 		"keep":
 			return fall_back()
 	return ""
@@ -1136,7 +1353,7 @@ static func zombie_tick(s) -> void:
 	s.ready_ = false
 	s.ads = false
 	s.crouch_t = 0.12 if s.ztype != "brute" else 0.0
-	s.prone_t = s.ztype == "crawler"
+	s.prone_t = s.ztype == "crawler" and not s.has_meta("risen")
 	s.tool_mode = ""
 	s.hand_t = null
 	s.groan_t -= G.DT
@@ -1150,6 +1367,11 @@ static func zombie_tick(s) -> void:
 		return
 	var to = G.flat(t.pos - s.pos)
 	var d = to.length()
+	# (a man on the floor above or below is not "close", however near he is on the plan: the dead stood
+	# in a knot under a man upstairs and the wave never ended)
+	if absf(t.pos.y - s.pos.y) > 1.7:
+		d = maxf(d, 8.0) + absf(t.pos.y - s.pos.y) * 3.0
+	var level = d == to.length()
 	var yaw = atan2(to.x, to.z)
 	s.aim_yaw = G.turn_to(s.aim_yaw, yaw, 3.0 * G.DT)
 	s.aim_pitch = 0.0
@@ -1191,7 +1413,7 @@ static func zombie_tick(s) -> void:
 		if _smash(s, 1.5, 230.0):
 			s.want = Vector3.ZERO
 			return
-	if s.bad_t < G.sim_time and (d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
+	if level and s.bad_t < G.sim_time and (d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
 		AI.stop_move(s)
 		var dir = to / d
 		# slide round posts and corners rather than pushing into them
@@ -1235,6 +1457,16 @@ static func zombie_tick(s) -> void:
 			s.prog_t = 0.0
 			s.prog_p = s.pos
 	else:
+		# A crawler following a route (round a building, in at a door, up a staircase) that isn't getting
+		# anywhere hauls itself upright: the routes are for men on their feet, who step over a low wall
+		# and climb stairs, and a crawler left at the foot of either kept the wave from ever ending.
+		if s.ztype == "crawler" and not s.has_meta("risen"):
+			if G.sim_time - float(s.get_meta("cr_t", -99.0)) > 5.0:
+				if s.has_meta("cr_p") and G.sim_time - float(s.get_meta("cr_t", -99.0)) < 7.0 and G.dist2d(s.pos, s.get_meta("cr_p")) < 1.2:
+					s.set_meta("risen", true)
+					risen_n += 1
+				s.set_meta("cr_t", G.sim_time)
+				s.set_meta("cr_p", s.pos)
 		if s.move_target == null or G.dist2d(s.move_target, t.pos) > 4.0:
 			AI.go_to(s, t.pos, spd)
 		if s.route != null and not (s.route["i"] == 0 and s.route["nav"]):
@@ -1249,6 +1481,7 @@ static func zombie_tick(s) -> void:
 # what's stopping them, and it takes a pack of them a while.
 static var smashed = 0
 static var smash_said = -1
+static var risen_n = 0
 
 static func _smash(s, reach: float, dmg: float) -> bool:
 	for st in Build.sites:
@@ -1332,6 +1565,8 @@ static func status_text() -> String:
 				extra += " from the %s" % SIDE_NAMES[horde_side]
 			if not drops.is_empty():
 				extra += " · supply drop %s, %d s" % [AI.grid_ref(drops[0]["p"]), int(drops[0]["t"])]
+			if horde_endless:
+				return "wave %d, endless (best %d) · %d coming%s" % [horde_wave, horde_best(G.map_id), n + horde_left, extra]
 			return "wave %d of %d · %d coming%s" % [horde_wave, HORDE_WIN, n + horde_left, extra]
 	return ""
 

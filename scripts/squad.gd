@@ -13,6 +13,8 @@ const FORMS = {
 static var tick_t = 0.0
 static var events = {"flank": 0, "breach": 0, "bound": 0, "suppress": 0, "smoke": 0, "fallback": 0}
 
+static var pack_said_t = -99.0
+
 static func step(dt: float) -> void:
 	tick_t -= dt
 	if tick_t > 0.0:
@@ -219,7 +221,10 @@ static func _flank(q) -> void:
 		q["supp_tgt"] = tgt
 		Voice.say(L, "flank")
 		if G.mode == "horde":
-			G.ui.radio(L.team, "%s: a pack of them at %s, we're cutting them down" % [L.sname, AI.grid_ref(tgt.pos)])
+			# (one such report every twenty seconds at most: with ten squads the feed was nothing else)
+			if G.sim_time - pack_said_t > 20.0:
+				pack_said_t = G.sim_time
+				G.ui.radio(L.team, "%s: a pack of them at %s, we're cutting them down" % [L.sname, AI.grid_ref(tgt.pos)])
 		else:
 			G.ui.radio(L.team, "%s: pinned an enemy at %s, flanking %s" % [L.sname, AI.grid_ref(tgt.pos), "right" if side > 0.0 else "left"])
 

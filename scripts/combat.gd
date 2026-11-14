@@ -382,7 +382,12 @@ static func kill(s, attacker, head: bool) -> void:
 		s.set_meta("burst", true)
 		var bp: Vector3 = s.chest()
 		G.fx.smoke_screen(bp, 6.0, Color(0.55, 0.62, 0.3), 0.6)
-		(func(): Combat.explode(bp, null, 0.55)).call_deferred()
+		# (gas, not high explosive: it throws men about but doesn't bring walls down. With a dozen
+		# bloaters a wave, their bursts had the middle of the town in ruins by the third.)
+		(func():
+			Combat.soft = true
+			Combat.explode(bp, null, 0.55)
+			Combat.soft = false).call_deferred()
 	s.go_dead()
 	if attacker == null or attacker.team != s.team:
 		Ops.note_loss(s, attacker, cause if cause != "" else ("arty" if arty else ""))
@@ -1101,6 +1106,7 @@ static func launch_rifle_grenade(s, origin: Vector3, target: Vector3) -> void:
 	G.fx.muzzle(origin, false)
 
 # ---------------------------------------------------------------- explosions
+static var soft = false       # a blast that hurts and throws men but leaves walls, doors and windows alone
 static func explode(pos: Vector3, owner_s, power: float) -> void:
 	if power >= float(last_boom["pow"]) or G.sim_time - float(last_boom["t"]) > 4.0:
 		last_boom = {"t": G.sim_time, "p": pos, "pow": power}
@@ -1109,7 +1115,8 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 		var wl = G.world.water_level(pos.x, pos.z)
 		G.fx.splash(Vector3(pos.x, wl, pos.z), 2.2 * power)
 		G.fx.water_column(Vector3(pos.x, wl, pos.z), power)
-	Doors.blast(pos, power)
+	if not soft:
+		Doors.blast(pos, power)
 	Faction.blast(pos, power)
 	var R = 7.0 * power
 	G.fx.explosion(pos, power)
@@ -1128,7 +1135,8 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 		else:
 			# watching from close by (not through a soldier's eyes): the sound goes dull for a moment
 			G.audio.dull(1.0 - cam.global_position.distance_to(pos) / (24.0 * clampf(power, 0.6, 2.0)))
-	G.world.damage_area(pos, R * 0.75, power)
+	if not soft:
+		G.world.damage_area(pos, R * 0.75, power)
 	if power >= 1.0:
 		G.world.blast_crater(pos, clampf(1.2 * power, 1.0, 3.2))
 	elif power >= 0.7:

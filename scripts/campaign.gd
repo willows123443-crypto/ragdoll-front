@@ -197,6 +197,10 @@ static func add_men(a: Dictionary, cls: Array, vet0: int = 0) -> void:
 	var used = {}
 	for m in a["men"]:
 		used[m["name"]] = true
+	# (nor the name of a man on the roll of the fallen: a recruit was given the name of a man who had
+	# died in the battle he joined after)
+	for f in data.get("fallen", []):
+		used[str(f.get("name", ""))] = true
 	for c in cls:
 		if a["men"].size() >= MAX_STR:
 			break
@@ -1517,7 +1521,9 @@ static func _survivors(a: Dictionary, lost_it: bool) -> Array:
 			var k: int = s.get_meta("roster")
 			if k < a["men"].size():
 				named[k] = [alive, s.kills]
-		elif alive and s.vehicle == null:
+		elif alive and (s.vehicle == null or not (s.squad != null and s.squad.get("crew", false))):
+			# (a man riding in the back of something counts: only a vehicle's own crew doesn't. A battle
+			# won with sixteen men standing, most of them in half-tracks, left the company with one.)
 			extra.append(s.cls)
 	if t == 0:
 		for e in fallen_log:

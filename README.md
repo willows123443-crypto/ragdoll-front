@@ -445,6 +445,17 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 - **Leaving a campaign battle** by the menu puts your own difficulty setting back (it stayed at the campaign's).
 - **Small things:** the dock keeps clear of the corner minimap, so the supply total is no longer half hidden; once a battle is over the menu says "Battle over", offers "Back to the field" and "Play it again" in place of "Resume" and "Restart", and drops "Save"; the title's campaign line no longer says "twelve regions".
 - Tests: `--campsave` (a campaign battle saved and carried on), `--hordex` (rebuilding, closing up, endless waves, the Ministry), `--hordeshot=DIR` (pictures).
+- **Found by playing that build in the browser** (a campaign battle with a reserve, saved part-way, carried on and fought to the end; the horde on the Ministry; the horde on the town):
+  - Men riding in a lorry that was bringing them up, or in a landing craft, vanished from a saved battle (five of fifteen in the battle I saved). They are now put down on foot where the vehicle was; only a man in an aircraft or over water is left out.
+  - A saved siege came back with its clock and its supplies reset (4:39 left became 7:45). The mode's own state is saved now: the siege clock and supplies, reinforcement waves, the phase of an assault, the moving hill.
+  - A campaign battle won with sixteen men standing left the company with one: men riding in the back of a vehicle when it ended weren't counted as survivors. Only a vehicle's own crew is left out now.
+  - Bloaters were what was flattening the town. A bloater's burst was an explosion that brought walls down, and with a dozen a wave the middle of the town was rubble by wave three. It is a gas blast now: it throws men about and hurts them, and leaves walls, doors and windows alone.
+  - The horde on the Ministry started with the camera against the south wall; it starts above the building now.
+  - The dock showed under the campaign screen when that came up over a finished battle.
+  - "Board windows" was still cut off on its card ("Board up" now); "Target down!" had become "Dead ones down!" (now "One down!", "Got one!"); "Smoke! Pull back behind it!" was still said though nobody throws smoke at the dead.
+  - With ten squads the radio feed was one line over and over ("a pack of them at…"); it is said once in twenty seconds at most.
+  - A recruit could be given the name of a man who had just fallen; names on the roll of the fallen are not reused.
+  - "Rebuild walls" said it put the roof back. It puts back walls and floors; a pitched roof stays off, and the card says so.
 
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.

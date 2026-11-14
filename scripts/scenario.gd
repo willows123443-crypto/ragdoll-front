@@ -140,15 +140,21 @@ static func capture_battle() -> Dictionary:
 	for s in G.soldiers:
 		if s.state == "dead":
 			continue
+		# Aboard something that isn't itself kept (a lorry bringing men up, a landing craft): he is put
+		# down on foot where it was. (Men riding up from reserve vanished from a saved campaign battle.)
+		# Only a man in an aircraft, or over water, is left out.
+		var foot = false
 		if s.vehicle != null and not vidx.has(s.vehicle):
-			continue           # (aboard something that isn't kept: a lorry on a supply run, an aircraft)
+			if s.vehicle.spec.get("plane", false) or s.vehicle.spec.get("air", false) or (not G.world.water.is_empty() and G.world.in_water(s.pos.x, s.pos.z)):
+				continue
+			foot = true
 		var sq = G.squads.find(s.squad) if s.squad != null else -1
 		if sq >= 0 and not d["squads"].has(sq):
 			d["squads"][sq] = {"crew": bool(s.squad.get("crew", false)), "form": str(s.squad.get("form", "wedge")), "guard": bool(s.squad.get("guard", false)), "follow": bool(s.squad.get("follow", false))}
-		var m = {"t": s.team, "x": snappedf(s.pos.x, 0.1), "z": snappedf(s.pos.z, 0.1), "y": snappedf(s.pos.y, 0.1), "cls": s.cls, "w": s.wid, "hp": s.hp, "mag": s.mag, "res": s.reserve,
+		var m = {"t": s.team, "x": snappedf(s.pos.x, 0.1), "z": snappedf(s.pos.z, 0.1), "y": snappedf(G.world.ground_y(s.pos.x, s.pos.z) if foot else s.pos.y, 0.1), "cls": s.cls, "w": s.wid, "hp": s.hp, "mag": s.mag, "res": s.reserve,
 			"gr": s.grenades, "sm": s.smokes, "name": s.sname, "vet": s.vet, "zk": s.ztype if s.zombie else "", "sq": sq,
 			"ord": [s.order["mode"], s.order["point"].x, s.order["point"].z] if s.order != null and s.order.get("point") != null and s.order["mode"] in ["move", "hold"] else null}
-		if s.vehicle != null:
+		if s.vehicle != null and not foot:
 			m["veh"] = [vidx[s.vehicle], s.seat]
 		# (his place in the campaign: the company commander, a man come up from reserve, or one of the roster)
 		if s.has_meta("co"):
@@ -167,6 +173,10 @@ static func capture_battle() -> Dictionary:
 			ru.append(k)
 	d["ruins"] = ru
 	d["caps"] = G.team_caps.duplicate()
+	# the state of the mode itself: the clock and supplies of a siege, the reinforcement waves, the hill
+	# that moves. (A siege saved with 4:39 left came back with 7:45.)
+	d["obj"] = {"all_t": Obj.all_t.duplicate(), "bleed_t": Obj.bleed_t, "wave": Obj.wave, "wave_t": Obj.wave_t, "wave_left": Obj.wave_left, "phase": Obj.phase,
+		"hold_t": Obj.hold_t, "supply": Obj.supply, "siege_t": Obj.siege_t, "mode_t": Obj.mode_t, "koth_t": Modes.koth_t, "koth_moves": Modes.koth_moves, "rescue_t": Modes.rescue_t}
 	if Campaign.active:
 		d["camp"] = Campaign.battle_state()
 	d["endless"] = Modes.horde_endless
@@ -333,6 +343,21 @@ static func load_battle() -> String:
 		Modes.horde_endless = bool(d.get("endless", false))
 	if camp != null:
 		Campaign.resume_end(camp)
+	if d.has("obj"):
+		var ob: Dictionary = d["obj"]
+		Obj.all_t = ob["all_t"].duplicate()
+		Obj.bleed_t = float(ob["bleed_t"])
+		Obj.wave = int(ob["wave"])
+		Obj.wave_t = float(ob["wave_t"])
+		Obj.wave_left = int(ob["wave_left"])
+		Obj.phase = int(ob["phase"])
+		Obj.hold_t = float(ob["hold_t"])
+		Obj.supply = float(ob["supply"])
+		Obj.siege_t = float(ob["siege_t"])
+		Obj.mode_t = float(ob["mode_t"])
+		Modes.koth_t = float(ob["koth_t"])
+		Modes.koth_moves = int(ob["koth_moves"])
+		Modes.rescue_t = float(ob["rescue_t"])
 	G.game_time = float(d.get("elapsed", 0.0))       # (the battle clock carries on from where it was)
 	G.main.refresh_markers()
 	return "Saved battle loaded: %d men back on the field" % d.get("men", []).size()

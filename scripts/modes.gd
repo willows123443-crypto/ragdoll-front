@@ -826,12 +826,15 @@ static func horde_say(text: String) -> String:
 	for w in ["suppress", "base of fire", "keep them down", "everything on that position", "flank", "pinned", "enemy fire", "taking fire", "sniper", "return fire"]:
 		if w in low:
 			return G.pick(HORDE_FIGHT)
-	for w in ["bounding", "leapfrog", "cover and move", "first team", "moving up", "advance", "push forward", "on me"]:
+	for w in ["bounding", "leapfrog", "cover and move", "first team", "moving up", "advance", "push forward", "on me", "smoke"]:
 		if w in low:
 			return G.pick(HORDE_MOVE)
+	for w in ["target down", "enemy down", "tango down", "he's down", "scratch one", "got him", "neutralised"]:
+		if w in low:
+			return G.pick(["One down!", "Dropped it!", "That one's finished!", "Got one!"])
 	# (a sighting keeps its bearing and range: "Contact south, 15m!" becomes "Dead ones south, 15m!")
-	for w in ["Contact", "Enemy", "Tango", "Hostiles", "Target"]:
-		if text.begins_with(w):
+	for w in ["Contact", "Enemy", "Tango", "Hostiles"]:
+		if text.begins_with(w + " ") or text.begins_with(w + ","):
 			return "Dead ones" + text.substr(w.length())
 	return text
 
@@ -954,6 +957,15 @@ static func _horde(dt: float) -> void:
 		# (the Ministry: nobody waits for them in the yard)
 		horde_in = true
 		fall_back()
+		# (the view starts well back from the building, looking down on it: it used to start with the
+		# camera against the south wall)
+		if G.player == null and not G.pc.rts:
+			var c0 = Vector3(Levels.rect.position.x + Levels.rect.size.x * 0.5, Levels.gy, Levels.rect.position.y + Levels.rect.size.y * 0.5)
+			var from = c0 + Vector3(0, 46.0, 52.0)
+			var dv = c0 - from
+			G.pc.free_pos = from
+			G.pc.free_yaw = atan2(dv.x, dv.z)
+			G.pc.free_pitch = atan2(dv.y, Vector2(dv.x, dv.z).length())
 		G.ui.message("The Ministry. Get everyone inside and hold it floor by floor: when a floor is lost, \"Up a floor\" (Armoury tab) sends the men up to hold the stairs")
 	var dead_walking = 0
 	for s in G.soldiers:
@@ -1206,7 +1218,7 @@ const BREAK = 30.0
 
 # the zombie-mode shop: points come from kills and pay for weapons, supplies and boarding up windows
 const SHOP = {
-	"board": {"name": "Board windows", "cost": 6, "tip": "Click a building: planks go up over every window (the dead have to tear them down)"},
+	"board": {"name": "Board up", "cost": 6, "tip": "Click a building: planks go up over every window (the dead have to tear them down)"},
 	"lmg": {"name": "Machine guns", "cost": 12, "tip": "Click near your men: the three closest get machine guns"},
 	"shotgun": {"name": "Shotguns ×4", "cost": 8, "tip": "Click near your men: the four closest get shotguns"},
 	"flamer": {"name": "Flamethrower", "cost": 10, "tip": "Click near your men: the closest gets a flamethrower"},
@@ -1214,7 +1226,7 @@ const SHOP = {
 	"heal": {"name": "Patch all up", "cost": 6, "tip": ""},
 	"man": {"name": "Extra man", "cost": 7, "tip": ""},
 	"men5": {"name": "5 extra men", "cost": 32, "tip": ""},
-	"rebuild": {"name": "Rebuild walls", "cost": 12, "tip": "Click a damaged building: the walls and roof it has lost within 14 m of the click are put back (not where someone is standing)"},
+	"rebuild": {"name": "Rebuild walls", "cost": 12, "tip": "Click a damaged building: the walls and floors it has lost within 14 m of the click are put back (not where someone is standing, and not a pitched roof)"},
 	"keep": {"name": "To the keep", "cost": 0, "tip": "Everyone runs to the building in the middle and holds it"},
 }
 
@@ -1285,7 +1297,7 @@ static func shop(k: String, p: Vector3) -> String:
 			if nr == 0:
 				return "Nothing to rebuild there: click a building that has lost walls"
 			Support.points[0] -= c
-			return "%d pieces of wall and roof put back" % nr
+			return "%d pieces of the building put back" % nr
 		"keep":
 			return fall_back()
 	return ""

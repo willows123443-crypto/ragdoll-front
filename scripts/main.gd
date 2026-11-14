@@ -4290,9 +4290,12 @@ func _bal_test() -> void:
 func _save_test() -> void:
 	await _wait(0.5)
 	seed(9)
-	for cfg in [["town", "capture"], ["town", "horde"]]:
+	for cfg in [["town", "capture"], ["town", "horde"], ["field", "siege"]]:
 		start_game({"map": cfg[0], "mode": cfg[1], "size": 10, "limit": 100, "reinforce": true, "armor": "light", "teams": 2})
 		await _wait(45.0)
+		if Prep.active():
+			Prep.finish()
+			await _wait(25.0)
 		# knock a few pieces of the map down so there's something to remember
 		var knocked = 0
 		for c in G.world.static_cols:
@@ -4317,7 +4320,8 @@ func _save_test() -> void:
 					sq_sizes.append(live_m)
 			sq_sizes.sort()
 			return [men[0], men[1], int(hp), z, aboard, str(sq_sizes), G.vehicles.filter(func(v): return is_instance_valid(v) and not v.dead).size(),
-				G.world.static_cols.filter(func(c): return not c.alive and c.dest).size(), str(G.score), str(Support.points), Build.sites.filter(func(st): return not st["dead"]).size(), Modes.horde_wave]
+				G.world.static_cols.filter(func(c): return not c.alive and c.dest).size(), str(G.score), str(Support.points), Build.sites.filter(func(st): return not st["dead"]).size(), Modes.horde_wave,
+				"siege %d supply, %d s left, wave %d" % [int(Obj.supply), int(Obj.siege_t), Obj.wave]]
 		var before: Array = count.call()
 		var named = ""
 		for s in G.soldiers:
@@ -4351,8 +4355,8 @@ func _save_test() -> void:
 						nk = v.kind + ("(fleet)" if v.has_meta("fleet") else "")
 				extra.append("%s t%d %s %s near %s %.0fm metas %s" % [s.sname, s.team, s.cls, s.state, nk, nv, str(s.get_meta_list())])
 		print("SAVETEST   there now but not saved: %s" % str(extra))
-		print("SAVETEST   before: men %d v %d (hp %d, zombies %d), aboard vehicles %d, squads %s, vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d" % before)
-		print("SAVETEST   after:  men %d v %d (hp %d, zombies %d), aboard vehicles %d, squads %s, vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d" % after)
+		print("SAVETEST   before: men %d v %d (hp %d, zombies %d), aboard vehicles %d, squads %s, vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d, %s" % before)
+		print("SAVETEST   after:  men %d v %d (hp %d, zombies %d), aboard vehicles %d, squads %s, vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d, %s" % after)
 		print("SAVETEST   one man: %s -> %s | battle running again: %s (mode %s)" % [named, found, G.started and not G.over, G.mode])
 		end_game(1)
 		await _wait(1.0)
@@ -4550,12 +4554,23 @@ func _camp_save_test() -> void:
 			else:
 				a[4] += 1
 		return a
+	# three of the roster are riding in a lorry that is on a run of its own (so the lorry isn't kept)
+	var riders = G.soldiers.filter(func(x): return x.team == 0 and x.state == "alive" and x.has_meta("roster") and x.vehicle == null).slice(0, 3)
+	var lorry = null
+	if riders.size() == 3:
+		var lp: Vector3 = _free_spot(riders[0].pos + Vector3(6, 0, 0))
+		lorry = spawn_vehicle("truck", 0, lp, 0.0, false)
+		for k in range(3):
+			riders[k].mount(lorry, 1 + k)
+		lorry.mission = {"kind": "test"}
 	var c_before: Array = count.call()
 	var t_run = G.sim_time - Campaign.t_start
 	var pend = Campaign.reserves.filter(func(r): return not r["done"]).size()
 	out.append("before the save: ours %d (roster %d, reserve %d, commander %d), theirs %d | fallen so far %d | reserves still to come %d | %.0f s in | ruins %d" % [c_before[0], c_before[1], c_before[2], c_before[3], c_before[4],
 		Campaign.fallen_log.size(), pend, t_run, G.world.static_cols.filter(func(c): return not c.alive and c.dest).size()])
-	out.append("save: " + Scenario.save_battle())
+	out.append("save: " + Scenario.save_battle() + (" | with %d men riding in a lorry on a run" % G.soldiers.filter(func(x): return x.vehicle == lorry and lorry != null).size()))
+	if lorry != null:
+		lorry.mission = null
 	out.append("offered on the campaign screen: %s | on the title: '%s'" % [str(Scenario.campaign_save_ok()), Scenario.save_text()])
 	# away to the title, then back
 	quit_to_title()
@@ -4570,6 +4585,28 @@ func _camp_save_test() -> void:
 	await _wait(6.0)
 	var c_later: Array = count.call()
 	out.append("six seconds on: reserve men on the field %d (not sent a second time: %s)" % [c_later[2], str(c_later[2] <= c_after[2])])
+	# six reinforcements come up, and five more of the roster fall: the company is made up again from
+	# the reinforcements who lived
+	for k in range(6):
+		base_spawn(0)
+	await _wait(0.5)
+	var ro2 = G.soldiers.filter(func(x): return x.team == 0 and x.state == "alive" and x.has_meta("roster"))
+	for k in range(mini(5, ro2.size())):
+		ro2[k].hp = 0.0
+		Combat.kill(ro2[k], null, false)
+	# two of the reinforcements are riding in the back of a jeep when it ends: they still count
+	var foot = G.soldiers.filter(func(x): return x.team == 0 and x.state == "alive" and x.vehicle == null and not x.has_meta("roster") and not x.has_meta("reserve") and not x.has_meta("co"))
+	var jeep = spawn_vehicle("jeep", 0, _free_spot(G.world.rally_point(0) + Vector3(5, 0, 5)), 0.0, false)
+	var in_back = 0
+	for k in range(mini(2, foot.size())):
+		for seat in range(1, jeep.seats.size()):
+			if jeep.seats[seat] == null:
+				foot[k].mount(jeep, seat)
+				in_back += 1
+				break
+	var c_end: Array = count.call()
+	out.append("riding in the back of a jeep at the end: %d" % in_back)
+	out.append("before the end: ours %d (roster %d, reserve %d, commander %d), not of the roster or reserve %d | fallen so far %d" % [c_end[0], c_end[1], c_end[2], c_end[3], c_end[0] - c_end[1] - c_end[2] - c_end[3], Campaign.fallen_log.size()])
 	# the battle is won: the two who fell before the save are still dead
 	for x in G.soldiers:
 		if x.team == 1 and x.state != "dead":
@@ -4578,7 +4615,9 @@ func _camp_save_test() -> void:
 	await _wait(1.0)
 	end_game(0)
 	await _wait(3.5)
-	var still = top["men"].filter(func(m): return names.any(func(nm): return nm.ends_with(str(m["name"])))).size()
+	# (a recruit who happens to be given a dead man's name doesn't count: he has no battles behind him)
+	var still = top["men"].filter(func(m): return int(m["battles"]) > 0 and names.any(func(nm): return nm.ends_with(str(m["name"])))).size()
+	out.append("the two who fell first: %s | the roll now: %s" % [str(names), str(top["men"].map(func(m): return "%s(%d)" % [m["name"], int(m["battles"])]))])
 	out.append("after the battle: company %d -> %d men (the two who fell before the save still on the roll: %d) | reserve company %d -> %d | saved battle still offered: %s" % [men0, top["men"].size(), still, res0, other["men"].size(), str(Scenario.campaign_save_ok())])
 	for l in Campaign.data["log"].slice(0, 5):
 		out.append("   log: " + str(l).substr(0, 120))
@@ -4619,6 +4658,27 @@ func _horde_x_test() -> void:
 	if not rb.is_empty():
 		W.destroy_col(rb[0].get_meta("rebuilt"))
 		out.append("one rebuilt piece knocked down again: '%s'" % Modes.shop("rebuild", kp))
+	# a bloater bursts against a wall: the wall stands, the man beside it is hurt
+	var wall = null
+	for c in W.static_cols:
+		if c.alive and c.dest and c.has_meta("bld") and not c.has_meta("furn") and c.lo.y - c.gy < 0.5 and c.hi.y - c.lo.y > 1.5:
+			wall = c
+			break
+	if wall != null:
+		var wp: Vector3 = (wall.lo + wall.hi) * 0.5
+		var out_p = _free_spot(Vector3(wp.x + 1.6, 0, wp.z + 1.6))
+		Soldier.zombie_next = "bloater"
+		var bz = spawn_soldier(1, out_p.x, out_p.z, "pistol")
+		Soldier.zombie_next = ""
+		Modes.make_zombie(bz, "bloater")
+		var victim = spawn_soldier(0, out_p.x + 1.5, out_p.z, "rifle")
+		var hp0 = victim.hp
+		var standing0 = W.static_cols.filter(func(c): return c.alive).size()
+		var whp0 = wall.hp
+		bz.hp = 0.0
+		Combat.kill(bz, null, false)
+		await _wait(1.0)
+		out.append("bloater bursts 2 m from a wall: pieces of the map standing %d -> %d, that wall's strength %.0f -> %.0f, the man beside it %.0f -> %.0f hp (%s)" % [standing0, W.static_cols.filter(func(c): return c.alive).size(), whp0, wall.hp, hp0, victim.hp, victim.state])
 	# five at once
 	var men0 = G.alive_count(0)
 	var p0 = Support.points[0]

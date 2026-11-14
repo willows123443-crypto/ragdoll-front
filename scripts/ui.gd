@@ -2685,7 +2685,7 @@ func update_hud(dt: float) -> void:
 	var ctl = G.player != null
 	# (not under the title or the pause menu: the dock and its hint line showed through both, and the
 	# pause menu's tip was printed across the dock)
-	dock.visible = show_game and not ctl and not title.visible
+	dock.visible = show_game and not ctl and not title.visible and not (camp_panel != null and camp_panel.visible)
 	tip.visible = dock.visible
 	_radio_place()
 	if dock.visible:

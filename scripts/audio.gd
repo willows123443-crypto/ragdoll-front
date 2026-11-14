@@ -109,7 +109,7 @@ func _ready() -> void:
 	s_far = _noise(2.2, 0.6, 0.04, 0.9, 40.0)
 	_build_music.call_deferred()
 	_build_menu_music.call_deferred()
-	_build_voices.call_deferred()
+	_build_voices()
 	set_volume(G.settings["volume"])
 
 # ---------------------------------------------------------------- battle music and the sound of the wider battle
@@ -211,6 +211,9 @@ var deaf_fx: AudioEffectLowPassFilter = null
 var deaf_bus = -1
 var web = false
 var world_bus = "Master"
+# (measured at the page's output, the music plays about 12 dB lower in a browser than the same build does
+# on a desktop: this makes most of it up, and the page's limiter keeps it from clipping)
+var music_boost = 9.0 if OS.has_feature("web") else 0.0
 var world_trim = 0.0        # (browser only: what the World bus's volume does on desktop)
 var deaf = 0.0
 var s_ring: AudioStreamWAV = null
@@ -262,7 +265,7 @@ func _process(dt: float) -> void:
 	var menu_on = (not G.started or G.attract) and G.settings["music"] > 0.0
 	menu_k = move_toward(menu_k, 1.0 if menu_on else 0.0, dt * (0.5 if menu_on else 0.9))
 	if menu_player != null:
-		menu_player.volume_db = linear_to_db(maxf(menu_k * G.settings["music"] * 2.0, 0.0001)) + 3.0
+		menu_player.volume_db = linear_to_db(maxf(menu_k * G.settings["music"] * 2.0, 0.0001)) + 3.0 + music_boost
 		if menu_k > 0.0 and not menu_player.playing:
 			menu_player.play()
 		elif menu_k <= 0.0 and menu_player.playing:
@@ -288,7 +291,7 @@ func _process(dt: float) -> void:
 	var lv = [0.25 + intensity * 0.5, maxf(0.0, intensity - 0.25) * 1.3, maxf(0.0, intensity - 0.55) * 2.0]
 	for i in range(music.size()):
 		var a = clampf(lv[i], 0.0, 1.0) * mv * (1.0 if on else 0.0)
-		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 3.0
+		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 3.0 + music_boost
 	# the wider battle: far-off booms and crackling gunfire while a fight is on
 	if on:
 		rumble_t -= dt
@@ -1055,16 +1058,28 @@ func _fanfare(notes: Array) -> AudioStreamWAV:
 		at += nt[1]
 	return _wav_rate(out, MRATE)
 
+# (Built a sound at a time over the first few seconds, a frame between each: made all at once they held
+# the title screen back, most of all in a browser.)
+var voices_ready = false
+
 func _build_voices() -> void:
+	var tree = get_tree()
+	for k in range(20):
+		await tree.process_frame
 	# shouts: hey, go, ah, oi, ya, ho
 	for v in [[0.3, 215.0, 255.0, "e", "i"], [0.28, 205.0, 170.0, "o", "u"], [0.36, 235.0, 200.0, "a", "a"], [0.32, 190.0, 245.0, "o", "i"], [0.28, 245.0, 205.0, "i", "a"], [0.26, 175.0, 205.0, "o", "o"]]:
 		s_shouts.append(_voice(v[0], v[1], v[2], v[3], v[4], 0.25, 0.03))
+		await tree.process_frame
 	for v in [[0.14, 135.0, 108.0, "u", "o"], [0.18, 150.0, 118.0, "a", "o"], [0.12, 160.0, 125.0, "o", "u"]]:
 		s_grunts.append(_voice(v[0], v[1], v[2], v[3], v[4], 0.55, 0.02))
+		await tree.process_frame
 	for v in [[0.42, 265.0, 170.0, "a", "a"], [0.3, 300.0, 205.0, "a", "e"], [0.36, 240.0, 160.0, "e", "o"]]:
 		s_pains.append(_voice(v[0], v[1], v[2], v[3], v[4], 0.7, 0.03))
+		await tree.process_frame
 	for v in [[0.8, 335.0, 235.0, "a", "e"], [1.0, 380.0, 195.0, "a", "a"], [0.6, 305.0, 180.0, "e", "a"]]:
 		s_screams.append(_voice(v[0], v[1], v[2], v[3], v[4], 0.5, 0.02))
+		await tree.process_frame
+	voices_ready = true
 	s_step_road = _knock(0.07, 420.0, 0.012, 0.55, 0.5)
 	s_step_floor = _knock(0.11, 150.0, 0.03, 0.3, 0.6)
 	# a magazine change: out, in, and the bolt run forward
@@ -1077,6 +1092,7 @@ func _build_voices() -> void:
 	_mix_at(rl, click, 0.52, 0.7)
 	_mix_at(rl, clack, 0.58, 1.0)
 	s_reload = _wav(rl)
+	await tree.process_frame
 	# the pin and the spoon: a thin ring and a tick after it
 	var pn = PackedFloat32Array()
 	pn.resize(int(0.3 * RATE))
@@ -1086,10 +1102,13 @@ func _build_voices() -> void:
 	_mix_at(pn, click, 0.16, 0.6)
 	s_pin = _wav(pn)
 	s_door = _knock(0.2, 95.0, 0.05, 0.25, 0.9)
+	await tree.process_frame
 	s_win = _fanfare([[0, 0.16], [4, 0.16], [7, 0.16], [12, 0.5], [7, 0.16], [12, 0.9]])
+	await tree.process_frame
 	s_lose = _fanfare([[7, 0.45], [5, 0.45], [3, 0.45], [0, 1.1]])
 	sting_player = AudioStreamPlayer.new()
 	add_child(sting_player)
+	await tree.process_frame
 	# the horde, heard before it's seen: a dozen of the dead moaning over one another, on a loop
 	var hl = 3.2
 	var hn = int(hl * RATE)
@@ -1101,6 +1120,7 @@ func _build_voices() -> void:
 		var st = randi() % hn
 		for i in range(d.size() / 2):
 			hb[(st + i) % hn] += d.decode_s16(i * 2) / 32000.0 * 0.4
+		await tree.process_frame
 	s_horde = _wav(hb)
 	s_horde.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	s_horde.loop_begin = 0
@@ -1112,7 +1132,7 @@ func _build_voices() -> void:
 
 # a shout to go with a callout: no words, each man in his own voice
 func bark(s, text: String) -> void:
-	if s_shouts.is_empty() or not G.started or G.attract or voice_t > G.sim_time or s.zombie:
+	if not voices_ready or not G.started or G.attract or voice_t > G.sim_time or s.zombie:
 		return
 	var p: Vector3 = s.pos if s.state != "dead" else s.parts[0].global_position
 	if cam_dist(p) > 60.0:
@@ -1126,7 +1146,7 @@ func _man_pitch(s) -> float:
 
 # "grunt" (an effort: a throw, a shove, a climb), "pain" (hit and still up), "scream" (going down)
 func voice(s, kind: String) -> void:
-	if s_shouts.is_empty() or s.zombie or not G.started:
+	if not voices_ready or s.zombie or not G.started:
 		return
 	var p: Vector3 = s.parts[0].global_position
 	if cam_dist(p) > (70.0 if kind == "scream" else 40.0):
@@ -1151,7 +1171,7 @@ func sting(won: bool) -> void:
 	if sting_player == null or G.settings["music"] <= 0.0:
 		return
 	sting_player.stream = s_win if won else s_lose
-	sting_player.volume_db = linear_to_db(maxf(G.settings["music"] * 1.6, 0.001)) - 2.0
+	sting_player.volume_db = linear_to_db(maxf(G.settings["music"] * 1.6, 0.001)) - 2.0 + music_boost
 	sting_player.play()
 
 # the moan of the horde: louder the more of them are up and the nearer the nearest is to where you're

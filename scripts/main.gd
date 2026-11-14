@@ -4398,6 +4398,10 @@ func _aud_test() -> void:
 	await _wait(0.5)
 	var secs = float(_arg("secs", "30"))
 	if _arg("menu", "") == "1":
+		var w0 = Time.get_ticks_msec()
+		while (G.audio.horde_player == null or G.audio.menu_player == null) and Time.get_ticks_msec() - w0 < 20000:
+			await get_tree().process_frame
+		print("AUDTEST every sound built %d ms after the title came up" % (Time.get_ticks_msec() - w0))
 		# the title screen: is its tune playing, and how loud
 		var m0 = Time.get_ticks_msec()
 		var mpk = -200.0

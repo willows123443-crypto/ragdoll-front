@@ -211,10 +211,9 @@ var deaf_fx: AudioEffectLowPassFilter = null
 var deaf_bus = -1
 var web = false
 var world_bus = "Master"
-# In a browser a sound can't be played louder than it was made (the gain stops at 1) and a centred one
-# reaches each ear at half strength, so the title tune and the horn calls are made at full scale and
-# turned down on a desktop instead of being made quiet and turned up.
-var music_cut = 0.0 if OS.has_feature("web") else -4.0
+# The title tune and the horn calls are made at full scale and turned down to taste here. (A little
+# further in a browser, where the page's limiter lifts everything that passes through it.)
+var music_cut = -6.0 if OS.has_feature("web") else -4.0
 
 # scale a waveform so its loudest point is at `peak`
 func _norm(out: PackedFloat32Array, peak: float) -> void:
@@ -301,7 +300,7 @@ func _process(dt: float) -> void:
 	var lv = [0.25 + intensity * 0.5, maxf(0.0, intensity - 0.25) * 1.3, maxf(0.0, intensity - 0.55) * 2.0]
 	for i in range(music.size()):
 		var a = clampf(lv[i], 0.0, 1.0) * mv * (1.0 if on else 0.0)
-		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) + (3.0 if music_cut == 0.0 else -3.0)
+		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 3.0
 	# the wider battle: far-off booms and crackling gunfire while a fight is on
 	if on:
 		rumble_t -= dt
@@ -1207,7 +1206,7 @@ func _horde_bed(dt: float) -> void:
 		horde_want = 0.0
 	horde_k = move_toward(horde_k, horde_want, dt * (0.35 if horde_want > horde_k else 0.6))
 	if horde_k > 0.005:
-		horde_player.volume_db = linear_to_db(horde_k) - 4.0 + (music_cut * 2.0) + fx_db()
+		horde_player.volume_db = linear_to_db(horde_k) - 12.0 + fx_db()
 		horde_player.pitch_scale = 0.85 + horde_k * 0.25
 		if not horde_player.playing:
 			horde_player.play()

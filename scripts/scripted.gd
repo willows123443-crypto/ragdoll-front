@@ -244,7 +244,7 @@ static func describe_trigger(tr: Dictionary) -> String:
 		"message": t = "\"%s\"" % tr.get("text", "")
 		"attack": t = "%s attacks" % an
 		"win": t = "%s wins" % an
-	return "%s → %s" % [w, t]
+	return "%s -> %s" % [w, t]
 
 static func describe_unit(u: Dictionary) -> String:
 	var name = ("%d men" % int(u.get("size", 6))) if u["kind"] == "squad" else u.get("vtype", "jeep")

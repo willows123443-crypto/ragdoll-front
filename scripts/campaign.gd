@@ -14,7 +14,7 @@ extends RefCounted
 # join the motor pool; ruins and anything built stay as they were left.
 
 const PATH = "user://campaign.dat"
-const VERSION = 4
+const VERSION = 5
 const REGIONS = [
 	{"name": "Westfield", "map": "field", "p": Vector2(0.07, 0.5), "mode": "capture", "hq": 0},
 	{"name": "Old Town", "map": "town", "p": Vector2(0.24, 0.24), "mode": "capture", "bonus": "recruits"},
@@ -123,6 +123,8 @@ static func new_campaign(short: bool = false) -> void:
 	b3["veh"] = ["armoredcar"]
 	selected = -1
 	data["plan"] = _bravo_plan()
+	data["report"] = null
+	_snapshot()
 	save()
 
 static func _add_army(team: int, region: int, strength: int) -> Dictionary:
@@ -134,6 +136,8 @@ static func _add_army(team: int, region: int, strength: int) -> Dictionary:
 	var a2 = {"id": data["next_id"], "team": team, "region": region, "str": 0, "moved": false, "men": [], "veh": [],
 		"name": names[n % names.size()] if n < names.size() else "%s %d" % [names[0], n + 1]}
 	data["next_id"] += 1
+	if team == 0:
+		a2["co"] = _new_co()
 	data["armies"].append(a2)
 	var cls = []
 	for k in range(strength):
@@ -177,7 +181,7 @@ static func can_buy(a: Dictionary, pack: String) -> String:
 	if a == null:
 		return "pick an army first"
 	var P = PACKS[pack]
-	if data["funds"][a["team"]] < cost(a["team"], pack):
+	if data["funds"][a["team"]] < cost_for(a, pack):
 		return "not enough in the war chest"
 	if not supplied(a["team"], a["region"]):
 		return "cut off: no recruits can reach it"
@@ -193,13 +197,191 @@ static func buy(a: Dictionary, pack: String) -> String:
 	if why != "":
 		return why
 	var P = PACKS[pack]
-	data["funds"][a["team"]] -= cost(a["team"], pack)
+	data["funds"][a["team"]] -= cost_for(a, pack)
 	if P.has("veh"):
 		a["veh"].append(P["veh"])
 	else:
-		add_men(a, P["cls"], 1 if has_bonus(a["team"], "training") else 0)
+		add_men(a, P["cls"], 1 if (has_bonus(a["team"], "training") or co_trait(a) == "trainer") else 0)
 	save()
 	return ""
+
+# ---------------------------------------------------------------- company commanders
+# Each of your companies has an officer in command, with a name and one thing he's good at. He's on the
+# field with his men (an officer you can see and lose): wounded, he's away for two turns and his company
+# does without what he brings; killed, the senior man takes over with a way of his own. Battles won
+# bring promotion.
+const CO_NAMES = ["Harker", "Lindqvist", "Okafor", "Brandt", "Moreau", "Tanaka", "Reyes", "Kowalski", "Fairbairn", "Achterberg", "Sutherland", "Vasquez", "Holm", "Petrov", "Nakamura", "Dunleavy"]
+const CO_RANKS = ["Capt.", "Maj.", "Col."]
+const CO_TRAITS = {
+	"fire": ["Fire-eater", "attacks 15% harder on paper; in a battle every man carries an extra grenade"],
+	"steady": ["Steady", "defends 15% better on paper; in a battle 12 more supply points to spend"],
+	"quarter": ["Quartermaster", "everything bought for this company costs 1 less"],
+	"scrounger": ["Scrounger", "3 more in the war chest after every battle he wins"],
+	"trainer": ["Old hand", "his recruits arrive already trained (one rank up)"],
+}
+
+static func _new_co() -> Dictionary:
+	var used = {}
+	for a in data.get("armies", []):
+		if a.has("co"):
+			used[a["co"]["name"]] = true
+	var free = CO_NAMES.filter(func(n): return not used.has(n))
+	var nm: String = free[randi() % free.size()] if not free.is_empty() else CO_NAMES[randi() % CO_NAMES.size()]
+	return {"name": nm, "trait": CO_TRAITS.keys()[randi() % CO_TRAITS.size()], "rank": 0, "wins": 0, "out": 0}
+
+# what he brings, or "" while he's away wounded (or for an army with no commander)
+static func co_trait(a) -> String:
+	if a == null or not a.has("co") or int(a["co"].get("out", 0)) > 0:
+		return ""
+	return str(a["co"]["trait"])
+
+static func co_name(a) -> String:
+	if a == null or not a.has("co"):
+		return ""
+	return "%s %s" % [CO_RANKS[clampi(int(a["co"]["rank"]), 0, 2)], a["co"]["name"]]
+
+static func co_text(a) -> String:
+	if a == null or not a.has("co"):
+		return ""
+	var c = a["co"]
+	var tr: Array = CO_TRAITS[str(c["trait"])]
+	var away = "  (wounded: back in %d turn%s)" % [int(c["out"]), "" if int(c["out"]) == 1 else "s"] if int(c["out"]) > 0 else ""
+	return "%s  ·  %s: %s%s" % [co_name(a), tr[0], tr[1], away]
+
+static func cost_for(a, pack: String) -> int:
+	var c = cost(a["team"], pack)
+	return maxi(1, c - 1) if co_trait(a) == "quarter" else c
+
+# what became of him in a battle: hit true if he went down
+static func _co_after(a, hit: bool, won: bool, where: String) -> Array:
+	var lines = []
+	if a == null or not a.has("co") or not (a in data["armies"]):
+		return lines
+	var c = a["co"]
+	if hit:
+		if randf() < 0.5:
+			var old = co_name(a)
+			a["co"] = _new_co()
+			lines.append("%s was killed at %s. %s takes over the %s (%s)." % [old, where, co_name(a), a["name"], CO_TRAITS[str(a["co"]["trait"])][0]])
+			data["fallen"].push_front({"name": old + " (commanding)", "cls": "officer", "vet": 3, "kills": 0, "battles": int(c["wins"]), "army": a["name"], "at": where, "turn": data["turn"], "co": true})
+		else:
+			c["out"] = 2
+			lines.append("%s was wounded at %s and is away for two turns." % [co_name(a), where])
+		return lines
+	if won and int(c.get("out", 0)) <= 0:
+		c["wins"] = int(c["wins"]) + 1
+		if co_trait(a) == "scrounger":
+			data["funds"][0] += 3
+			lines.append("%s's men come back with more than they left with: +3 to the war chest." % co_name(a))
+		if int(c["rank"]) < 2 and int(c["wins"]) in [2, 5]:
+			c["rank"] = int(c["rank"]) + 1
+			lines.append("%s %s is promoted %s." % [CO_RANKS[int(c["rank"]) - 1], c["name"], {"Maj.": "Major", "Col.": "Colonel"}[CO_RANKS[int(c["rank"])]]])
+	return lines
+
+# ---------------------------------------------------------------- reserves
+# Another of the side's companies in the region (the one being defended, or the one the attack set out
+# from) doesn't stand and watch: part of it comes up as reinforcements a couple of minutes into the
+# battle. What it loses there, it has lost.
+static var reserves: Array = []       # {"army", "team", "at", "n", "done"}
+
+static func _reserve_armies(b, t: int) -> Array:
+	if b == null:
+		return []
+	var main_id: int = int(b["army"]) if t == 0 else int(b["foe"])
+	var reg: int = int(b["region"]) if int(b["attacker"]) != t else int(b["from"])
+	return armies_at(reg, t).filter(func(a): return a["id"] != main_id)
+
+# what a side's company is worth on paper beyond its own strength: reserves behind it, and its commander
+static func _mods(b, t: int) -> float:
+	var k = 1.0 + 0.2 * _reserve_armies(b, t).size()
+	if t == 0:
+		var tr = co_trait(army(b["army"]))
+		if (tr == "fire" and int(b["attacker"]) == 0) or (tr == "steady" and int(b["attacker"]) == 1):
+			k *= 1.15
+	return k
+
+static func _plan_reserves(b) -> String:
+	reserves = []
+	var note = ""
+	for t in range(2):
+		var k = 0
+		for a in _reserve_armies(b, t):
+			var n = clampi(int(ceil(a["men"].size() / 2.0)), 0, 8)
+			if n <= 0:
+				continue
+			reserves.append({"army": a["id"], "team": t, "at": G.sim_time + 110.0 + 60.0 * k, "n": n, "done": false})
+			k += 1
+			if t == 0:
+				note += " · in reserve: %d men of the %s, coming up in about %d minutes" % [n, a["name"], 2 + k - 1]
+			else:
+				note += " · scouts report a second enemy company close by"
+	return note
+
+static func battle_step() -> void:
+	if not active or reserves.is_empty() or G.over or not G.started:
+		return
+	for r in reserves:
+		if r["done"] or G.sim_time < r["at"]:
+			continue
+		r["done"] = true
+		var a = army(r["army"])
+		if a == null:
+			continue
+		var t: int = r["team"]
+		var home: Vector3 = G.world.rally_point(t)
+		var sent = 0
+		for k in range(mini(int(r["n"]), a["men"].size())):
+			var m = a["men"][k]
+			var p: Vector3 = G.main._free_spot(home + Vector3(randf_range(-7, 7), 0, randf_range(-7, 7)))
+			var s = G.main.spawn_soldier(t, p.x, p.z, "")
+			if s == null:
+				continue
+			s.set_class(str(m["cls"]))
+			s.set_meta("reserve", a["id"])
+			s.set_meta("res_k", k)
+			if t == 0:
+				s.sname = "%s %s" % [RANK_S[clampi(int(m["vet"]), 0, 3)], m["name"]]
+				s.set_vet(m["vet"])
+				_apply_perk(s, str(m.get("perk", "")))
+			sent += 1
+		if t == 0:
+			G.ui.message("%d men of the %s have come up from reserve" % [sent, a["name"]])
+			G.ui.radio(0, "%s here: %d men coming up to join you" % [a["name"], sent])
+		else:
+			G.ui.radio(0, "Enemy reinforcements arriving: a second company has joined the fight")
+
+# what the reserves lost is taken off the companies they came from
+static func _reserve_losses() -> Array:
+	var lines = []
+	for r in reserves:
+		if not r["done"]:
+			continue
+		var a = army(r["army"])
+		if a == null:
+			continue
+		var dead_k = {}
+		var dead_n = 0
+		for s in G.soldiers:
+			if s.has_meta("reserve") and int(s.get_meta("reserve")) == int(r["army"]) and s.state == "dead":
+				dead_k[int(s.get_meta("res_k"))] = s.kills
+				dead_n += 1
+		if dead_n == 0:
+			continue
+		if int(r["team"]) == 0:
+			var keep = []
+			for k in range(a["men"].size()):
+				if dead_k.has(k):
+					_fell(a["men"][k], a, int(dead_k[k]))
+				else:
+					keep.append(a["men"][k])
+			a["men"] = keep
+			lines.append("%s lost %d of the men it sent up." % [a["name"], dead_n])
+		else:
+			for k in range(mini(dead_n, a["men"].size() - 1)):
+				a["men"].pop_back()
+		_sync(a)
+	reserves = []
+	return lines
 
 static func can_raise(team: int) -> String:
 	if data["funds"][team] < RAISE_COST:
@@ -280,6 +462,11 @@ static func _upgrade() -> void:
 			["headline", {"head": "THE WAR GOES ON", "sub": "", "turn": data.get("turn", 1)}]]:
 		if not data.has(k[0]):
 			data[k[0]] = k[1]
+	for a in data["armies"]:
+		if a["team"] == 0 and not a.has("co"):
+			a["co"] = _new_co()
+	if not data.has("report"):
+		data["report"] = null
 	data["version"] = VERSION
 
 static func load_saved() -> bool:
@@ -562,6 +749,10 @@ static func _new_turn() -> Array:
 				continue
 			a["moved"] = false
 			_sync(a)
+			if a.has("co") and int(a["co"].get("out", 0)) > 0:
+				a["co"]["out"] = int(a["co"]["out"]) - 1
+				if int(a["co"]["out"]) == 0:
+					lines.append("%s is back with the %s." % [co_name(a), a["name"]])
 			if net.has(a["region"]):
 				# stragglers and the walking wounded come back (faster, and to a bigger army, with a hospital)
 				var hosp = has_bonus(t, "hospital")
@@ -587,6 +778,7 @@ static func _new_turn() -> Array:
 			_bravo_spends(lines)
 	_event(lines)
 	data["turn"] += 1
+	data["report_due"] = true
 	data["plan"] = _bravo_plan()
 	var ours = data["owner"].count(0)
 	if data["owner"][HQ[1]] == 0:
@@ -753,11 +945,71 @@ static func over() -> int:
 	return -1
 
 static func _log(lines: Array) -> void:
-	if lines.is_empty():
+	if not lines.is_empty():
+		data["log"] = lines + data["log"]
+		if data["log"].size() > 30:
+			data["log"] = data["log"].slice(0, 30)
+		if not data.has("turn_log"):
+			data["turn_log"] = []
+		data["turn_log"] += lines
+	if data.get("report_due", false):
+		data["report_due"] = false
+		_make_report()
+
+# ---------------------------------------------------------------- the turn report
+# Everything that happened since your last turn began, on one sheet: what Bravo did, what it cost you,
+# what changed on the map and in the war chest, and whatever else came in. It's put up when the new turn
+# starts and stays until you've read it.
+static func _snapshot() -> void:
+	var st = {}
+	for a in data["armies"]:
+		st[a["id"]] = [a["name"], a["team"], a["men"].size(), a["veh"].size()]
+	data["snap"] = {"turn": data["turn"], "owner": data["owner"].duplicate(), "funds": data["funds"].duplicate(), "fallen": data.get("fallen", []).size(), "armies": st}
+	data["turn_log"] = []
+
+static func _make_report() -> void:
+	var sn = data.get("snap")
+	if sn == null:
+		_snapshot()
 		return
-	data["log"] = lines + data["log"]
-	if data["log"].size() > 30:
-		data["log"] = data["log"].slice(0, 30)
+	var bravo = []
+	var other = []
+	for l in data.get("turn_log", []):
+		var t = str(l)
+		if t.begins_with("Bravo") or t.find("to Bravo") >= 0 or t.find("Bravo's") >= 0:
+			bravo.append(t)
+		elif not t.begins_with("The war chest grows"):
+			other.append(t)
+	var gained = []
+	var lost = []
+	for i in range(data["owner"].size()):
+		var was = int(sn["owner"][i]) if i < sn["owner"].size() else -1
+		if was != int(data["owner"][i]):
+			if int(data["owner"][i]) == 0:
+				gained.append(REGIONS[i]["name"])
+			elif was == 0:
+				lost.append(REGIONS[i]["name"])
+	var nf = maxi(0, data.get("fallen", []).size() - int(sn["fallen"]))
+	var names = []
+	for k in range(mini(nf, 6)):
+		var f = data["fallen"][k]
+		names.append(str(f["name"]) if f.get("co", false) else "%s %s" % [RANK_S[clampi(int(f["vet"]), 0, 3)], f["name"]])
+	var veh_lost = 0
+	var gone = []
+	var now = {}
+	for a in data["armies"]:
+		now[a["id"]] = a
+	for id in sn["armies"]:
+		var was_a: Array = sn["armies"][id]
+		if int(was_a[1]) != 0:
+			continue
+		if not now.has(id):
+			gone.append(str(was_a[0]))
+		else:
+			veh_lost += maxi(0, int(was_a[3]) - now[id]["veh"].size())
+	data["report"] = {"turn": int(sn["turn"]), "seen": false, "bravo": bravo, "other": other, "gained": gained, "lost": lost, "fallen": nf, "names": names,
+		"veh_lost": veh_lost, "gone": gone, "funds": [int(sn["funds"][0]), int(data["funds"][0])], "regions": [sn["owner"].count(0), data["owner"].count(0)]}
+	_snapshot()
 
 # ---------------------------------------------------------------- battles
 static func pending_battle() -> Variant:
@@ -819,8 +1071,8 @@ static func odds() -> Array:
 		return [1.0, "even"]
 	var ours = army(b["army"])
 	var theirs = army(b["foe"])
-	var p0 = _power(ours, b["attacker"] == 1, ours != null and supplied(0, ours["region"] if b["attacker"] == 1 else b["from"]))
-	var p1 = _power(theirs, b["attacker"] == 0, theirs != null and supplied(1, theirs["region"] if b["attacker"] == 0 else b["from"]))
+	var p0 = _power(ours, b["attacker"] == 1, ours != null and supplied(0, ours["region"] if b["attacker"] == 1 else b["from"])) * _mods(b, 0)
+	var p1 = _power(theirs, b["attacker"] == 0, theirs != null and supplied(1, theirs["region"] if b["attacker"] == 0 else b["from"])) * _mods(b, 1)
 	var k = p0 / p1
 	return [k, "very good" if k > 1.6 else ("good" if k > 1.2 else ("even" if k > 0.85 else ("poor" if k > 0.6 else "bad")))]
 
@@ -946,6 +1198,25 @@ static func attack(i: int, mode: String = "", size: int = SQUAD, supply: Array =
 				made += 1
 		if made > 0:
 			note += " · dug in"
+	# the company commander is on the field with his men
+	if ours != null and ours.has("co") and int(ours["co"].get("out", 0)) <= 0:
+		var hp0: Vector3 = G.main._free_spot(G.world.rally_point(0) + Vector3(randf_range(-4, 4), 0, randf_range(-4, 4)))
+		var cs = G.main.spawn_soldier(0, hp0.x, hp0.z, "")
+		if cs != null:
+			cs.set_class("officer")
+			cs.sname = co_name(ours)
+			cs.set_vet(2)
+			cs.set_meta("co", true)
+		match co_trait(ours):
+			"fire":
+				for s in G.soldiers:
+					if s.team == 0 and s.state != "dead":
+						s.grenades += 1
+			"steady":
+				if Support.points.size() > 0:
+					Support.points[0] += 12
+		note += " · %s commanding (%s)" % [co_name(ours), CO_TRAITS[str(ours["co"]["trait"])][0]]
+	note += _plan_reserves(b)
 	G.ui.message("Battle for %s · %d of our vehicles%s" % [r["name"] if not stage2 else "the Ministry", nveh, note])
 	var ot = objective_text()
 	if ot != "":
@@ -1046,7 +1317,7 @@ static func _survivors(a: Dictionary, lost_it: bool) -> Array:
 	var extra = []
 	last_before = before if t == 0 else last_before
 	for s in G.soldiers:
-		if s.team != t or s.zombie:
+		if s.team != t or s.zombie or s.has_meta("reserve") or s.has_meta("co"):
 			continue
 		var alive = s.state != "dead"
 		if t == 0 and s.has_meta("roster"):
@@ -1166,6 +1437,12 @@ static func battle_over(winner: int) -> String:
 			_survivors(theirs, winner != 1)
 		if winner == 0 and ours != null:
 			lines += _objective_result(b, ours, wrecked, foe_veh_left, foe_veh_kind)
+		lines += _reserve_losses()
+		var co_hit = false
+		for cs in G.soldiers:
+			if cs.has_meta("co") and cs.state == "dead":
+				co_hit = true
+		lines += _co_after(ours, co_hit, winner == 0, r["name"] if not stage2 else "the Ministry")
 		lines += _outcome(b, winner, ours, theirs)
 	_headline(lines)
 	_log(lines)
@@ -1303,8 +1580,8 @@ static func auto_resolve() -> String:
 	var theirs = army(b["foe"])
 	var sup0 = ours != null and supplied(0, ours["region"] if b["attacker"] == 1 else b["from"])
 	var sup1 = theirs != null and supplied(1, theirs["region"] if b["attacker"] == 0 else b["from"])
-	var p0 = _power(ours, b["attacker"] == 1, sup0) * randf_range(0.85, 1.15)
-	var p1 = _power(theirs, b["attacker"] == 0, sup1) * randf_range(0.85, 1.15)
+	var p0 = _power(ours, b["attacker"] == 1, sup0) * randf_range(0.85, 1.15) * _mods(b, 0)
+	var p1 = _power(theirs, b["attacker"] == 0, sup1) * randf_range(0.85, 1.15) * _mods(b, 1)
 	var winner = 0 if p0 >= p1 else 1
 	var ratio = maxf(p0, p1) / maxf(minf(p0, p1), 0.5)
 	var lose_frac = clampf(0.3 + 0.12 * ratio, 0.42, 0.8)
@@ -1314,6 +1591,7 @@ static func auto_resolve() -> String:
 		lines += _auto_losses(ours, win_frac if winner == 0 else lose_frac, winner == 0)
 	if theirs != null:
 		_auto_losses(theirs, win_frac if winner == 1 else lose_frac, winner == 1)
+	lines += _co_after(ours, randf() < (0.06 if winner == 0 else 0.15), winner == 0, REGIONS[int(b["region"])]["name"])
 	lines += _outcome(b, winner, ours, theirs)
 	_headline(lines)
 	_log(lines)

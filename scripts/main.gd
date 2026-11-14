@@ -68,8 +68,20 @@ func _ready() -> void:
 			_aud_test()
 		if a == "--stacktest":
 			_stack_test()
+		if a == "--restest":
+			_res_test()
+		if a == "--walltest":
+			_wall_test()
+		if a == "--savetest":
+			_save_test()
+		if a.begins_with("--finishshot="):
+			_finish_shot(a.substr(13))
+		if a.begins_with("--casshot="):
+			_cas_shot(a.substr(10))
 		if a == "--zedtest":
 			_zed_test()
+		if a == "--zbench":
+			_z_bench()
 		if a == "--flanktest":
 			_flank_test()
 		if a == "--orderstest":
@@ -513,6 +525,7 @@ func stop_attract() -> void:
 		preview_map(G.map_id)
 
 func start_game(o: Dictionary) -> void:
+	apply_graphics()
 	shadow_ups = 0
 	shadow_low_t = 0.0
 	shadow_high_t = 0.0
@@ -816,6 +829,7 @@ func _sim_step() -> void:
 		f.call()
 	Reinforce.step(G.DT)
 	Build.step(G.DT)
+	Campaign.battle_step()
 	var ta = Time.get_ticks_usec()
 	for v in G.vehicles.duplicate():
 		if is_instance_valid(v):
@@ -828,12 +842,16 @@ func _sim_step() -> void:
 	for s in G.soldiers.duplicate():
 		if not is_instance_valid(s):
 			continue
-		if big and s.lod_frozen and s.state == "alive":
+		if (big or s.zombie) and s.lod_frozen and s.state == "alive":
 			# the far ones think every third tick (every other while they're in a fight)
 			# every third tick when they're not in a fight (every other while they are): with their rifles
 			# gliding along with them in between, it doesn't show from the commander view
-			var every = 2 if s.vis_t != null or s.supp > 0.3 else 3
+			var every = 2 if s.vis_t != null or s.supp > 0.3 or s.zombie else 3
 			var rem = (fr + s.id) % every
+			if rem != 0 and s.zombie and Soldier.horde_lean:
+				# (the far-off dead move thirty times a second, not sixty: nothing of theirs is touched on
+				# the frames in between, which is most of what each one cost)
+				continue
 			if rem != 0:
 				# (of the in-between frames, one in two gets a fresh pose; on the other he's carried along as he is)
 				if Soldier.PERF:
@@ -930,6 +948,38 @@ var shadow_auto = 2
 var shadow_low_t = 0.0
 var shadow_high_t = 0.0
 var shadow_ups = 0
+# ---------------------------------------------------------------- graphics presets
+# Low, medium and high set several things at once: how sharp the 3D picture is drawn, shadows, how far
+# off men and vehicles are shown in full detail, how many soldiers there can be, and the grass.
+const GRAPHICS = {
+	"low": {"render_scale": 0.75, "shadow_mode": "off", "lod_dist": 30.0, "max_soldiers": 200, "grass": false},
+	"medium": {"render_scale": 1.0, "shadow_mode": "auto", "lod_dist": 55.0, "max_soldiers": 300, "grass": true},
+	"high": {"render_scale": 1.0, "shadow_mode": "all", "lod_dist": 80.0, "max_soldiers": 450, "grass": true},
+}
+
+# which preset the settings match now ("custom" if none)
+func graphics_preset() -> String:
+	for k in GRAPHICS:
+		var ok = true
+		for f in GRAPHICS[k]:
+			if str(G.settings.get(f, GRAPHICS["medium"][f])) != str(GRAPHICS[k][f]):
+				ok = false
+		if ok:
+			return k
+	return "custom"
+
+func set_graphics(k: String) -> void:
+	for f in GRAPHICS[k]:
+		G.settings[f] = GRAPHICS[k][f]
+	G.settings["shadows"] = true
+	shadow_auto = 2
+	apply_graphics()
+	apply_shadows()
+	G.ui.message("Graphics: %s%s" % [k, " (grass changes with the next battle)" if G.started else ""])
+
+func apply_graphics() -> void:
+	get_viewport().scaling_3d_scale = clampf(float(G.settings.get("render_scale", 1.0)), 0.5, 1.0)
+
 func apply_shadows() -> void:
 	if sun == null:
 		return
@@ -984,7 +1034,84 @@ func end_game(t: int) -> void:
 	G.over = true
 	if G.player != null:
 		G.pc.leave_soldier()
+	if _finish_ok():
+		_finish_start(t)
+		return
+	_finish_end(t)
+
+# ---------------------------------------------------------------- the slow-motion finish
+# When a battle ends the result doesn't come up at once: for a few seconds everything runs at a quarter
+# speed while the camera circles the last thing that happened (the shell that settled it, or the last
+# man to fall), then the result is shown. Any key or click skips it. It isn't a recording played back:
+# it's the end of the battle itself, slowed down.
+var finish_left = 0.0
+var finish_team = 0
+var finish_p = Vector3.ZERO
+var finish_a = 0.0
+var finish_ms = 0
+
+func _finish_ok() -> bool:
+	# (not in the automatic tests, which end battles by the dozen and wait on what follows)
+	var testing = not OS.get_cmdline_user_args().is_empty() and _arg("finishshot", "") == ""
+	return G.settings.get("finish_cam", true) and not testing and DisplayServer.get_name() != "headless" and not G.editor.active
+
+func _finish_start(t: int) -> void:
+	finish_team = t
+	finish_left = 4.5
+	finish_ms = Time.get_ticks_msec()
+	var cap = "The field is %s" % ("ours" if t == 0 else "theirs")
+	finish_p = G.world.capture
+	if G.sim_time - float(Combat.last_boom["t"]) < 2.5 and float(Combat.last_boom["pow"]) >= 1.0:
+		finish_p = Combat.last_boom["p"]
+		cap = "The last shell"
+	elif G.sim_time - float(Combat.last_kill["t"]) < 6.0:
+		finish_p = Combat.last_kill["p"]
+		cap = "The last to fall: %s" % str(Combat.last_kill["name"])
+	finish_p.y = G.world.ground_y(finish_p.x, finish_p.z) + 1.0
+	var cam = get_viewport().get_camera_3d()
+	finish_a = atan2(cam.global_position.z - finish_p.z, cam.global_position.x - finish_p.x) if cam != null else 0.0
+	Engine.time_scale = 0.22
+	G.ui.finish_bars(true, cap)
+	if not RenderingServer.frame_pre_draw.is_connected(_finish_cam):
+		RenderingServer.frame_pre_draw.connect(_finish_cam)
+
+# (run just before each frame is drawn, so it has the last word on where the camera is)
+func _finish_cam() -> void:
+	if finish_left <= 0.0:
+		return
+	var now = Time.get_ticks_msec()
+	var real = (now - finish_ms) / 1000.0
+	finish_ms = now
+	finish_left -= real
+	finish_a += real * 0.28
+	var cam = get_viewport().get_camera_3d()
+	if cam != null:
+		var k = clampf(1.0 - finish_left / 4.5, 0.0, 1.0)
+		var rad = lerpf(11.0, 7.5, k)
+		var from = finish_p + Vector3(cos(finish_a) * rad, lerpf(4.5, 2.2, k), sin(finish_a) * rad)
+		from.y = maxf(from.y, G.world.ground_y(from.x, from.z) + 1.2)
+		cam.global_position = from
+		cam.look_at(finish_p, Vector3.UP)
+		cam.force_update_transform()      # (this late in the frame the move isn't passed on to the renderer otherwise)
+	if finish_left <= 0.0:
+		_finish_stop()
+
+func _finish_stop() -> void:
+	if finish_left > -50.0:
+		finish_left = -99.0
+		Engine.time_scale = 1.0
+		G.ui.finish_bars(false, "")
+		_finish_end(finish_team)
+
+func _input(ev: InputEvent) -> void:
+	if finish_left > 0.0 and ((ev is InputEventKey and ev.pressed) or (ev is InputEventMouseButton and ev.pressed)):
+		finish_left = 0.0
+		_finish_stop()
+		get_viewport().set_input_as_handled()
+
+func _finish_end(t: int) -> void:
 	G.ui.show_win(t)
+	G.audio.sting(t == 0)
 	var dres = Modes.daily_over(t)
 	if dres != "":
 		G.ui.message(dres)
@@ -3834,6 +3961,51 @@ func _kit_shot(dir: String) -> void:
 	await _snap(dir, "kit_aim_left")
 	get_tree().quit()
 
+# --zbench: what one zombie costs. An empty field, one man a long way off for them to walk at, and the
+# dead added thirty at a time; the whole physics frame is timed at each size, with the horde savings on
+# and off, from high up and from close by.
+func _z_bench() -> void:
+	await _wait(0.5)
+	for lean in [true, false]:
+		for cam_h in [60.0, 4.0]:
+			Soldier.horde_lean = lean
+			seed(2)
+			start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+			await _wait(1.0)
+			var bait = spawn_soldier(0, -150.0, 0.0, "rifle")
+			bait.mag = 0
+			bait.reserve = 0
+			bait.grenades = 0
+			bait.hp = 100000.0
+			bait.order = {"mode": "hold", "point": bait.pos}
+			await _look(Vector3(60, cam_h, 0), Vector3(40, 1, 0))
+			var line = "ZBENCH savings %s, camera %s:" % ["on" if lean else "off", "high" if cam_h > 10.0 else "low among them"]
+			var base = 0.0
+			var zn = 0
+			for n in [0, 30, 60]:
+				while zn < n:
+					var z = spawn_soldier(1, 30.0 + (zn % 10) * 2.2, -12.0 + (zn / 10) * 2.2, "rifle")
+					Modes.make_zombie(z)
+					zn += 1
+				await _wait(4.0)
+				var samples = []
+				for f in range(300):
+					await get_tree().physics_frame
+					samples.append(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
+				samples.sort()
+				var ms: float = samples[samples.size() / 2]
+				if n == 0:
+					base = ms
+				var frozen = 0
+				for sl in G.soldiers:
+					if sl.zombie and sl.lod_frozen:
+						frozen += 1
+				line += "  %d: %.1f ms%s" % [n, ms, "" if n == 0 else " (%.2f each, %d posed)" % [(ms - base) / n, frozen]]
+			print(line)
+			end_game(0)
+			await _wait(1.0)
+	get_tree().quit()
+
 # --zedtest: a zombie battle left to run. What the men do when the dead get close (shoves, how many
 # are wedged with nowhere to go), what they throw, how many bodies are kept lying about, how many of the
 # dead cast shadows, and what a tick and a frame cost.
@@ -3844,15 +4016,29 @@ func _zed_test() -> void:
 	start_game({"map": _arg("map", "town"), "mode": "horde", "size": int(_arg("size", "12")), "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
 	G.pc.free_pos = G.world.capture + Vector3(-20, 45, 0)
 	await _look(G.world.capture + Vector3(-20, 45, 0), G.world.capture)
+	if _arg("low", "") != "":
+		# (down among the defenders, as when you're playing one of them)
+		await _look(G.world.capture + Vector3(-6, 3.0, 0), G.world.capture + Vector3(10, 1.5, 0))
 	var secs = float(_arg("secs", "180"))
 	var t = 0.0
 	var worst_ms = 0.0
 	var corner_s = 0.0
 	var close_s = 0.0
+	var busy_ms = 0.0
+	var busy_z = 0.0
+	var busy_n = 0
 	while t < secs:
 		await _wait(1.0)
 		t += 1.0
 		worst_ms = maxf(worst_ms, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
+		var zup = 0
+		for s in G.soldiers:
+			if s.zombie and s.state != "dead":
+				zup += 1
+		if zup >= 10 and t > 5.0:
+			busy_ms += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
+			busy_z += zup
+			busy_n += 1
 		for s in G.soldiers:
 			if s.state == "alive" and not s.zombie:
 				if G.sim_time - float(s.get_meta("cornered_t", -99.0)) < 1.0:
@@ -3879,7 +4065,268 @@ func _zed_test() -> void:
 			print("ZEDTEST %3ds: men %d, the dead up %d (casting shadows %d), bodies lying %d | shoves %d, thrown %s | tick %.1f ms (worst %.1f)%s" % [int(t), men, zs, zshadow, bodies, Combat.shove_n, str(Combat.thrown),
 				Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, worst_ms,
 				"" if DisplayServer.get_name() == "headless" else " | draws %d, fps %d" % [RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME), Engine.get_frames_per_second()]])
+	print("ZEDTEST with ten or more of the dead up (%d samples): mean tick %.1f ms with %.0f of them on average" % [busy_n, busy_ms / maxf(busy_n, 1), busy_z / maxf(busy_n, 1)])
+	# the things that give a reason to move
+	var pts0 = Support.points[0]
+	var d_before = Modes.drops.size()
+	Modes._new_drop()
+	var dp: Vector3 = Modes.drops[Modes.drops.size() - 1]["p"]
+	var runner = null
+	for s in G.soldiers:
+		if s.team == 0 and s.state == "alive":
+			runner = s
+			break
+	var line = "wave %d from the %s | drops waiting before %d | new drop %.0f m from the middle" % [Modes.horde_wave, Modes.SIDE_NAMES[maxi(Modes.horde_side, 0)], d_before, G.dist2d(dp, G.world.capture)]
+	if runner != null:
+		runner.pos = dp + Vector3(1.0, 0, 0)
+		runner.reserve = 0
+		await _wait(0.5)
+		line += " | fetched: points %d -> %d, his reserve %d, drops left %d" % [pts0, Support.points[0], runner.reserve, Modes.drops.size()]
+	print("ZEDTEST ", line)
+	print("ZEDTEST keep: building %d at %.0f m from the middle | %s | spade blows so far %d" % [Modes.keep(), G.dist2d(Modes.keep_pos(), G.world.capture), Modes.fall_back(), Combat.spade_n])
+	await _wait(12.0)
+	var inside = 0
+	var men_n = 0
+	for s in G.soldiers:
+		if s.team == 0 and s.state == "alive":
+			men_n += 1
+			if Doors.building_at(s.pos) == Modes.keep():
+				inside += 1
+	var dbg = []
+	for s in G.soldiers:
+		if s.team == 0 and s.state == "alive":
+			dbg.append("%.0fm %s %s mv=%s" % [G.dist2d(s.pos, Modes.keep_pos()), str(s.task), "ord" if s.order != null else "-", str(s.move_target != null)])
+	print("ZEDTEST 12 s after the order: %d of %d men inside the keep | %s" % [inside, men_n, str(dbg)])
 	print("ZEDTEST over %ds: man-seconds with a zombie within 3 m %d, of which wedged with no way out %d" % [int(secs), int(close_s), int(corner_s)])
+	get_tree().quit()
+
+# --casshot=DIR: casualties as the commander sees them. Two of your men are put down wounded in a battle
+# you're commanding, and a picture is taken from above.
+func _cas_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	await _wait(0.5)
+	start_game({"map": "field", "mode": "commander", "size": 8, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(3.0)
+	var down = []
+	for s in G.soldiers:
+		if s.team == 0 and s.state == "alive" and s.cls != "medic" and down.size() < 2:
+			s.hp = 30.0
+			s.fall(0.5)
+			s.make_wounded()
+			down.append(s)
+	await _wait(4.0)
+	var mid: Vector3 = (down[0].pos + down[1].pos) * 0.5 if down.size() == 2 else G.world.rally_point(0)
+	await _look(mid + Vector3(-14, 24, 0), mid)
+	await _wait(1.0)
+	var helped = 0
+	for s in down:
+		if s.medic != null and is_instance_valid(s.medic):
+			helped += 1
+	print("CASSHOT %d men down (%s), %d with someone coming, command view %s" % [down.size(), str(down.map(func(x): return x.state)), helped, G.ui.cmdhud.active() if "cmdhud" in G.ui else "?"])
+	await _snap(dir, "casualties")
+	get_tree().quit()
+
+# --finishshot=DIR: the slow-motion finish. A small battle is ended just after a man falls; a picture is
+# taken part way through the finish and another once the result is up, with the state at each point.
+func _finish_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	await _wait(0.5)
+	start_game({"map": "town", "mode": "deathmatch", "size": 8, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(6.0)
+	var victim = null
+	for s in G.soldiers:
+		if s.team == 1 and s.state == "alive":
+			victim = s
+			break
+	victim.hp = 0.0
+	Combat.kill(victim, null, false)
+	await _wait(0.2)
+	end_game(0)
+	print("FINISHSHOT started: left %.1f s, time scale %.2f, win panel up %s, focus %.0f m from the man who fell" % [finish_left, Engine.time_scale, G.ui.win.visible, G.dist2d(finish_p, victim.pos)])
+	for k in range(3):
+		await get_tree().process_frame
+	await _snap(dir, "finish_slowmo")
+	var guard = 0
+	while finish_left > 0.0 and guard < 600:
+		guard += 1
+		await get_tree().process_frame
+	await get_tree().process_frame
+	print("FINISHSHOT ended after %d frames: time scale %.2f, win panel up %s, bars shown %s" % [guard, Engine.time_scale, G.ui.win.visible, G.ui.fin_bars[0].visible])
+	await _snap(dir, "finish_result")
+	get_tree().quit()
+
+# --savetest: a battle saved part way and loaded again: what was there before against what comes back.
+func _save_test() -> void:
+	await _wait(0.5)
+	seed(9)
+	for cfg in [["town", "capture"], ["town", "horde"]]:
+		start_game({"map": cfg[0], "mode": cfg[1], "size": 10, "limit": 100, "reinforce": true, "armor": "light", "teams": 2})
+		await _wait(45.0)
+		# knock a few pieces of the map down so there's something to remember
+		var knocked = 0
+		for c in G.world.static_cols:
+			if c.alive and c.dest and knocked < 5:
+				G.world.ruin_col(c)
+				knocked += 1
+		var count = func() -> Array:
+			var men = [0, 0]
+			var hp = 0.0
+			var z = 0
+			for s in G.soldiers:
+				if s.state != "dead" and s.vehicle == null:
+					men[mini(s.team, 1)] += 1
+					hp += s.hp
+					if s.zombie:
+						z += 1
+			return [men[0], men[1], int(hp), z, G.vehicles.filter(func(v): return is_instance_valid(v) and not v.dead).size(),
+				G.world.static_cols.filter(func(c): return not c.alive and c.dest).size(), str(G.score), str(Support.points), Build.sites.filter(func(st): return not st["dead"]).size(), Modes.horde_wave]
+		var before: Array = count.call()
+		var named = ""
+		for s in G.soldiers:
+			if s.team == 0 and s.state == "alive":
+				named = "%s/%s/%d rounds" % [s.sname, s.wid, s.reserve]
+				break
+		var msg = Scenario.save_battle()
+		var saved_names = {}
+		for s in G.soldiers:
+			if s.state != "dead" and s.vehicle == null:
+				saved_names[s.sname] = true
+		end_game(1)
+		await _wait(2.0)
+		var msg2 = Scenario.load_battle()
+		await _wait(1.0)
+		var after: Array = count.call()
+		var found = ""
+		for s in G.soldiers:
+			if s.team == 0 and named.begins_with(s.sname + "/"):
+				found = "%s/%s/%d rounds" % [s.sname, s.wid, s.reserve]
+				break
+		print("SAVETEST %s/%s: %s | %s" % [cfg[0], cfg[1], msg, msg2])
+		var extra = []
+		for s in G.soldiers:
+			if s.state != "dead" and s.vehicle == null and not saved_names.has(s.sname):
+				var nv = 999.0
+				var nk = ""
+				for v in G.vehicles:
+					if is_instance_valid(v) and G.dist2d(v.pos, s.pos) < nv:
+						nv = G.dist2d(v.pos, s.pos)
+						nk = v.kind + ("(fleet)" if v.has_meta("fleet") else "")
+				extra.append("%s t%d %s %s near %s %.0fm metas %s" % [s.sname, s.team, s.cls, s.state, nk, nv, str(s.get_meta_list())])
+		print("SAVETEST   on foot now but not saved: %s" % str(extra))
+		print("SAVETEST   before: men on foot %d v %d (hp %d, zombies %d), vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d" % before)
+		print("SAVETEST   after:  men on foot %d v %d (hp %d, zombies %d), vehicles %d, ruins %d, score %s, supply %s, structures %d, wave %d" % after)
+		print("SAVETEST   one man: %s -> %s | battle running again: %s (mode %s)" % [named, found, G.started and not G.over, G.mode])
+		end_game(1)
+		await _wait(1.0)
+	get_tree().quit()
+
+# --walltest: the Ministry's walls. Grenades against an inside wall and against the outside one: what
+# comes down, and whether the outside still stands.
+func _wall_test() -> void:
+	await _wait(0.5)
+	start_game({"map": "office", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.0)
+	var W = G.world
+	var inner = null
+	var outer = null
+	var n_in = 0
+	var n_out = 0
+	for c in W.static_cols:
+		if not c.alive or c.hi.y - c.lo.y < 2.0 or c.lo.y > 0.5:
+			continue
+		var thin = minf(c.hi.x - c.lo.x, c.hi.z - c.lo.z)
+		if thin > 0.5:
+			continue
+		if c.dest:
+			n_in += 1
+			if inner == null and absf((c.lo.x + c.hi.x) * 0.5) < 30.0:
+				inner = c
+		else:
+			n_out += 1
+			if outer == null:
+				outer = c
+	print("WALLTEST ground-floor wall pieces: %d can be destroyed (inside), %d cannot (outside and stairwells)" % [n_in, n_out])
+	for pr in [["inside", inner], ["outside", outer]]:
+		var c = pr[1]
+		if c == null:
+			print("WALLTEST no %s wall found" % pr[0])
+			continue
+		var p = Vector3((c.lo.x + c.hi.x) * 0.5, 1.0, (c.lo.z + c.hi.z) * 0.5)
+		var alive0 = W.static_cols.filter(func(x): return x.alive).size()
+		var hits = 0
+		while c.alive and hits < 6:
+			hits += 1
+			Combat.explode(p + Vector3(0.4, 0, 0.4), null, 1.0)
+			await _wait(0.4)
+		print("WALLTEST %s wall at (%.0f, %.0f), %.0f hp: %s after %d grenade-sized blasts; pieces down in all %d" % [pr[0], p.x, p.z, c.hp if "hp" in c else -1.0, "DOWN" if not c.alive else "still standing", hits, alive0 - W.static_cols.filter(func(x): return x.alive).size()])
+	get_tree().quit()
+
+# --restest: a campaign battle with a second company in reserve and the company commander on the field:
+# the reserve comes up, what it loses is taken off it, the commander can fall, and the turn report is made.
+func _res_test() -> void:
+	await _wait(0.5)
+	seed(4)
+	var out = []
+	Campaign.new_campaign()
+	var D = Campaign.data
+	var a0 = Campaign.army_at(0, 0)
+	var a1 = Campaign.army_at(1, 0)
+	Campaign.move(a0, 1)
+	a1["moved"] = false
+	a0["moved"] = false
+	out.append("commanders: %s | %s" % [Campaign.co_text(a0).substr(0, 70), Campaign.co_text(a1).substr(0, 70)])
+	var res_before = a0["men"].size() if Campaign.army_at(1, 0) == a1 else a1["men"].size()
+	var top = Campaign.army_at(1, 0)
+	var other = a0 if top == a1 else a1
+	res_before = other["men"].size()
+	Campaign.move(top, 3)
+	out.append("odds with a company in reserve: %.2f (%s)" % [Campaign.odds()[0], Campaign.odds()[1]])
+	Campaign.start_battle("command")
+	await _wait(4.0)
+	out.append("battle on %s: reserves planned %d, commander on the field: %s" % [G.map_id, Campaign.reserves.size(), str(G.soldiers.filter(func(x): return x.has_meta("co")).map(func(x): return x.sname))])
+	var n_before = G.soldiers.filter(func(x): return x.team == 0 and x.state != "dead").size()
+	for r in Campaign.reserves:
+		r["at"] = G.sim_time + 1.0
+	await _wait(3.0)
+	var rs = G.soldiers.filter(func(x): return x.has_meta("reserve") and x.team == 0)
+	out.append("reserve arrived: %d men (ours on the field %d -> %d), first is '%s' a %s" % [rs.size(), n_before, G.soldiers.filter(func(x): return x.team == 0 and x.state != "dead").size(), rs[0].sname if not rs.is_empty() else "-", rs[0].cls if not rs.is_empty() else "-"])
+	# two of the reserve and the commander are killed
+	for k in range(mini(2, rs.size())):
+		rs[k].hp = 0.0
+		Combat.kill(rs[k], null, false)
+	for cs in G.soldiers:
+		if cs.has_meta("co"):
+			cs.hp = 0.0
+			Combat.kill(cs, null, false)
+	await _wait(1.0)
+	end_game(0)
+	await _wait(3.5)
+	out.append("after the battle: reserve company %d -> %d men | top company's commander now: %s" % [res_before, other["men"].size(), Campaign.co_text(top).substr(0, 80)])
+	for l in D["log"].slice(0, 8):
+		out.append("   log: " + str(l).substr(0, 110))
+	var lines = Campaign.end_turn()
+	var guard = 0
+	while Campaign.pending_battle() != null and guard < 3:
+		guard += 1
+		Campaign.auto_resolve()
+	var rep = D.get("report")
+	if rep != null:
+		out.append("turn report for turn %d: Bravo's moves %d, fell %d (%s), gained %s, lost %s, war chest %d -> %d, dispatches %d" % [int(rep["turn"]), rep["bravo"].size(), int(rep["fallen"]), ", ".join(rep["names"]).substr(0, 60), str(rep["gained"]), str(rep["lost"]), int(rep["funds"][0]), int(rep["funds"][1]), rep["other"].size()])
+	else:
+		out.append("turn report: none made")
+	for l in out:
+		print("RESTEST ", l)
+	if _arg("pic", "") != "":
+		G.ui.visible = true
+		G.ui._show_campaign()
+		await _wait(0.5)
+		await _snap(_arg("pic", ""), "camp_report")
+		if rep != null:
+			rep["seen"] = true
+		Campaign.selected = Campaign.data["armies"].filter(func(x): return x["team"] == 0)[0]["id"]
+		G.ui._show_campaign()
+		await _wait(0.5)
+		await _snap(_arg("pic", ""), "camp_commander")
 	get_tree().quit()
 
 # --stacktest: several companies in one region of the campaign. A region held by two has to be won
@@ -3957,6 +4404,21 @@ func _aud_test() -> void:
 		while Time.get_ticks_msec() - m0 < secs * 1000.0:
 			await get_tree().process_frame
 			mpk = maxf(mpk, maxf(AudioServer.get_bus_peak_volume_left_db(0, 0), AudioServer.get_bus_peak_volume_right_db(0, 0)))
+		print("AUDTEST voices built: shouts %d grunts %d pains %d screams %d, reload %s pin %s door %s steps %s/%s stings %s/%s horde loop %s" % [G.audio.s_shouts.size(), G.audio.s_grunts.size(), G.audio.s_pains.size(), G.audio.s_screams.size(),
+			G.audio.s_reload != null, G.audio.s_pin != null, G.audio.s_door != null, G.audio.s_step_road != null, G.audio.s_step_floor != null, G.audio.s_win != null, G.audio.s_lose != null, G.audio.s_horde != null])
+		for pr in [["shout", G.audio.s_shouts[0]], ["shout2", G.audio.s_shouts[3]], ["grunt", G.audio.s_grunts[0]], ["pain", G.audio.s_pains[0]], ["scream", G.audio.s_screams[1]], ["reload", G.audio.s_reload], ["pin", G.audio.s_pin], ["door", G.audio.s_door], ["step road", G.audio.s_step_road], ["step floor", G.audio.s_step_floor], ["win", G.audio.s_win], ["lose", G.audio.s_lose], ["horde", G.audio.s_horde], ["rifle", G.audio.s_guns["rifle"]]]:
+			var d: PackedByteArray = pr[1].data
+			var pkv = 0.0
+			var acc2 = 0.0
+			var clip = 0
+			var nn = d.size() / 2
+			for i in range(nn):
+				var x = d.decode_s16(i * 2) / 32000.0
+				pkv = maxf(pkv, absf(x))
+				acc2 += x * x
+				if absf(x) > 0.98:
+					clip += 1
+			print("AUDTEST   %-10s %.2f s  peak %.2f  rms %.3f  clipped %.1f%%" % [pr[0], float(nn) / pr[1].mix_rate, pkv, sqrt(acc2 / maxf(nn, 1)), 100.0 * clip / maxf(nn, 1)])
 		print("AUDTEST title screen: tune built %s, playing %s, fade %.2f, master peak %.1f dB, started %s attract %s" % [G.audio.menu_player != null, G.audio.menu_player != null and G.audio.menu_player.playing, G.audio.menu_k, mpk, G.started, G.attract])
 		get_tree().quit()
 		return
@@ -4442,6 +4904,12 @@ func _perf_run() -> void:
 		for kk in keys.slice(0, 14):
 			line += "%s %.2f  " % [kk, AI.pf[kk] / 1000.0 / n]
 		print("PERF %d think: %s" % [k, line])
+		var zc = 0
+		for zs in G.soldiers:
+			if zs.zombie and zs.state != "dead":
+				zc += 1
+		print("PERF %d engine: whole physics frame %.1f ms | active bodies %d, pairs %d, islands %d | zombies up %d" % [k, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
+			Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS), Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS), Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT), zc])
 	get_tree().quit()
 
 # somewhere out in the open, with nothing built within r of it

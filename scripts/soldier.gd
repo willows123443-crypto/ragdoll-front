@@ -1169,6 +1169,21 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 		var reach = Vector3(0, -0.12 + 0.06 * cos(k), 0) + uf * (0.32 + 0.22 * sw)
 		rh = rsh + reach - ur * (0.08 + 0.22 * maxf(0.0, -sw))
 		lh = lsh + reach + ur * (0.08 + 0.22 * maxf(0.0, -sw))
+	elif throw_t > 0.0 and has_meta("spade"):
+		# the entrenching tool, swung two-handed from over the right shoulder down across the body
+		var TP: float = get_meta("throw_T", 0.5)
+		var kp = clampf(1.0 - throw_t / TP, 0.0, 1.0)
+		var sw = clampf((kp - 0.2) / 0.45, 0.0, 1.0)
+		var up_p: Vector3 = rsh + ur * 0.12 - uf * 0.05 + Vector3(0, 0.42, 0)
+		var dn_p: Vector3 = (rsh + lsh) * 0.5 + uf * 0.45 - ur * 0.12 + Vector3(0, -0.28, 0)
+		rh = up_p.lerp(dn_p, sw * sw * (3.0 - 2.0 * sw))
+		var hd: Vector3 = (Vector3(0, 1.0, 0) - uf * 0.2).lerp(uf * 0.9 + Vector3(0, -0.25, 0), sw).normalized()
+		lh = rh - hd * 0.18
+		anchor_l = true
+		g = (uf * 0.3 + Vector3(0, -0.9, 0)).normalized()
+		tool_at("shovel", rh - hd * 0.2, rh + hd * 0.62)
+		if gun_node != null:
+			gun_node.visible = false
 	elif throw_t > 0.0 and has_meta("thrust"):
 		# a shove with the rifle held across the body: drawn in to the chest, driven out with both hands
 		# and brought back
@@ -1646,7 +1661,13 @@ func kick(dir: Vector3) -> void:
 
 # far from the camera in a big battle, a healthy soldier's body just follows its pose
 # instead of being simulated: the physics only runs for the people you can actually see
+const ZOMBIE_LOD = 26.0
 func _lod_far() -> bool:
+	# the dead are many and all alike: beyond a stone's throw from the camera a zombie is always posed and
+	# never simulated, however few of them there are (each one was costing as much as a soldier)
+	if zombie and horde_lean and state == "alive" and vault == null:
+		var zc = get_viewport().get_camera_3d()
+		return zc != null and zc.global_position.distance_squared_to(pos) > ZOMBIE_LOD * ZOMBIE_LOD
 	# (men riding on a lorry or serving a gun count too: a far-off crew is posed, not simulated)
 	if G.soldiers.size() < 36 or is_player or (state != "alive" and state != "riding") or vault != null or dragging != null:
 		return false
@@ -2374,6 +2395,8 @@ func start_reload() -> bool:
 	if reload_t > 0.0 or mag >= W["mag"] or reserve <= 0:
 		return false
 	reload_t = W["reload"]
+	if not W["rocket"]:
+		G.audio.reload_snd(pos)
 	return true
 
 func finish_reload() -> void:
@@ -3139,9 +3162,12 @@ func _settle() -> void:
 		for b in parts:
 			b.linear_damp = 1.6
 			b.angular_damp = 3.5
-	if dead_t > 3.0 and int(dead_t * 60.0) % 15 == 0:
+	if dead_t > (2.0 if zombie and horde_lean else 3.0) and int(dead_t * 60.0) % 15 == 0:
+		# (a body that never quite stops twitching is put to rest anyway after a while: left alone it was
+		# simulated for as long as it lay there. The dead of a horde sooner than anyone.)
+		var give_up = dead_t > (4.0 if zombie and horde_lean else 9.0)
 		for b in parts:
-			if b.linear_velocity.length_squared() > 0.02 or b.angular_velocity.length_squared() > 0.1:
+			if not give_up and (b.linear_velocity.length_squared() > 0.02 or b.angular_velocity.length_squared() > 0.1):
 				return
 		# (not left half in the ground: lifted clear first, and given another moment to come to rest)
 		if _unbury():
@@ -3369,6 +3395,13 @@ func _tick_alive() -> void:
 		_show_nade(false)
 	if throw_t <= 0.0 and has_meta("thrust"):
 		remove_meta("thrust")
+		if has_meta("spade"):
+			# (the spade goes back on his pack and the rifle comes off his shoulder again)
+			remove_meta("spade")
+			if tool_node != null and is_instance_valid(tool_node):
+				tool_node.visible = false
+			if gun_node != null and vehicle == null and gun_body == null and state == "alive":
+				gun_node.visible = true
 	if has_meta("throw_pending") and thr_before > Combat.THROW_AT and throw_t <= Combat.THROW_AT:
 		Combat.release_throw(self)
 		# and down for a moment while it goes off

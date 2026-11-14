@@ -1496,6 +1496,7 @@ func _wreck_paint(n: Node) -> void:
 func open_door(i: int) -> void:
 	if doors.is_empty() or i < 0 or i >= spec["seats"].size():
 		return
+	G.audio.door(pos)
 	var o: Vector3 = spec["seats"][i]["o"]
 	var best = null
 	var bd = 1e9

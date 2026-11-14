@@ -250,7 +250,7 @@ func _process(dt: float) -> void:
 		return
 	t = 0.25
 	var n = mini(qs.size(), 9)
-	head.text = ("▸ " if folded else "▾ ") + "Squads (%d)" % qs.size()
+	head.text = ("+ " if folded else "- ") + "Squads (%d)" % qs.size()
 	for i in range(n):
 		var q = qs[i]
 		var c = _card(i)

@@ -138,6 +138,11 @@ func _jump(p: Vector3) -> void:
 	G.pc.rts_focus = Vector3(p.x, G.world.ground_y(p.x, p.z), p.z)
 
 func _watch() -> void:
+	# a man down with nobody on the way to him
+	for s in G.soldiers:
+		if s.team == 0 and s.state == "wounded" and (s.medic == null or not is_instance_valid(s.medic)) and s.dragger == null and s.carried_by == null:
+			alert("down%d" % s.id, "%s is down and nobody's with him" % s.sname, s.pos, 45.0, Color(1.0, 0.75, 0.2))
+			break
 	# squads pinned
 	for q in G.squads:
 		if q["team"] != 0:
@@ -339,10 +344,51 @@ func _status_pills() -> void:
 		draw_style_box(Hud.pill(Color(0.06, 0.07, 0.08, 0.86), col), box)
 		draw_string(font, box.position + Vector2(8, 13), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(col.r, col.g, col.b, a + 0.14))
 
+# Casualties you can read from above: every one of your men who's down and still alive gets a white disc
+# with a red cross over him, ringed by how much life he has left. A green line runs to him from whoever
+# is coming to treat or carry him; with nobody coming the ring turns amber and blinks.
+func _casualty_marks() -> void:
+	var cam: Camera3D = G.pc.cam
+	if cam == null:
+		return
+	var vs = get_viewport_rect().size
+	var blink = 0.5 + 0.5 * sin(G.sim_time * 7.0)
+	for s in G.soldiers:
+		if s.team != 0 or s.state != "wounded" or s.parts.is_empty():
+			continue
+		var wp: Vector3 = s.parts[1].global_position + Vector3(0, 1.1, 0)
+		if cam.is_position_behind(wp):
+			continue
+		var p = cam.unproject_position(wp)
+		if p.x < 0.0 or p.y < 0.0 or p.x > vs.x or p.y > vs.y or _on_panel(p):
+			continue
+		var helper = null
+		for h in [s.medic, s.dragger, s.carried_by]:
+			if h != null and is_instance_valid(h) and h.state == "alive":
+				helper = h
+				break
+		var r = 8.5
+		if helper != null:
+			var hp3: Vector3 = helper.pos + Vector3(0, 1.3, 0)
+			if not cam.is_position_behind(hp3):
+				var hp2 = cam.unproject_position(hp3)
+				draw_dashed_line(hp2, p, Color(0.5, 1.0, 0.6, 0.85), 1.6, 6.0)
+				draw_circle(hp2, 5.0, Color(0, 0, 0, 0.6))
+				draw_rect(Rect2(hp2 - Vector2(3.5, 1.2), Vector2(7.0, 2.4)), Color(0.5, 1.0, 0.6))
+				draw_rect(Rect2(hp2 - Vector2(1.2, 3.5), Vector2(2.4, 7.0)), Color(0.5, 1.0, 0.6))
+		draw_circle(p, r + 2.5, Color(0, 0, 0, 0.6))
+		draw_circle(p, r, Color(0.96, 0.96, 0.93))
+		draw_rect(Rect2(p - Vector2(5.5, 1.8), Vector2(11.0, 3.6)), Color(0.85, 0.12, 0.1))
+		draw_rect(Rect2(p - Vector2(1.8, 5.5), Vector2(3.6, 11.0)), Color(0.85, 0.12, 0.1))
+		var life = clampf(s.hp / 60.0, 0.05, 1.0)
+		var ring = Color(0.5, 1.0, 0.6) if helper != null else Color(1.0, 0.75, 0.2, 0.45 + 0.55 * blink)
+		draw_arc(p, r + 4.5, -PI / 2.0, -PI / 2.0 + TAU * life, 24, ring, 2.2)
+
 func _draw() -> void:
 	if not active():
 		return
 	_man_dots()
+	_casualty_marks()
 	_order_icons()
 	_status_pills()
 	_truck_tags()
@@ -555,14 +601,15 @@ func _income() -> void:
 			break
 	var recent = (z[1] - earn_hist[mid_i][1]) * 60.0 / maxf(10.0, z[0] - earn_hist[mid_i][0])
 	var older = (earn_hist[mid_i][1] - a[1]) * 60.0 / maxf(10.0, earn_hist[mid_i][0] - a[0]) if mid_i > 0 else recent
-	var trend = "▲" if recent > older + 1.0 else ("▼" if recent < older - 1.0 else "")
+	var trend = "(rising)" if recent > older + 1.0 else ("(falling)" if recent < older - 1.0 else "")
 	var t = "Supply %d   ·   +%.0f / min %s" % [Support.points[0], maxf(0.0, per_min), trend]
 	var tw = font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
 	var at = Vector2(vs.x * 0.5 - tw * 0.5, 90.0)
 	draw_rect(Rect2(at + Vector2(-10, -16), Vector2(tw + 20, 22)), Color(0, 0, 0, 0.5))
 	draw_string(font, at, t, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.88, 0.5))
-	if trend == "▼":
-		draw_string(font, at + Vector2(tw - 10, 0), "▼", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.35, 0.3))
+	if trend == "(falling)":
+		var fw = font.get_string_size(trend, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+		draw_string(font, at + Vector2(tw - fw, 0), trend, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.35, 0.3))
 
 # ---------------------------------------------------------------- what each squad's been told to do
 # a small badge over each of your squads: a shield (holding / in cover), an arrow (moving, charging,

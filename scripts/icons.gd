@@ -155,3 +155,51 @@ static func get_icon(kind: String) -> ImageTexture:
 	var tex = ImageTexture.create_from_image(img)
 	cache[kind] = tex
 	return tex
+
+
+# Small square symbols for buttons, drawn the same way. (The browser build has only the one font, and it
+# has no arrows, flags, stars or ticks in it: typed as characters they came out as empty boxes.)
+static func sym(kind: String) -> ImageTexture:
+	var key = "sym:" + kind
+	if cache.has(key):
+		return cache[key]
+	var S = 18
+	var img = Image.create(S, S, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	match kind:
+		"menu":
+			for y in [3, 8, 13]:
+				_r(img, 2, y, 14, 2)
+		"back":
+			_ln(img, Vector2(3, 9), Vector2(15, 9), 1.0)
+			_ln(img, Vector2(3, 9), Vector2(8, 4), 1.0)
+			_ln(img, Vector2(3, 9), Vector2(8, 14), 1.0)
+		"play":
+			for x in range(4, 15):
+				var h = int((14 - x) * 0.65)
+				_r(img, x, 9 - h, 1, h * 2 + 1)
+		"flag":
+			_r(img, 3, 2, 2, 15)
+			_r(img, 5, 3, 10, 7)
+		"cross":
+			_r(img, 7, 2, 4, 14)
+			_r(img, 2, 7, 14, 4)
+		"check":
+			_ln(img, Vector2(3, 9), Vector2(7, 13), 1.1)
+			_ln(img, Vector2(7, 13), Vector2(15, 4), 1.1)
+		"star":
+			for k in range(5):
+				var a0 = -PI / 2.0 + k * TAU / 5.0
+				var a1 = a0 + TAU * 2.0 / 5.0
+				_ln(img, Vector2(9, 9.5) + Vector2(cos(a0), sin(a0)) * 7.5, Vector2(9, 9.5) + Vector2(cos(a1), sin(a1)) * 7.5, 0.95)
+			_disc(img, 9, 9.5, 3.2)
+		"swords":
+			_ln(img, Vector2(3, 15), Vector2(15, 3), 1.0)
+			_ln(img, Vector2(15, 15), Vector2(3, 3), 1.0)
+			_ln(img, Vector2(3, 11), Vector2(7, 15), 0.95)
+			_ln(img, Vector2(15, 11), Vector2(11, 15), 0.95)
+		_:
+			_disc(img, 9, 9, 4)
+	var tex = ImageTexture.create_from_image(img)
+	cache[key] = tex
+	return tex

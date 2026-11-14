@@ -157,7 +157,11 @@ static func _solid(horiz: bool, fixed: float, a: float, b: float, y0: float, dy:
 		# (the building itself can't be knocked down: its walls, floors and roof stand whatever lands on
 		# them, so the fight for it happens inside it; the furniture and barricades still break)
 		# (inside walls are lit: the corridor ones more than the partitions between offices)
-		var o2 = {"dest": false, "hp": hp}
+		# (...the outside of it, that is. The walls inside, between the corridors and the offices, can be
+		# blown through: a satchel or a few grenades makes a new way into a room. The pieces over the
+		# doorways come down more easily than the wall beside them, so they aren't left hanging.)
+		# (three times as stout as it was written down: one grenade cracks it, it takes three, or a satchel)
+		var o2 = {"dest": t < T_OUT, "hp": hp * (3.0 if t < T_OUT else 1.0) * (0.35 if dy > 0.5 else 1.0)}
 		if t < T_OUT:
 			o2["lit"] = 0.42
 		if horiz:

@@ -186,7 +186,7 @@ func _squad(at: Vector2, me) -> void:
 				st = "reloading"
 			elif m.task == "construct":
 				st = "building"
-		var name_ = m.sname + (" (you)" if m == me else "") + (" ★" + "★".repeat(m.vet - 1) if m.vet > 0 else "")
+		var name_ = m.sname + (" (you)" if m == me else "") + (" *" + "*".repeat(m.vet - 1) if m.vet > 0 else "")
 		draw_rect(Rect2(at.x, y, 6, 14), G.team_color(m.team))
 		draw_string(font, Vector2(at.x + 10, y + 12), name_, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, col)
 		# health bar

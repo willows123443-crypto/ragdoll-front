@@ -131,7 +131,7 @@ func _process(dt: float) -> void:
 		var txt = Levels.names[k3] if k3 >= 0 else "Whole building"
 		if k3 >= 0:
 			txt += "   %d" % mine[k3] + (" · %d enemy" % theirs[k3] if theirs[k3] > 0 else "")
-		b.text = ("▸ " if on else "   ") + txt
+		b.text = ("> " if on else "   ") + txt
 		var sb = Hud.pill(Hud.ACCENT.darkened(0.45) if on else Hud.BG_SOFT, Hud.ACCENT if on else Hud.EDGE)
 		b.add_theme_stylebox_override("normal", sb)
 		b.add_theme_stylebox_override("hover", Hud.pill(Hud.BG, Hud.ACCENT))

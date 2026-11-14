@@ -1391,7 +1391,8 @@ static func decide(s) -> void:
 		return
 	# low on ammunition: go and get some
 	if s.task == "resupply":
-		if s.supply_target == null or (s.supply_target is Object and (not is_instance_valid(s.supply_target) or s.supply_target.reserve + s.supply_target.mag <= 0)):
+		# (a body he was heading for may have been cleared away: asking a freed thing what it is fails)
+		if s.supply_target == null or (typeof(s.supply_target) == TYPE_OBJECT and (not is_instance_valid(s.supply_target) or s.supply_target.reserve + s.supply_target.mag <= 0)):
 			s.task = null
 		else:
 			return
@@ -1606,6 +1607,10 @@ static func decide(s) -> void:
 					engage = recent and d_seen < 70.0
 				else:
 					engage = recent and (d_seen < 40.0 or ((s.hurt_t > 0.0 or s.supp > 0.5) and d_seen < 90.0))
+			# (the dead only bite: with them in sight a hundred metres off there's no reason to stop where
+			# he stands, so a man sent somewhere in a zombie battle keeps going until they're close)
+			if engage and G.mode == "horde" and d_seen > 10.0:
+				engage = false
 			if engage:
 				if s.cover == null or s.cover_bad >= 2:
 					var ca = find_cover(s, s.last_seen, "hold")
@@ -1662,8 +1667,10 @@ static func decide(s) -> void:
 			if not s.order.has("arrived"):
 				s.order["arrived"] = G.sim_time
 			var quiet = not s.has_seen or G.sim_time - s.seen_t > 15.0
-			# (not in the first battle: there the squad stays where it was put until it's sent on)
-			if quiet and G.sim_time - s.order["arrived"] > 25.0 and not (G.tutorial and s.team == 0):
+			# (your own men stay where you put them until you send them on: only a side the computer is
+			# commanding drifts back into the battle by itself)
+			var yours = s.team == 0 and not G.ai_runs(0)
+			if quiet and G.sim_time - s.order["arrived"] > 25.0 and not yours and not (G.tutorial and s.team == 0):
 				s.order = null
 				s.decide_t = 0.0
 				if randf() < 0.4:
@@ -2421,7 +2428,9 @@ static func _keep_from_zombies(s) -> void:
 		return
 	var zd = G.dist2d(near.pos, s.pos)
 	# don't head toward them: cancel any move that closes the distance
-	if s.move_target != null and G.dist2d(s.move_target, near.pos) < zd - 2.0 and s.task != "medic":
+	# (a man who's been ordered somewhere goes, unless they're almost on him: the rule used to stop
+	# anyone you sent toward the middle whenever one of the dead was nearer to it than he was)
+	if s.move_target != null and G.dist2d(s.move_target, near.pos) < zd - 2.0 and s.task != "medic" and (s.order == null or zd < 9.0):
 		stop_move(s)
 		s.decide_t = 1.5
 	if s.in_cover and zd > 6.0:
@@ -2473,7 +2482,13 @@ static func _keep_from_zombies(s) -> void:
 		s.threat = near.pos
 		s.has_threat = true
 		if zd < 1.9 and s.throw_t <= 0.0 and absf(near.pos.y - s.pos.y) < 1.0 and G.sim_time > float(s.get_meta("shove_t", 0.0)):
-			Combat.shove(s, near)
+			if Combat.dry(s):
+				if not s.has_meta("spade_said"):
+					s.set_meta("spade_said", true)
+					G.fx.callout(s, G.pick(["I'm out! Come on then!", "Empty! Spades, lads!", "Nothing left: come and get it!"]))
+				Combat.spade(s, near)
+			else:
+				Combat.shove(s, near)
 		elif zd < 1.8 and s.throw_t <= 0.0 and s.fire_cd <= 0.0 and s.reload_t > 0.0:
 			Combat.knife(s, near)
 
@@ -2562,7 +2577,11 @@ static func aim_and_fire(s) -> void:
 	# empty or being reloaded) to make room
 	if tgt != null and not s.is_player and not s.zombie and not s.has_meta("bayonet") and tgt.state == "alive" and G.sim_time > float(s.get_meta("shove_t", 0.0)) \
 			and G.dist2d(tgt.pos, s.pos) < 1.7 and absf(tgt.pos.y - s.pos.y) < 1.0 and (tgt.zombie or s.mag <= 0 or s.reload_t > 0.0):
-		Combat.shove(s, tgt)
+		# (with nothing left to fire it's the entrenching tool, not a push)
+		if Combat.dry(s) or s.has_meta("lastditch"):
+			Combat.spade(s, tgt)
+		else:
+			Combat.shove(s, tgt)
 		return
 	# fixed bayonets and right on top of him: run him through rather than fumble a shot
 	if tgt != null and s.has_meta("bayonet") and s.wid in Soldier.BAYONET_GUNS and s.fire_cd <= 0.0 and tgt.state == "alive" \
@@ -2571,7 +2590,11 @@ static func aim_and_fire(s) -> void:
 		return
 	# raiders and fighters with a knife finish it quietly when they're on top of someone
 	if tgt != null and s.has_meta("knife") and s.fire_cd <= 0.0 and tgt.state == "alive" and G.dist2d(tgt.pos, s.pos) < 1.7 and absf(tgt.pos.y - s.pos.y) < 1.0:
-		Combat.knife(s, tgt)
+		# (the last stand is made with the entrenching tool, where everyone can see it; raiders keep the knife)
+		if s.has_meta("lastditch"):
+			Combat.spade(s, tgt)
+		else:
+			Combat.knife(s, tgt)
 		return
 	if tgt != null and s.has_meta("knife") and G.main.is_night() and G.dist2d(tgt.pos, s.pos) < 9.0 and tgt.vis_t != s and s.task != "medic":
 		go_to(s, tgt.pos, 4.6)        # creep in for the knife rather than give ourselves away
@@ -2999,7 +3022,7 @@ static func supply_tick(s, dt: float) -> void:
 				G.fx.callout(s, G.pick(["Got ammo!", "Restocked!"]))
 		return
 	s.resupply_t = 0.0
-	if s.task == "resupply" and s.supply_target is Object and is_instance_valid(s.supply_target) and G.dist2d(s.supply_target.pos, s.pos) < 1.8:
+	if s.task == "resupply" and typeof(s.supply_target) == TYPE_OBJECT and is_instance_valid(s.supply_target) and G.dist2d(s.supply_target.pos, s.pos) < 1.8:
 		# kneel over him and go through his kit before taking anything
 		var body_p: Vector3 = s.supply_target.parts[1].global_position if not s.supply_target.parts.is_empty() else s.supply_target.pos
 		s.crouch_t = 0.9

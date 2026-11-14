@@ -6,7 +6,7 @@ var tab = "units"
 const MAP_IDS = ["town", "field", "trenches", "forest", "city", "factory", "office", "beach", "valley", "front", "river", "pass", "huge", "random"]
 const TIPS = {"s1": "Click the ground to drop in a soldier", "s5": "Click the ground to drop in five soldiers",
 	"sp": "Click where this side's reinforcements should arrive", "mv": "Click a point to send the whole side there",
-	"up": "Click a structure to upgrade it: sandbags → concrete wall, MG nest → pillbox, FOB tent → hut",
+	"up": "Click a structure to upgrade it: sandbags to a concrete wall, an MG nest to a pillbox, a FOB tent to a hut",
 	"camo": "Click a structure to throw a camouflage net over it (aircraft and artillery won't see it until the enemy gets close)",
 	"rep": "Click a damaged structure to have engineers repair it (anything destroyed is gone and has to be built again)",
 	"dis": "Click a structure, wall, building piece or emplacement to take it apart",
@@ -154,6 +154,11 @@ func _button(text: String, cb: Callable) -> Button:
 	return b
 
 # buttons that answer you: a soft glow when the mouse is on them and a click when pressed
+func _back_button(cb: Callable) -> Button:
+	var b = _button(" Back", cb)
+	b.icon = Icons.sym("back")
+	return b
+
 func _juice(b: Button) -> void:
 	b.mouse_entered.connect(func():
 		var tw = b.create_tween()
@@ -323,8 +328,9 @@ func _build_side() -> void:
 	side.z_index = 20          # the drop-down opens over the squad cards
 	side.add_theme_constant_override("separation", 4)
 	root.add_child(side)
-	var top = _button("☰  Menu", func():
+	var top = _button(" Menu", func():
 		side_list.visible = not side_list.visible)
+	top.icon = Icons.sym("menu")
 	top.custom_minimum_size = Vector2(96, 30)
 	top.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	top.tooltip_text = "Menu, pause, slow motion, the battle report and the controls"
@@ -485,7 +491,7 @@ func _cards(t: String) -> Array:
 		"armoury":
 			for k in Modes.SHOP:
 				var sh = Modes.SHOP[k]
-				out.append(["h:" + k, sh["name"], "%d pts" % sh["cost"]])
+				out.append(["h:" + k, sh["name"], ("%d pts" % sh["cost"]) if sh["cost"] > 0 else "free"])
 		"upgrades":
 			for k in Prod.UPGRADES:
 				var u = Prod.UPGRADES[k]
@@ -573,7 +579,7 @@ func _render_tools() -> void:
 	dock_side.visible = sided
 	if sided:
 		var bt = mini(build_team, G.team_count() - 1)
-		dock_side.text = "For: %s  ⇄" % G.TEAM_NAMES[bt]
+		dock_side.text = "For: %s  (switch)" % G.TEAM_NAMES[bt]
 		dock_side.add_theme_stylebox_override("normal", _dock_style(G.team_color(bt).darkened(0.35)))
 		dock_side.add_theme_stylebox_override("hover", _dock_style(G.team_color(bt).darkened(0.15)))
 	for c in dock_cards.get_children():
@@ -865,7 +871,7 @@ func _build_center() -> void:
 	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cross.draw.connect(_draw_cross)
 	root.add_child(cross)
-	hitmark = _label("✕", 30, Color(1, 1, 1))
+	hitmark = _label("×", 30, Color(1, 1, 1))
 	_place(hitmark, Control.PRESET_CENTER, -10, -22, 20, 40)
 	hitmark.visible = false
 	root.add_child(hitmark)
@@ -1059,7 +1065,7 @@ func _build_menu() -> void:
 	var outer = VBoxContainer.new()
 	outer.add_theme_constant_override("separation", 8)
 	var top = HBoxContainer.new()
-	top.add_child(_button("←  Back", func():
+	top.add_child(_back_button(func():
 		menu.visible = false
 		show_menu()))
 	var tl = _label("  New battle", 28, Color(0.96, 0.93, 0.85))
@@ -1172,7 +1178,8 @@ func _build_menu() -> void:
 	r.custom_minimum_size = Vector2(316, 0)
 	cols.add_child(r)
 	_section(r, "Play")
-	var go = _button("▶  DEPLOY", func(): _deploy())
+	var go = _button(" DEPLOY", func(): _deploy())
+	go.icon = Icons.sym("play")
 	go.custom_minimum_size = Vector2(0, 58)
 	go.add_theme_font_size_override("font_size", 22)
 	go.add_theme_stylebox_override("normal", _dock_style(Color(0.78, 0.58, 0.16)))
@@ -1266,7 +1273,7 @@ func _campaign_fallen() -> Control:
 	if fl.is_empty():
 		rv.add_child(_label("Nobody yet. Keep it that way.", 13, Color(0.75, 0.78, 0.72)))
 	for f in fl:
-		var line = "%s %s  ·  %s, %s\n      fell at %s, turn %d%s" % [Campaign.RANK_S[clampi(int(f["vet"]), 0, 3)], f["name"], str(Campaign.CLS_ONE.get(f["cls"], f["cls"])), f["army"],
+		var line = "%s %s  ·  %s, %s\n      fell at %s, turn %d%s" % ["" if f.get("co", false) else Campaign.RANK_S[clampi(int(f["vet"]), 0, 3)], f["name"], str(Campaign.CLS_ONE.get(f["cls"], f["cls"])), f["army"],
 			f["at"], int(f["turn"]), ("  ·  %d kills in %d battles" % [int(f["kills"]), int(f["battles"])]) if int(f["kills"]) > 0 else ""]
 		rv.add_child(_label(line, 12, Color(1.0, 0.86, 0.45) if int(f["vet"]) >= 2 else Color(0.8, 0.82, 0.78)))
 	v.add_child(sc)
@@ -1299,6 +1306,11 @@ func _show_campaign(result: String = "") -> void:
 	for c in camp_box.get_children():
 		camp_box.remove_child(c)
 		c.queue_free()
+	var rep = Campaign.data.get("report")
+	if rep != null and not rep.get("seen", true) and Campaign.pending_battle() == null:
+		camp_box.add_child(_campaign_report(rep))
+		camp_panel.visible = true
+		return
 	var D = Campaign.data
 	# the top bar: turn, war chest, ground held, who runs our side in battle
 	var head = HBoxContainer.new()
@@ -1404,7 +1416,7 @@ func _show_campaign(result: String = "") -> void:
 		bl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		bl.custom_minimum_size = Vector2(1200, 0)
 		camp_box.add_child(bl)
-		for opt in [["  ⚔  Command from above  ", "command", "You give the orders from the commander's view" + (", and place your defences before they arrive" if pend["attacker"] == 1 and not st2 else "")],
+		for opt in [["  Command from above  ", "command", "You give the orders from the commander's view" + (", and place your defences before they arrive" if pend["attacker"] == 1 and not st2 else "")],
 				["  Fight as a soldier  ", "soldier", "The AI commands your side and you go in as one of the men (you can still switch between them)"]]:
 			var hw: String = opt[1]
 			var fb = _button(opt[0], func():
@@ -1423,13 +1435,15 @@ func _show_campaign(result: String = "") -> void:
 		ab.tooltip_text = "The staff settle it on paper, at once. It costs more men than a battle well fought, earns no objective, and fewer are promoted."
 		h.add_child(ab)
 	elif done < 0:
-		var eb = _button("  End turn  ▶  ", func():
+		var eb = _button("  End turn  ", func():
 			Campaign.selected = -1
 			camp_view = -1
 			var lines = Campaign.end_turn()
 			camp_result = ""
 			_show_campaign("\n".join(lines) if not lines.is_empty() else "Bravo holds its ground."))
 		eb.add_theme_font_size_override("font_size", 18)
+		eb.icon = Icons.sym("play")
+		eb.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		h.add_child(eb)
 	var sp2 = Control.new()
 	sp2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1446,6 +1460,68 @@ func _show_campaign(result: String = "") -> void:
 	h.add_child(_button("Close", func(): camp_panel.visible = false))
 	camp_box.add_child(h)
 	camp_panel.visible = true
+
+# the sheet that goes up when a new turn starts: what happened since the last one, in one place
+func _campaign_report(rep: Dictionary) -> Control:
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	v.add_child(_label("Report for turn %d" % int(rep["turn"]), 26, Color(0.97, 0.93, 0.82)))
+	var head = Campaign.data.get("headline", {})
+	if str(head.get("head", "")) != "":
+		v.add_child(_label("%s  ·  %s" % [str(head["head"]), str(head.get("sub", ""))], 14, Color(0.96, 0.74, 0.27)))
+	var cols = HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 14)
+	v.add_child(cols)
+	var sections = []
+	var bl: Array = rep["bravo"]
+	sections.append(["Bravo's moves", Color(1.0, 0.55, 0.45), bl if not bl.is_empty() else ["Bravo held its ground."]])
+	var cost = []
+	if int(rep["fallen"]) > 0:
+		cost.append("%d men fell: %s%s." % [int(rep["fallen"]), ", ".join(rep["names"]), "…" if int(rep["fallen"]) > rep["names"].size() else ""])
+	if int(rep["veh_lost"]) > 0:
+		cost.append("%d vehicle%s lost." % [int(rep["veh_lost"]), "" if int(rep["veh_lost"]) == 1 else "s"])
+	for g in rep["gone"]:
+		cost.append("The %s is no more." % g)
+	for l in rep["lost"]:
+		cost.append("%s was lost." % l)
+	sections.append(["What it cost us", Color(0.95, 0.85, 0.5), cost if not cost.is_empty() else ["Nothing. Not a man, not a yard."]])
+	var ch = []
+	for g in rep["gained"]:
+		ch.append("%s is ours." % g)
+	ch.append("Regions held: %d (were %d)." % [int(rep["regions"][1]), int(rep["regions"][0])])
+	ch.append("War chest: %d (was %d)." % [int(rep["funds"][1]), int(rep["funds"][0])])
+	sections.append(["What changed", Color(0.6, 0.9, 0.65), ch])
+	var ot: Array = rep["other"]
+	if not ot.is_empty():
+		sections.append(["Dispatches", Color(0.8, 0.85, 0.9), ot])
+	for sec in sections:
+		var pc = PanelContainer.new()
+		var sb = StyleBoxFlat.new()
+		sb.bg_color = Color(0.12, 0.14, 0.15, 1.0)
+		sb.set_corner_radius_all(6)
+		sb.set_content_margin_all(10)
+		pc.add_theme_stylebox_override("panel", sb)
+		pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pc.custom_minimum_size = Vector2(0, 430)
+		var sv = VBoxContainer.new()
+		sv.add_theme_constant_override("separation", 5)
+		pc.add_child(sv)
+		sv.add_child(_label(sec[0], 17, sec[1]))
+		for l in (sec[2] as Array).slice(0, 12):
+			var lb = _label("•  " + str(l), 13, Color(0.9, 0.91, 0.88))
+			lb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			lb.custom_minimum_size = Vector2(240, 0)
+			sv.add_child(lb)
+		cols.add_child(pc)
+	var hb = HBoxContainer.new()
+	var go = _button("   Continue to turn %d   " % int(Campaign.data["turn"]), func():
+		rep["seen"] = true
+		Campaign.save()
+		_show_campaign())
+	go.add_theme_font_size_override("font_size", 18)
+	hb.add_child(go)
+	v.add_child(hb)
+	return v
 
 # the right-hand panel: the army you've picked (its men, vehicles, roster and what you can buy for it),
 # an enemy army you've clicked, or a list of your armies
@@ -1492,7 +1568,7 @@ func _campaign_side() -> Control:
 		return outer
 	var mine = a["team"] == 0
 	var tc = G.team_color(a["team"])
-	v.add_child(_label(("⚑ " if mine else "✠ ") + a["name"], 19, tc.lerp(Color.WHITE, 0.5)))
+	v.add_child(_label(a["name"] + ("" if mine else "  (enemy)"), 19, tc.lerp(Color.WHITE, 0.5)))
 	var sup = Campaign.supplied(a["team"], a["region"])
 	v.add_child(_label("%s  ·  %s%s" % [Campaign.REGIONS[a["region"]]["name"], "in supply" if sup else "CUT OFF from supply", ("  ·  moved this turn" if a["moved"] else "  ·  ready to move") if mine else ""], 13, Color(0.8, 0.83, 0.8) if sup else Color(1.0, 0.5, 0.4)))
 	if not mine:
@@ -1503,6 +1579,11 @@ func _campaign_side() -> Control:
 			camp_view = -1
 			_show_campaign()))
 		return outer
+	if Campaign.co_text(a) != "":
+		var col = _label(Campaign.co_text(a), 13, Color(1.0, 0.86, 0.45))
+		col.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		col.custom_minimum_size = Vector2(CAMP_SIDE - 30, 0)
+		v.add_child(col)
 	# men by class, and the vehicles
 	var mk = Campaign.make_up(a)
 	var parts = []
@@ -1517,7 +1598,7 @@ func _campaign_side() -> Control:
 	v.add_child(_label("Vehicles %d / %d:  %s" % [a["veh"].size(), Campaign.MAX_VEH, ", ".join(vn) if not vn.is_empty() else "none"], 13, Color(0.85, 0.88, 0.85)))
 	# the roster: veterans first
 	var sc = ScrollContainer.new()
-	sc.custom_minimum_size = Vector2(CAMP_SIDE - 24, 96)
+	sc.custom_minimum_size = Vector2(CAMP_SIDE - 24, 58)
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	var rv = VBoxContainer.new()
 	rv.add_theme_constant_override("separation", 0)
@@ -1545,7 +1626,7 @@ func _campaign_side() -> Control:
 	for pk in Campaign.PACKS:
 		var P = Campaign.PACKS[pk]
 		var why = Campaign.can_buy(a, pk)
-		var label = "%s  %d" % [P["name"], Campaign.cost(0, pk)] + (("  +%d" % P["cls"].size()) if P.has("cls") else "")
+		var label = "%s  %d" % [P["name"], Campaign.cost_for(a, pk)] + (("  +%d" % P["cls"].size()) if P.has("cls") else "")
 		var key = pk
 		var b = _button(label, func():
 			var r = Campaign.buy(Campaign.army(aid), key)
@@ -1641,7 +1722,7 @@ func _campaign_map() -> Control:
 			continue           # (not in the short campaign)
 		var cut = not net[o].has(i)
 		var bk: String = r.get("bonus", "")
-		var txt = "%s%s\n%s" % [r["name"], "  ★" if r.has("hq") else "", Campaign.BONUS[bk][0] if Campaign.BONUS.has(bk) else ("headquarters" if r.has("hq") else r["map"])]
+		var txt = "%s%s\n%s" % [r["name"], "  (HQ)" if r.has("hq") else "", Campaign.BONUS[bk][0] if Campaign.BONUS.has(bk) else ("headquarters" if r.has("hq") else r["map"])]
 		if cut:
 			txt += "\ncut off"
 		var nr = Campaign.ruins(i).size()
@@ -1679,12 +1760,15 @@ func _campaign_map() -> Control:
 		var step = 26 if here_n <= 2 else 21
 		for a in Campaign.armies_at(i):
 			var mine = a["team"] == 0
-			var at = "%s %s  %d" % ["⚑" if mine else "✠", a["name"], a["str"]]
+			var at = " %s  %d" % [a["name"], a["str"]]
 			if mine and a["moved"]:
-				at += " ✓"
+				at += "  moved"
 			var aid = a["id"]
 			var ab = _button(at, func(): _campaign_army(aid))
 			ab.add_theme_font_size_override("font_size", 12)
+			ab.icon = Icons.sym("flag" if mine else "cross")
+			ab.add_theme_color_override("icon_normal_color", G.team_color(a["team"]).lerp(Color.WHITE, 0.4))
+			ab.add_theme_constant_override("icon_max_width", 13)
 			ab.size = Vector2(150, 24 if here_n <= 2 else 20)
 			ab.position = c + Vector2(-75, 14 + k * step)
 			var ac = G.team_color(a["team"])
@@ -2046,15 +2130,24 @@ func _fill_title() -> void:
 		c.queue_free()
 	if G.started and not G.attract:
 		title_sub.text = "Paused · %s on %s" % [G.mode.capitalize(), G.world.MAPS.get(G.map_id, {}).get("name", G.map_id) if G.world != null else ""]
-		_title_button("▶  Resume", "back to the battle", func(): _close_title(), true)
+		_title_button("Resume", "back to the battle", func(): _close_title(), true)
 		_title_button("Restart this battle", "same map, mode and forces", func():
 			_close_title()
 			_deploy())
+		_title_button("Save this battle", "one slot: it can be carried on later from the title screen" if Scenario.can_save() == "" else Scenario.can_save(), func():
+			message(Scenario.save_battle())
+			_close_title())
 		_title_button("New battle…", "pick a map, a mode and your forces", func(): _open_setup())
 		_title_button("Battle report", "who killed whom, and how", func(): show_report())
 	else:
 		title_sub.text = "Battles that play themselves, until you step in: drop in soldiers, take over anyone, or command from above."
-		_title_button("▶  Quick battle", "pick a map, a mode and your forces", func(): _open_setup(), true)
+		_title_button("Quick battle", "pick a map, a mode and your forces", func(): _open_setup(), true)
+		if Scenario.save_text() != "":
+			_title_button("Continue saved battle", Scenario.save_text(), func():
+				G.main.stop_attract()
+				title.visible = false
+				menu.visible = false
+				message(Scenario.load_battle()))
 		_title_header("PLAY")
 		_title_button("First battle", "a guided fight: learn to command in five minutes", func():
 			G.main.stop_attract()
@@ -2189,6 +2282,38 @@ func _build_win() -> void:
 	win.add_child(v)
 	win.visible = false
 	root.add_child(win)
+
+# black bars top and bottom and a line of text, for the slow-motion finish
+var fin_bars: Array = []
+var fin_label: Label = null
+
+func finish_bars(on: bool, text: String) -> void:
+	if fin_bars.is_empty():
+		# (on a layer of their own, so the rest of the screen furniture can be put away while they're up)
+		var lay = CanvasLayer.new()
+		lay.layer = 60
+		G.main.add_child(lay)
+		for k in range(2):
+			var cr = ColorRect.new()
+			cr.color = Color(0, 0, 0, 1)
+			cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			lay.add_child(cr)
+			fin_bars.append(cr)
+		fin_label = _label("", 22, Color(0.97, 0.93, 0.82))
+		fin_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lay.add_child(fin_label)
+	visible = not on
+	var vs = get_viewport().get_visible_rect().size
+	var bh = vs.y * 0.11
+	fin_bars[0].position = Vector2(0, 0)
+	fin_bars[0].size = Vector2(vs.x, bh)
+	fin_bars[1].position = Vector2(0, vs.y - bh)
+	fin_bars[1].size = Vector2(vs.x, bh)
+	fin_label.position = Vector2(0, vs.y - bh + bh * 0.3)
+	fin_label.size = Vector2(vs.x, 30)
+	fin_label.text = text + "     (any key to skip)" if on else ""
+	for c in fin_bars + [fin_label]:
+		c.visible = on
 
 func show_win(team: int) -> void:
 	win_title.text = "%s wins" % G.TEAM_NAMES[team]
@@ -2727,7 +2852,8 @@ func builder_bar_show(on: bool) -> void:
 		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		t.custom_minimum_size = Vector2(420, 0)
 		v.add_child(t)
-		var b = _button("▶  Start the battle", func(): G.main.builder_start())
+		var b = _button(" Start the battle", func(): G.main.builder_start())
+		b.icon = Icons.sym("play")
 		v.add_child(b)
 		builder_bar.add_child(v)
 		root.add_child(builder_bar)
@@ -2754,7 +2880,15 @@ func _show_settings() -> void:
 	vol.value_changed.connect(func(x):
 		G.settings["volume"] = x
 		G.audio.set_volume(x))
-	_row(v, "Volume", vol)
+	_row(v, "Volume (everything)", vol)
+	var sfx = HSlider.new()
+	sfx.min_value = 0.0
+	sfx.max_value = 1.0
+	sfx.step = 0.05
+	sfx.value = G.settings.get("sfx", 1.0)
+	sfx.custom_minimum_size = Vector2(220, 0)
+	sfx.value_changed.connect(func(x): G.settings["sfx"] = x)
+	_row(v, "Effects (guns, voices, engines)", sfx)
 	var mus = HSlider.new()
 	mus.min_value = 0.0
 	mus.max_value = 1.0
@@ -2762,7 +2896,7 @@ func _show_settings() -> void:
 	mus.value = G.settings["music"]
 	mus.custom_minimum_size = Vector2(220, 0)
 	mus.value_changed.connect(func(x): G.settings["music"] = x)
-	_row(v, "Music", mus)
+	_row(v, "Music (title, battle, stings)", mus)
 	var sens = HSlider.new()
 	sens.min_value = 0.2
 	sens.max_value = 3.0
@@ -2771,7 +2905,7 @@ func _show_settings() -> void:
 	sens.custom_minimum_size = Vector2(220, 0)
 	sens.value_changed.connect(func(x): G.settings["sens"] = x)
 	_row(v, "Mouse sensitivity", sens)
-	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Show soldiers' shouts as text"], ["grass", "Grass (next battle)"], ["fps", "Show frame rate and soldier count"]]:
+	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Show soldiers' shouts as text"], ["grass", "Grass (next battle)"], ["fps", "Show frame rate and soldier count"], ["finish_cam", "Slow-motion finish when a battle ends"]]:
 		var key = item[0]
 		var cb = CheckBox.new()
 		cb.button_pressed = G.settings[key]
@@ -2781,6 +2915,21 @@ func _show_settings() -> void:
 			if key == "shadows":
 				G.main.apply_time())
 		_row(v, item[1], cb)
+	# one switch for a slower or a faster machine: it sets the rows under it, which can still be changed
+	# one by one afterwards
+	var gp_vals = ["low", "medium", "high"]
+	var gp = _option(["Low (slow machines, the browser on a laptop)", "Medium", "High", "Custom"], gp_vals.find(G.main.graphics_preset()) if gp_vals.has(G.main.graphics_preset()) else 3)
+	gp.item_selected.connect(func(i):
+		if i < 3:
+			G.main.set_graphics(gp_vals[i])
+			_show_settings())
+	_row(v, "Graphics", gp)
+	var rs_vals = [0.6, 0.75, 0.85, 1.0]
+	var rs = _option(["60% (fastest, soft)", "75%", "85%", "100% (sharpest)"], maxi(0, rs_vals.find(float(G.settings.get("render_scale", 1.0)))))
+	rs.item_selected.connect(func(i):
+		G.settings["render_scale"] = rs_vals[i]
+		G.main.apply_graphics())
+	_row(v, "3D picture drawn at", rs)
 	var sh_vals = ["auto", "all", "near", "off"]
 	var sh = _option(["Automatic (turned down if the game runs slowly)", "All", "Near the view only", "Off (fastest)"], maxi(0, sh_vals.find(str(G.settings.get("shadow_mode", "auto")))))
 	sh.item_selected.connect(func(i):
@@ -2889,7 +3038,7 @@ func _order_card_tick() -> void:
 	var sig = str(sel.size()) + str(riding) + str(smokes) + str(on_foot.size()) + G.pc._sel_summary() + active
 	if sig != order_sig:
 		order_sig = sig
-		order_title.text = G.pc._sel_short() + "  ▸"
+		order_title.text = G.pc._sel_short() + "  >"
 		order_title.tooltip_text = G.pc._sel_summary()
 		for c in order_grid.get_children():
 			if c != order_title:
@@ -3117,7 +3266,7 @@ func _build_info() -> void:
 	info_title = _label("", 18, Color(1.0, 0.88, 0.45))
 	info_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(info_title)
-	head.add_child(_button("✕", func(): hide_info()))
+	head.add_child(_button("×", func(): hide_info()))
 	v.add_child(head)
 	info_body = _label("", 13, Color(0.85, 0.88, 0.9))
 	info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

@@ -109,6 +109,7 @@ func _ready() -> void:
 	s_far = _noise(2.2, 0.6, 0.04, 0.9, 40.0)
 	_build_music.call_deferred()
 	_build_menu_music.call_deferred()
+	_build_voices.call_deferred()
 	set_volume(G.settings["volume"])
 
 # ---------------------------------------------------------------- battle music and the sound of the wider battle
@@ -234,14 +235,13 @@ func deafen(k: float) -> void:
 			s_ring.mix_rate = rate
 		ui_player2.stream = s_ring
 		ui_player2.pitch_scale = randf_range(0.95, 1.05)
-		ui_player2.volume_db = -20.0 + 6.0 * k
+		ui_player2.volume_db = -20.0 + 6.0 * k + fx_db()
 		ui_player2.play()
 
 func _process(dt: float) -> void:
 	_ear_tick()
 	_engine_loops()
 	echo_budget = minf(echo_budget + dt * 9.0, 4.0)
-	bark_t -= dt
 	if deaf > 0.0 and deaf_fx != null:
 		deaf = maxf(0.0, deaf - dt)
 		# the world comes back gradually: from a dull thump up to full brightness
@@ -267,6 +267,7 @@ func _process(dt: float) -> void:
 			menu_player.play()
 		elif menu_k <= 0.0 and menu_player.playing:
 			menu_player.stop()
+	_horde_bed(dt)
 	heat = maxf(0.0, heat - dt * 0.25)
 	# how hot the whole battle is, not just what's in front of the camera (the commander's view is high up):
 	# the share of men who can see an enemy right now
@@ -297,7 +298,7 @@ func _process(dt: float) -> void:
 			if r < 0.45:
 				ui_player2.stream = s_far
 				ui_player2.pitch_scale = randf_range(0.45, 0.8)
-				ui_player2.volume_db = randf_range(-26.0, -16.0)
+				ui_player2.volume_db = randf_range(-26.0, -16.0) + fx_db()
 				ui_player2.play()
 			elif r < 0.75:
 				# a machine gun somewhere off past the edge of the map: a short burst, dulled by distance
@@ -335,7 +336,7 @@ func _far_shot(delay: float, vol: float, pit: float) -> void:
 		far_i = (far_i + 1) % far_players.size()
 		pl.stream = s_distant
 		pl.pitch_scale = pit * randf_range(0.95, 1.05)
-		pl.volume_db = vol
+		pl.volume_db = vol + fx_db()
 		pl.play())
 
 # a crackle and a squelch, for orders going out over the radio
@@ -365,7 +366,7 @@ func radio_click() -> void:
 		return
 	ui_player.stream = s_radio
 	ui_player.pitch_scale = randf_range(0.95, 1.05)
-	ui_player.volume_db = -10.0
+	ui_player.volume_db = -10.0 + fx_db()
 	ui_player.play()
 
 # a small two-note blip when a waypoint goes down or a line is drawn (not the radio squelch)
@@ -386,7 +387,7 @@ func order_tick(high: bool = false) -> void:
 		add_child(tick_player)
 	tick_player.stream = s_tick
 	tick_player.pitch_scale = 1.2 if high else 1.0
-	tick_player.volume_db = -12.0
+	tick_player.volume_db = -12.0 + fx_db()
 	tick_player.play()
 
 # The tune for the title screen: a slow march in D minor. A soft pad holds the chords, a horn carries
@@ -459,6 +460,10 @@ func _build_menu_music() -> void:
 	menu_player.volume_db = -80.0
 	add_child(menu_player)
 
+# the effects slider (everything but the music), as decibels
+func fx_db() -> float:
+	return linear_to_db(clampf(float(G.settings.get("sfx", 1.0)), 0.001, 1.0))
+
 func set_volume(v: float) -> void:
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(v, 0.001)))
 
@@ -510,7 +515,7 @@ func play(stream: AudioStream, pos: Vector3, vol_db: float = 0.0, pitch: float =
 	pi = (pi + 1) % players.size()
 	p.stream = stream
 	p.global_position = pos
-	p.volume_db = vol_db - (5.0 if muffle else 0.0) + world_trim
+	p.volume_db = vol_db - (5.0 if muffle else 0.0) + world_trim + fx_db()
 	# through a wall: dull and low, the top end cut away (and the top end goes with distance too)
 	p.attenuation_filter_cutoff_hz = 800.0 if muffle else cutoff
 	p.pitch_scale = pitch * randf_range(0.93, 1.07)
@@ -713,14 +718,6 @@ func _glass_sound() -> AudioStreamWAV:
 		out[i] = v * minf(1.0, t * 2000.0)
 	return _wav(out)
 
-# ---------------------------------------------------------------- callouts
-# Shouts are shown as text over the man who makes them; nothing is read out. (They used to be spoken by
-# the computer's speech voice, which was far louder than the battle and nothing like a soldier.)
-var bark_t = 0.0
-
-func bark(_s, _text: String) -> void:
-	pass
-
 # the dead: a voiced moan through a throaty filter, wobbling in pitch, with breath noise
 func _groan(len_s: float, f0: float, rough: float) -> AudioStreamWAV:
 	var n = int(len_s * RATE)
@@ -759,9 +756,18 @@ func groan(pos: Vector3, kind: String) -> void:
 		_:
 			play(s_groans[randi() % s_groans.size()], pos, -5.0, randf_range(0.8, 1.15))
 
+# a footfall, by what's underfoot: a dull pad on earth and grass, a harder scuff on a road, a hollow
+# knock on the boards and concrete of a floor indoors
 func step(pos: Vector3) -> void:
-	if cam_dist(pos) < 12.0:
-		play(s_step, pos, -14.0, randf_range(0.8, 1.2))
+	if cam_dist(pos) > 14.0:
+		return
+	var W = G.world
+	if W != null and s_step_floor != null and W.inside_at(pos.x, pos.y + 1.0, pos.z):
+		play(s_step_floor, pos, -11.0, randf_range(0.85, 1.2))
+	elif W != null and s_step_road != null and W.on_road(pos.x, pos.z):
+		play(s_step_road, pos, -12.0, randf_range(0.85, 1.2))
+	else:
+		play(s_step, pos, -13.0, randf_range(0.8, 1.2))
 
 func splash(pos: Vector3, deep: bool) -> void:
 	if cam_dist(pos) < 18.0:
@@ -856,10 +862,10 @@ func _engine_loops() -> void:
 		eng.global_position = v.pos
 		wh.global_position = v.pos
 		eng.pitch_scale = (0.55 if heavy else 0.8) * (1.0 + rpm * 0.7 + gi * 0.06)
-		eng.volume_db = (-7.0 if heavy else -10.0) + r * 5.0
+		eng.volume_db = (-7.0 if heavy else -10.0) + r * 5.0 + fx_db()
 		var back = v.speed < -0.4
 		wh.pitch_scale = 0.8 + r * 0.8
-		wh.volume_db = -17.0 if back else -80.0
+		wh.volume_db = (-17.0 + fx_db()) if back else -80.0
 		if not eng.playing:
 			eng.play(randf() * 0.9)
 			wh.play(randf() * 0.9)
@@ -933,7 +939,7 @@ func _engine_loop() -> AudioStreamWAV:
 func hit_tick(kill: bool) -> void:
 	ui_player.stream = s_hit
 	ui_player.pitch_scale = 0.6 if kill else 1.0
-	ui_player.volume_db = -4.0 if kill else -8.0
+	ui_player.volume_db = (-4.0 if kill else -8.0) + fx_db()
 	ui_player.play()
 
 # ---------------------------------------------------------------- radio chatter (commander)
@@ -947,3 +953,230 @@ func radio_say(_text: String) -> void:
 		return
 	radio_t = G.sim_time + 3.5
 	radio_click()
+
+
+# ---------------------------------------------------------------- voices without words
+# Men shout, grunt, cry out and scream, but nothing is said: each sound is a buzz from the throat pushed
+# through two mouth resonances that slide from one vowel to another, with a rasp of breath on the front.
+# Every man has his own pitch, so a section doesn't sound like one man.
+const VOWEL = {"a": [800.0, 1250.0], "o": [520.0, 920.0], "e": [520.0, 1850.0], "i": [320.0, 2250.0], "u": [360.0, 820.0]}
+var s_shouts: Array = []
+var s_grunts: Array = []
+var s_pains: Array = []
+var s_screams: Array = []
+var s_step_road: AudioStreamWAV = null
+var s_step_floor: AudioStreamWAV = null
+var s_reload: AudioStreamWAV = null
+var s_pin: AudioStreamWAV = null
+var s_door: AudioStreamWAV = null
+var s_win: AudioStreamWAV = null
+var s_lose: AudioStreamWAV = null
+var s_horde: AudioStreamWAV = null
+var horde_player: AudioStreamPlayer = null
+var horde_k = 0.0
+var horde_t = 0.0
+var horde_want = 0.0
+var sting_player: AudioStreamPlayer = null
+var voice_t = 0.0
+
+func _voice(len_s: float, f0: float, f1: float, va: String, vb: String, rough: float, burst: float) -> AudioStreamWAV:
+	var n = int(len_s * RATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var A: Array = VOWEL[va]
+	var B: Array = VOWEL[vb]
+	var ph = 0.0
+	var l1 = 0.0
+	var b1 = 0.0
+	var l2 = 0.0
+	var b2 = 0.0
+	var wob = randf() * 6.0
+	for i in range(n):
+		var t = float(i) / RATE
+		var k = t / len_s
+		var f = lerpf(f0, f1, k) * (1.0 + 0.025 * sin(t * 34.0 + wob)) * (1.0 + (randf() - 0.5) * 0.05 * rough)
+		ph += f / RATE
+		var src = (2.0 * fmod(ph, 1.0) - 1.0) * 0.7 + (randf() * 2.0 - 1.0) * 0.45 * rough
+		if t < burst:
+			src += (randf() * 2.0 - 1.0) * 1.3 * (1.0 - t / burst)
+		var c1 = 2.0 * sin(PI * lerpf(A[0], B[0], k) / RATE)
+		var c2 = 2.0 * sin(PI * lerpf(A[1], B[1], k) / RATE)
+		var h1 = src - l1 - 0.28 * b1
+		b1 += c1 * h1
+		l1 += c1 * b1
+		var h2 = src - l2 - 0.22 * b2
+		b2 += c2 * h2
+		l2 += c2 * b2
+		var env = minf(1.0, t / 0.012) * minf(1.0, (len_s - t) / 0.07)
+		out[i] = clampf((b1 * 0.5 + b2 * 0.32) * env, -1.0, 1.0)
+	return _wav(out)
+
+# a short tap or knock: a click of noise and a decaying tone
+func _knock(len_s: float, tone: float, decay: float, bright: float, vol: float) -> AudioStreamWAV:
+	var n = int(len_s * RATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var lp = 0.0
+	for i in range(n):
+		var t = float(i) / RATE
+		lp += (randf() * 2.0 - 1.0 - lp) * bright
+		out[i] = (lp * exp(-t / (decay * 0.5)) * 0.7 + sin(TAU * tone * t) * exp(-t / decay) * 0.6) * vol * minf(1.0, t * 900.0)
+	return _wav(out)
+
+func _mix_at(out: PackedFloat32Array, src: AudioStreamWAV, at_s: float, vol: float) -> void:
+	var d: PackedByteArray = src.data
+	var st = int(at_s * RATE)
+	for i in range(d.size() / 2):
+		if st + i >= out.size():
+			break
+		out[st + i] += d.decode_s16(i * 2) / 32000.0 * vol
+
+# a few notes on a horn: [semitones above D4, seconds]
+func _fanfare(notes: Array) -> AudioStreamWAV:
+	var total = 0.0
+	for nt in notes:
+		total += nt[1]
+	var n = int((total + 0.5) * MRATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	var at = 0.0
+	for nt in notes:
+		var f = 293.66 * pow(2.0, nt[0] / 12.0)
+		var L: float = nt[1] + (0.45 if nt == notes[notes.size() - 1] else 0.03)
+		var st = int(at * MRATE)
+		for k in range(int(L * MRATE)):
+			if st + k >= n:
+				break
+			var t = float(k) / MRATE
+			var ph = TAU * f * t * (1.0 + 0.003 * sin(TAU * 5.0 * t))
+			var env = minf(1.0, t / 0.03) * minf(1.0, (L - t) / 0.25)
+			out[st + k] += (sin(ph) + 0.5 * sin(ph * 2.0) + 0.3 * sin(ph * 3.0) + 0.12 * sin(ph * 4.0)) * 0.2 * env
+			out[st + k] += sin(ph * 0.5) * 0.12 * env
+		at += nt[1]
+	return _wav_rate(out, MRATE)
+
+func _build_voices() -> void:
+	# shouts: hey, go, ah, oi, ya, ho
+	for v in [[0.3, 215.0, 255.0, "e", "i"], [0.28, 205.0, 170.0, "o", "u"], [0.36, 235.0, 200.0, "a", "a"], [0.32, 190.0, 245.0, "o", "i"], [0.28, 245.0, 205.0, "i", "a"], [0.26, 175.0, 205.0, "o", "o"]]:
+		s_shouts.append(_voice(v[0], v[1], v[2], v[3], v[4], 0.25, 0.03))
+	for v in [[0.14, 135.0, 108.0, "u", "o"], [0.18, 150.0, 118.0, "a", "o"], [0.12, 160.0, 125.0, "o", "u"]]:
+		s_grunts.append(_voice(v[0], v[1], v[2], v[3], v[4], 0.55, 0.02))
+	for v in [[0.42, 265.0, 170.0, "a", "a"], [0.3, 300.0, 205.0, "a", "e"], [0.36, 240.0, 160.0, "e", "o"]]:
+		s_pains.append(_voice(v[0], v[1], v[2], v[3], v[4], 0.7, 0.03))
+	for v in [[0.8, 335.0, 235.0, "a", "e"], [1.0, 380.0, 195.0, "a", "a"], [0.6, 305.0, 180.0, "e", "a"]]:
+		s_screams.append(_voice(v[0], v[1], v[2], v[3], v[4], 0.5, 0.02))
+	s_step_road = _knock(0.07, 420.0, 0.012, 0.55, 0.5)
+	s_step_floor = _knock(0.11, 150.0, 0.03, 0.3, 0.6)
+	# a magazine change: out, in, and the bolt run forward
+	var click = _knock(0.05, 2100.0, 0.008, 0.8, 0.6)
+	var clack = _knock(0.08, 900.0, 0.015, 0.7, 0.8)
+	var rl = PackedFloat32Array()
+	rl.resize(int(0.75 * RATE))
+	_mix_at(rl, click, 0.0, 0.8)
+	_mix_at(rl, clack, 0.3, 0.8)
+	_mix_at(rl, click, 0.52, 0.7)
+	_mix_at(rl, clack, 0.58, 1.0)
+	s_reload = _wav(rl)
+	# the pin and the spoon: a thin ring and a tick after it
+	var pn = PackedFloat32Array()
+	pn.resize(int(0.3 * RATE))
+	for i in range(pn.size()):
+		var t = float(i) / RATE
+		pn[i] = sin(TAU * 3400.0 * t) * 0.3 * exp(-t / 0.05) + sin(TAU * 5200.0 * t) * 0.15 * exp(-t / 0.03)
+	_mix_at(pn, click, 0.16, 0.6)
+	s_pin = _wav(pn)
+	s_door = _knock(0.2, 95.0, 0.05, 0.25, 0.9)
+	s_win = _fanfare([[0, 0.16], [4, 0.16], [7, 0.16], [12, 0.5], [7, 0.16], [12, 0.9]])
+	s_lose = _fanfare([[7, 0.45], [5, 0.45], [3, 0.45], [0, 1.1]])
+	sting_player = AudioStreamPlayer.new()
+	add_child(sting_player)
+	# the horde, heard before it's seen: a dozen of the dead moaning over one another, on a loop
+	var hl = 3.2
+	var hn = int(hl * RATE)
+	var hb = PackedFloat32Array()
+	hb.resize(hn)
+	for vz in range(9):
+		var g = _groan(randf_range(0.9, 1.6), randf_range(70.0, 150.0), randf_range(0.4, 0.9))
+		var d: PackedByteArray = g.data
+		var st = randi() % hn
+		for i in range(d.size() / 2):
+			hb[(st + i) % hn] += d.decode_s16(i * 2) / 32000.0 * 0.4
+	s_horde = _wav(hb)
+	s_horde.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	s_horde.loop_begin = 0
+	s_horde.loop_end = hn
+	horde_player = AudioStreamPlayer.new()
+	horde_player.stream = s_horde
+	horde_player.volume_db = -80.0
+	add_child(horde_player)
+
+# a shout to go with a callout: no words, each man in his own voice
+func bark(s, text: String) -> void:
+	if s_shouts.is_empty() or not G.started or G.attract or voice_t > G.sim_time or s.zombie:
+		return
+	var p: Vector3 = s.pos if s.state != "dead" else s.parts[0].global_position
+	if cam_dist(p) > 60.0:
+		return
+	voice_t = G.sim_time + 0.12
+	var pick = (s.id + text.length()) % s_shouts.size()
+	play(s_shouts[pick], p, 1.0 if text.ends_with("!") else -2.0, _man_pitch(s), 0.0, occluded(p), 6000.0)
+
+func _man_pitch(s) -> float:
+	return 0.84 + fmod(absf(s.seed_) * 7.31, 1.0) * 0.34
+
+# "grunt" (an effort: a throw, a shove, a climb), "pain" (hit and still up), "scream" (going down)
+func voice(s, kind: String) -> void:
+	if s_shouts.is_empty() or s.zombie or not G.started:
+		return
+	var p: Vector3 = s.parts[0].global_position
+	if cam_dist(p) > (70.0 if kind == "scream" else 40.0):
+		return
+	var bank: Array = s_grunts if kind == "grunt" else (s_pains if kind == "pain" else s_screams)
+	play(bank[randi() % bank.size()], p, {"grunt": -6.0, "pain": 0.0, "scream": 3.0}[kind], _man_pitch(s) * randf_range(0.95, 1.05), 0.0, occluded(p), 7000.0)
+
+func reload_snd(pos: Vector3) -> void:
+	if s_reload != null and cam_dist(pos) < 22.0:
+		play(s_reload, pos, -9.0, randf_range(0.92, 1.08))
+
+func pin(pos: Vector3) -> void:
+	if s_pin != null and cam_dist(pos) < 20.0:
+		play(s_pin, pos, -8.0, randf_range(0.95, 1.1))
+
+func door(pos: Vector3) -> void:
+	if s_door != null and cam_dist(pos) < 45.0:
+		play(s_door, pos, -5.0, randf_range(0.85, 1.1))
+
+# the end of a battle: a rising call if you won it, a falling one if you didn't
+func sting(won: bool) -> void:
+	if sting_player == null or G.settings["music"] <= 0.0:
+		return
+	sting_player.stream = s_win if won else s_lose
+	sting_player.volume_db = linear_to_db(maxf(G.settings["music"] * 1.6, 0.001)) - 2.0
+	sting_player.play()
+
+# the moan of the horde: louder the more of them are up and the nearer the nearest is to where you're
+# listening from, so a wave is heard coming before it's seen
+func _horde_bed(dt: float) -> void:
+	if horde_player == null:
+		return
+	var on = G.started and not G.over and not G.attract and G.mode == "horde"
+	horde_t -= dt
+	if on and horde_t <= 0.0:
+		horde_t = 0.4
+		var n = 0
+		var near = 1e9
+		for z in G.soldiers:
+			if z.zombie and z.state != "dead":
+				n += 1
+				near = minf(near, ear_pos.distance_to(z.pos))
+		horde_want = 0.0 if n == 0 else clampf(0.12 + minf(n, 40) / 40.0 * 0.4 + clampf(1.0 - near / 90.0, 0.0, 1.0) * 0.6, 0.0, 1.0)
+	if not on:
+		horde_want = 0.0
+	horde_k = move_toward(horde_k, horde_want, dt * (0.35 if horde_want > horde_k else 0.6))
+	if horde_k > 0.005:
+		horde_player.volume_db = linear_to_db(horde_k) - 7.0 + fx_db()
+		horde_player.pitch_scale = 0.85 + horde_k * 0.25
+		if not horde_player.playing:
+			horde_player.play()
+	elif horde_player.playing:
+		horde_player.stop()

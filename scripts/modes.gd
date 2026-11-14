@@ -51,6 +51,9 @@ static func reset() -> void:
 	horde_left = 0
 	horde_t = 10.0
 	horde_spawn_t = 0.0
+	horde_side = -1
+	clear_drops()
+	keep_b = -1
 	check_t = 0.0
 	generals = []
 	gen_known = [null, null]
@@ -617,7 +620,177 @@ static func _move_hill() -> void:
 		G.ui.radio(t, "New hill marked, everybody move!")
 
 # ---------------------------------------------------------------- the horde
+# ---- reasons to move in a zombie battle
+# Each wave comes mostly from one side (announced), so the line has to be turned to face it. A supply drop
+# lands out beyond the defences at the start of each wave from the second: whoever reaches it in time
+# brings back points, ammunition and sometimes a weapon. And there's a keep: the building nearest the
+# middle, where men rest and restock between waves, and where everyone can be called back to.
+const SIDE_NAMES = ["west", "east", "north", "south"]
+const DROP_TIME = 85.0
+static var horde_side = -1
+static var drops: Array = []         # {"p", "t", "node"}
+static var keep_b = -1               # index of the keep in the world's buildings (-1: not looked for, -2: none)
+
+static func clear_drops() -> void:
+	for d in drops:
+		if d.get("node") != null and is_instance_valid(d["node"]):
+			d["node"].queue_free()
+	drops = []
+
+static func keep() -> int:
+	if keep_b == -1:
+		keep_b = -2
+		var bd = 60.0
+		for i in range(G.world.buildings.size()):
+			var b = G.world.buildings[i]
+			var d = G.dist2d(Vector3(b["x"], 0, b["z"]), G.world.capture)
+			if d < bd and b["w"] > 5.0 and b["d"] > 5.0:
+				bd = d
+				keep_b = i
+	return keep_b
+
+static func keep_pos() -> Vector3:
+	var k = keep()
+	if k < 0:
+		return G.world.capture
+	var b = G.world.buildings[k]
+	return Vector3(b["x"], G.world.ground_y(b["x"], b["z"]), b["z"])
+
+# everyone back to the keep (or to the middle, on a map with no building near it)
+static func fall_back() -> String:
+	var k = keep()
+	var c = keep_pos()
+	var n = 0
+	for s in G.soldiers:
+		if s.team != 0 or s.state != "alive" or s.is_player or s.vehicle != null:
+			continue
+		var p = c
+		if k >= 0:
+			var b = G.world.buildings[k]
+			p = Vector3(b["x"] + randf_range(-0.5, 0.5) * (b["w"] - 2.4), c.y, b["z"] + randf_range(-0.5, 0.5) * (b["d"] - 2.4))
+		else:
+			p = G.main._free_spot(c + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6)))
+		s.order = {"mode": "move", "point": p, "tag": "fallback"}
+		s.decide_t = 0.0
+		n += 1
+	G.audio.radio_click()
+	return "%d men falling back to %s" % [n, "the keep" if k >= 0 else "the middle"]
+
+static func _new_drop() -> void:
+	var c = G.world.capture
+	var b: Rect2 = G.world.bounds.grow(-14.0)
+	var p = c
+	for k in range(14):
+		var ang = randf() * TAU
+		# (not on the side they're coming from)
+		var dv = Vector3(cos(ang), 0, sin(ang))
+		var side_v = [Vector3(-1, 0, 0), Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 0, 1)][maxi(horde_side, 0)]
+		if horde_side >= 0 and dv.dot(side_v) > 0.3:
+			continue
+		p = c + dv * randf_range(48.0, 68.0)
+		p.x = clampf(p.x, b.position.x, b.end.x)
+		p.z = clampf(p.z, b.position.y, b.end.y)
+		p = G.main._free_spot(p)
+		if G.dist2d(p, c) > 38.0 and Doors.building_at(p) < 0:
+			break
+	p.y = G.world.ground_y(p.x, p.z)
+	var node = Node3D.new()
+	var crate = MeshInstance3D.new()
+	var bm = BoxMesh.new()
+	bm.size = Vector3(1.1, 0.7, 0.8)
+	crate.mesh = bm
+	crate.material_override = VModel.mat(Color(0.3, 0.34, 0.2))
+	crate.position = Vector3(0, 0.35, 0)
+	node.add_child(crate)
+	for sx in [-0.3, 0.3]:
+		var band = MeshInstance3D.new()
+		var sb = BoxMesh.new()
+		sb.size = Vector3(0.08, 0.72, 0.82)
+		band.mesh = sb
+		band.material_override = VModel.mat(Color(0.75, 0.72, 0.62))
+		band.position = Vector3(sx, 0.35, 0)
+		node.add_child(band)
+	# a column of green light over it, to find it by from anywhere on the map
+	var beam = MeshInstance3D.new()
+	var cm = CylinderMesh.new()
+	cm.top_radius = 0.25
+	cm.bottom_radius = 0.25
+	cm.height = 34.0
+	cm.radial_segments = 6
+	cm.rings = 1
+	beam.mesh = cm
+	var mt = StandardMaterial3D.new()
+	mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mt.albedo_color = Color(0.4, 1.0, 0.45, 0.42)
+	mt.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mt.cull_mode = BaseMaterial3D.CULL_DISABLED
+	beam.material_override = mt
+	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	beam.position = Vector3(0, 17.5, 0)
+	node.add_child(beam)
+	G.world.add_child(node)
+	node.global_position = p
+	drops.append({"p": p, "t": DROP_TIME, "node": node})
+	G.ui.message("Supply drop at %s: get a man to it within %d s (green light)" % [AI.grid_ref(p), int(DROP_TIME)])
+	G.ui.radio(0, "Supplies dropped at %s, %d m out. Fetch them before the dead get there" % [AI.grid_ref(p), int(G.dist2d(p, c))])
+
+static func _step_drops(dt: float) -> void:
+	for i in range(drops.size() - 1, -1, -1):
+		var d = drops[i]
+		d["t"] -= dt
+		var who = null
+		for s in G.soldiers:
+			if s.team == 0 and s.state == "alive" and G.dist2d(s.pos, d["p"]) < 3.0 and absf(s.pos.y - d["p"].y) < 2.5:
+				who = s
+				break
+		if who == null and d["t"] > 0.0:
+			if is_instance_valid(d["node"]):
+				d["node"].rotation.y += dt * 0.6
+			continue
+		if is_instance_valid(d["node"]):
+			d["node"].queue_free()
+		drops.remove_at(i)
+		if who == null:
+			G.ui.message("The supply drop was lost")
+			continue
+		# what's in it: points always, ammunition for everyone near, and one thing more
+		Support.points[0] += 8
+		var near = 0
+		for s in G.soldiers:
+			if s.team == 0 and s.state != "dead" and G.dist2d(s.pos, d["p"]) < 30.0:
+				s.reserve = s.W["mag"] * s.W["mags"]
+				s.grenades = maxi(s.grenades, 2)
+				near += 1
+		var extra = ""
+		var r = randf()
+		if r < 0.4 and not who.is_player and who.wid != "lmg":
+			who.set_weapon("lmg")
+			extra = ", and a machine gun for %s" % who.sname
+		elif r < 0.7:
+			for s in G.soldiers:
+				if s.team == 0 and (s.state == "alive" or s.state == "wounded"):
+					s.hp = 100.0
+					s.bleed = 0.0
+			extra = ", and dressings for everyone"
+		else:
+			Support.points[0] += 6
+			extra = ", and 6 points more"
+		G.fx.callout(who, G.pick(["Got it!", "Supplies! Over here!", "Crate's ours!"]))
+		G.ui.message("Supply drop recovered: +8 points, %d men restocked%s" % [near, extra])
+
+# between waves the keep is where men rest: anyone inside it mends slowly and fills his pouches
+static func _keep_rest(dt: float) -> void:
+	var k = keep()
+	if k < 0:
+		return
+	for s in G.soldiers:
+		if s.team == 0 and s.state == "alive" and Doors.building_at(s.pos) == k:
+			s.hp = minf(100.0, s.hp + 3.0 * dt)
+			if s.reserve < s.W["mag"] * s.W["mags"] and randf() < dt * 0.5:
+				s.reserve = mini(s.W["mag"] * s.W["mags"], s.reserve + s.W["mag"])
+
 static func _horde(dt: float) -> void:
+	_step_drops(dt)
 	var dead_walking = 0
 	for s in G.soldiers:
 		if s.team == 1 and s.state != "dead":
@@ -640,12 +813,14 @@ static func _horde(dt: float) -> void:
 		G.main.end_game(0)
 		return
 	if horde_t >= BREAK - 0.01 and horde_wave > 0:
-		G.ui.message("Wave %d beaten: %d s to dig in. Build barricades, board up windows, buy weapons (Armoury tab)" % [horde_wave, int(BREAK)])
+		G.ui.message("Wave %d beaten: %d s to dig in. Build barricades, board up windows, buy weapons (Armoury tab). Men in the keep rest and restock" % [horde_wave, int(BREAK)])
 		G.ui.radio(0, "Wave %d done. Points for kills: %d to spend" % [horde_wave, Support.points[0]])
 	horde_t -= dt
+	_keep_rest(dt)
 	if horde_t > 0.0:
 		return
 	horde_wave += 1
+	horde_side = randi() % 4
 	horde_left = 10 + horde_wave * 8 + G.team_size
 	# after dark they come in greater numbers (and faster: see make_zombie)
 	if G.main.is_night():
@@ -655,7 +830,10 @@ static func _horde(dt: float) -> void:
 	var fresh = G.team_size - G.alive_count(0)
 	for i in range(maxi(0, fresh)):
 		G.main.base_spawn(0)
-	G.ui.message("Wave %d: %d of them" % [horde_wave, horde_left])
+	G.ui.message("Wave %d: %d of them, most from the %s" % [horde_wave, horde_left, SIDE_NAMES[horde_side]])
+	G.ui.radio(0, "They're coming from the %s. Turn the line to face them" % SIDE_NAMES[horde_side])
+	if horde_wave >= 2:
+		_new_drop()
 
 static func _spawn_pack(n: int) -> void:
 	var W = G.world
@@ -664,7 +842,8 @@ static func _spawn_pack(n: int) -> void:
 	var p = Vector3.ZERO
 	# somewhere on the edge of the map, not right on top of anyone
 	for k in range(10):
-		var side = randi() % 4
+		# (three packs in four come from the side this wave is coming from)
+		var side = horde_side if (horde_side >= 0 and randf() < 0.75) else randi() % 4
 		match side:
 			0: p = Vector3(b.position.x + 12.0, 0, randf_range(b.position.y + 10.0, b.end.y - 10.0))
 			1: p = Vector3(b.end.x - 12.0, 0, randf_range(b.position.y + 10.0, b.end.y - 10.0))
@@ -839,10 +1018,11 @@ const SHOP = {
 	"ammo": {"name": "Ammo for all", "cost": 5, "tip": ""},
 	"heal": {"name": "Patch everyone up", "cost": 6, "tip": ""},
 	"man": {"name": "Extra man", "cost": 6, "tip": ""},
+	"keep": {"name": "Fall back to the keep", "cost": 0, "tip": "Everyone runs to the building in the middle and holds it"},
 }
 
 static func shop_instant(k: String) -> bool:
-	return k in ["ammo", "heal", "man"]
+	return k in ["ammo", "heal", "man", "keep"]
 
 # buy something; p is where the player clicked (for the ones that need a place)
 static func shop(k: String, p: Vector3) -> String:
@@ -887,6 +1067,8 @@ static func shop(k: String, p: Vector3) -> String:
 			Support.points[0] -= c
 			G.main.base_spawn(0)
 			return "A survivor joins you"
+		"keep":
+			return fall_back()
 	return ""
 
 # planks over every window of the building at p: they block the window until torn or blown down
@@ -1106,7 +1288,12 @@ static func status_text() -> String:
 			for s in G.soldiers:
 				if s.team == 1 and s.state != "dead":
 					n += 1
-			return "wave %d of %d · %d coming" % [horde_wave, HORDE_WIN, n + horde_left]
+			var extra = ""
+			if horde_side >= 0 and n + horde_left > 0:
+				extra += " from the %s" % SIDE_NAMES[horde_side]
+			if not drops.is_empty():
+				extra += " · supply drop %s, %d s" % [AI.grid_ref(drops[0]["p"]), int(drops[0]["t"])]
+			return "wave %d of %d · %d coming%s" % [horde_wave, HORDE_WIN, n + horde_left, extra]
 	return ""
 
 # ---------------------------------------------------------------- the daily challenge

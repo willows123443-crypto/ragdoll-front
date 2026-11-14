@@ -5050,6 +5050,12 @@ func load_map(id: String) -> void:
 			if i >= 0 and i < static_cols.size():
 				ruin_col(static_cols[i])
 				ruined_at_start += 1
+	elif not Scenario.pending_ruins.is_empty():
+		# (a saved battle being loaded: what had been knocked down stays down)
+		for i in Scenario.pending_ruins:
+			if i >= 0 and i < static_cols.size():
+				ruin_col(static_cols[i])
+				ruined_at_start += 1
 	finalize_static()
 	Doors.setup(self)
 	build_nav()

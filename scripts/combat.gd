@@ -292,11 +292,15 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 	if s == G.player:
 		G.ui.damage_indicator(attacker.pos if attacker != null else point - dir * 10.0)
 	if s.hp <= 0.0:
+		if kind != "head" and randf() < 0.45:
+			G.audio.voice(s, "scream")
 		kill(s, attacker, kind == "head")
 		b.apply_impulse(imp * b.mass * (0.5 if kind == "head" else 0.4), point - b.global_position)
 		_cap(s, 5.5)
 		return
 	Medical.wound(s, dmg * mult)
+	if randf() < 0.4:
+		G.audio.voice(s, "pain")
 	b.apply_impulse(imp * b.mass * 0.8, point - b.global_position)
 	if s.state == "alive" or s.state == "riding":
 		s.limb[Soldier.PART_REG[part]] = 0.05
@@ -355,9 +359,15 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 
 static var cause = ""          # what the next kill was done with, for the kill feed ("" = the attacker's gun)
 
+# the last man to fall and the last big blast: where the camera goes for the slow-motion finish
+static var last_kill = {"t": -99.0, "p": Vector3.ZERO, "name": "", "team": -1}
+static var last_boom = {"t": -99.0, "p": Vector3.ZERO, "pow": 0.0}
+
 static func kill(s, attacker, head: bool) -> void:
 	if s.state == "dead":
 		return
+	if not s.zombie or G.mode == "horde":
+		last_kill = {"t": G.sim_time, "p": s.pos, "name": s.sname, "team": s.team}
 	if attacker != null and not is_instance_valid(attacker):
 		attacker = null
 	# zombie mode: kills earn points to spend between waves
@@ -463,6 +473,7 @@ static func shove(s, t) -> void:
 	s.stumble = 0.12
 	s.stumble_dir = dir
 	G.audio.play(G.audio.s_hit, t.chest(), -9.0, 0.8)
+	G.audio.voice(s, "grunt")
 	cause = "rifle butt"
 	hit_soldier(t, 1, t.chest(), dir, randf_range(14.0, 24.0), s, 3.0)
 	cause = ""
@@ -481,6 +492,35 @@ static func shove(s, t) -> void:
 	s.set_meta("shove_t", G.sim_time + 1.3)
 	if randf() < 0.3:
 		G.fx.callout(s, G.pick(["Get off!", "Back!", "Get back!", "Off me!"]))
+
+# The entrenching tool: what a man fights with when there's nothing left to fire. Swung two-handed, edge
+# on, it puts a man or one of the dead on the ground more often than not.
+static var spade_n = 0
+static func spade(s, t) -> void:
+	if t == null or t.state == "dead" or s.state != "alive":
+		return
+	spade_n += 1
+	var dir = G.flat(t.pos - s.pos).normalized()
+	s.throw_t = 0.5
+	s.set_meta("throw_T", 0.5)
+	s.set_meta("thrust", true)
+	s.set_meta("spade", true)
+	s.stumble = 0.15
+	s.stumble_dir = dir
+	G.audio.play(G.audio.s_hit, t.chest(), -5.0, 0.55)
+	G.audio.voice(s, "grunt")
+	cause = "entrenching tool"
+	hit_soldier(t, 1 if randf() < 0.6 else 2, t.chest(), dir, randf_range(55.0, 95.0), s, 4.0)
+	cause = ""
+	if t.state == "alive" and randf() < 0.6:
+		t.fall(randf_range(0.8, 1.4))
+		t.push(1, dir * 3.0 + Vector3(0, 0.5, 0), 0.4)
+	s.fire_cd = maxf(s.fire_cd, 0.6)
+	s.set_meta("shove_t", G.sim_time + 1.0)
+
+# has he anything left to shoot with at all
+static func dry(s) -> bool:
+	return s.mag <= 0 and s.reserve <= 0 and s.reload_t <= 0.0
 
 # ---------------------------------------------------------------- rockets
 static func launch_rocket(s, origin: Vector3, dir: Vector3, veh = null) -> void:
@@ -748,6 +788,7 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 			return          # one in the hand already
 		# (a throw cut short when he was knocked down leaves nothing behind)
 		s.set_meta("throw_pending", [target, type, cook])
+		G.audio.pin(s.pos + Vector3(0, 1.2, 0))
 		s.throw_t = THROW_T
 		s.set_meta("throw_T", THROW_T)
 		s.burst = 0
@@ -763,6 +804,8 @@ static func release_throw(s) -> void:
 	if s.state != "alive":
 		return
 	_throw_now(s, pend[0], pend[1], pend[2])
+	if randf() < 0.6:
+		G.audio.voice(s, "grunt")
 	s.throw_t = THROW_AT          # keep the follow-through going
 
 static var thrown = {}
@@ -1035,6 +1078,8 @@ static func launch_rifle_grenade(s, origin: Vector3, target: Vector3) -> void:
 
 # ---------------------------------------------------------------- explosions
 static func explode(pos: Vector3, owner_s, power: float) -> void:
+	if power >= float(last_boom["pow"]) or G.sim_time - float(last_boom["t"]) > 4.0:
+		last_boom = {"t": G.sim_time, "p": pos, "pow": power}
 	# a shell into the river throws up a tall column of spray
 	if not G.world.water.is_empty() and G.world.in_water(pos.x, pos.z) and pos.y < G.world.water_level(pos.x, pos.z) + 0.6:
 		var wl = G.world.water_level(pos.x, pos.z)

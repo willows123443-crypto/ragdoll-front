@@ -101,3 +101,159 @@ static func apply(d: Dictionary) -> void:
 		var o = ords[t]
 		G.orders[t] = {"mode": o[0], "point": Vector3(o[1], G.world.ground_y(o[1], o[2]), o[2]) if o.size() > 2 else null}
 	G.main.refresh_markers()
+
+
+# ---------------------------------------------------------------- a battle in progress
+# One slot. What's kept: the map and what's been destroyed on it, every man still standing (his name,
+# rank, weapon, wounds and ammunition), every vehicle and how badly it's hit, what's been built, the
+# orders, the score, the points held, supply, and the wave in a zombie battle. What isn't: shells in
+# the air, fires, bodies, who was in which squad or riding in the back of what (men are put back on
+# foot where they were, and squads form again), and what each man was in the middle of doing.
+const SAVE_PATH = "user://battle.save"
+static var pending_ruins: Array = []
+
+static func can_save() -> String:
+	if not G.started or G.over or G.attract:
+		return "there's no battle to save"
+	if Campaign.active:
+		return "campaign battles can't be saved part way (the campaign map is saved between them)"
+	if G.tutorial:
+		return "the first battle can't be saved"
+	return ""
+
+static func capture_battle() -> Dictionary:
+	var d = capture()
+	d["battle"] = true
+	d["soldiers"] = []
+	d["men"] = []
+	for s in G.soldiers:
+		# (a crew comes back with its vehicle, so the men aboard aren't written down a second time)
+		if s.state == "dead" or s.state == "riding" or s.vehicle != null:
+			continue
+		d["men"].append({"t": s.team, "x": snappedf(s.pos.x, 0.1), "z": snappedf(s.pos.z, 0.1), "y": snappedf(s.pos.y, 0.1), "cls": s.cls, "w": s.wid, "hp": s.hp, "mag": s.mag, "res": s.reserve,
+			"gr": s.grenades, "sm": s.smokes, "name": s.sname, "vet": s.vet, "zk": s.ztype if s.zombie else "",
+			"ord": [s.order["mode"], s.order["point"].x, s.order["point"].z] if s.order != null and s.order.get("point") != null and s.order["mode"] in ["move", "hold"] else null})
+	d["vhp"] = []
+	d["vcrew"] = []
+	for v in G.vehicles:
+		if v.dead or v.mission != null or v.spec.get("plane", false):
+			continue
+		d["vhp"].append(v.hp / maxf(v.spec["hp"], 1.0))
+		d["vcrew"].append(v.seats.filter(func(x): return x != null).size())
+	var ru = []
+	var W = G.world
+	for k in range(W.static_cols.size()):
+		if not W.static_cols[k].alive and W.static_cols[k].dest:
+			ru.append(k)
+	d["ruins"] = ru
+	d["score"] = G.score.duplicate()
+	d["sup"] = Support.points.duplicate()
+	d["tickets"] = Obj.tickets.duplicate()
+	d["pts"] = Obj.points.map(func(p): return [int(p.get("owner", -1)), float(p.get("prog", 0.0))])
+	d["horde"] = [Modes.horde_wave, Modes.horde_left, Modes.horde_side]
+	d["elapsed"] = G.sim_time
+	d["weather"] = G.settings.get("weather", "clear")
+	return d
+
+static func save_battle() -> String:
+	var why = can_save()
+	if why != "":
+		return "Not saved: " + why
+	var f = FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f == null:
+		return "Not saved: the save file couldn't be written"
+	var d = capture_battle()
+	f.store_var(d)
+	f.close()
+	return "Battle saved: %d men, %d vehicles, %d pieces of the map in ruins" % [d["men"].size(), d["vehicles"].size(), d["ruins"].size()]
+
+static func has_save() -> bool:
+	return FileAccess.file_exists(SAVE_PATH)
+
+static func save_text() -> String:
+	if not has_save():
+		return ""
+	var f = FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if f == null:
+		return ""
+	var d = f.get_var()
+	if not (d is Dictionary) or not d.get("battle", false):
+		return ""
+	var mins = int(float(d.get("elapsed", 0.0)) / 60.0)
+	return "%s on %s, %d min in, %d men" % [str(d["mode"]).capitalize(), G.world.MAPS.get(d["map"], {}).get("name", d["map"]) if G.world != null else str(d["map"]), mins, d["men"].size()]
+
+static func load_battle() -> String:
+	if not has_save():
+		return "No saved battle"
+	var f = FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var d = f.get_var() if f != null else null
+	if not (d is Dictionary) or not d.get("battle", false):
+		return "The saved battle couldn't be read"
+	pending_ruins = d.get("ruins", [])
+	var nv0 = d.get("vehicles", []).size()
+	apply(d)
+	pending_ruins = []
+	# the vehicles' damage (they were put back in the order they were saved in)
+	var vh: Array = d.get("vhp", [])
+	var live = G.vehicles.filter(func(v): return is_instance_valid(v) and not v.dead)
+	var vc: Array = d.get("vcrew", [])
+	for k in range(mini(mini(vh.size(), nv0), live.size())):
+		live[k].hp = maxf(1.0, float(vh[k]) * live[k].spec["hp"])
+		# (a vehicle is put back with every seat filled: anyone beyond the number that was aboard goes)
+		if k < vc.size():
+			var aboard = 0
+			for i in range(live[k].seats.size()):
+				var m = live[k].seats[i]
+				if m == null:
+					continue
+				aboard += 1
+				if aboard > int(vc[k]):
+					live[k].seats[i] = null
+					G.soldiers.erase(m)
+					m.queue_free()
+	# the men
+	for m in d.get("men", []):
+		if str(m["zk"]) != "":
+			Soldier.zombie_next = str(m["zk"])
+		var s = G.main.spawn_soldier(int(m["t"]), float(m["x"]), float(m["z"]), "pistol" if str(m["zk"]) != "" else str(m["w"]))
+		Soldier.zombie_next = ""
+		if s == null:
+			continue
+		if str(m["zk"]) != "":
+			Modes.make_zombie(s, str(m["zk"]))
+		else:
+			s.set_class(str(m["cls"]))
+			if s.wid != str(m["w"]):
+				s.set_weapon(str(m["w"]))
+			s.mag = int(m["mag"])
+			s.reserve = int(m["res"])
+			s.grenades = int(m["gr"])
+			s.smokes = int(m["sm"])
+			s.sname = str(m["name"])
+			s.set_vet(int(m["vet"]))
+		s.hp = float(m["hp"])
+		if float(m["y"]) > G.world.ground_y(s.pos.x, s.pos.z) + 1.5:
+			s.pos.y = float(m["y"])          # (he was upstairs)
+		if m.get("ord") != null:
+			s.order = {"mode": m["ord"][0], "point": Vector3(m["ord"][1], G.world.ground_y(m["ord"][1], m["ord"][2]), m["ord"][2])}
+	if d.has("score"):
+		for k in range(mini(G.score.size(), d["score"].size())):
+			G.score[k] = d["score"][k]
+	for k in range(mini(Support.points.size(), d.get("sup", []).size())):
+		Support.points[k] = d["sup"][k]
+	for k in range(mini(Obj.tickets.size(), d.get("tickets", []).size())):
+		Obj.tickets[k] = d["tickets"][k]
+	var pts: Array = d.get("pts", [])
+	for k in range(mini(Obj.points.size(), pts.size())):
+		var was: int = int(Obj.points[k].get("owner", -1))
+		Obj.points[k]["owner"] = int(pts[k][0])
+		Obj.points[k]["prog"] = float(pts[k][1])
+		if was != int(pts[k][0]) and int(pts[k][0]) >= 0 and k < G.main.point_flags.size():
+			G.main._set_flag_color(G.main.point_flags[k], G.TEAM_BAND[int(pts[k][0])])
+	if G.mode == "horde" and d.has("horde"):
+		Modes.horde_wave = int(d["horde"][0])
+		Modes.horde_left = int(d["horde"][1])
+		Modes.horde_side = int(d["horde"][2])
+		Modes.horde_t = Modes.BREAK
+	G.main.refresh_markers()
+	return "Saved battle loaded: %d men back on the field" % d.get("men", []).size()

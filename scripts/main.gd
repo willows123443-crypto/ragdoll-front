@@ -4423,6 +4423,7 @@ func _aud_test() -> void:
 				if absf(x) > 0.98:
 					clip += 1
 			print("AUDTEST   %-10s %.2f s  peak %.2f  rms %.3f  clipped %.1f%%" % [pr[0], float(nn) / pr[1].mix_rate, pkv, sqrt(acc2 / maxf(nn, 1)), 100.0 * clip / maxf(nn, 1)])
+		print("AUDTEST title tune: volume %.1f dB, restarts %d" % [G.audio.menu_player.volume_db, G.audio.loop_restarts])
 		print("AUDTEST title screen: tune built %s, playing %s, fade %.2f, master peak %.1f dB, started %s attract %s" % [G.audio.menu_player != null, G.audio.menu_player != null and G.audio.menu_player.playing, G.audio.menu_k, mpk, G.started, G.attract])
 		get_tree().quit()
 		return
@@ -4448,6 +4449,7 @@ func _aud_test() -> void:
 		acc += db_to_linear(l)
 		if l > -30.0:
 			loud += 1
+	print("AUDTEST music layers playing %s at %s dB, loop restarts %d, title tune playing %s" % [str(G.audio.music.map(func(m): return m.playing)), str(G.audio.music.map(func(m): return snappedf(m.volume_db, 0.1))), G.audio.loop_restarts, G.audio.menu_player != null and G.audio.menu_player.playing])
 	print("AUDTEST driver %s, playback type %s, frames %d: master peak %.1f dB, mean level %.4f (%.1f dB), frames above -30 dB %d%%, world bus peak %.1f dB, music setting %.2f, volume %.2f" % [
 		AudioServer.get_driver_name(), str(ProjectSettings.get_setting("audio/general/default_playback_type", "?")), n, pk, acc / maxf(n, 1), linear_to_db(maxf(acc / maxf(n, 1), 0.00001)), int(100.0 * loud / maxf(n, 1)), wpk, G.settings["music"], G.settings["volume"]])
 	get_tree().quit()

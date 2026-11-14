@@ -198,7 +198,8 @@ func _build_music() -> void:
 		pl.stream = w
 		pl.volume_db = -80.0
 		add_child(pl)
-		pl.play()
+		if not web:
+			pl.play()        # (in a browser each layer is started when it's wanted, at the level it's wanted)
 		music.append(pl)
 	music_ready = true
 
@@ -274,11 +275,7 @@ func _process(dt: float) -> void:
 	var menu_on = (not G.started or G.attract) and G.settings["music"] > 0.0
 	menu_k = move_toward(menu_k, 1.0 if menu_on else 0.0, dt * (0.5 if menu_on else 0.9))
 	if menu_player != null:
-		menu_player.volume_db = linear_to_db(maxf(menu_k * G.settings["music"] * 2.0, 0.0001)) + music_cut
-		if menu_k > 0.0 and not menu_player.playing:
-			menu_player.play()
-		elif menu_k <= 0.0 and menu_player.playing:
-			menu_player.stop()
+		_loop_vol(menu_player, linear_to_db(maxf((1.0 if web and menu_on else menu_k) * G.settings["music"] * 2.0, 0.0001)) + music_cut, menu_k > 0.0 and (menu_on or not web))
 	_horde_bed(dt)
 	heat = maxf(0.0, heat - dt * 0.25)
 	# how hot the whole battle is, not just what's in front of the camera (the commander's view is high up):
@@ -300,7 +297,11 @@ func _process(dt: float) -> void:
 	var lv = [0.25 + intensity * 0.5, maxf(0.0, intensity - 0.25) * 1.3, maxf(0.0, intensity - 0.55) * 2.0]
 	for i in range(music.size()):
 		var a = clampf(lv[i], 0.0, 1.0) * mv * (1.0 if on else 0.0)
-		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 3.0
+		if web:
+			# (kept in step with the first layer when one is brought in part way through)
+			_loop_vol(music[i], linear_to_db(maxf(a, 0.0001)) - 3.0, a > 0.02, music[0].get_playback_position() if i > 0 and music[0].playing else -1.0)
+		else:
+			music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 3.0
 	# the wider battle: far-off booms and crackling gunfire while a fight is on
 	if on:
 		rumble_t -= dt
@@ -472,6 +473,36 @@ func _build_menu_music() -> void:
 	menu_player.stream = w
 	menu_player.volume_db = -80.0
 	add_child(menu_player)
+
+# Set a looping player's volume, and start or stop it. On a desktop that's all there is to it. In a
+# browser a sound that isn't placed in the world keeps the volume it was started at (turning it up or
+# down afterwards does nothing: the title tune was started at the first step of its fade-in and stayed
+# there, all but silent), so there the volume goes in steps of 4 dB, and at each step the sound is
+# stopped and started again at the new level from where it had got to.
+func _loop_vol(pl: AudioStreamPlayer, db: float, on: bool, sync_pos: float = -1.0) -> void:
+	if not on:
+		if pl.playing:
+			pl.stop()
+		return
+	if not web:
+		pl.volume_db = db
+		if not pl.playing:
+			pl.play(maxf(sync_pos, 0.0))
+		return
+	var cur: float = pl.get_meta("vol", -999.0)
+	if pl.playing and absf(cur - db) < 4.0:
+		return
+	var at = pl.get_playback_position() if pl.playing else maxf(sync_pos, 0.0)
+	var L = pl.stream.get_length() if pl.stream != null else 0.0
+	if L > 0.0:
+		at = fmod(at, L)
+	loop_restarts += 1
+	pl.stop()
+	pl.volume_db = db
+	pl.set_meta("vol", db)
+	pl.play(at)
+
+var loop_restarts = 0
 
 # the effects slider (everything but the music), as decibels
 func fx_db() -> float:
@@ -1205,10 +1236,5 @@ func _horde_bed(dt: float) -> void:
 	if not on:
 		horde_want = 0.0
 	horde_k = move_toward(horde_k, horde_want, dt * (0.35 if horde_want > horde_k else 0.6))
-	if horde_k > 0.005:
-		horde_player.volume_db = linear_to_db(horde_k) - 12.0 + fx_db()
-		horde_player.pitch_scale = 0.85 + horde_k * 0.25
-		if not horde_player.playing:
-			horde_player.play()
-	elif horde_player.playing:
-		horde_player.stop()
+	horde_player.pitch_scale = 0.85 + horde_k * 0.25
+	_loop_vol(horde_player, linear_to_db(maxf(horde_k, 0.001)) - 12.0 + fx_db(), horde_k > 0.02)

@@ -30,29 +30,37 @@ var ui_player: AudioStreamPlayer
 var ui_player2: AudioStreamPlayer
 
 func _ready() -> void:
-	var bus = AudioServer.bus_count
-	AudioServer.add_bus(bus)
-	AudioServer.set_bus_name(bus, "World")
-	AudioServer.set_bus_send(bus, "Master")
-	AudioServer.set_bus_volume_db(bus, -4.0)
-	# the loudest moments (a shell close by with a firefight going) are held under full scale and not
-	# clipped. (In a browser the engine's effects aren't used: the page puts its own limiter on the output.)
-	var lim = AudioEffectHardLimiter.new()
-	lim.ceiling_db = -0.5
-	AudioServer.add_bus_effect(0, lim)
-	var rev = AudioEffectReverb.new()
-	reverb = rev
-	rev.room_size = 0.55
-	rev.damping = 0.6
-	rev.wet = 0.18
-	rev.dry = 1.0
-	AudioServer.add_bus_effect(bus, rev)
-	# a blast close by leaves you half deaf for a moment: everything dull and muffled, then it comes back
-	deaf_fx = AudioEffectLowPassFilter.new()
-	deaf_fx.cutoff_hz = 20000.0
-	AudioServer.add_bus_effect(bus, deaf_fx)
-	AudioServer.set_bus_effect_enabled(bus, AudioServer.get_bus_effect_count(bus) - 1, false)
-	deaf_bus = bus
+	# In a browser every sound goes straight to the master bus. Adding a bus while the game runs
+	# (AudioServer.add_bus) trips a fault in the engine's web audio: the new bus is slotted in ahead of
+	# the master, the master is then routed into it, and nothing is connected to the speakers any more.
+	# That is why the browser build was completely silent. (The engine's effects aren't used in a
+	# browser anyway, so nothing is lost: the page has its own limiter.)
+	web = OS.has_feature("web") or "--webaudio" in OS.get_cmdline_user_args()     # (the flag: to test the browser routing on a desktop)
+	if not web:
+		var bus = AudioServer.bus_count
+		AudioServer.add_bus(bus)
+		AudioServer.set_bus_name(bus, "World")
+		AudioServer.set_bus_send(bus, "Master")
+		AudioServer.set_bus_volume_db(bus, -4.0)
+		world_bus = "World"
+		# the loudest moments (a shell close by with a firefight going) are held under full scale and
+		# not clipped
+		var lim = AudioEffectHardLimiter.new()
+		lim.ceiling_db = -0.5
+		AudioServer.add_bus_effect(0, lim)
+		var rev = AudioEffectReverb.new()
+		reverb = rev
+		rev.room_size = 0.55
+		rev.damping = 0.6
+		rev.wet = 0.18
+		rev.dry = 1.0
+		AudioServer.add_bus_effect(bus, rev)
+		# a blast close by leaves you half deaf for a moment: everything dull and muffled, then it comes back
+		deaf_fx = AudioEffectLowPassFilter.new()
+		deaf_fx.cutoff_hz = 20000.0
+		AudioServer.add_bus_effect(bus, deaf_fx)
+		AudioServer.set_bus_effect_enabled(bus, AudioServer.get_bus_effect_count(bus) - 1, false)
+		deaf_bus = bus
 	s_shot = _noise(0.32, 0.055, 0.45, 2.2)
 	s_boom = _noise(1.8, 0.35, 0.08, 1.0, 55.0)
 	s_whizz = _noise(0.12, 0.03, 0.9, 1.0)
@@ -88,7 +96,7 @@ func _ready() -> void:
 	add_child(ear)
 	for i in range(28):
 		var p = AudioStreamPlayer3D.new()
-		p.bus = "World"
+		p.bus = world_bus
 		p.unit_size = UNIT
 		p.max_distance = 260.0
 		p.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
@@ -200,6 +208,9 @@ func _wav_rate(samples: PackedFloat32Array, rate: int) -> AudioStreamWAV:
 
 var deaf_fx: AudioEffectLowPassFilter = null
 var deaf_bus = -1
+var web = false
+var world_bus = "Master"
+var world_trim = 0.0        # (browser only: what the World bus's volume does on desktop)
 var deaf = 0.0
 var s_ring: AudioStreamWAV = null
 
@@ -231,7 +242,7 @@ func _process(dt: float) -> void:
 	_engine_loops()
 	echo_budget = minf(echo_budget + dt * 9.0, 4.0)
 	bark_t -= dt
-	if deaf > 0.0:
+	if deaf > 0.0 and deaf_fx != null:
 		deaf = maxf(0.0, deaf - dt)
 		# the world comes back gradually: from a dull thump up to full brightness
 		deaf_fx.cutoff_hz = lerpf(20000.0, 450.0, clampf(deaf / 1.6, 0.0, 1.0))
@@ -242,7 +253,9 @@ func _process(dt: float) -> void:
 	var on = G.started and not G.over and not G.attract
 	# (the battle behind the title screen is kept well down under the tune)
 	var wv = -18.0 if G.attract else -4.0
-	if absf(AudioServer.get_bus_volume_db(deaf_bus) - wv) > 0.05:
+	if deaf_bus < 0:
+		world_trim = move_toward(world_trim, wv, dt * 30.0)
+	elif absf(AudioServer.get_bus_volume_db(deaf_bus) - wv) > 0.05:
 		AudioServer.set_bus_volume_db(deaf_bus, move_toward(AudioServer.get_bus_volume_db(deaf_bus), wv, dt * 30.0))
 	# the title screen and the menus before a battle have their own tune; it fades out as the battle
 	# comes up and back in when you return
@@ -497,7 +510,7 @@ func play(stream: AudioStream, pos: Vector3, vol_db: float = 0.0, pitch: float =
 	pi = (pi + 1) % players.size()
 	p.stream = stream
 	p.global_position = pos
-	p.volume_db = vol_db - (5.0 if muffle else 0.0)
+	p.volume_db = vol_db - (5.0 if muffle else 0.0) + world_trim
 	# through a wall: dull and low, the top end cut away (and the top end goes with distance too)
 	p.attenuation_filter_cutoff_hz = 800.0 if muffle else cutoff
 	p.pitch_scale = pitch * randf_range(0.93, 1.07)
@@ -793,7 +806,7 @@ func _make_engine_loops() -> void:
 		var pair = []
 		for k in range(2):
 			var p = AudioStreamPlayer3D.new()
-			p.bus = "World"
+			p.bus = world_bus
 			p.unit_size = 10.0
 			p.max_distance = 110.0
 			p.stream = s_eng_loop if k == 0 else s_whine

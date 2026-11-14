@@ -1,0 +1,537 @@
+Godot Engine v4.6.3.stable.official.7d41c59c4 - https://godotengine.org
+
+AUTOTEST start
+AUTOTEST town/capture 2t day 12s | cover types { "low": 6 }
+AUTOTEST town/capture 2t day 12s | squad objectives 0:-1 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:2 1:0 1:2 1:2 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST town/capture 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/capture 2t day 12s | morale 78/74 broken 0/0 lowammo 0/0 leaders 17/17 squads | routs 0/0 shots 145/88 hits 6/4
+AUTOTEST town/capture 2t day 12s | vehicles: jeep0 hp479 crew0 spd0.0, tank0 hp1779 crew2 spd2.4, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp898 crew1 spd0.0, jeep1 hp428 crew0 spd0.0, tank1 hp1784 crew2 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew0 spd0.0, nest1 hp900 crew1 spd0.0, tank-1 hp655 crew0 spd0.0, armoredcar-1 hp239 crew0 spd0.0 | riding 11 chute 0
+AUTOTEST town/capture 2t day 12s | t0 spawn(-96,0) avg(-65,3) t1 spawn(96,0) avg(65,0)
+AUTOTEST town/capture 2t day 12s | knees ok/backward: body 42/0, target 44/0
+AUTOTEST town/capture 2t day 12s | teams 2 alive [22, 21]
+AUTOTEST town/capture 2t day 12s | prof vehicles 1.51 soldiers 3.76 ms/tick
+AUTOTEST town/capture 2t day 12s | soldiers inside buildings 0
+AUTOTEST town/capture 2t day 12s | squad events { "flank": 0, "breach": 0, "bound": 4, "suppress": 11, "smoke": 0, "fallback": 0 } | officers [true, true]
+AUTOTEST town/capture 2t day 12s | alive 22 v 21 | dead 1 | score 1-0 | sim 5.74 ms/tick
+AUTOTEST town/capture 2t day | ordered soldiers dist to goal [2, 41, 0] | followers dist to leader [18, 19, 26]
+AUTOTEST town/capture 2t day 30s | cover types { "corner": 1, "low": 2 }
+AUTOTEST town/capture 2t day 30s | squad objectives 0:-1 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:2 1:2 1:2 1:2 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 1:-1
+AUTOTEST town/capture 2t day 30s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/capture 2t day 30s | morale 78/78 broken 0/0 lowammo 0/0 leaders 20/21 squads | routs 0/0 shots 209/118 hits 6/4
+AUTOTEST town/capture 2t day 30s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp596 crew0 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp564 crew0 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp898 crew1 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1339 crew0 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, tank-1 hp655 crew0 spd0.0, armoredcar-1 hp112 crew0 spd0.0, armoredcar1 hp519 crew2 spd0.0, halftrack1 hp894 crew0 spd0.0, motorbike0 hp200 crew0 spd0.0 WRECK | riding 9 chute 0
+AUTOTEST town/capture 2t day 30s | t0 spawn(-96,0) avg(-47,6) t1 spawn(96,0) avg(55,4)
+AUTOTEST town/capture 2t day 30s | knees ok/backward: body 50/2, target 50/2
+AUTOTEST town/capture 2t day 30s | teams 2 alive [23, 22]
+AUTOTEST town/capture 2t day 30s | prof vehicles 1.64 soldiers 4.15 ms/tick
+AUTOTEST town/capture 2t day 30s | soldiers inside buildings 2
+AUTOTEST town/capture 2t day 30s | squad events { "flank": 0, "breach": 0, "bound": 12, "suppress": 19, "smoke": 0, "fallback": 0 } | officers [true, true]
+AUTOTEST town/capture 2t day 30s | alive 23 v 22 | dead 5 | score 3-0 | sim 6.95 ms/tick
+AUTOTEST town/capture 2t day | points A:-1 B:-1 C:-1 |  | over=false
+AUTOTEST field/capture 2t day 12s | cover types { "low": 4 }
+AUTOTEST field/capture 2t day 12s | squad objectives 0:0 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:1 1:0 1:2 1:2 1:2 1:-1 1:-1 1:-1 1:-1
+AUTOTEST field/capture 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/capture 2t day 12s | morale 78/78 broken 0/0 lowammo 0/0 leaders 17/17 squads | routs 0/0 shots 155/191 hits 1/6
+AUTOTEST field/capture 2t day 12s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1800 crew3 spd6.7, mortar0 hp260 crew1 spd0.0, radar0 hp736 crew1 spd0.0, nest0 hp897 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp518 crew2 spd0.0, tank1 hp1800 crew3 spd0.9, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, armoredcar-1 hp390 crew0 spd0.0, technical-1 hp61 crew0 spd0.0 | riding 16 chute 0
+AUTOTEST field/capture 2t day 12s | t0 spawn(-96,0) avg(-64,2) t1 spawn(96,0) avg(62,-7)
+AUTOTEST field/capture 2t day 12s | knees ok/backward: body 42/0, target 42/0
+AUTOTEST field/capture 2t day 12s | teams 2 alive [22, 22]
+AUTOTEST field/capture 2t day 12s | prof vehicles 1.75 soldiers 4.15 ms/tick
+AUTOTEST field/capture 2t day 12s | soldiers inside buildings 0
+AUTOTEST field/capture 2t day 12s | squad events { "flank": 0, "breach": 0, "bound": 16, "suppress": 26, "smoke": 1, "fallback": 0 } | officers [true, true]
+AUTOTEST field/capture 2t day 12s | alive 22 v 22 | dead 0 | score 0-0 | sim 6.51 ms/tick
+AUTOTEST field/capture 2t day | ordered soldiers dist to goal [1, 1, 1] | followers dist to leader [23, 11, 13]
+AUTOTEST field/capture 2t day 30s | cover types { "low": 3 }
+AUTOTEST field/capture 2t day 30s | squad objectives 0:0 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:1 1:1 1:2 1:2 1:2 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 1:-1
+AUTOTEST field/capture 2t day 30s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/capture 2t day 30s | morale 66/78 broken 0/0 lowammo 0/0 leaders 17/21 squads | routs 0/0 shots 262/298 hits 3/9
+AUTOTEST field/capture 2t day 30s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1530 crew2 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp64 crew0 spd0.0, nest0 hp0 crew0 spd0.0 WRECK, nest0 hp0 crew0 spd0.0 WRECK, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp788 crew2 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, armoredcar-1 hp0 crew0 spd0.0 WRECK, technical-1 hp0 crew0 spd0.0 WRECK, armoredcar1 hp1000 crew2 spd6.2, halftrack1 hp810 crew0 spd0.0, motorbike0 hp200 crew2 spd17.6, atgun1 hp520 crew2 spd1.1 | riding 15 chute 0
+AUTOTEST field/capture 2t day 30s | t0 spawn(-96,0) avg(-54,5) t1 spawn(96,0) avg(47,-6)
+AUTOTEST field/capture 2t day 30s | knees ok/backward: body 34/0, target 34/0
+AUTOTEST field/capture 2t day 30s | teams 2 alive [12, 25]
+AUTOTEST field/capture 2t day 30s | prof vehicles 1.68 soldiers 3.65 ms/tick
+AUTOTEST field/capture 2t day 30s | soldiers inside buildings 0
+AUTOTEST field/capture 2t day 30s | squad events { "flank": 1, "breach": 0, "bound": 25, "suppress": 42, "smoke": 2, "fallback": 0 } | officers [false, true]
+AUTOTEST field/capture 2t day 30s | alive 12 v 25 | dead 15 | score 3-10 | sim 6.54 ms/tick
+AUTOTEST field/capture 2t day | points A:-1 B:-1 C:-1 |  | over=false
+AUTOTEST trenches/capture 2t day 12s | cover types { "low": 13 }
+AUTOTEST trenches/capture 2t day 12s | squad objectives 0:-1 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:1 1:0 1:2 1:2 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST trenches/capture 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST trenches/capture 2t day 12s | morale 77/79 broken 0/0 lowammo 0/0 leaders 17/17 squads | routs 0/0 shots 138/198 hits 0/2
+AUTOTEST trenches/capture 2t day 12s | vehicles: jeep0 hp520 crew2 spd6.8, tank0 hp1765 crew2 spd7.5, mortar0 hp260 crew1 spd0.0, radar0 hp743 crew1 spd0.0, nest0 hp797 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp520 crew2 spd13.1, tank1 hp1793 crew2 spd-2.1, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp824 crew0 spd0.0, nest1 hp900 crew1 spd0.0, technical-1 hp109 crew0 spd0.0, truck-1 hp131 crew0 spd0.0 | riding 15 chute 0
+AUTOTEST trenches/capture 2t day 12s | t0 spawn(-96,0) avg(-61,0) t1 spawn(96,0) avg(68,-4)
+AUTOTEST trenches/capture 2t day 12s | knees ok/backward: body 54/0, target 56/0
+AUTOTEST trenches/capture 2t day 12s | teams 2 alive [22, 22]
+AUTOTEST trenches/capture 2t day 12s | prof vehicles 1.59 soldiers 3.78 ms/tick
+AUTOTEST trenches/capture 2t day 12s | soldiers inside buildings 0
+AUTOTEST trenches/capture 2t day 12s | squad events { "flank": 3, "breach": 0, "bound": 29, "suppress": 58, "smoke": 6, "fallback": 0 } | officers [true, true]
+AUTOTEST trenches/capture 2t day 12s | alive 22 v 22 | dead 0 | score 0-0 | sim 5.87 ms/tick
+AUTOTEST trenches/capture 2t day | ordered soldiers dist to goal [2, 19, 15] | followers dist to leader [14, 35, 24]
+AUTOTEST trenches/capture 2t day 30s | cover types { "low": 8 }
+AUTOTEST trenches/capture 2t day 30s | squad objectives 0:-1 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:1 1:1 1:2 1:2 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 1:-1
+AUTOTEST trenches/capture 2t day 30s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST trenches/capture 2t day 30s | morale 78/79 broken 0/0 lowammo 0/0 leaders 19/21 squads | routs 0/0 shots 225/342 hits 0/4
+AUTOTEST trenches/capture 2t day 30s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp778 crew2 spd-2.1, mortar0 hp260 crew1 spd0.0, radar0 hp712 crew1 spd0.0, nest0 hp641 crew0 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp195 crew0 spd0.0, tank1 hp829 crew2 spd2.9, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp448 crew1 spd0.0, nest1 hp900 crew1 spd0.0, technical-1 hp0 crew0 spd0.0 WRECK, truck-1 hp127 crew0 spd0.0, armoredcar1 hp1000 crew2 spd0.0, halftrack1 hp900 crew2 spd1.6, motorbike0 hp200 crew2 spd-2.8, atgun1 hp520 crew2 spd0.1 | riding 19 chute 0
+AUTOTEST trenches/capture 2t day 30s | t0 spawn(-96,0) avg(-53,-4) t1 spawn(96,0) avg(55,-5)
+AUTOTEST trenches/capture 2t day 30s | knees ok/backward: body 47/0, target 47/0
+AUTOTEST trenches/capture 2t day 30s | teams 2 alive [19, 27]
+AUTOTEST trenches/capture 2t day 30s | prof vehicles 1.46 soldiers 3.34 ms/tick
+AUTOTEST trenches/capture 2t day 30s | soldiers inside buildings 0
+AUTOTEST trenches/capture 2t day 30s | squad events { "flank": 4, "breach": 0, "bound": 37, "suppress": 72, "smoke": 6, "fallback": 0 } | officers [true, true]
+AUTOTEST trenches/capture 2t day 30s | alive 19 v 27 | dead 6 | score 0-3 | sim 5.52 ms/tick
+AUTOTEST trenches/capture 2t day | points A:-1 B:-1 C:-1 |  | over=false
+AUTOTEST valley/capture 2t day 12s | cover types { "low": 8 }
+AUTOTEST valley/capture 2t day 12s | squad objectives 0:-1 0:0 0:0 0:0 0:0 0:-1 0:0 0:-1 1:2 1:1 1:2 1:2 1:-1 1:-1 1:-1 1:-1 1:2
+AUTOTEST valley/capture 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST valley/capture 2t day 12s | morale 76/82 broken 0/0 lowammo 0/0 leaders 17/17 squads | routs 0/0 shots 0/0 hits 0/0
+AUTOTEST valley/capture 2t day 12s | vehicles: jeep0 hp520 crew4 spd15.0, tank0 hp1800 crew3 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp520 crew4 spd6.0, tank1 hp1800 crew3 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, technical-1 hp118 crew0 spd0.0, tank-1 hp569 crew0 spd0.0, jeep-1 hp135 crew0 spd0.0 | riding 22 chute 0
+AUTOTEST valley/capture 2t day 12s | t0 spawn(-260,0) avg(-242,7) t1 spawn(260,0) avg(240,-7)
+AUTOTEST valley/capture 2t day 12s | knees ok/backward: body 44/0, target 44/0
+AUTOTEST valley/capture 2t day 12s | teams 2 alive [22, 22]
+AUTOTEST valley/capture 2t day 12s | prof vehicles 1.01 soldiers 2.12 ms/tick
+AUTOTEST valley/capture 2t day 12s | soldiers inside buildings 0
+AUTOTEST valley/capture 2t day 12s | squad events { "flank": 4, "breach": 0, "bound": 41, "suppress": 72, "smoke": 6, "fallback": 0, "trail": 1 } | officers [true, true]
+AUTOTEST valley/capture 2t day 12s | alive 22 v 22 | dead 0 | score 0-0 | sim 3.36 ms/tick
+AUTOTEST valley/capture 2t day | ordered soldiers dist to goal [2, 0, 0] | followers dist to leader [10, 12, 9, 12]
+AUTOTEST valley/capture 2t day 60s | cover types { "low": 9 }
+AUTOTEST valley/capture 2t day 60s | squad objectives 0:-1 0:1 0:0 0:0 0:0 0:-1 0:0 0:-1 1:2 1:2 1:2 1:2 1:-1 1:-1 1:-1 1:-1 1:2 1:-1 1:-1 0:-1 1:-1
+AUTOTEST valley/capture 2t day 60s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST valley/capture 2t day 60s | morale 81/81 broken 0/0 lowammo 0/0 leaders 21/21 squads | routs 0/0 shots 0/0 hits 0/0
+AUTOTEST valley/capture 2t day 60s | vehicles: jeep0 hp520 crew2 spd0.0, tank0 hp1800 crew3 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp520 crew2 spd0.0, tank1 hp1800 crew3 spd5.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, technical-1 hp118 crew0 spd0.0, tank0 hp990 crew3 spd0.0, jeep-1 hp135 crew0 spd0.0, armoredcar1 hp1000 crew2 spd-3.7, halftrack1 hp900 crew2 spd-1.9, motorbike0 hp200 crew0 spd0.0 WRECK, atgun1 hp520 crew2 spd0.0 | riding 27 chute 0
+AUTOTEST valley/capture 2t day 60s | t0 spawn(-260,0) avg(-220,0) t1 spawn(260,0) avg(252,-13)
+AUTOTEST valley/capture 2t day 60s | knees ok/backward: body 49/0, target 50/0
+AUTOTEST valley/capture 2t day 60s | teams 2 alive [24, 28]
+AUTOTEST valley/capture 2t day 60s | prof vehicles 1.27 soldiers 3.52 ms/tick
+AUTOTEST valley/capture 2t day 60s | soldiers inside buildings 0
+AUTOTEST valley/capture 2t day 60s | squad events { "flank": 4, "breach": 0, "bound": 68, "suppress": 72, "smoke": 6, "fallback": 0, "trail": 25 } | officers [true, true]
+AUTOTEST valley/capture 2t day 60s | alive 24 v 28 | dead 0 | score 0-0 | sim 5.36 ms/tick
+AUTOTEST valley/capture 2t day | points A:0 B:-1 C:-1 |  | over=false
+AUTOTEST valley/frontline 2t day 12s | cover types {  }
+AUTOTEST valley/frontline 2t day 12s | squad objectives 0:2 0:2 0:2 0:2 0:2 0:2 0:2 0:2 1:2 1:4 1:2 1:2 1:2 1:2 1:2 1:2 1:2
+AUTOTEST valley/frontline 2t day 12s | builds hq0:ok, hq1:ok, fob1:0% | spawnable [true, true] | wall-leaners 0
+AUTOTEST valley/frontline 2t day 12s | morale 77/78 broken 0/0 lowammo 0/0 leaders 16/17 squads | routs 0/0 shots 37/2 hits 0/0
+AUTOTEST valley/frontline 2t day 12s | vehicles: jeep0 hp325 crew0 spd10.7, tank0 hp1800 crew3 spd7.5, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp520 crew2 spd15.0, tank1 hp1800 crew3 spd6.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd-0.4, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, halftrack-1 hp312 crew0 spd0.0, technical-1 hp150 crew0 spd0.0, jeep-1 hp204 crew0 spd0.0 | riding 16 chute 0
+AUTOTEST valley/frontline 2t day 12s | t0 spawn(-260,0) avg(-166,-9) t1 spawn(260,0) avg(142,6)
+AUTOTEST valley/frontline 2t day 12s | knees ok/backward: body 48/0, target 48/0
+AUTOTEST valley/frontline 2t day 12s | teams 2 alive [20, 22]
+AUTOTEST valley/frontline 2t day 12s | prof vehicles 1.27 soldiers 2.46 ms/tick
+AUTOTEST valley/frontline 2t day 12s | soldiers inside buildings 0
+AUTOTEST valley/frontline 2t day 12s | squad events { "flank": 4, "breach": 0, "bound": 72, "suppress": 72, "smoke": 6, "fallback": 0, "trail": 28 } | officers [true, true]
+AUTOTEST valley/frontline 2t day 12s | alive 20 v 22 | dead 2 | score 0-0 | sim 4.06 ms/tick
+AUTOTEST valley/frontline 2t day | ordered soldiers dist to goal [0, 0, 11] | followers dist to leader [4, 10]
+AUTOTEST valley/frontline 2t day 75s | cover types { "low": 3 }
+AUTOTEST valley/frontline 2t day 75s | squad objectives 0:3 0:3 0:2 0:3 0:3 0:3 0:2 0:3 1:2 1:4 1:2 1:2 1:2 1:2 1:2 1:2 1:2 0:2 1:-1 1:-1 0:3 1:-1 1:-1
+AUTOTEST valley/frontline 2t day 75s | builds hq0:ok, hq1:ok, fob1:8%, sandbags0:ok, sandbags0:ok | spawnable [true, true] | wall-leaners 0
+AUTOTEST valley/frontline 2t day 75s | morale 75/73 broken 0/0 lowammo 0/0 leaders 19/23 squads | routs 0/0 shots 422/783 hits 0/1
+AUTOTEST valley/frontline 2t day 75s | vehicles: jeep0 hp92 crew0 spd0.0, tank0 hp1494 crew2 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp652 crew1 spd0.0, nest0 hp703 crew0 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, halftrack1 hp498 crew0 spd0.0, technical-1 hp115 crew0 spd0.0, jeep0 hp265 crew1 spd0.0, gunship0 hp624 crew2 spd0.0, armoredcar1 hp1000 crew2 spd6.5, halftrack1 hp900 crew2 spd1.7, motorbike0 hp200 crew0 spd0.0 WRECK, fighter1 hp325 crew1 spd0.0, atgun1 hp520 crew2 spd0.0 | riding 18 chute 0
+AUTOTEST valley/frontline 2t day 75s | t0 spawn(-260,0) avg(-108,2) t1 spawn(260,0) avg(168,19)
+AUTOTEST valley/frontline 2t day 75s | knees ok/backward: body 34/0, target 34/0
+AUTOTEST valley/frontline 2t day 75s | teams 2 alive [20, 19]
+AUTOTEST valley/frontline 2t day 75s | prof vehicles 1.66 soldiers 2.78 ms/tick
+AUTOTEST valley/frontline 2t day 75s | soldiers inside buildings 2
+AUTOTEST valley/frontline 2t day 75s | squad events { "flank": 5, "breach": 0, "bound": 100, "suppress": 90, "smoke": 7, "fallback": 0, "trail": 34 } | officers [true, true]
+AUTOTEST valley/frontline 2t day 75s | alive 20 v 19 | dead 16 | score 7-2 | sim 5.19 ms/tick
+AUTOTEST valley/frontline 2t day | points A:0 B:0 C:0 D:1 E:1 | tickets 94 : 83 | over=false
+AUTOTEST front/assault 2t day 12s | cover types { "low": 1 }
+AUTOTEST front/assault 2t day 12s | squad objectives 0:-1 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:0 1:3 1:1 1:0 1:-1 1:-1 1:-1 1:-1 1:1
+AUTOTEST front/assault 2t day 12s | builds hq0:ok | spawnable [true, true] | wall-leaners 0
+AUTOTEST front/assault 2t day 12s | morale 71/72 broken 0/0 lowammo 0/0 leaders 15/17 squads | routs 0/0 shots 242/172 hits 13/14
+AUTOTEST front/assault 2t day 12s | vehicles: jeep0 hp436 crew1 spd0.0, tank0 hp1456 crew2 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp735 crew1 spd0.0, nest0 hp640 crew0 spd0.0, nest0 hp894 crew0 spd0.0, jeep1 hp442 crew2 spd0.0, tank1 hp1293 crew0 spd0.0, mortar1 hp0 crew0 spd0.0 WRECK, radar1 hp414 crew0 spd0.0, nest1 hp899 crew1 spd0.0, nest1 hp897 crew1 spd0.0, tank-1 hp663 crew0 spd0.0, truck-1 hp225 crew0 spd0.0, jeep-1 hp74 crew0 spd0.0 | riding 9 chute 0
+AUTOTEST front/assault 2t day 12s | t0 spawn(-225,0) avg(-210,0) t1 spawn(225,0) avg(58,-12)
+AUTOTEST front/assault 2t day 12s | knees ok/backward: body 40/0, target 40/0
+AUTOTEST front/assault 2t day 12s | teams 2 alive [19, 18]
+AUTOTEST front/assault 2t day 12s | prof vehicles 1.41 soldiers 2.58 ms/tick
+AUTOTEST front/assault 2t day 12s | soldiers inside buildings 0
+AUTOTEST front/assault 2t day 12s | squad events { "flank": 6, "breach": 0, "bound": 106, "suppress": 103, "smoke": 7, "fallback": 0, "trail": 35 } | officers [true, true]
+AUTOTEST front/assault 2t day 12s | alive 19 v 18 | dead 7 | score 4-2 | sim 4.58 ms/tick
+AUTOTEST front/assault 2t day | ordered soldiers dist to goal [3, 26, 2] | followers dist to leader [24, 22, 17]
+AUTOTEST front/assault 2t day 50s | cover types { "low": 3 }
+AUTOTEST front/assault 2t day 50s | squad objectives 0:-1 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:0 1:0 1:1 1:0 1:-1 1:-1 1:-1 1:-1 1:1 0:-1 0:-1 1:-1
+AUTOTEST front/assault 2t day 50s | builds hq0:ok, mgnest1:ok, mgnest1:0%, sandbags1:0%, sandbags1:0% | spawnable [true, true] | wall-leaners 0
+AUTOTEST front/assault 2t day 50s | morale 74/69 broken 0/0 lowammo 0/0 leaders 14/20 squads | routs 0/0 shots 513/393 hits 17/28
+AUTOTEST front/assault 2t day 50s | vehicles: jeep0 hp360 crew0 spd0.0, tank0 hp1449 crew2 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp729 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp744 crew1 spd0.0, jeep1 hp183 crew0 spd0.0, tank1 hp188 crew0 spd0.0, radar1 hp0 crew0 spd0.0 WRECK, nest1 hp899 crew1 spd0.0, nest1 hp453 crew0 spd0.0, tank-1 hp663 crew0 spd0.0, truck0 hp357 crew1 spd6.4, jeep-1 hp74 crew0 spd0.0, gunship0 hp892 crew2 spd0.0, motorbike0 hp200 crew0 spd0.0 WRECK, atgun1 hp440 crew0 spd0.0, nest1 hp900 crew1 spd0.0 | riding 11 chute 0
+AUTOTEST front/assault 2t day 50s | t0 spawn(-225,0) avg(-177,8) t1 spawn(225,0) avg(73,-5)
+AUTOTEST front/assault 2t day 50s | knees ok/backward: body 29/0, target 29/0
+AUTOTEST front/assault 2t day 50s | teams 2 alive [18, 13]
+AUTOTEST front/assault 2t day 50s | prof vehicles 1.13 soldiers 2.43 ms/tick
+AUTOTEST front/assault 2t day 50s | soldiers inside buildings 0
+AUTOTEST front/assault 2t day 50s | squad events { "flank": 6, "breach": 0, "bound": 125, "suppress": 115, "smoke": 7, "fallback": 0, "trail": 49 } | officers [true, true]
+AUTOTEST front/assault 2t day 50s | alive 18 v 13 | dead 19 | score 11-7 | sim 4.03 ms/tick
+AUTOTEST front/assault 2t day | points A:1 B:1 C:1 D:1 | attackers' tickets 92 | over=false
+AUTOTEST town/laststand 2t day 12s | cover types { "corner": 1, "low": 2 }
+AUTOTEST town/laststand 2t day 12s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1
+AUTOTEST town/laststand 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/laststand 2t day 12s | morale 79/0 broken 0/0 lowammo 0/0 leaders 10/10 squads | routs 0/0 shots 2/1 hits 0/0
+AUTOTEST town/laststand 2t day 12s | vehicles: jeep0 hp520 crew2 spd12.3, tank0 hp1800 crew3 spd2.9, mortar0 hp260 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0, truck1 hp650 crew8 spd11.0 st0 d31 | riding 16 chute 0
+AUTOTEST town/laststand 2t day 12s | t0 spawn(-96,0) avg(-20,8) t1 spawn(96,0) avg(127,0)
+AUTOTEST town/laststand 2t day 12s | knees ok/backward: body 23/1, target 24/0
+AUTOTEST town/laststand 2t day 12s | teams 2 alive [21, 8]
+AUTOTEST town/laststand 2t day 12s | prof vehicles 0.37 soldiers 2.42 ms/tick
+AUTOTEST town/laststand 2t day 12s | soldiers inside buildings 7
+AUTOTEST town/laststand 2t day 12s | squad events { "flank": 6, "breach": 0, "bound": 128, "suppress": 118, "smoke": 7, "fallback": 0, "trail": 51 } | officers [true, true]
+AUTOTEST town/laststand 2t day 12s | alive 21 v 8 | dead 0 | score 0-0 | sim 2.97 ms/tick
+AUTOTEST town/laststand 2t day | ordered soldiers dist to goal [20, 34, 38] | followers dist to leader []
+AUTOTEST town/laststand 2t day 45s | cover types { "corner": 1 }
+AUTOTEST town/laststand 2t day 45s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1
+AUTOTEST town/laststand 2t day 45s | builds sandbags0:ok | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/laststand 2t day 45s | morale 80/57 broken 0/0 lowammo 0/0 leaders 8/10 squads | routs 0/0 shots 194/70 hits 11/0
+AUTOTEST town/laststand 2t day 45s | vehicles: jeep0 hp400 crew2 spd-2.6, tank0 hp1088 crew0 spd0.0, mortar0 hp0 crew0 spd0.0 WRECK, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0 | riding 4 chute 0
+AUTOTEST town/laststand 2t day 45s | t0 spawn(-96,0) avg(-29,0) t1 spawn(96,0) avg(90,-4)
+AUTOTEST town/laststand 2t day 45s | knees ok/backward: body 18/0, target 18/0
+AUTOTEST town/laststand 2t day 45s | teams 2 alive [14, 3]
+AUTOTEST town/laststand 2t day 45s | prof vehicles 0.40 soldiers 2.36 ms/tick
+AUTOTEST town/laststand 2t day 45s | soldiers inside buildings 2
+AUTOTEST town/laststand 2t day 45s | squad events { "flank": 6, "breach": 0, "bound": 144, "suppress": 170, "smoke": 8, "fallback": 0, "trail": 51 } | officers [true, false]
+AUTOTEST town/laststand 2t day 45s | alive 14 v 3 | dead 12 | score 4-1 | sim 3.21 ms/tick
+AUTOTEST town/laststand 2t day | points A:0 | wave 1 | over=false
+AUTOTEST field/capture 4t night 12s | cover types { "low": 18 }
+AUTOTEST field/capture 4t night 12s | squad objectives 0:-1 0:0 0:0 0:0 1:2 1:0 1:4 1:4 2:3 2:2 2:4 2:4 3:1 3:0 3:4 3:4 3:-1 2:-1 1:-1
+AUTOTEST field/capture 4t night 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/capture 4t night 12s | morale 83/77 broken 0/0 lowammo 0/0 leaders 15/19 squads | routs 0/0 shots 171/112 hits 7/3
+AUTOTEST field/capture 4t night 12s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1800 crew2 spd0.9, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1795 crew2 spd0.0, jeep2 hp0 crew0 spd0.0 WRECK, tank2 hp1733 crew2 spd0.0, jeep3 hp359 crew0 spd0.0, tank3 hp1762 crew2 spd0.0, jeep-1 hp176 crew0 spd0.0, halftrack-1 hp263 crew0 spd0.0 | riding 8 chute 0
+AUTOTEST field/capture 4t night 12s | t0 spawn(-96,0) avg(-81,19) t1 spawn(96,0) avg(82,-7) t2 spawn(0,-71) avg(3,-62) t3 spawn(0,71) avg(6,66)
+AUTOTEST field/capture 4t night 12s | knees ok/backward: body 69/1, target 70/0
+AUTOTEST field/capture 4t night 12s | teams 4 alive [12, 14, 12, 13]
+AUTOTEST field/capture 4t night 12s | prof vehicles 1.31 soldiers 4.34 ms/tick
+AUTOTEST field/capture 4t night 12s | soldiers inside buildings 0
+AUTOTEST field/capture 4t night 12s | squad events { "flank": 10, "breach": 0, "bound": 152, "suppress": 214, "smoke": 8, "fallback": 0, "trail": 51 } | officers [true, true, true, true]
+AUTOTEST field/capture 4t night 12s | alive 12 v 14 | dead 9 | score 3-2 | sim 6.45 ms/tick
+AUTOTEST field/capture 4t night | ordered soldiers dist to goal [0, 60, 5] | followers dist to leader [18, 13, 25]
+AUTOTEST field/capture 4t night 40s | cover types { "low": 11 }
+AUTOTEST field/capture 4t night 40s | squad objectives 0:-1 0:0 0:0 0:0 1:2 1:4 1:4 1:4 2:0 2:4 2:4 2:4 3:0 3:3 3:4 3:4 3:-1 2:-1 1:-1 3:-1 1:-1
+AUTOTEST field/capture 4t night 40s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/capture 4t night 40s | morale 68/67 broken 0/0 lowammo 0/0 leaders 15/21 squads | routs 0/0 shots 338/336 hits 15/24
+AUTOTEST field/capture 4t night 40s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1743 crew2 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1780 crew2 spd2.9, jeep2 hp0 crew0 spd0.0 WRECK, tank2 hp1733 crew2 spd0.0, jeep3 hp0 crew0 spd0.0 WRECK, tank3 hp0 crew0 spd0.0 WRECK, jeep-1 hp154 crew0 spd0.0, halftrack-1 hp245 crew0 spd0.0, tank1 hp1800 crew3 spd0.9 | riding 9 chute 0
+AUTOTEST field/capture 4t night 40s | t0 spawn(-96,0) avg(-67,22) t1 spawn(96,0) avg(78,-1) t2 spawn(0,-71) avg(4,-55) t3 spawn(0,71) avg(-9,71)
+AUTOTEST field/capture 4t night 40s | knees ok/backward: body 51/2, target 51/2
+AUTOTEST field/capture 4t night 40s | teams 4 alive [11, 16, 9, 7]
+AUTOTEST field/capture 4t night 40s | prof vehicles 0.92 soldiers 3.32 ms/tick
+AUTOTEST field/capture 4t night 40s | soldiers inside buildings 0
+AUTOTEST field/capture 4t night 40s | squad events { "flank": 13, "breach": 0, "bound": 183, "suppress": 272, "smoke": 8, "fallback": 0, "trail": 51 } | officers [true, true, false, true]
+AUTOTEST field/capture 4t night 40s | alive 11 v 16 | dead 20 | score 7-6 | sim 5.09 ms/tick
+AUTOTEST field/capture 4t night | points A:-1 B:3 C:1 D:2 E:-1 |  | over=false
+AUTOTEST town/deathmatch 3t dusk 12s | cover types { "low": 5 }
+AUTOTEST town/deathmatch 3t dusk 12s | squad objectives 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 2:-1 2:-1 2:-1 2:-1 1:-1 2:-1
+AUTOTEST town/deathmatch 3t dusk 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/deathmatch 3t dusk 12s | morale 78/78 broken 0/0 lowammo 0/0 leaders 11/14 squads | routs 0/0 shots 166/156 hits 2/3
+AUTOTEST town/deathmatch 3t dusk 12s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1800 crew3 spd-2.1, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1800 crew3 spd0.0, jeep2 hp134 crew0 spd0.0 WRECK, tank2 hp1800 crew3 spd-2.1, jeep-1 hp161 crew0 spd0.0, jeep-1 hp115 crew0 spd0.0 | riding 9 chute 0
+AUTOTEST town/deathmatch 3t dusk 12s | t0 spawn(-96,0) avg(-90,0) t1 spawn(96,0) avg(66,-23) t2 spawn(-8,-71) avg(-20,-69)
+AUTOTEST town/deathmatch 3t dusk 12s | knees ok/backward: body 48/0, target 48/0
+AUTOTEST town/deathmatch 3t dusk 12s | teams 3 alive [13, 13, 11]
+AUTOTEST town/deathmatch 3t dusk 12s | prof vehicles 0.93 soldiers 3.03 ms/tick
+AUTOTEST town/deathmatch 3t dusk 12s | soldiers inside buildings 0
+AUTOTEST town/deathmatch 3t dusk 12s | squad events { "flank": 15, "breach": 0, "bound": 192, "suppress": 295, "smoke": 8, "fallback": 0, "trail": 51 } | officers [true, true, false]
+AUTOTEST town/deathmatch 3t dusk 12s | alive 13 v 13 | dead 8 | score 0-3 | sim 4.44 ms/tick
+AUTOTEST town/deathmatch 3t dusk | ordered soldiers dist to goal [0, 2, 7] | followers dist to leader [7, 9, 11, 14]
+AUTOTEST town/deathmatch 3t dusk 30s | cover types { "low": 1 }
+AUTOTEST town/deathmatch 3t dusk 30s | squad objectives 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 2:-1 2:-1 2:-1 2:-1 1:-1 2:-1
+AUTOTEST town/deathmatch 3t dusk 30s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/deathmatch 3t dusk 30s | morale 73/77 broken 0/0 lowammo 0/0 leaders 11/14 squads | routs 0/0 shots 209/267 hits 3/7
+AUTOTEST town/deathmatch 3t dusk 30s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1781 crew2 spd-0.8, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1800 crew3 spd-2.0, jeep2 hp134 crew0 spd0.0 WRECK, tank2 hp1402 crew2 spd-2.1, jeep-1 hp161 crew0 spd0.0, jeep-1 hp115 crew0 spd0.0 | riding 7 chute 0
+AUTOTEST town/deathmatch 3t dusk 30s | t0 spawn(-96,0) avg(-75,-8) t1 spawn(96,0) avg(41,-28) t2 spawn(-8,-71) avg(-17,-66)
+AUTOTEST town/deathmatch 3t dusk 30s | knees ok/backward: body 46/2, target 49/2
+AUTOTEST town/deathmatch 3t dusk 30s | teams 3 alive [13, 13, 10]
+AUTOTEST town/deathmatch 3t dusk 30s | prof vehicles 0.74 soldiers 2.92 ms/tick
+AUTOTEST town/deathmatch 3t dusk 30s | soldiers inside buildings 1
+AUTOTEST town/deathmatch 3t dusk 30s | squad events { "flank": 15, "breach": 0, "bound": 208, "suppress": 337, "smoke": 8, "fallback": 0, "trail": 51 } | officers [true, true, false]
+AUTOTEST town/deathmatch 3t dusk 30s | alive 13 v 13 | dead 9 | score 0-3 | sim 4.40 ms/tick
+AUTOTEST town/deathmatch 3t dusk | points  |  | over=false
+AUTOTEST field/destroy 2t day 12s | cover types { "corner": 2, "low": 3 }
+AUTOTEST field/destroy 2t day 12s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST field/destroy 2t day 12s | builds hq0:ok, hq1:ok, fob1:0% | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/destroy 2t day 12s | morale 73/81 broken 0/0 lowammo 0/0 leaders 15/17 squads | routs 0/0 shots 146/205 hits 5/18
+AUTOTEST field/destroy 2t day 12s | vehicles: jeep0 hp421 crew0 spd0.0, tank0 hp1800 crew2 spd7.5, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd1.8, nest0 hp790 crew0 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1732 crew2 spd7.5, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd8.8, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, truck-1 hp239 crew0 spd0.0, halftrack-1 hp240 crew0 spd0.0 | riding 11 chute 0
+AUTOTEST field/destroy 2t day 12s | t0 spawn(-96,0) avg(-68,-3) t1 spawn(96,0) avg(60,-1)
+AUTOTEST field/destroy 2t day 12s | knees ok/backward: body 39/0, target 38/0
+AUTOTEST field/destroy 2t day 12s | teams 2 alive [19, 20]
+AUTOTEST field/destroy 2t day 12s | prof vehicles 1.42 soldiers 3.30 ms/tick
+AUTOTEST field/destroy 2t day 12s | soldiers inside buildings 0
+AUTOTEST field/destroy 2t day 12s | squad events { "flank": 15, "breach": 0, "bound": 212, "suppress": 340, "smoke": 8, "fallback": 0, "trail": 51 } | officers [true, true]
+AUTOTEST field/destroy 2t day 12s | alive 19 v 20 | dead 5 | score 2-3 | sim 5.13 ms/tick
+AUTOTEST field/destroy 2t day | ordered soldiers dist to goal [3, 0, 4] | followers dist to leader []
+AUTOTEST field/destroy 2t day 45s | cover types { "low": 3 }
+AUTOTEST field/destroy 2t day 45s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 1:-1 1:-1 0:-1 1:-1
+AUTOTEST field/destroy 2t day 45s | builds hq0:ok, hq1:ok, fob1:0% | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/destroy 2t day 45s | morale 74/61 broken 0/0 lowammo 0/0 leaders 15/22 squads | routs 0/0 shots 423/773 hits 9/23
+AUTOTEST field/destroy 2t day 45s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1604 crew2 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp726 crew0 spd0.0, nest0 hp900 crew1 spd0.0, tank1 hp0 crew0 spd0.0 WRECK, mortar1 hp260 crew1 spd0.0, radar1 hp0 crew0 spd0.0 WRECK, nest1 hp775 crew0 spd0.0, nest1 hp900 crew1 spd0.0, truck-1 hp221 crew0 spd0.0, halftrack-1 hp47 crew0 spd0.0, gunship0 hp683 crew2 spd0.0, armoredcar1 hp1000 crew2 spd4.7, halftrack1 hp900 crew2 spd0.3, motorbike0 hp0 crew0 spd0.0 WRECK, atgun1 hp520 crew2 spd0.0 | riding 15 chute 0
+AUTOTEST field/destroy 2t day 45s | t0 spawn(-96,0) avg(-36,7) t1 spawn(96,0) avg(75,5)
+AUTOTEST field/destroy 2t day 45s | knees ok/backward: body 29/0, target 29/0
+AUTOTEST field/destroy 2t day 45s | teams 2 alive [17, 14]
+AUTOTEST field/destroy 2t day 45s | prof vehicles 1.66 soldiers 2.92 ms/tick
+AUTOTEST field/destroy 2t day 45s | soldiers inside buildings 0
+AUTOTEST field/destroy 2t day 45s | squad events { "flank": 17, "breach": 0, "bound": 229, "suppress": 372, "smoke": 8, "fallback": 0, "trail": 51 } | officers [true, true]
+AUTOTEST field/destroy 2t day 45s | alive 17 v 14 | dead 23 | score 14-6 | sim 5.61 ms/tick
+AUTOTEST field/destroy 2t day | points  | destroy the enemy base | over=false
+AUTOTEST town/breakthrough 2t day 12s | cover types { "low": 10 }
+AUTOTEST town/breakthrough 2t day 12s | squad objectives 0:-1 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:0 1:1 1:0 1:0 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST town/breakthrough 2t day 12s | builds hq0:ok, mgnest1:ok, wire1:ok, traps1:ok, tower1:ok, wire1:ok, traps1:ok, sandbags1:ok, tower1:ok, sandbags1:0% | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/breakthrough 2t day 12s | morale 77/69 broken 0/0 lowammo 0/0 leaders 16/17 squads | routs 0/0 shots 91/89 hits 6/1
+AUTOTEST town/breakthrough 2t day 12s | vehicles: nest1 hp900 crew0 spd0.0, jeep0 hp518 crew2 spd8.0, tank0 hp1800 crew3 spd1.8, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp899 crew1 spd0.0, jeep1 hp520 crew1 spd11.3, tank1 hp1800 crew3 spd4.6, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp802 crew0 spd0.0, nest1 hp900 crew1 spd0.0, tank-1 hp396 crew0 spd0.0, technical-1 hp142 crew0 spd0.0 | riding 16 chute 0
+AUTOTEST town/breakthrough 2t day 12s | t0 spawn(-96,0) avg(-69,6) t1 spawn(96,0) avg(66,-8)
+AUTOTEST town/breakthrough 2t day 12s | knees ok/backward: body 46/3, target 48/2
+AUTOTEST town/breakthrough 2t day 12s | teams 2 alive [22, 20]
+AUTOTEST town/breakthrough 2t day 12s | prof vehicles 1.50 soldiers 3.71 ms/tick
+AUTOTEST town/breakthrough 2t day 12s | soldiers inside buildings 0
+AUTOTEST town/breakthrough 2t day 12s | squad events { "flank": 17, "breach": 0, "bound": 233, "suppress": 382, "smoke": 8, "fallback": 0, "trail": 51 } | officers [true, true]
+AUTOTEST town/breakthrough 2t day 12s | alive 22 v 20 | dead 2 | score 2-0 | sim 5.65 ms/tick
+AUTOTEST town/breakthrough 2t day | ordered soldiers dist to goal [1, 0, 1] | followers dist to leader [2, 22]
+AUTOTEST town/breakthrough 2t day 35s | cover types { "low": 7 }
+AUTOTEST town/breakthrough 2t day 35s | squad objectives 0:-1 0:0 0:0 0:0 0:-1 0:-1 0:-1 0:-1 1:0 1:0 1:0 1:0 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 0:-1
+AUTOTEST town/breakthrough 2t day 35s | builds hq0:ok, mgnest1:dead, wire1:ok, traps1:ok, wire1:ok, sandbags1:ok, tower1:ok, sandbags1:0%, mgnest1:0%, sandbags0:ok, tower1:0% | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/breakthrough 2t day 35s | morale 77/72 broken 0/0 lowammo 0/0 leaders 17/19 squads | routs 0/0 shots 366/439 hits 13/14
+AUTOTEST town/breakthrough 2t day 35s | vehicles: nest1 hp0 crew0 spd0.0 WRECK, jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1779 crew2 spd-0.6, mortar0 hp260 crew1 spd0.0, radar0 hp734 crew1 spd0.0, nest0 hp900 crew0 spd0.0, nest0 hp899 crew1 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1424 crew2 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp505 crew0 spd0.0, nest1 hp802 crew1 spd0.0, nest1 hp871 crew0 spd0.0, tank1 hp968 crew1 spd0.0, technical-1 hp0 crew0 spd0.0 WRECK, gunship0 hp775 crew2 spd0.0, motorbike0 hp200 crew0 spd0.0 WRECK | riding 12 chute 0
+AUTOTEST town/breakthrough 2t day 35s | t0 spawn(-96,0) avg(-44,2) t1 spawn(96,0) avg(52,-8)
+AUTOTEST town/breakthrough 2t day 35s | knees ok/backward: body 44/2, target 45/1
+AUTOTEST town/breakthrough 2t day 35s | teams 2 alive [23, 18]
+AUTOTEST town/breakthrough 2t day 35s | prof vehicles 1.61 soldiers 3.78 ms/tick
+AUTOTEST town/breakthrough 2t day 35s | soldiers inside buildings 1
+AUTOTEST town/breakthrough 2t day 35s | squad events { "flank": 20, "breach": 0, "bound": 245, "suppress": 418, "smoke": 8, "fallback": 0, "trail": 51 } | officers [true, true]
+AUTOTEST town/breakthrough 2t day 35s | alive 23 v 18 | dead 7 | score 3-3 | sim 6.52 ms/tick
+AUTOTEST town/breakthrough 2t day | points A:1 B:1 | break the line · tickets 97 | over=false
+AUTOTEST field/sabotage 2t day 12s | cover types { "low": 1 }
+AUTOTEST field/sabotage 2t day 12s | squad objectives 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST field/sabotage 2t day 12s | builds radio1:ok, depot1:ok, mgnest1:ok, tower1:ok, wire1:ok | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/sabotage 2t day 12s | morale 81/77 broken 0/0 lowammo 0/0 leaders 9/9 squads | routs 0/0 shots 0/0 hits 0/0
+AUTOTEST field/sabotage 2t day 12s | vehicles: nest1 hp900 crew1 spd0.0, jeep1 hp520 crew2 spd0.0, tank1 hp1800 crew3 spd0.0, mortar1 hp260 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, truck-1 hp243 crew0 spd0.0, technical-1 hp110 crew0 spd0.0 | riding 9 chute 0
+AUTOTEST field/sabotage 2t day 12s | t0 spawn(-96,0) avg(-71,-12) t1 spawn(96,0) avg(87,-13)
+AUTOTEST field/sabotage 2t day 12s | knees ok/backward: body 32/0, target 32/0
+AUTOTEST field/sabotage 2t day 12s | teams 2 alive [5, 21]
+AUTOTEST field/sabotage 2t day 12s | prof vehicles 0.41 soldiers 2.76 ms/tick
+AUTOTEST field/sabotage 2t day 12s | soldiers inside buildings 0
+AUTOTEST field/sabotage 2t day 12s | squad events { "flank": 20, "breach": 0, "bound": 248, "suppress": 418, "smoke": 8, "fallback": 0, "trail": 60 } | officers [false, true]
+AUTOTEST field/sabotage 2t day 12s | alive 5 v 21 | dead 0 | score 0-0 | sim 3.36 ms/tick
+AUTOTEST field/sabotage 2t day | ordered soldiers dist to goal [0, 0, 82] | followers dist to leader [3, 3, 6]
+AUTOTEST field/sabotage 2t day 35s | cover types { "low": 3 }
+AUTOTEST field/sabotage 2t day 35s | squad objectives 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST field/sabotage 2t day 35s | builds radio1:ok, depot1:ok, mgnest1:ok, tower1:ok, wire1:ok | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/sabotage 2t day 35s | morale 80/76 broken 0/0 lowammo 0/0 leaders 9/9 squads | routs 0/0 shots 1/1 hits 0/0
+AUTOTEST field/sabotage 2t day 35s | vehicles: nest1 hp900 crew1 spd0.0, jeep1 hp520 crew2 spd0.0, tank1 hp1800 crew3 spd6.7, mortar1 hp260 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, truck0 hp357 crew1 spd11.0, technical-1 hp110 crew0 spd0.0 | riding 10 chute 0
+AUTOTEST field/sabotage 2t day 35s | t0 spawn(-96,0) avg(-75,4) t1 spawn(96,0) avg(80,-15)
+AUTOTEST field/sabotage 2t day 35s | knees ok/backward: body 30/1, target 32/0
+AUTOTEST field/sabotage 2t day 35s | teams 2 alive [5, 21]
+AUTOTEST field/sabotage 2t day 35s | prof vehicles 0.35 soldiers 2.52 ms/tick
+AUTOTEST field/sabotage 2t day 35s | soldiers inside buildings 0
+AUTOTEST field/sabotage 2t day 35s | squad events { "flank": 20, "breach": 0, "bound": 257, "suppress": 422, "smoke": 8, "fallback": 0, "trail": 66 } | officers [false, true]
+AUTOTEST field/sabotage 2t day 35s | alive 5 v 21 | dead 0 | score 0-0 | sim 3.04 ms/tick
+AUTOTEST field/sabotage 2t day | points  | targets left: 2 | over=false
+AUTOTEST town/siege 2t day 12s | cover types { "low": 4 }
+AUTOTEST town/siege 2t day 12s | squad objectives 0:2 0:-1 0:2 0:2 0:-1 0:-1 0:-1 0:2 1:2 1:-1 1:2 1:2 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST town/siege 2t day 12s | builds hq1:ok, mgnest0:ok, mgnest0:ok, wire0:ok, wire0:ok, wire0:ok, sandbags0:ok, sandbags0:ok, hospital0:ok, traps0:ok, fob1:0% | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/siege 2t day 12s | morale 71/78 broken 0/0 lowammo 0/0 leaders 16/17 squads | routs 0/0 shots 56/35 hits 0/1
+AUTOTEST town/siege 2t day 12s | vehicles: nest0 hp660 crew0 spd0.0, nest0 hp867 crew0 spd0.0, jeep0 hp422 crew2 spd-3.5, tank0 hp1800 crew3 spd7.5, mortar0 hp260 crew1 spd0.0, radar0 hp733 crew1 spd0.0, nest0 hp542 crew0 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp520 crew3 spd0.8, tank1 hp1720 crew2 spd2.9, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp818 crew0 spd0.0, jeep-1 hp179 crew0 spd0.0, jeep-1 hp199 crew0 spd0.0 | riding 16 chute 0
+AUTOTEST town/siege 2t day 12s | t0 spawn(-96,0) avg(-66,11) t1 spawn(96,0) avg(65,6)
+AUTOTEST town/siege 2t day 12s | knees ok/backward: body 43/0, target 41/0
+AUTOTEST town/siege 2t day 12s | teams 2 alive [20, 22]
+AUTOTEST town/siege 2t day 12s | prof vehicles 1.26 soldiers 3.15 ms/tick
+AUTOTEST town/siege 2t day 12s | soldiers inside buildings 0
+AUTOTEST town/siege 2t day 12s | squad events { "flank": 21, "breach": 0, "bound": 261, "suppress": 430, "smoke": 9, "fallback": 0, "trail": 66 } | officers [true, true]
+AUTOTEST town/siege 2t day 12s | alive 20 v 22 | dead 2 | score 0-0 | sim 4.75 ms/tick
+AUTOTEST town/siege 2t day | ordered soldiers dist to goal [23, 1, 73] | followers dist to leader []
+AUTOTEST town/siege 2t day 35s | cover types { "corner": 2, "low": 1 }
+AUTOTEST town/siege 2t day 35s | squad objectives 0:2 0:-1 0:2 0:2 0:-1 0:-1 0:-1 0:2 1:2 1:-1 1:2 1:2 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST town/siege 2t day 35s | builds hq1:ok, mgnest0:ok, mgnest0:ok, wire0:ok, wire0:ok, sandbags0:ok, sandbags0:ok, hospital0:ok, traps0:ok, fob1:1% | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/siege 2t day 35s | morale 74/71 broken 0/0 lowammo 0/0 leaders 18/20 squads | routs 0/0 shots 157/124 hits 6/11
+AUTOTEST town/siege 2t day 35s | vehicles: nest0 hp495 crew0 spd0.0, nest0 hp867 crew0 spd0.0, jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1407 crew2 spd-2.1, mortar0 hp260 crew1 spd0.0, radar0 hp733 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp30 crew0 spd0.0, tank1 hp1720 crew2 spd2.9, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp704 crew1 spd0.0, jeep-1 hp0 crew0 spd0.0 WRECK, jeep0 hp90 crew0 spd0.0, armoredcar1 hp992 crew2 spd0.0, halftrack1 hp900 crew2 spd8.9, atgun1 hp520 crew2 spd0.0 | riding 18 chute 0
+AUTOTEST town/siege 2t day 35s | t0 spawn(-96,0) avg(-49,18) t1 spawn(96,0) avg(45,18)
+AUTOTEST town/siege 2t day 35s | knees ok/backward: body 38/0, target 38/0
+AUTOTEST town/siege 2t day 35s | teams 2 alive [16, 24]
+AUTOTEST town/siege 2t day 35s | prof vehicles 1.37 soldiers 3.12 ms/tick
+AUTOTEST town/siege 2t day 35s | soldiers inside buildings 2
+AUTOTEST town/siege 2t day 35s | squad events { "flank": 22, "breach": 0, "bound": 274, "suppress": 454, "smoke": 9, "fallback": 0, "trail": 66 } | officers [true, true]
+AUTOTEST town/siege 2t day 35s | alive 16 v 24 | dead 10 | score 2-4 | sim 5.18 ms/tick
+AUTOTEST town/siege 2t day | points A:0 B:0 C:0 | supply 115 · 7:24 left | over=false
+AUTOTEST factory/capture 2t day 12s | cover types {  }
+AUTOTEST factory/capture 2t day 12s | squad objectives 0:-1 0:0 0:0 0:0 0:0 0:-1 0:-1 0:-1 1:2 1:1 1:2 1:2 1:-1 1:2 1:-1 1:-1 1:2
+AUTOTEST factory/capture 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST factory/capture 2t day 12s | morale 79/81 broken 0/0 lowammo 0/0 leaders 17/17 squads | routs 0/0 shots 0/0 hits 0/0
+AUTOTEST factory/capture 2t day 12s | vehicles: jeep0 hp520 crew2 spd0.0, tank0 hp1800 crew3 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp520 crew2 spd0.0, tank1 hp1800 crew3 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, jeep-1 hp159 crew0 spd0.0, technical-1 hp113 crew0 spd0.0 | riding 18 chute 0
+AUTOTEST factory/capture 2t day 12s | t0 spawn(-125,0) avg(-113,9) t1 spawn(125,0) avg(113,-8)
+AUTOTEST factory/capture 2t day 12s | knees ok/backward: body 50/0, target 50/0
+AUTOTEST factory/capture 2t day 12s | teams 2 alive [22, 22]
+AUTOTEST factory/capture 2t day 12s | prof vehicles 1.01 soldiers 2.67 ms/tick
+AUTOTEST factory/capture 2t day 12s | soldiers inside buildings 1
+AUTOTEST factory/capture 2t day 12s | squad events { "flank": 22, "breach": 0, "bound": 278, "suppress": 454, "smoke": 9, "fallback": 0, "trail": 69 } | officers [true, true]
+AUTOTEST factory/capture 2t day 12s | alive 22 v 22 | dead 0 | score 0-0 | sim 3.97 ms/tick
+AUTOTEST factory/capture 2t day | ordered soldiers dist to goal [2, 3, 0] | followers dist to leader [21, 13, 18, 19]
+AUTOTEST factory/capture 2t day 35s | cover types { "wall": 1 }
+AUTOTEST factory/capture 2t day 35s | squad objectives 0:-1 0:0 0:0 0:0 0:0 0:-1 0:-1 0:-1 1:2 1:2 1:2 1:2 1:-1 1:2 1:-1 1:-1 1:2 1:-1 1:-1 0:-1 1:-1
+AUTOTEST factory/capture 2t day 35s | builds  | spawnable [true, true] | wall-leaners 1
+AUTOTEST factory/capture 2t day 35s | morale 83/75 broken 0/0 lowammo 0/0 leaders 21/21 squads | routs 0/0 shots 31/151 hits 1/9
+AUTOTEST factory/capture 2t day 35s | vehicles: jeep0 hp520 crew2 spd0.5, tank0 hp1800 crew3 spd-1.2, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp520 crew2 spd0.0, tank1 hp1800 crew3 spd0.3, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, jeep-1 hp138 crew0 spd0.0, technical-1 hp94 crew0 spd0.0, armoredcar1 hp1000 crew2 spd0.0, halftrack1 hp900 crew2 spd2.1, motorbike0 hp200 crew0 spd0.0 WRECK, atgun1 hp520 crew2 spd0.0 | riding 24 chute 0
+AUTOTEST factory/capture 2t day 35s | t0 spawn(-125,0) avg(-103,12) t1 spawn(125,0) avg(101,-9)
+AUTOTEST factory/capture 2t day 35s | knees ok/backward: body 48/0, target 48/0
+AUTOTEST factory/capture 2t day 35s | teams 2 alive [22, 28]
+AUTOTEST factory/capture 2t day 35s | prof vehicles 1.05 soldiers 3.49 ms/tick
+AUTOTEST factory/capture 2t day 35s | soldiers inside buildings 9
+AUTOTEST factory/capture 2t day 35s | squad events { "flank": 22, "breach": 0, "bound": 288, "suppress": 459, "smoke": 9, "fallback": 0, "trail": 70 } | officers [true, true]
+AUTOTEST factory/capture 2t day 35s | alive 22 v 28 | dead 2 | score 0-2 | sim 4.95 ms/tick
+AUTOTEST factory/capture 2t day | points A:0 B:-1 C:-1 |  | over=false
+AUTOTEST field/horde 2t day 12s | cover types { "low": 2 }
+AUTOTEST field/horde 2t day 12s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1
+AUTOTEST field/horde 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/horde 2t day 12s | morale 79/67 broken 0/0 lowammo 0/0 leaders 11/11 squads | routs 0/0 shots 24/0 hits 0/0
+AUTOTEST field/horde 2t day 12s | vehicles: jeep0 hp520 crew2 spd-3.5, tank0 hp1800 crew3 spd-2.4, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd4.1, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0 | riding 9 chute 0
+AUTOTEST field/horde 2t day 12s | t0 spawn(-96,0) avg(-86,10) t1 spawn(96,0) avg(4,-63)
+AUTOTEST field/horde 2t day 12s | knees ok/backward: body 41/0, target 41/0
+AUTOTEST field/horde 2t day 12s | teams 2 alive [22, 14]
+AUTOTEST field/horde 2t day 12s | prof vehicles 0.47 soldiers 2.25 ms/tick
+AUTOTEST field/horde 2t day 12s | soldiers inside buildings 0
+AUTOTEST field/horde 2t day 12s | squad events { "flank": 22, "breach": 0, "bound": 290, "suppress": 460, "smoke": 9, "fallback": 0, "trail": 73 } | officers [true, false]
+AUTOTEST field/horde 2t day 12s | alive 22 v 14 | dead 0 | score 0-0 | sim 2.89 ms/tick
+AUTOTEST field/horde 2t day | ordered soldiers dist to goal [1, 2, 11] | followers dist to leader [8, 24]
+AUTOTEST field/horde 2t day 30s | cover types { "low": 3 }
+AUTOTEST field/horde 2t day 30s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST field/horde 2t day 30s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/horde 2t day 30s | morale 81/51 broken 0/0 lowammo 0/0 leaders 10/14 squads | routs 0/0 shots 485/0 hits 65/0
+AUTOTEST field/horde 2t day 30s | vehicles: jeep0 hp520 crew2 spd0.0, tank0 hp1800 crew3 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd-2.8, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0 | riding 9 chute 0
+AUTOTEST field/horde 2t day 30s | t0 spawn(-96,0) avg(-84,-2) t1 spawn(96,0) avg(7,-34)
+AUTOTEST field/horde 2t day 30s | knees ok/backward: body 37/0, target 37/0
+AUTOTEST field/horde 2t day 30s | teams 2 alive [21, 10]
+AUTOTEST field/horde 2t day 30s | prof vehicles 0.67 soldiers 3.13 ms/tick
+AUTOTEST field/horde 2t day 30s | soldiers inside buildings 0
+AUTOTEST field/horde 2t day 30s | squad events { "flank": 29, "breach": 0, "bound": 304, "suppress": 536, "smoke": 9, "fallback": 0, "trail": 73 } | officers [true, false]
+AUTOTEST field/horde 2t day 30s | alive 21 v 10 | dead 19 | score 18-0 | sim 4.20 ms/tick
+AUTOTEST field/horde 2t day | points  | wave 1 of 10 · 10 coming from the west | over=false
+AUTOTEST town/koth 2t day 12s | cover types { "low": 3 }
+AUTOTEST town/koth 2t day 12s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:0 1:0 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1
+AUTOTEST town/koth 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/koth 2t day 12s | morale 74/78 broken 0/0 lowammo 0/0 leaders 17/17 squads | routs 0/0 shots 139/144 hits 5/5
+AUTOTEST town/koth 2t day 12s | vehicles: jeep0 hp319 crew0 spd0.0, tank0 hp1764 crew2 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp900 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp505 crew2 spd0.0, tank1 hp1726 crew2 spd3.0, mortar1 hp260 crew1 spd0.0, radar1 hp743 crew0 spd0.0, nest1 hp899 crew1 spd0.0, nest1 hp900 crew1 spd0.0, halftrack-1 hp288 crew0 spd0.0, armoredcar-1 hp240 crew0 spd0.0 | riding 13 chute 0
+AUTOTEST town/koth 2t day 12s | t0 spawn(-96,0) avg(-65,8) t1 spawn(96,0) avg(62,-5)
+AUTOTEST town/koth 2t day 12s | knees ok/backward: body 43/0, target 44/0
+AUTOTEST town/koth 2t day 12s | teams 2 alive [22, 21]
+AUTOTEST town/koth 2t day 12s | prof vehicles 1.30 soldiers 3.38 ms/tick
+AUTOTEST town/koth 2t day 12s | soldiers inside buildings 0
+AUTOTEST town/koth 2t day 12s | squad events { "flank": 29, "breach": 0, "bound": 308, "suppress": 544, "smoke": 9, "fallback": 0, "trail": 73 } | officers [true, true]
+AUTOTEST town/koth 2t day 12s | alive 22 v 21 | dead 1 | score 1-0 | sim 4.99 ms/tick
+AUTOTEST town/koth 2t day | ordered soldiers dist to goal [0, 2] | followers dist to leader [23, 5, 23]
+AUTOTEST town/koth 2t day 25s | cover types { "low": 2 }
+AUTOTEST town/koth 2t day 25s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:0 1:0 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1
+AUTOTEST town/koth 2t day 25s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/koth 2t day 25s | morale 64/78 broken 0/0 lowammo 0/0 leaders 17/20 squads | routs 0/0 shots 213/240 hits 7/12
+AUTOTEST town/koth 2t day 25s | vehicles: jeep0 hp57 crew0 spd0.0 WRECK, tank0 hp1384 crew2 spd2.4, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp899 crew0 spd0.0, nest0 hp662 crew1 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1022 crew0 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp743 crew0 spd0.0, nest1 hp899 crew1 spd0.0, nest1 hp900 crew1 spd0.0, halftrack-1 hp288 crew0 spd0.0, armoredcar-1 hp240 crew0 spd0.0, armoredcar1 hp1000 crew2 spd6.1, halftrack1 hp897 crew2 spd8.3, motorbike0 hp200 crew2 spd8.2 | riding 14 chute 0
+AUTOTEST town/koth 2t day 25s | t0 spawn(-96,0) avg(-54,6) t1 spawn(96,0) avg(57,0)
+AUTOTEST town/koth 2t day 25s | knees ok/backward: body 40/1, target 42/0
+AUTOTEST town/koth 2t day 25s | teams 2 alive [19, 22]
+AUTOTEST town/koth 2t day 25s | prof vehicles 1.39 soldiers 3.25 ms/tick
+AUTOTEST town/koth 2t day 25s | soldiers inside buildings 0
+AUTOTEST town/koth 2t day 25s | squad events { "flank": 29, "breach": 0, "bound": 315, "suppress": 567, "smoke": 9, "fallback": 0, "trail": 73 } | officers [true, true]
+AUTOTEST town/koth 2t day 25s | alive 19 v 22 | dead 9 | score 3-4 | sim 5.63 ms/tick
+AUTOTEST town/koth 2t day | points K:-1 | hill moves in 63 s | over=false
+AUTOTEST field/escort 2t day 12s | cover types { "corner": 4, "low": 4 }
+AUTOTEST field/escort 2t day 12s | squad objectives 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 0:-1 0:-1 0:-1 0:-1
+AUTOTEST field/escort 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/escort 2t day 12s | morale 76/80 broken 0/0 lowammo 0/0 leaders 14/15 squads | routs 0/0 shots 22/213 hits 0/3
+AUTOTEST field/escort 2t day 12s | vehicles: jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1800 crew3 spd0.1, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, armoredcar0 hp69 crew0 spd0.0 WRECK st0 d69, truck0 hp1267 crew2 spd8.5 st0 d89, truck0 hp1269 crew2 spd9.1 st0 d113, truck0 hp1300 crew2 spd0.0 st0 d136 | riding 13 chute 0
+AUTOTEST field/escort 2t day 12s | t0 spawn(-96,0) avg(-70,1) t1 spawn(96,0) avg(57,0)
+AUTOTEST field/escort 2t day 12s | knees ok/backward: body 43/0, target 44/0
+AUTOTEST field/escort 2t day 12s | teams 2 alive [17, 21]
+AUTOTEST field/escort 2t day 12s | prof vehicles 1.12 soldiers 3.29 ms/tick
+AUTOTEST field/escort 2t day 12s | soldiers inside buildings 0
+AUTOTEST field/escort 2t day 12s | squad events { "flank": 29, "breach": 0, "bound": 321, "suppress": 572, "smoke": 9, "fallback": 0, "trail": 73 } | officers [true, true]
+AUTOTEST field/escort 2t day 12s | alive 17 v 21 | dead 2 | score 1-1 | sim 4.89 ms/tick
+AUTOTEST field/escort 2t day | ordered soldiers dist to goal [0, 3, 2] | followers dist to leader [5, 2, 7, 3]
+AUTOTEST field/escort 2t day 30s | cover types { "low": 5 }
+AUTOTEST field/escort 2t day 30s | squad objectives 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 0:-1 0:-1 0:-1 0:-1
+AUTOTEST field/escort 2t day 30s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/escort 2t day 30s | morale 48/77 broken 0/0 lowammo 0/0 leaders 8/15 squads | routs 0/0 shots 46/340 hits 0/7
+AUTOTEST field/escort 2t day 30s | vehicles: jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1763 crew2 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, armoredcar0 hp69 crew0 spd0.0 WRECK st0 d69, truck0 hp43 crew0 spd0.0 WRECK st0 d68, truck0 hp484 crew0 spd0.0 st0 d70, truck0 hp905 crew1 spd0.0 st0 d81 | riding 7 chute 0
+AUTOTEST field/escort 2t day 30s | t0 spawn(-96,0) avg(-66,6) t1 spawn(96,0) avg(46,2)
+AUTOTEST field/escort 2t day 30s | knees ok/backward: body 32/0, target 32/0
+AUTOTEST field/escort 2t day 30s | teams 2 alive [9, 20]
+AUTOTEST field/escort 2t day 30s | prof vehicles 0.74 soldiers 2.55 ms/tick
+AUTOTEST field/escort 2t day 30s | soldiers inside buildings 0
+AUTOTEST field/escort 2t day 30s | squad events { "flank": 29, "breach": 0, "bound": 332, "suppress": 588, "smoke": 9, "fallback": 0, "trail": 73 } | officers [false, true]
+AUTOTEST field/escort 2t day 30s | alive 9 v 20 | dead 11 | score 1-8 | sim 3.76 ms/tick
+AUTOTEST field/escort 2t day | points  | convoy: 0 through, 2 on the road (need 2) | over=false
+AUTOTEST field/rescue 2t day 12s | cover types { "low": 7, "corner": 1 }
+AUTOTEST field/rescue 2t day 12s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 1:-1
+AUTOTEST field/rescue 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/rescue 2t day 12s | morale 74/82 broken 0/0 lowammo 0/0 leaders 17/18 squads | routs 0/0 shots 187/196 hits 0/6
+AUTOTEST field/rescue 2t day 12s | vehicles: jeep0 hp462 crew1 spd1.6, tank0 hp1800 crew4 spd6.0, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp542 crew0 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp520 crew2 spd14.4, tank1 hp1775 crew2 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew0 spd0.0, nest1 hp900 crew1 spd0.0, jeep-1 hp182 crew0 spd0.0, halftrack-1 hp288 crew0 spd0.0 | riding 15 chute 0
+AUTOTEST field/rescue 2t day 12s | t0 spawn(-96,0) avg(-59,14) t1 spawn(96,0) avg(58,3)
+AUTOTEST field/rescue 2t day 12s | knees ok/backward: body 44/1, target 44/0
+AUTOTEST field/rescue 2t day 12s | teams 2 alive [21, 22]
+AUTOTEST field/rescue 2t day 12s | prof vehicles 1.99 soldiers 3.98 ms/tick
+AUTOTEST field/rescue 2t day 12s | soldiers inside buildings 0
+AUTOTEST field/rescue 2t day 12s | squad events { "flank": 30, "breach": 0, "bound": 336, "suppress": 595, "smoke": 9, "fallback": 0, "trail": 73 } | officers [true, true]
+AUTOTEST field/rescue 2t day 12s | alive 21 v 22 | dead 2 | score 0-2 | sim 6.50 ms/tick
+AUTOTEST field/rescue 2t day | ordered soldiers dist to goal [23, 67, 47] | followers dist to leader [12, 43]
+AUTOTEST field/rescue 2t day 25s | cover types { "low": 4, "corner": 1 }
+AUTOTEST field/rescue 2t day 25s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 1:-1
+AUTOTEST field/rescue 2t day 25s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST field/rescue 2t day 25s | morale 76/82 broken 0/0 lowammo 0/0 leaders 15/18 squads | routs 0/0 shots 366/424 hits 1/10
+AUTOTEST field/rescue 2t day 25s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1762 crew2 spd-2.1, mortar0 hp260 crew1 spd0.0, radar0 hp732 crew1 spd0.0, nest0 hp542 crew1 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1693 crew2 spd-2.1, mortar1 hp260 crew1 spd0.0, radar1 hp723 crew1 spd0.0, nest1 hp900 crew0 spd0.0, nest1 hp900 crew1 spd0.0, jeep-1 hp0 crew0 spd0.0 WRECK, halftrack-1 hp277 crew0 spd0.0 | riding 11 chute 0
+AUTOTEST field/rescue 2t day 25s | t0 spawn(-96,0) avg(-39,16) t1 spawn(96,0) avg(56,8)
+AUTOTEST field/rescue 2t day 25s | knees ok/backward: body 35/1, target 36/0
+AUTOTEST field/rescue 2t day 25s | teams 2 alive [18, 19]
+AUTOTEST field/rescue 2t day 25s | prof vehicles 1.70 soldiers 3.66 ms/tick
+AUTOTEST field/rescue 2t day 25s | soldiers inside buildings 0
+AUTOTEST field/rescue 2t day 25s | squad events { "flank": 30, "breach": 0, "bound": 342, "suppress": 611, "smoke": 10, "fallback": 0, "trail": 73 } | officers [true, true]
+AUTOTEST field/rescue 2t day 25s | alive 18 v 19 | dead 8 | score 2-4 | sim 6.37 ms/tick
+AUTOTEST field/rescue 2t day | points  | pilot down · 11:33 | over=false
+AUTOTEST town/general 2t day 12s | cover types { "low": 10 }
+AUTOTEST town/general 2t day 12s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 0:-1 1:-1 1:-1 1:-1
+AUTOTEST town/general 2t day 12s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/general 2t day 12s | morale 77/77 broken 0/0 lowammo 0/0 leaders 17/21 squads | routs 0/0 shots 178/126 hits 4/4
+AUTOTEST town/general 2t day 12s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1800 crew3 spd2.9, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd4.7, nest0 hp900 crew1 spd0.0, nest0 hp899 crew1 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1725 crew2 spd2.9, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp549 crew0 spd0.0, nest1 hp900 crew1 spd0.0, armoredcar-1 hp341 crew0 spd0.0, truck-1 hp158 crew0 spd0.0 | riding 12 chute 0
+AUTOTEST town/general 2t day 12s | t0 spawn(-96,0) avg(-70,2) t1 spawn(96,0) avg(68,-2)
+AUTOTEST town/general 2t day 12s | knees ok/backward: body 67/1, target 68/0
+AUTOTEST town/general 2t day 12s | teams 2 alive [25, 24]
+AUTOTEST town/general 2t day 12s | prof vehicles 2.21 soldiers 5.69 ms/tick
+AUTOTEST town/general 2t day 12s | soldiers inside buildings 0
+AUTOTEST town/general 2t day 12s | squad events { "flank": 30, "breach": 0, "bound": 346, "suppress": 626, "smoke": 10, "fallback": 0, "trail": 73 } | officers [true, true]
+AUTOTEST town/general 2t day 12s | alive 25 v 24 | dead 5 | score 3-2 | sim 8.60 ms/tick
+AUTOTEST town/general 2t day | ordered soldiers dist to goal [56] | followers dist to leader [2, 62, 5]
+AUTOTEST town/general 2t day 30s | cover types { "low": 6 }
+AUTOTEST town/general 2t day 30s | squad objectives 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 0:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 1:-1 0:-1 0:-1 1:-1 1:-1 1:-1 0:-1 1:-1
+AUTOTEST town/general 2t day 30s | builds  | spawnable [true, true] | wall-leaners 0
+AUTOTEST town/general 2t day 30s | morale 67/79 broken 0/0 lowammo 0/0 leaders 17/23 squads | routs 0/0 shots 255/162 hits 8/7
+AUTOTEST town/general 2t day 30s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1800 crew3 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp445 crew0 spd0.0, nest0 hp464 crew0 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1703 crew2 spd0.0, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, armoredcar-1 hp341 crew0 spd0.0, truck-1 hp138 crew0 spd0.0, motorbike0 hp145 crew1 spd0.0, motorbike1 hp200 crew2 spd7.6 | riding 14 chute 0
+AUTOTEST town/general 2t day 30s | t0 spawn(-96,0) avg(-50,4) t1 spawn(96,0) avg(59,-3)
+AUTOTEST town/general 2t day 30s | knees ok/backward: body 38/2, target 38/0
+AUTOTEST town/general 2t day 30s | teams 2 alive [20, 26]
+AUTOTEST town/general 2t day 30s | prof vehicles 1.62 soldiers 4.48 ms/tick
+AUTOTEST town/general 2t day 30s | soldiers inside buildings 3
+AUTOTEST town/general 2t day 30s | squad events { "flank": 30, "breach": 0, "bound": 355, "suppress": 669, "smoke": 10, "fallback": 0, "trail": 73 } | officers [true, true]
+AUTOTEST town/general 2t day 30s | alive 20 v 26 | dead 12 | score 3-5 | sim 7.05 ms/tick
+AUTOTEST town/general 2t day | points  | their general: location unknown · ours: 1 guards | over=false
+AUTOTEST river/frontline 2t day 12s | cover types { "low": 1 }
+AUTOTEST river/frontline 2t day 12s | squad objectives 0:2 0:2 0:2 0:2 0:2 0:2 0:-1 0:2 1:2 1:4 1:2 1:2 1:2 1:2 1:-1 1:2 0:-1 0:-1 1:-1 1:-1 1:2
+AUTOTEST river/frontline 2t day 12s | builds hq0:ok, hq1:ok, fob1:0% | spawnable [true, true] | wall-leaners 0
+AUTOTEST river/frontline 2t day 12s | morale 79/82 broken 0/0 lowammo 0/0 leaders 19/21 squads | routs 0/0 shots 164/151 hits 8/5
+AUTOTEST river/frontline 2t day 12s | vehicles: jeep0 hp0 crew0 spd7.0 WRECK, tank0 hp1800 crew3 spd0.5, mortar0 hp260 crew1 spd0.0, radar0 hp750 crew1 spd0.0, nest0 hp897 crew0 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp397 crew2 spd3.2, tank1 hp1800 crew3 spd3.3, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp900 crew1 spd0.0, nest1 hp900 crew1 spd0.0, dinghy0 hp152 crew0 spd0.0 st0 d0, dinghy0 hp260 crew1 spd0.0 st0 d0, dinghy1 hp0 crew0 spd0.0 WRECK st0 d0, dinghy1 hp260 crew1 spd0.0 st0 d0, armoredcar-1 hp289 crew0 spd0.0, jeep-1 hp154 crew0 spd0.0, tank-1 hp411 crew0 spd0.0 | riding 17 chute 0
+AUTOTEST river/frontline 2t day 12s | t0 spawn(-220,0) avg(-118,-7) t1 spawn(220,0) avg(118,1)
+AUTOTEST river/frontline 2t day 12s | knees ok/backward: body 51/0, target 50/0
+AUTOTEST river/frontline 2t day 12s | teams 2 alive [21, 22]
+AUTOTEST river/frontline 2t day 12s | prof vehicles 2.16 soldiers 3.32 ms/tick
+AUTOTEST river/frontline 2t day 12s | soldiers inside buildings 2
+AUTOTEST river/frontline 2t day 12s | squad events { "flank": 30, "breach": 0, "bound": 359, "suppress": 669, "smoke": 10, "fallback": 0, "trail": 75 } | officers [true, true]
+AUTOTEST river/frontline 2t day 12s | alive 21 v 22 | dead 5 | score 2-3 | sim 6.07 ms/tick
+AUTOTEST river/frontline 2t day | ordered soldiers dist to goal [0, 1, 1] | followers dist to leader [10, 19, 17, 15]
+AUTOTEST river/frontline 2t day 30s | cover types { "corner": 2 }
+AUTOTEST river/frontline 2t day 30s | squad objectives 0:2 0:2 0:2 0:2 0:2 0:2 0:2 0:2 1:2 1:4 1:2 1:2 1:2 1:2 1:-1 1:2 0:2 0:-1 1:-1 1:-1 1:2 0:2 1:-1 1:-1 0:2
+AUTOTEST river/frontline 2t day 30s | builds hq0:ok, hq1:ok, fob1:0%, sandbags0:78% | spawnable [true, true] | wall-leaners 0
+AUTOTEST river/frontline 2t day 30s | morale 76/82 broken 0/0 lowammo 0/0 leaders 21/25 squads | routs 0/0 shots 279/298 hits 13/6
+AUTOTEST river/frontline 2t day 30s | vehicles: jeep0 hp0 crew0 spd0.0 WRECK, tank0 hp1375 crew0 spd0.0, mortar0 hp260 crew1 spd0.0, radar0 hp738 crew1 spd0.0, nest0 hp897 crew0 spd0.0, nest0 hp900 crew1 spd0.0, jeep1 hp0 crew0 spd0.0 WRECK, tank1 hp1088 crew2 spd3.4, mortar1 hp260 crew1 spd0.0, radar1 hp750 crew1 spd0.0, nest1 hp899 crew1 spd0.0, nest1 hp899 crew1 spd0.0, dinghy0 hp152 crew1 spd0.0 st0 d0, dinghy0 hp260 crew1 spd0.0 st0 d0, dinghy1 hp0 crew0 spd0.0 WRECK st0 d0, dinghy1 hp166 crew0 spd0.0 st0 d0, armoredcar-1 hp289 crew0 spd0.0, jeep-1 hp0 crew0 spd0.0 WRECK, tank-1 hp324 crew0 spd0.0, gunship0 hp856 crew2 spd0.0, armoredcar1 hp1000 crew2 spd0.0, halftrack1 hp900 crew2 spd0.0, motorbike0 hp200 crew2 spd9.1 | riding 19 chute 0
+AUTOTEST river/frontline 2t day 30s | t0 spawn(-220,0) avg(-105,-1) t1 spawn(220,0) avg(150,2)
+AUTOTEST river/frontline 2t day 30s | knees ok/backward: body 45/1, target 46/0
+AUTOTEST river/frontline 2t day 30s | teams 2 alive [23, 21]
+AUTOTEST river/frontline 2t day 30s | prof vehicles 1.90 soldiers 5.62 ms/tick
+AUTOTEST river/frontline 2t day 30s | soldiers inside buildings 6
+AUTOTEST river/frontline 2t day 30s | squad events { "flank": 30, "breach": 0, "bound": 367, "suppress": 670, "smoke": 12, "fallback": 0, "trail": 76 } | officers [true, true]
+AUTOTEST river/frontline 2t day 30s | alive 23 v 21 | dead 12 | score 6-4 | sim 8.45 ms/tick
+AUTOTEST river/frontline 2t day | points A:0 B:0 C:-1 D:1 E:1 | tickets 95 : 93 | over=false
+AUTOTEST done
+WARNING: 1 RID of type "CanvasItem" was leaked.
+   at: _free_rids (servers/rendering/renderer_canvas_cull.cpp:2690)
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+   at: cleanup (core/object/object.cpp:2663)
+ERROR: 2 resources still in use at exit (run with --verbose for details).
+   at: clear (core/io/resource.cpp:810)
+ERROR: Pages in use exist at exit in PagedAllocator: N7Variant5Pools12BucketMediumE
+   at: ~PagedAllocator (./core/templates/paged_allocator.h:169)
+ERROR: 28 RID allocations of type 'PN13RendererDummy14TextureStorage12DummyTextureE' were leaked at exit.
+ERROR: 231 RID allocations of type 'N13RendererDummy11MeshStorage14DummyMultiMeshE' were leaked at exit.
+ERROR: 90 RID allocations of type 'N13RendererDummy9DummyMeshE' were leaked at exit.
+ERROR: 64 RID allocations of type 'PN18TextServerAdvanced22ShapedTextDataAdvancedE' were leaked at exit.
+ERROR: 2 RID allocations of type 'PN18TextServerAdvanced12FontAdvancedE' were leaked at exit.

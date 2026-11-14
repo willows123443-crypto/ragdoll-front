@@ -1413,7 +1413,7 @@ static func decide(s) -> void:
 					return
 	if s.ammo_frac() < 0.7 and s.vis_t == null and s.task != "resupply":
 		for o in G.soldiers:
-			if o.state == "dead" and o.reserve > 0 and G.dist2d(o.pos, s.pos) < 9.0:
+			if o.state == "dead" and not o.zombie and o.reserve > 0 and G.dist2d(o.pos, s.pos) < 9.0:
 				release_cover(s)
 				s.supply_target = o
 				s.task = "resupply"
@@ -2436,19 +2436,45 @@ static func _keep_from_zombies(s) -> void:
 		var home = G.flat(G.world.capture - s.pos)
 		if home.length() > 6.0:
 			away = (away * 0.75 + home.normalized() * 0.25).normalized()
-		for ang in [0.0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6]:
+		# the way out is the one with the most room in it, not just the first free step: backing straight
+		# away ended with the whole section wedged in a corner. Each way is scored on how far it runs
+		# clear, how far it leads from the horde and whether there's a zombie standing in it; when none
+		# of them runs anywhere he stands his ground and fights (the butt of the rifle does the rest)
+		var best_d = away
+		var best_sc = -1e9
+		var best_free = 0.0
+		for ang in [0.0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.2, -2.2]:
 			var nd = away.rotated(Vector3.UP, ang)
-			if not G.world.solid_at(s.pos.x + nd.x * 0.8, s.pos.z + nd.z * 0.8, 0.25, s.pos.y):
-				away = nd
-				break
+			var free = 0.0
+			for st in [0.8, 1.6, 2.4, 3.2, 4.0, 5.0]:
+				if G.world.solid_at(s.pos.x + nd.x * st, s.pos.z + nd.z * st, 0.25, s.pos.y):
+					break
+				free = st
+			if free < 0.8:
+				continue
+			var sc = free * 1.4 + nd.dot(away) * 3.0
+			var toz = G.flat(near.pos - s.pos)
+			if toz.length() < free + 1.5 and nd.dot(toz.normalized()) > 0.55:
+				sc -= 9.0      # (that way is through the nearest of them)
+			if sc > best_sc:
+				best_sc = sc
+				best_d = nd
+				best_free = free
 		release_cover(s)
 		stop_move(s)
-		s.want = away * (3.2 if zd < danger * 0.5 else 2.2)
+		if best_free < 1.6:
+			s.want = Vector3.ZERO
+			s.set_meta("cornered_t", G.sim_time)
+		else:
+			away = best_d
+			s.want = away * (3.2 if zd < danger * 0.5 else 2.2)
 		s.prone_t = false
 		s.kneel = false
 		s.threat = near.pos
 		s.has_threat = true
-		if zd < 1.8 and s.throw_t <= 0.0 and s.fire_cd <= 0.0 and s.reload_t > 0.0:
+		if zd < 1.9 and s.throw_t <= 0.0 and absf(near.pos.y - s.pos.y) < 1.0 and G.sim_time > float(s.get_meta("shove_t", 0.0)):
+			Combat.shove(s, near)
+		elif zd < 1.8 and s.throw_t <= 0.0 and s.fire_cd <= 0.0 and s.reload_t > 0.0:
 			Combat.knife(s, near)
 
 # indoors with the enemy about and no cover: tip the nearest table over and get behind it
@@ -2532,6 +2558,12 @@ static func aim_and_fire(s) -> void:
 		s.set_meta("knife", true)
 		s.decide_t = 0.0
 		G.fx.callout(s, G.pick(["I'm out! Come on then!", "Nothing left... for the lads!", "Fix knives! At them!", "Last of it, let's go!"]))
+	# something right on top of him: a shove with the butt (always at a zombie; at a man when the gun's
+	# empty or being reloaded) to make room
+	if tgt != null and not s.is_player and not s.zombie and not s.has_meta("bayonet") and tgt.state == "alive" and G.sim_time > float(s.get_meta("shove_t", 0.0)) \
+			and G.dist2d(tgt.pos, s.pos) < 1.7 and absf(tgt.pos.y - s.pos.y) < 1.0 and (tgt.zombie or s.mag <= 0 or s.reload_t > 0.0):
+		Combat.shove(s, tgt)
+		return
 	# fixed bayonets and right on top of him: run him through rather than fumble a shot
 	if tgt != null and s.has_meta("bayonet") and s.wid in Soldier.BAYONET_GUNS and s.fire_cd <= 0.0 and tgt.state == "alive" \
 			and G.dist2d(tgt.pos, s.pos) < 1.9 and absf(tgt.pos.y - s.pos.y) < 1.0 and not s.is_player:
@@ -2824,7 +2856,7 @@ static func find_ammo(s):
 			best = a
 	bd *= 1.3      # a long walk to a crate is worth less than a body close by
 	for o in G.soldiers:
-		if o.state == "dead" and o.reserve > 0 and o != s:
+		if o.state == "dead" and not o.zombie and o.reserve > 0 and o != s:
 			var d2 = G.dist2d(o.pos, s.pos)
 			if d2 < 45.0 and d2 < bd:
 				bd = d2
@@ -2985,6 +3017,8 @@ static func supply_tick(s, dt: float) -> void:
 		s.decide_t = 0.0
 
 static func scavenge(s, body) -> void:
+	if body.zombie:
+		return          # (the dead carry nothing worth having)
 	# out of rounds for my own gun: pick up his instead (a rocket launcher first, if there's armour about)
 	var his_left = body.reserve + body.mag
 	var armour_near = G.vehicles.any(func(v): return v.team != s.team and not v.dead and (v.spec["tracked"] or v.kind in ["armoredcar", "halftrack", "technical"]) and G.dist2d(v.pos, s.pos) < 120.0)

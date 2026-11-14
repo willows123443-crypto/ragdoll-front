@@ -409,6 +409,7 @@ static func knife(s, t) -> void:
 	if t == null or t.state == "dead" or s.state != "alive":
 		return
 	s.throw_t = 0.4
+	s.set_meta("throw_T", 0.55)
 	var f = Vector3(sin(t.body_yaw), 0, cos(t.body_yaw))
 	var from_behind = f.dot(G.flat(s.pos - t.pos).normalized()) < 0.2 or t.vis_t != s
 	G.audio.play(G.audio.s_hit, t.chest(), -10.0, 0.6)
@@ -439,6 +440,7 @@ static func bayonet(s, t) -> void:
 	if t == null or t.state == "dead" or s.state != "alive":
 		return
 	s.throw_t = 0.35
+	s.set_meta("throw_T", 0.55)
 	s.stumble = 0.25
 	s.stumble_dir = G.flat(t.pos - s.pos).normalized()
 	G.audio.play(G.audio.s_hit, t.chest(), -8.0, 0.55)
@@ -446,6 +448,39 @@ static func bayonet(s, t) -> void:
 	hit_soldier(t, 1, t.chest(), G.flat(t.pos - s.pos).normalized(), randf_range(95.0, 150.0), s, 2.0)
 	cause = ""
 	s.fire_cd = 1.0
+
+# A shove with the rifle butt: for something right on top of him (a zombie, or anyone when his gun's
+# empty). It hurts, and it knocks the other man back a couple of steps so there's room to shoot.
+static var shove_n = 0
+static func shove(s, t) -> void:
+	if t == null or t.state == "dead" or s.state != "alive":
+		return
+	shove_n += 1
+	var dir = G.flat(t.pos - s.pos).normalized()
+	s.throw_t = 0.42
+	s.set_meta("throw_T", 0.42)
+	s.set_meta("thrust", true)
+	s.stumble = 0.12
+	s.stumble_dir = dir
+	G.audio.play(G.audio.s_hit, t.chest(), -9.0, 0.8)
+	cause = "rifle butt"
+	hit_soldier(t, 1, t.chest(), dir, randf_range(14.0, 24.0), s, 3.0)
+	cause = ""
+	if t.state == "alive":
+		if t.zombie and randf() < 0.5:
+			# (knocked clean off its feet: it's a second or so getting up again)
+			t.fall(randf_range(0.7, 1.2))
+			t.push(1, dir * 3.0 + Vector3(0, 0.5, 0), 0.4)
+		else:
+			# (sent staggering back a good step and a half)
+			t.stumble = 0.75
+			t.stumble_dir = dir
+			t.vel = dir * 6.5
+			t.stun = maxf(t.stun, 0.5)
+	s.fire_cd = maxf(s.fire_cd, 0.45)
+	s.set_meta("shove_t", G.sim_time + 1.3)
+	if randf() < 0.3:
+		G.fx.callout(s, G.pick(["Get off!", "Back!", "Get back!", "Off me!"]))
 
 # ---------------------------------------------------------------- rockets
 static func launch_rocket(s, origin: Vector3, dir: Vector3, veh = null) -> void:
@@ -692,12 +727,23 @@ static func step_strikes() -> void:
 			strikes.remove_at(i)
 
 # ---------------------------------------------------------------- grenades and smoke
-const THROW_T = 1.05      # an AI throw from start to finish: pull the pin, wind back, let go, follow through
-const THROW_AT = 0.42     # throw_t left when the grenade leaves his hand
+const THROW_T = 1.35      # an AI throw from start to finish: pull the pin, wind back, let go, follow through
+const THROW_AT = 0.5     # throw_t left when the grenade leaves his hand
 
 # AI men go through the motions first (see Soldier, throw_t): the grenade only leaves the hand part way through
 static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -> void:
 	if not s.is_player and s.state == "alive":
+		# (smoke hides nothing from the dead: nobody throws it in a horde battle)
+		if type == "smoke" and G.mode == "horde":
+			s.smokes = 0
+			return
+		# (not with a wall right in front of him: his arm went through it and the grenade started its
+		# flight on the far side)
+		var chest: Vector3 = s.pos + Vector3(0, 1.3, 0)
+		var d0 = G.flat(target - s.pos).normalized()
+		if not G.ray(chest, chest + d0 * 1.8 + Vector3(0, 0.45, 0), G.L_WORLD).is_empty():
+			s.nade_cd = maxf(s.nade_cd, 3.0)
+			return
 		if s.has_meta("throw_pending") and s.throw_t > 0.0:
 			return          # one in the hand already
 		# (a throw cut short when he was knocked down leaves nothing behind)
@@ -719,10 +765,17 @@ static func release_throw(s) -> void:
 	_throw_now(s, pend[0], pend[1], pend[2])
 	s.throw_t = THROW_AT          # keep the follow-through going
 
+static var thrown = {}
 static func _throw_now(s, target: Vector3, type: String, cook: float = 0.0) -> void:
+	thrown[type] = thrown.get(type, 0) + 1
 	if type == "frag" and Faction.militia(s.team) and randf() < 0.6:
 		type = "molotov"
 	var start = (s.parts[6].global_position + Vector3(0, 0.15, 0)) if s.parts.size() > 6 and not s.is_player else s.head_pos() + Vector3(0, 0.1, 0)
+	# (the hand can be the other side of something thin he's standing against: it leaves from the near
+	# side of whatever is between his chest and his hand)
+	var chest0: Vector3 = s.pos + Vector3(0, 1.3, 0)
+	if not s.is_player and not G.ray(chest0, start, G.L_WORLD).is_empty():
+		start = chest0 + Vector3(0, 0.3, 0)
 	var dist = G.dist2d(target, start)
 	var T = clampf(0.6 + dist * 0.035, 0.7, 1.6)
 	var v = Vector3((target.x - start.x) / T, (target.y + 0.2 - start.y) / T - 0.5 * G.GRAV * T, (target.z - start.z) / T)

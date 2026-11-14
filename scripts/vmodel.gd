@@ -1198,17 +1198,39 @@ static func _rust(n: Node, k: float) -> void:
 		if c is Node3D and not (c is CPUParticles3D):
 			_rust(c, k)
 
+# The militia's own paint: dusty sand slapped on over whatever the vehicle was, with black-painted
+# panels and bare rusty ones, so a captured tank can't be taken for one of the army's green ones at a
+# glance. Dark parts (tracks, tyres, barrels), glass and team markings are left as they are. Only a
+# handful of shades are used, so the pieces still share materials.
+static func _livery(n: Node, base: Color) -> void:
+	var shades = [base, base.darkened(0.12), base.lightened(0.08), base.lerp(Color(0.45, 0.27, 0.15), 0.7), Color(0.07, 0.07, 0.07)]
+	for c in n.get_children():
+		if c is MeshInstance3D and c.material_override is StandardMaterial3D and not c.has_meta("mark") and not c.has_meta("barrel"):
+			var m: StandardMaterial3D = c.material_override
+			var col: Color = m.albedo_color
+			if col.a > 0.95 and m.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED and col.get_luminance() > 0.13:
+				var r = randf()
+				var k = 0 if r < 0.4 else (1 if r < 0.58 else (2 if r < 0.7 else (3 if r < 0.86 else 4)))
+				c.material_override = mat(shades[k])
+		if c is Node3D and not (c is CPUParticles3D):
+			_livery(c, base)
+
 static func _banner(v, parent: Node3D, at: Vector3) -> void:
-	box(v, parent, Vector3(0.04, 1.6, 0.04), at + Vector3(0, 0.8, 0), Color(0.22, 0.2, 0.18), {"b": 0.005})
-	var fl = box(v, parent, Vector3(0.02, 0.45, 0.7), at + Vector3(0, 1.38, -0.36), Color(0.06, 0.06, 0.06), {"b": 0.005})
+	box(v, parent, Vector3(0.05, 2.1, 0.05), at + Vector3(0, 1.05, 0), Color(0.22, 0.2, 0.18), {"b": 0.005})
+	var fl = box(v, parent, Vector3(0.02, 0.72, 1.15), at + Vector3(0, 1.72, -0.6), Color(0.04, 0.04, 0.04), {"b": 0.005})
 	fl.rotation.y = 0.15
+	fl.set_meta("mark", true)
+	# (a white mark daubed on the flag, so it reads as a banner and not a hole in the picture)
+	var wm = box(v, parent, Vector3(0.025, 0.2, 0.42), at + Vector3(0, 1.72, -0.6), Color(0.86, 0.84, 0.78), {"b": 0.0})
+	wm.rotation.y = 0.15
+	wm.set_meta("mark", true)
 
 static func _dress_variant(v, var_: String) -> void:
 	var sand = Color(0.62, 0.55, 0.4)
 	var can = Color(0.3, 0.33, 0.2)
 	match var_:
 		"oldtank":
-			_rust(v, 0.55)
+			_livery(v, Color(0.7, 0.61, 0.42))
 			var L = v.spec["len"]
 			var W = v.spec["wid"]
 			# sandbags piled on the front plate and logs strapped along the sides: field-made armour
@@ -1222,7 +1244,7 @@ static func _dress_variant(v, var_: String) -> void:
 				box(v, v, Vector3(0.18, 0.34, 0.26), Vector3(-0.5 + k * 0.25, 1.35, -L * 0.5 + 0.3), can, {"b": 0.02})
 			_banner(v, v.turret if v.turret != null else v, Vector3(-0.6, 0.6, -0.6))
 		"gunbus":
-			_rust(v, 0.5)
+			_livery(v, Color(0.66, 0.6, 0.46))
 			var L2 = v.spec["len"]
 			var W2 = v.spec["wid"]
 			# boiler plate welded on at odd angles over the sides, sandbags round the top

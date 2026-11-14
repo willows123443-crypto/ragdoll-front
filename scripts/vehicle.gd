@@ -418,6 +418,11 @@ func _lod_tick(dt: float) -> void:
 func driver():
 	return seats[0]
 
+# a supply lorry of the fleet has a closed cab: its driver isn't a separate target (he can't be seen or
+# shot out of it, and he never climbs down), so the lorry is only ever stopped by wrecking the lorry
+func sealed(i: int) -> bool:
+	return i == 0 and has_meta("fleet")
+
 func gunner():
 	for i in range(seats.size()):
 		if spec["seats"][i]["role"] == "gunner":
@@ -2990,7 +2995,7 @@ const SOFT_KINDS = ["supplytruck", "ammotruck", "truck", "ambulance", "radar", "
 # stuck (track off, wheels shot) or badly holed, and still being hit by something heavy: the crew don't
 # sit there waiting for the next one, they get out and run for cover away from whoever's firing
 func _bail_check() -> void:
-	if bailed or dead or burning or spec.get("static", false) or spec.get("air", false) or spec.get("boat", false):
+	if bailed or dead or burning or spec.get("static", false) or spec.get("air", false) or spec.get("boat", false) or has_meta("fleet"):
 		return
 	if G.sim_time - heavy_t > 4.0:
 		return
@@ -3112,7 +3117,13 @@ func _self_repair() -> void:
 	if G.sim_time - get_meta("broke_t", G.sim_time) < 0.0:
 		return
 	if not has_meta("broke_t"):
-		set_meta("broke_t", G.sim_time + 3.0)
+		set_meta("broke_t", G.sim_time + (16.0 if has_meta("fleet") else 3.0))
+		return
+	if has_meta("fleet"):
+		# (the fleet's driver stays in his cab: the wheel is changed where it stands after a wait)
+		remove_meta("broke_t")
+		_fix_tyres()
+		tracks_broken = false
 		return
 	var pick = null
 	for i in range(seats.size() - 1, -1, -1):

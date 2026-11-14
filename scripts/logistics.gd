@@ -59,6 +59,9 @@ static func _park_off(team: int) -> Vector3:
 static func _join(team: int, v) -> void:
 	fleet[team].append(v)
 	v.set_meta("fleet", true)
+	var d0 = v.driver()
+	if d0 != null and is_instance_valid(d0) and not d0.is_player and d0.mount_t <= 0.0:
+		d0._hide_inside()
 	v.set_meta("load_t", G.sim_time + 4.0)
 	var cargo = Node3D.new()
 	v.add_child(cargo)
@@ -94,6 +97,7 @@ static func step(dt: float) -> void:
 				G.ui.radio(t, "A supply truck has been destroyed! %d left. Buy another at HQ (%d supply)" % [count(t), Support.COSTS["supplytruck"]])
 		for v in fleet[t]:
 			_keep_running(t, v, h)
+			_turn_back(t, v)
 			_dispatch(t, v, h)
 		# the AI side keeps its fleet up
 		if G.ai_runs(t) and count(t) < 2 and Support.points[t] >= Support.COSTS["supplytruck"] + 6:
@@ -225,6 +229,8 @@ static func _dispatch(t: int, v, h) -> void:
 		var tr = st.get("convoy")
 		if tr != null and is_instance_valid(tr) and not tr.dead and tr != v and tr.mission != null:
 			continue        # somebody's already on the way there
+		if _hot(t, st["p"], 60.0):
+			continue        # (not into a fight: a place with the enemy that close waits for its supplies)
 		var sc = G.sim_time - st.get("served_t", -999.0)
 		if st["kind"] != "supply":
 			if st.get("ammo") == null or st["ammo"]["stock"] > 70.0:
@@ -246,6 +252,33 @@ static func _dispatch(t: int, v, h) -> void:
 	_show_cargo(v, true)
 	if t == 0:
 		G.ui.radio(t, "Supply truck heading for the %s at %s" % [best["name"], AI.grid_ref(best["p"])])
+
+# enemy soldiers or vehicles near a place (the lorries keep away from those)
+static func _hot(t: int, p: Vector3, r: float) -> bool:
+	for o in G.soldiers:
+		if o.team != t and o.team >= 0 and o.state != "dead" and not o.hidden_in_vehicle and G.dist2d(o.pos, p) < r:
+			return true
+	for ov in G.vehicles:
+		if is_instance_valid(ov) and not ov.dead and ov.team != t and ov.team >= 0 and ov.driver() != null and G.dist2d(ov.pos, p) < r * 1.3:
+			return true
+	return false
+
+# a lorry on its way out whose stop has since come under attack turns round and goes home with its load
+static func _turn_back(t: int, v) -> void:
+	var m = v.mission
+	if m == null or m.get("stage", 0) != 0 or not m.get("fleet", false) or G.dist2d(v.pos, m["drop"]) < 25.0:
+		return
+	# (its stop under attack, or the enemy on the road just ahead of it)
+	if not _hot(t, m["drop"], 45.0) and not _hot(t, v.pos + v.forward() * 22.0, 30.0):
+		return
+	var st = m.get("site")
+	if st != null and st.get("convoy") == v:
+		st["convoy"] = null
+		st["served_t"] = G.sim_time - 60.0      # (it's tried again in a while, not at once)
+	m["stage"] = 2
+	m["site"] = null
+	if t == 0:
+		G.ui.radio(t, "Supply truck turning back: the enemy's too close to its stop at %s" % AI.grid_ref(m["drop"]))
 
 static func _show_cargo(v, on: bool) -> void:
 	var c = v.get_meta("cargo") if v.has_meta("cargo") else null

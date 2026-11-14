@@ -34,6 +34,12 @@ func _ready() -> void:
 	AudioServer.add_bus(bus)
 	AudioServer.set_bus_name(bus, "World")
 	AudioServer.set_bus_send(bus, "Master")
+	AudioServer.set_bus_volume_db(bus, -4.0)
+	# the loudest moments (a shell close by with a firefight going) are held under full scale and not
+	# clipped. (In a browser the engine's effects aren't used: the page puts its own limiter on the output.)
+	var lim = AudioEffectHardLimiter.new()
+	lim.ceiling_db = -0.5
+	AudioServer.add_bus_effect(0, lim)
 	var rev = AudioEffectReverb.new()
 	reverb = rev
 	rev.room_size = 0.55
@@ -78,10 +84,12 @@ func _ready() -> void:
 		s_groans.append(_groan(1.1 + k * 0.35, 85.0 + k * 22.0, 0.55))
 	s_snarl = _groan(0.55, 140.0, 1.0)
 	s_screech = _groan(0.7, 260.0, 1.2)
+	ear = AudioListener3D.new()
+	add_child(ear)
 	for i in range(28):
 		var p = AudioStreamPlayer3D.new()
 		p.bus = "World"
-		p.unit_size = 12.0
+		p.unit_size = UNIT
 		p.max_distance = 260.0
 		p.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
 		add_child(p)
@@ -92,6 +100,7 @@ func _ready() -> void:
 	add_child(ui_player2)
 	s_far = _noise(2.2, 0.6, 0.04, 0.9, 40.0)
 	_build_music.call_deferred()
+	_build_menu_music.call_deferred()
 	set_volume(G.settings["volume"])
 
 # ---------------------------------------------------------------- battle music and the sound of the wider battle
@@ -218,6 +227,7 @@ func deafen(k: float) -> void:
 		ui_player2.play()
 
 func _process(dt: float) -> void:
+	_ear_tick()
 	_engine_loops()
 	echo_budget = minf(echo_budget + dt * 9.0, 4.0)
 	bark_t -= dt
@@ -227,10 +237,23 @@ func _process(dt: float) -> void:
 		deaf_fx.cutoff_hz = lerpf(20000.0, 450.0, clampf(deaf / 1.6, 0.0, 1.0))
 		if deaf <= 0.0:
 			AudioServer.set_bus_effect_enabled(deaf_bus, AudioServer.get_bus_effect_count(deaf_bus) - 1, false)
-	tts_try_t -= dt
 	if not music_ready:
 		return
-	var on = G.started and not G.over
+	var on = G.started and not G.over and not G.attract
+	# (the battle behind the title screen is kept well down under the tune)
+	var wv = -18.0 if G.attract else -4.0
+	if absf(AudioServer.get_bus_volume_db(deaf_bus) - wv) > 0.05:
+		AudioServer.set_bus_volume_db(deaf_bus, move_toward(AudioServer.get_bus_volume_db(deaf_bus), wv, dt * 30.0))
+	# the title screen and the menus before a battle have their own tune; it fades out as the battle
+	# comes up and back in when you return
+	var menu_on = (not G.started or G.attract) and G.settings["music"] > 0.0
+	menu_k = move_toward(menu_k, 1.0 if menu_on else 0.0, dt * (0.5 if menu_on else 0.9))
+	if menu_player != null:
+		menu_player.volume_db = linear_to_db(maxf(menu_k * G.settings["music"] * 2.0, 0.0001)) + 3.0
+		if menu_k > 0.0 and not menu_player.playing:
+			menu_player.play()
+		elif menu_k <= 0.0 and menu_player.playing:
+			menu_player.stop()
 	heat = maxf(0.0, heat - dt * 0.25)
 	# how hot the whole battle is, not just what's in front of the camera (the commander's view is high up):
 	# the share of men who can see an enemy right now
@@ -251,7 +274,7 @@ func _process(dt: float) -> void:
 	var lv = [0.25 + intensity * 0.5, maxf(0.0, intensity - 0.25) * 1.3, maxf(0.0, intensity - 0.55) * 2.0]
 	for i in range(music.size()):
 		var a = clampf(lv[i], 0.0, 1.0) * mv * (1.0 if on else 0.0)
-		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 6.0
+		music[i].volume_db = linear_to_db(maxf(a, 0.0001)) - 3.0
 	# the wider battle: far-off booms and crackling gunfire while a fight is on
 	if on:
 		rumble_t -= dt
@@ -325,7 +348,7 @@ func radio_click() -> void:
 			v += hp * 0.32 * gate * (1.0 if t > 0.04 else 0.0) * exp(-maxf(0.0, t - 0.2) / 0.03)
 			out[i] = v
 		s_radio = _wav(out)
-	if not G.settings.get("voices", true) and G.settings["volume"] <= 0.0:
+	if G.settings["volume"] <= 0.0:
 		return
 	ui_player.stream = s_radio
 	ui_player.pitch_scale = randf_range(0.95, 1.05)
@@ -352,6 +375,76 @@ func order_tick(high: bool = false) -> void:
 	tick_player.pitch_scale = 1.2 if high else 1.0
 	tick_player.volume_db = -12.0
 	tick_player.play()
+
+# The tune for the title screen: a slow march in D minor. A soft pad holds the chords, a horn carries
+# the melody, a kettledrum marks each bar and a side drum ticks quietly underneath. Built once at
+# startup like the battle music (there are no sound files in the game).
+var menu_player: AudioStreamPlayer = null
+var menu_k = 0.0
+
+func _build_menu_music() -> void:
+	var bpm = 76.0
+	var beat = 60.0 / bpm
+	var bars = 8
+	var n = int(beat * 4.0 * bars * MRATE)
+	var out = PackedFloat32Array()
+	out.resize(n)
+	# chords, one a bar: Dm Dm Bb F Gm Dm A Dm (three notes each, an octave below the tune)
+	var chords = [[146.83, 174.61, 220.0], [146.83, 174.61, 220.0], [116.54, 146.83, 174.61], [130.81, 174.61, 220.0],
+		[98.0, 146.83, 196.0], [146.83, 174.61, 220.0], [110.0, 138.59, 164.81], [146.83, 174.61, 220.0]]
+	var bar_n = int(beat * 4.0 * MRATE)
+	for b in range(bars):
+		var ch = chords[b]
+		for k in range(bar_n):
+			var t = float(k) / MRATE
+			var env = minf(1.0, t / 0.5) * minf(1.0, (beat * 4.0 - t) / 0.6)
+			var v = 0.0
+			for f in ch:
+				v += sin(TAU * f * t) + 0.5 * sin(TAU * f * 1.003 * t + 1.0) + 0.22 * sin(TAU * f * 2.0 * t)
+			out[b * bar_n + k] = v * 0.045 * env
+	# the tune: [note in semitones above D4, beats]
+	var tune = [[0, 2], [3, 1], [7, 1],  [7, 3], [5, 1],  [3, 2], [0, 1], [3, 1],  [10, 2], [7, 2],
+		[8, 2], [5, 1], [8, 1],  [7, 3], [3, 1],  [2, 2], [-1, 1], [2, 1],  [0, 4]]
+	var at = 0.0
+	for nt in tune:
+		var f2 = 293.66 * pow(2.0, nt[0] / 12.0)
+		var len_s = nt[1] * beat
+		var st = int(at * MRATE)
+		for k in range(int(len_s * MRATE)):
+			if st + k >= n:
+				break
+			var t2 = float(k) / MRATE
+			var vib = 1.0 + 0.004 * sin(TAU * 5.2 * t2) * minf(1.0, t2 / 0.4)
+			var ph = TAU * f2 * vib * t2
+			var env2 = minf(1.0, t2 / 0.07) * minf(1.0, (len_s - t2) / 0.12) * (0.75 + 0.25 * exp(-t2 / 0.6))
+			out[st + k] += (sin(ph) + 0.45 * sin(ph * 2.0) + 0.22 * sin(ph * 3.0) + 0.08 * sin(ph * 4.0)) * 0.13 * env2
+		at += len_s
+	# kettledrum on the first beat of every bar (and the third of the last), side drum ticking the march
+	var lp = 0.0
+	for b in range(bars * 4):
+		var st3 = int(b * beat * MRATE)
+		if b % 4 == 0 or b == bars * 4 - 2:
+			for k in range(int(0.9 * MRATE)):
+				if st3 + k >= n:
+					break
+				var t3 = float(k) / MRATE
+				out[st3 + k] += sin(TAU * (73.4 - t3 * 6.0) * t3) * exp(-t3 / 0.28) * 0.3
+		for sub in ([0.0, 0.5, 0.75] if b % 2 == 1 else [0.0]):
+			var st4 = st3 + int(sub * beat * MRATE)
+			for k in range(int(0.09 * MRATE)):
+				if st4 + k >= n:
+					break
+				var t4 = float(k) / MRATE
+				lp += (randf() * 2.0 - 1.0 - lp) * 0.6
+				out[st4 + k] += lp * exp(-t4 / 0.025) * (0.07 if sub == 0.0 else 0.045)
+	var w = _wav_rate(out, MRATE)
+	w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	w.loop_begin = 0
+	w.loop_end = n
+	menu_player = AudioStreamPlayer.new()
+	menu_player.stream = w
+	menu_player.volume_db = -80.0
+	add_child(menu_player)
 
 func set_volume(v: float) -> void:
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(v, 0.001)))
@@ -419,7 +512,40 @@ func dull(k: float) -> void:
 	deaf = maxf(deaf, 0.3 + 0.9 * k)
 	AudioServer.set_bus_effect_enabled(deaf_bus, AudioServer.get_bus_effect_count(deaf_bus) - 1, true)
 
+# Where the battle is heard from. In a man's boots that's the camera. Looking down from above it's a
+# point close over the ground you're looking at: heard from the camera itself, forty or eighty metres up,
+# a whole battle was a faint patter (most players took it for no sound at all).
+const UNIT = 20.0          # how far a sound carries at full strength (was 12)
+const EAR_UP = 15.0        # the ear is never further than this from the ground being looked at
+var ear: AudioListener3D = null
+var ear_pos = Vector3.ZERO
+var ear_ok = false
+
+func _ear_tick() -> void:
+	var cam = get_viewport().get_camera_3d()
+	if cam == null or ear == null:
+		ear_ok = false
+		return
+	var cp: Vector3 = cam.global_position
+	var p = cp
+	if G.started and G.world != null and (G.player == null or not is_instance_valid(G.player)):
+		var fwd: Vector3 = -cam.global_transform.basis.z
+		var h = cp.y - G.world.ground_y(cp.x, cp.z)
+		if h > EAR_UP and fwd.y < -0.08:
+			var focus: Vector3 = cp + fwd * minf(h / -fwd.y, 320.0)
+			var back: Vector3 = cp - focus
+			var L = back.length()
+			if L > EAR_UP:
+				p = focus + back / L * EAR_UP
+	ear_pos = p
+	ear_ok = true
+	ear.global_transform = Transform3D(cam.global_transform.basis, p)
+	if not ear.is_current():
+		ear.make_current()
+
 func cam_dist(pos: Vector3) -> float:
+	if ear_ok:
+		return ear_pos.distance_to(pos)
 	var cam = get_viewport().get_camera_3d()
 	return cam.global_position.distance_to(pos) if cam else 0.0
 
@@ -428,7 +554,7 @@ func occluded(pos: Vector3) -> bool:
 	var cam = get_viewport().get_camera_3d()
 	if cam == null or G.world == null:
 		return false
-	var a = cam.global_position
+	var a = ear_pos if ear_ok else cam.global_position
 	if a.distance_to(pos) > 80.0:
 		return false
 	return G.blocked(a, pos + Vector3(0, 0.8, 0))
@@ -574,56 +700,13 @@ func _glass_sound() -> AudioStreamWAV:
 		out[i] = v * minf(1.0, t * 2000.0)
 	return _wav(out)
 
-# ---------------------------------------------------------------- spoken callouts (the browser's or system's speech voices)
-var tts_voices: Array = []
-var tts_try_t = 0.0
+# ---------------------------------------------------------------- callouts
+# Shouts are shown as text over the man who makes them; nothing is read out. (They used to be spoken by
+# the computer's speech voice, which was far louder than the battle and nothing like a soldier.)
 var bark_t = 0.0
 
-func _tts_ready() -> bool:
-	if not tts_voices.is_empty():
-		return true
-	if tts_try_t > 0.0:
-		return false
-	tts_try_t = 3.0       # browsers load their voices a moment after the page; keep asking now and then
-	if not DisplayServer.has_feature(DisplayServer.FEATURE_TEXT_TO_SPEECH):
-		tts_try_t = 1e9
-		return false
-	tts_voices = Array(DisplayServer.tts_get_voices_for_language("en"))
-	return not tts_voices.is_empty()
-
-func bark(s, text: String) -> void:
-	if not G.settings.get("voices", true) or bark_t > 0.0 or not G.started or G.attract:
-		return
-	var p: Vector3 = s.pos if s.state != "dead" else s.parts[0].global_position
-	var d = cam_dist(p)
-	var mine = G.player != null and is_instance_valid(G.player) and s != G.player and s.team == G.player.team and s.squad != null and s.squad == G.player.squad
-	if d > 38.0 and not mine:
-		return
-	if not _tts_ready():
-		return
-	if DisplayServer.tts_is_speaking():
-		return
-	bark_t = randf_range(1.4, 2.2)
-	# each side sounds different: its own pick of voices, pitch range and pace
-	var st = Voice.style(s)
-	var n = tts_voices.size()
-	var vi = (s.id * 7) % n
-	if n >= 3:
-		var third = maxi(1, n / 3)
-		vi = (s.id * 7) % third + (0 if st == "alpha" else (third if st == "bravo" else mini(2 * third, n - 1)))
-		vi = mini(vi, n - 1)
-	var voice = tts_voices[vi]
-	var vol = int(clampf(100.0 * G.settings["volume"] * (1.0 - minf(d, 40.0) / 55.0), 10.0, 100.0))
-	var f = fmod(s.seed_, 1.0)
-	var pitch = 0.82 + f * 0.36
-	var rate = 1.2 if text.ends_with("!") else 1.05
-	if st == "mil":
-		pitch = 0.62 + f * 0.26
-		rate += 0.18
-	elif st == "bravo":
-		pitch = 0.95 + f * 0.3
-		rate -= 0.08
-	DisplayServer.tts_speak(text, voice, vol, pitch, rate)
+func bark(_s, _text: String) -> void:
+	pass
 
 # the dead: a voiced moan through a throaty filter, wobbling in pitch, with breath noise
 func _groan(len_s: float, f0: float, rough: float) -> AudioStreamWAV:
@@ -845,17 +928,9 @@ func hit_tick(kill: bool) -> void:
 # "radio operator" voice. Only one at a time, and never on top of a soldier's shout.
 var radio_t = 0.0
 
-func radio_say(text: String) -> void:
-	if G.attract:
+func radio_say(_text: String) -> void:
+	# (a click on the net when a message comes in: the words are on the screen, not read out)
+	if G.attract or not G.started or G.sim_time < radio_t:
 		return
-	if not G.settings.get("voices", true) or not G.started or G.sim_time < radio_t:
-		return
-	radio_click()
-	if not _tts_ready():
-		return
-	if DisplayServer.tts_is_speaking():
-		DisplayServer.tts_stop()
 	radio_t = G.sim_time + 3.5
-	var voice = tts_voices[0]
-	var vol = int(clampf(85.0 * G.settings["volume"], 10.0, 100.0))
-	get_tree().create_timer(0.18, false).timeout.connect(func(): DisplayServer.tts_speak(text, voice, vol, 0.9, 1.15))
+	radio_click()

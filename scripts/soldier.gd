@@ -1076,6 +1076,32 @@ func set_crate(on: bool) -> void:
 	if crate_mesh != null:
 		crate_mesh.visible = on
 
+# the grenade in his throwing hand from the moment it comes off his belt until it leaves: green for a
+# fragmentation grenade, a pale can for smoke, a bottle for petrol
+var nade_mesh: MeshInstance3D = null
+func _show_nade(on: bool, type: String = "frag") -> void:
+	if on and nade_mesh == null and parts.size() > 6:
+		nade_mesh = MeshInstance3D.new()
+		var cm = CylinderMesh.new()
+		cm.top_radius = 0.035
+		cm.bottom_radius = 0.045
+		cm.height = 0.13
+		cm.radial_segments = 8
+		cm.rings = 1
+		nade_mesh.mesh = cm
+		nade_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		parts[6].add_child(nade_mesh)
+		nade_mesh.position = Vector3(0, 0.2, 0.0)
+	if nade_mesh != null:
+		if on and not nade_mesh.visible:
+			var col = Color(0.2, 0.27, 0.14)
+			if type == "smoke":
+				col = Color(0.72, 0.74, 0.7)
+			elif type == "molotov":
+				col = Color(0.5, 0.33, 0.12)
+			nade_mesh.material_override = _mat("nade_" + type, col, false)
+		nade_mesh.visible = on
+
 func _show_mag(on: bool) -> void:
 	if on and mag_mesh == null and parts.size() > 4:
 		mag_mesh = MeshInstance3D.new()
@@ -1143,6 +1169,20 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 		var reach = Vector3(0, -0.12 + 0.06 * cos(k), 0) + uf * (0.32 + 0.22 * sw)
 		rh = rsh + reach - ur * (0.08 + 0.22 * maxf(0.0, -sw))
 		lh = lsh + reach + ur * (0.08 + 0.22 * maxf(0.0, -sw))
+	elif throw_t > 0.0 and has_meta("thrust"):
+		# a shove with the rifle held across the body: drawn in to the chest, driven out with both hands
+		# and brought back
+		var TS: float = get_meta("throw_T", 0.42)
+		var ks = clampf(1.0 - throw_t / TS, 0.0, 1.0)
+		var out = 0.0
+		if ks < 0.25:
+			out = -0.1 * (ks / 0.25)
+		elif ks < 0.55:
+			out = lerpf(-0.1, 0.5, (ks - 0.25) / 0.3)
+		else:
+			out = lerpf(0.5, 0.12, (ks - 0.55) / 0.45)
+		rh = rsh + uf * (0.2 + out) - ur * 0.02 + Vector3(0, -0.12, 0)
+		g = (-ur * 0.82 + Vector3(0, 0.42, 0) + uf * 0.25).normalized()
 	elif throw_t > 0.0:
 		var TT: float = get_meta("throw_T", 0.55)
 		var k = 1.0 - throw_t / TT
@@ -1154,11 +1194,15 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 				lh = rh + ur * 0.09 + Vector3(0, 0.03 * sin(k * 40.0), 0)
 			elif k < rel:
 				var w = (k - 0.28) / (rel - 0.28)
-				rh = rsh + (-uf * 0.4 + ur * 0.12 + Vector3(0, 0.32, 0)) * minf(1.0, w * 1.6)
-				lh = lsh + uf * (0.3 + 0.15 * w) + Vector3(0, 0.05 * w, 0)
+				# (cocked: the hand up beside his head and a little behind it. Further back than this the arm
+				# can't follow, and it hung at his side instead)
+				rh = rsh + (-uf * 0.14 + ur * 0.24 + Vector3(0, 0.5, 0)) * minf(1.0, w * 1.6)
+				# (the left hand takes the rifle down out of the way: held up in front of him it read as aiming)
+				var lh_pin: Vector3 = (rsh + lsh) * 0.5 + uf * 0.3 + Vector3(0, -0.22, 0) + ur * 0.09
+				lh = lh_pin.lerp(lsh + uf * 0.2 + Vector3(0, -0.34, 0), minf(1.0, w * 2.5))
 			else:
 				var w2 = (k - rel) / (1.0 - rel)
-				rh = rsh + uf * lerpf(0.5, 0.35, w2) + Vector3(0, lerpf(0.3, -0.35, w2), 0) - ur * 0.15 * w2
+				rh = rsh + uf * lerpf(0.62, 0.4, w2) + Vector3(0, lerpf(0.42, -0.4, w2), 0) - ur * 0.18 * w2
 				lh = lsh + uf * 0.2 + Vector3(0, -0.3, 0)
 		else:
 			if k < 0.45:
@@ -1293,7 +1337,10 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 					mag_drop = true
 					G.fx.debris(pm, Vector3(randf_range(-0.3, 0.3), -0.5, randf_range(-0.3, 0.3)), 0.1, G.C_DARK)
 	else:
-		lh = rh + g * W["hold"]
+		# (in a throw the rifle stays down in the left hand: it used to follow the throwing hand up, so a
+		# man winding up to throw looked like a man taking aim)
+		if not (throw_t > 0.0 and anchor_l):
+			lh = rh + g * W["hold"]
 		# a bolt action: up, back, forward, down after every shot
 		if W.get("bolt", false) and shoulder:
 			var since = W["rof"] - fire_cd
@@ -1792,7 +1839,10 @@ func lod_unglide() -> void:
 	glide_aim = 0.0
 
 # far-off men don't cast shadows (dozens of little shadow casters were a big part of the frame cost)
+static var horde_lean = true      # (off only for the before/after measurement in --zedtest)
 func _far_shadows(on: bool) -> void:
+	if zombie and horde_lean:
+		on = false        # (a horde is a lot of bodies: none of them is drawn a second time for a shadow)
 	var mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if on else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var off = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for b in parts:
@@ -3313,6 +3363,12 @@ func _tick_alive() -> void:
 	stun = maxf(0.0, stun - G.DT)
 	var thr_before = throw_t
 	throw_t = maxf(0.0, throw_t - G.DT)
+	if has_meta("throw_pending") and throw_t > 0.0:
+		_show_nade(true, str((get_meta("throw_pending") as Array)[1]))
+	elif nade_mesh != null and nade_mesh.visible:
+		_show_nade(false)
+	if throw_t <= 0.0 and has_meta("thrust"):
+		remove_meta("thrust")
 	if has_meta("throw_pending") and thr_before > Combat.THROW_AT and throw_t <= Combat.THROW_AT:
 		Combat.release_throw(self)
 		# and down for a moment while it goes off
@@ -3655,7 +3711,7 @@ func _place_in_seat() -> void:
 		var k = G.smooth01(1.0 - mount_t / MOUNT_TIME)
 		pos = mount_from.lerp(goal, k) + Vector3(0, sin(k * PI) * 0.35, 0)
 		mount_t -= G.DT
-		if mount_t <= 0.0 and vehicle.spec["seats"][seat]["pose"] == "hidden":
+		if mount_t <= 0.0 and (vehicle.spec["seats"][seat]["pose"] == "hidden" or (vehicle.sealed(seat) and not is_player)):
 			_hide_inside()
 		return
 	pos = seat_p

@@ -1673,11 +1673,11 @@ func _campaign_map() -> Control:
 		b.add_theme_color_override("font_color", Color(0.96, 0.95, 0.9))
 		b.add_theme_color_override("font_hover_color", Color(1, 1, 0.85))
 		m.add_child(b)
-		# armies standing here
+		# armies standing here (up to three a side: the strongest first, closer together when it's crowded)
 		var k = 0
-		for a in Campaign.data["armies"]:
-			if a["region"] != i:
-				continue
+		var here_n = Campaign.armies_at(i).size()
+		var step = 26 if here_n <= 2 else 21
+		for a in Campaign.armies_at(i):
 			var mine = a["team"] == 0
 			var at = "%s %s  %d" % ["⚑" if mine else "✠", a["name"], a["str"]]
 			if mine and a["moved"]:
@@ -1685,8 +1685,8 @@ func _campaign_map() -> Control:
 			var aid = a["id"]
 			var ab = _button(at, func(): _campaign_army(aid))
 			ab.add_theme_font_size_override("font_size", 12)
-			ab.size = Vector2(150, 24)
-			ab.position = c + Vector2(-75, 14 + k * 26)
+			ab.size = Vector2(150, 24 if here_n <= 2 else 20)
+			ab.position = c + Vector2(-75, 14 + k * step)
 			var ac = G.team_color(a["team"])
 			var abg = Color(0.1, 0.1, 0.1, 0.92)
 			if mine and Campaign.selected == aid:
@@ -2771,7 +2771,7 @@ func _show_settings() -> void:
 	sens.custom_minimum_size = Vector2(220, 0)
 	sens.value_changed.connect(func(x): G.settings["sens"] = x)
 	_row(v, "Mouse sensitivity", sens)
-	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Show soldiers' shouts as text"], ["grass", "Grass (next battle)"], ["fps", "Show frame rate and soldier count"], ["voices", "Spoken callouts"]]:
+	for item in [["invert_y", "Invert mouse Y"], ["blood", "Blood and bullet holes"], ["callouts", "Show soldiers' shouts as text"], ["grass", "Grass (next battle)"], ["fps", "Show frame rate and soldier count"]]:
 		var key = item[0]
 		var cb = CheckBox.new()
 		cb.button_pressed = G.settings[key]

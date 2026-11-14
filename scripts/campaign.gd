@@ -98,7 +98,7 @@ static var selected = -1         # army id picked on the map
 
 static func new_campaign(short: bool = false) -> void:
 	data = {"version": VERSION, "owner": [], "armies": [], "next_id": 0, "roster": [], "turn": 1, "funds": [24, 24],
-		"log": ["The campaign begins. Move your armies one region a turn, recruit with the war chest, cut the enemy's supply lines and take the Capital."],
+		"log": ["The campaign begins. Move your armies one region a turn, recruit with the war chest, cut the enemy's supply lines and take the Capital. Up to three companies can share a region: each has to be beaten before the ground changes hands."],
 		"pool": [], "sites": {}, "ruins": {}, "battle": null, "raised": [0, 0], "short": short, "links": SHORT_LINKS if short else LINKS,
 		"fallen": [], "plan": [], "choice": null, "pending_ev": null,
 		"headline": {"head": "WAR!", "sub": "The army marches east. The Capital is %s regions away." % ("three" if short else "five"), "turn": 1}}
@@ -206,8 +206,8 @@ static func can_raise(team: int) -> String:
 		return "needs %d in the war chest" % RAISE_COST
 	if data["owner"][HQ[team]] != team:
 		return "we've lost our HQ"
-	if army_at(HQ[team], team) != null:
-		return "an army is already at HQ: move it out first"
+	if not room_at(HQ[team], team):
+		return "HQ is full (%d companies): move one out first" % STACK
 	if data["armies"].filter(func(x): return x["team"] == team).size() >= 6:
 		return "six armies is the most we can keep"
 	return ""
@@ -314,11 +314,22 @@ static func army(id: int) -> Variant:
 			return a
 	return null
 
+# Up to STACK companies of one side can stand in the same region. The strongest is the one that fights
+# when the region is attacked (or attacks out of it first); the region only changes hands when the last
+# of them has been beaten.
+const STACK = 3
+
+static func armies_at(region: int, team: int = -1) -> Array:
+	var out = data["armies"].filter(func(a): return a["region"] == region and (team < 0 or a["team"] == team))
+	out.sort_custom(func(x, y): return x["str"] > y["str"])
+	return out
+
 static func army_at(region: int, team: int = -1) -> Variant:
-	for a in data["armies"]:
-		if a["region"] == region and (team < 0 or a["team"] == team):
-			return a
-	return null
+	var l = armies_at(region, team)
+	return l[0] if not l.is_empty() else null
+
+static func room_at(region: int, team: int) -> bool:
+	return armies_at(region, team).size() < STACK
 
 # regions this side can trace back to its HQ through its own ground
 static func supply_net(team: int) -> Dictionary:
@@ -353,8 +364,8 @@ static func can_attack(i: int) -> bool:
 static func can_move(a: Dictionary, to: int) -> bool:
 	if a == null or a["team"] != 0 or a["moved"] or not linked(a["region"], to):
 		return false
-	var mine = army_at(to, 0)
-	return mine == null
+	# (into the enemy's ground or our own, as long as there's room for another company there)
+	return data["owner"][to] != 0 or room_at(to, 0)
 
 # ---------------------------------------------------------------- your moves
 # returns a line for the log, or "battle" if a battle has been started
@@ -475,6 +486,8 @@ static func _bravo_score(b: Dictionary, j: int, grabs: int, attacked_army: bool,
 			sc = (b["str"] - foe["str"] * 1.3) * 1.2 + (2.0 if not supplied(0, j) else 0.0) + (10.0 if j == HQ[0] else 0.0)
 			if b["str"] < 5 or b["str"] < foe["str"] * 1.15:
 				sc -= 8.0
+			# (more companies behind the first: each one is another battle to win before the place falls)
+			sc -= 2.5 * (armies_at(j, 0).size() - 1)
 		# cutting our line counts for a lot
 		if sc > -1e8:
 			var save_o = data["owner"][j]
@@ -485,13 +498,23 @@ static func _bravo_score(b: Dictionary, j: int, grabs: int, attacked_army: bool,
 					before += 1
 			data["owner"][j] = save_o
 			sc += before * 3.0
-	elif own == 1 and mine == null:
+	elif own == 1 and room_at(j, 1):
 		# move up toward the front, or fall back to recover if badly hurt
 		var front = 0
+		var danger = 0.0
 		for k in neighbours(j):
 			if data["owner"][k] == 0:
 				front += 1
+				for pa in armies_at(k, 0):
+					danger += pa["str"]
 		sc = front * 1.5 - 2.0 if b["str"] >= 5 else (4.0 if net1.has(j) and front == 0 else -1.0)
+		if mine != null:
+			# joining a company that's already there: worth it where the enemy next door outnumbers what's
+			# holding the place (and always to stand by the capital), otherwise spread out
+			var held = 0.0
+			for ma in armies_at(j, 1):
+				held += ma["str"]
+			sc = (2.5 + front * 0.5 + (2.0 if j == HQ[1] else 0.0)) if (b["str"] >= 5 and danger > held * 1.1) else -1.0
 	return sc
 
 # What Bravo means to do next turn, as things stand now: your scouts report it, and it's drawn on the map.
@@ -994,7 +1017,7 @@ static func _retreat(a: Dictionary, lines: Array) -> void:
 	var t: int = a["team"]
 	var opts = []
 	for j in neighbours(a["region"]):
-		if data["owner"][j] == t and army_at(j, t) == null:
+		if data["owner"][j] == t and room_at(j, t):
 			opts.append(j)
 	if opts.is_empty() or a["str"] <= 1:
 		data["armies"].erase(a)
@@ -1203,7 +1226,8 @@ static func _outcome(b: Dictionary, winner: int, ours, theirs) -> Array:
 	var r = REGIONS[i]
 	var st2 = int(b.get("stage", 1)) == 2
 	if b["attacker"] == 0:
-		if winner == 0 and i == HQ[1] and not st2:
+		var rest1 = armies_at(i, 1).filter(func(x): return x != theirs)
+		if winner == 0 and i == HQ[1] and not st2 and rest1.is_empty():
 			# the city is taken; the last of them are in the Ministry, and it has to be stormed
 			if theirs == null or not (theirs in data["armies"]):
 				theirs = _add_army(1, i, 0)
@@ -1218,7 +1242,15 @@ static func _outcome(b: Dictionary, winner: int, ours, theirs) -> Array:
 			_pick_objective()
 			lines.append("The city is ours, but Bravo's staff are holding out in the Ministry. One more fight: storm it.")
 			return lines
-		if winner == 0:
+		if winner == 0 and not rest1.is_empty() and not st2:
+			# beaten, but not the last of them: the place is still held, and our company goes back to where
+			# it set out from
+			lines.append("Victory at %s, but Bravo still holds it with %s. It must be beaten too." % [r["name"], rest1[0]["name"] if rest1.size() == 1 else "%d more companies" % rest1.size()])
+			if theirs != null:
+				_retreat(theirs, lines)
+			if ours != null:
+				ours["region"] = b["from"]
+		elif winner == 0:
 			data["owner"][i] = 0
 			lines.append(("The Ministry has fallen. %s is ours!" if st2 else "Victory at %s! The region is ours.") % r["name"])
 			if theirs != null:
@@ -1238,6 +1270,14 @@ static func _outcome(b: Dictionary, winner: int, ours, theirs) -> Array:
 				if theirs["str"] <= 1:
 					data["armies"].erase(theirs)
 					lines.append("Bravo's %s is broken." % theirs["name"])
+		elif not armies_at(i, 0).filter(func(x): return x != ours).is_empty():
+			# our company was beaten, but another of ours is still standing there: the ground is held
+			var rest0 = armies_at(i, 0).filter(func(x): return x != ours)
+			lines.append("Our %s was beaten at %s, but %s still holds the ground." % [ours["name"] if ours != null else "company", r["name"], rest0[0]["name"] if rest0.size() == 1 else "%d of our companies" % rest0.size()])
+			if ours != null:
+				_retreat(ours, lines)
+			if theirs != null:
+				theirs["region"] = b["from"]
 		else:
 			data["owner"][i] = 1
 			lines.append("%s has fallen to Bravo." % r["name"])

@@ -62,6 +62,14 @@ func _ready() -> void:
 			_war_fight()
 		if a.begins_with("--kitshot="):
 			_kit_shot(a.substr(10))
+		if a.begins_with("--meleeshot="):
+			_melee_shot(a.substr(12))
+		if a == "--audtest":
+			_aud_test()
+		if a == "--stacktest":
+			_stack_test()
+		if a == "--zedtest":
+			_zed_test()
 		if a == "--flanktest":
 			_flank_test()
 		if a == "--orderstest":
@@ -643,6 +651,10 @@ func start_game(o: Dictionary) -> void:
 	G.pc.free_yaw = PI / 2.0 + 0.12
 	G.pc.free_pitch = -0.12
 	G.started = true
+	# (the row of tools at the bottom belongs to the mode: it was left showing the last battle's tabs
+	# until one of them was clicked)
+	G.ui.tab = ""
+	G.ui._render_tools()
 	if bld:
 		G.builder = true
 		G.ui.builder_bar_show(true)
@@ -766,7 +778,8 @@ func base_spawn(team: int) -> void:
 
 func cleanup_bodies(force: bool) -> void:
 	var dead = G.soldiers.filter(func(s): return s.state == "dead" and s != G.player)
-	var lim = maxi(0, dead.size() - 10) if force else 60
+	# (a horde leaves bodies faster than anything: fewer of them are kept lying about)
+	var lim = maxi(0, dead.size() - 10) if force else (24 if G.mode == "horde" and Soldier.horde_lean else 60)
 	if dead.size() > lim:
 		dead.sort_custom(func(a, b): return a.dead_t > b.dead_t)
 		for i in range(dead.size() - lim):
@@ -3821,6 +3834,293 @@ func _kit_shot(dir: String) -> void:
 	await _snap(dir, "kit_aim_left")
 	get_tree().quit()
 
+# --zedtest: a zombie battle left to run. What the men do when the dead get close (shoves, how many
+# are wedged with nowhere to go), what they throw, how many bodies are kept lying about, how many of the
+# dead cast shadows, and what a tick and a frame cost.
+func _zed_test() -> void:
+	await _wait(0.5)
+	seed(int(_arg("seed", "5")))
+	Soldier.horde_lean = _arg("old", "") == ""
+	start_game({"map": _arg("map", "town"), "mode": "horde", "size": int(_arg("size", "12")), "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	G.pc.free_pos = G.world.capture + Vector3(-20, 45, 0)
+	await _look(G.world.capture + Vector3(-20, 45, 0), G.world.capture)
+	var secs = float(_arg("secs", "180"))
+	var t = 0.0
+	var worst_ms = 0.0
+	var corner_s = 0.0
+	var close_s = 0.0
+	while t < secs:
+		await _wait(1.0)
+		t += 1.0
+		worst_ms = maxf(worst_ms, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
+		for s in G.soldiers:
+			if s.state == "alive" and not s.zombie:
+				if G.sim_time - float(s.get_meta("cornered_t", -99.0)) < 1.0:
+					corner_s += 1.0
+				var zn = s.get_meta("znear") if s.has_meta("znear") else null
+				if zn != null and is_instance_valid(zn) and zn.state != "dead" and G.dist2d(zn.pos, s.pos) < 3.0:
+					close_s += 1.0
+		if int(t) % 30 == 0:
+			var men = 0
+			var zs = 0
+			var bodies = 0
+			var zshadow = 0
+			for s in G.soldiers:
+				if s.state == "dead":
+					bodies += 1
+				elif s.zombie:
+					zs += 1
+					for g in s.parts[1].find_children("*", "GeometryInstance3D", true, false):
+						if g.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+							zshadow += 1
+							break
+				else:
+					men += 1
+			print("ZEDTEST %3ds: men %d, the dead up %d (casting shadows %d), bodies lying %d | shoves %d, thrown %s | tick %.1f ms (worst %.1f)%s" % [int(t), men, zs, zshadow, bodies, Combat.shove_n, str(Combat.thrown),
+				Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, worst_ms,
+				"" if DisplayServer.get_name() == "headless" else " | draws %d, fps %d" % [RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME), Engine.get_frames_per_second()]])
+	print("ZEDTEST over %ds: man-seconds with a zombie within 3 m %d, of which wedged with no way out %d" % [int(secs), int(close_s), int(corner_s)])
+	get_tree().quit()
+
+# --stacktest: several companies in one region of the campaign. A region held by two has to be won
+# twice; one of ours beaten where another still stands doesn't lose the ground; and there's a limit.
+func _stack_test() -> void:
+	await _wait(0.3)
+	seed(3)
+	var out = []
+	Campaign.new_campaign()
+	var D = Campaign.data
+	var a0 = Campaign.army_at(0, 0)
+	var a1 = Campaign.army_at(1, 0)
+	var a2 = Campaign.army_at(2, 0)
+	var b3 = Campaign.army_at(3, 1)
+	var b7 = Campaign.army_at(7, 1)
+	var b4 = Campaign.army_at(4, 1)
+	# two of Bravo's in the Valley Road region
+	b7["region"] = 3
+	out.append("Bravo has %d companies at %s (%s %d, %s %d); strongest first: %s" % [Campaign.armies_at(3, 1).size(), Campaign.REGIONS[3]["name"], b3["name"], b3["str"], b7["name"], b7["str"], Campaign.army_at(3, 1)["name"]])
+	var res = Campaign.move(a1, 3)
+	var b = Campaign.pending_battle()
+	out.append("our %s attacks: %s, against %s" % [a1["name"], res, Campaign.army(b["foe"])["name"] if b != null else "-"])
+	var lines = Campaign._outcome(b, 0, a1, Campaign.army(b["foe"]))
+	out.append("  won: owner of the region %d (1 = still Bravo's), our company back at region %d, Bravo companies left there %d | %s" % [D["owner"][3], a1["region"], Campaign.armies_at(3, 1).size(), str(lines[0])])
+	Campaign.move(a2, 3)
+	b = Campaign.pending_battle()
+	lines = Campaign._outcome(b, 0, a2, Campaign.army(b["foe"]))
+	out.append("  second attack won: owner %d (0 = ours), our company now at region %d, Bravo companies left there %d | %s" % [D["owner"][3], a2["region"], Campaign.armies_at(3, 1).size(), str(lines[0])])
+	# two of ours at region 1, attacked and the first of them beaten
+	a1["moved"] = false
+	a0["moved"] = false
+	out.append("our %s can join %s at region 1: %s" % [a0["name"], a1["name"], Campaign.can_move(a0, 1)])
+	Campaign.move(a0, 1)
+	var top = Campaign.army_at(1, 0)
+	D["battle"] = {"region": 1, "attacker": 1, "army": top["id"], "foe": b4["id"], "from": 4, "stage": 1, "obj": ""}
+	lines = Campaign._outcome(D["battle"], 1, top, b4)
+	out.append("Bravo attacks region 1 (two of ours) and beats %s: owner %d (0 = still ours), ours left there %d, the beaten one now at region %d, Bravo's company back at region %d | %s" % [top["name"], D["owner"][1], Campaign.armies_at(1, 0).size(), top["region"] if top in D["armies"] else -1, b4["region"], str(lines[0])])
+	# the limit
+	for k in range(3):
+		if Campaign.armies_at(0, 0).size() < Campaign.STACK:
+			Campaign._add_army(0, 0, 6)
+	var extra = Campaign._add_army(0, 2, 6)
+	extra["moved"] = false
+	D["funds"][0] = 99
+	out.append("HQ with %d companies: a fourth can move in %s; raising another: '%s'" % [Campaign.armies_at(0, 0).size(), Campaign.can_move(extra, 0), Campaign.can_raise(0)])
+	# changing mode: the row of tools belongs to the new battle at once, and a second battle in the
+	# Ministry doesn't leave a second set of floor buttons
+	var seen = []
+	for md in [["town", "commander"], ["town", "sandbox"], ["town", "horde"], ["office", "capture"], ["office", "capture"]]:
+		start_game({"map": md[0], "mode": md[1], "size": 6, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+		await _wait(1.0)
+		var names = []
+		for c in G.ui.dock_tabs.get_children():
+			if not c.is_queued_for_deletion() and c is Button:
+				names.append(c.text)
+		seen.append("%s/%s: tab '%s', tabs %s, floor buttons %d" % [md[0], md[1], G.ui.tab, str(names), G.ui.floor_view.panel.get_child_count() - 1])
+		end_game(0)
+		await _wait(0.5)
+	for l in seen:
+		out.append(l)
+	for l in out:
+		print("STACKTEST ", l)
+	get_tree().quit()
+
+# --audtest: how loud the game really is. A small battle watched from where the camera starts, with
+# the level on the master bus read every frame: the loudest moment and how much of the time anything
+# at all is coming out.
+func _aud_test() -> void:
+	await _wait(0.5)
+	var secs = float(_arg("secs", "30"))
+	if _arg("menu", "") == "1":
+		# the title screen: is its tune playing, and how loud
+		var m0 = Time.get_ticks_msec()
+		var mpk = -200.0
+		while Time.get_ticks_msec() - m0 < secs * 1000.0:
+			await get_tree().process_frame
+			mpk = maxf(mpk, maxf(AudioServer.get_bus_peak_volume_left_db(0, 0), AudioServer.get_bus_peak_volume_right_db(0, 0)))
+		print("AUDTEST title screen: tune built %s, playing %s, fade %.2f, master peak %.1f dB, started %s attract %s" % [G.audio.menu_player != null, G.audio.menu_player != null and G.audio.menu_player.playing, G.audio.menu_k, mpk, G.started, G.attract])
+		get_tree().quit()
+		return
+	G.pc.force_free = true
+	start_game({"map": _arg("map", "town"), "mode": _arg("mode", "sandbox"), "size": int(_arg("size", "1")), "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	if _arg("high", "") == "1":
+		# (looking down on the middle of the town from 70 m up, as when commanding)
+		await _look(G.world.capture + Vector3(-25, 70, 0), G.world.capture)
+	var t0 = G.sim_time
+	var pk = -200.0
+	var n = 0
+	var loud = 0
+	var acc = 0.0
+	var wpk = -200.0
+	var wb = AudioServer.get_bus_index("World")
+	while G.sim_time - t0 < secs:
+		await get_tree().process_frame
+		var l = maxf(AudioServer.get_bus_peak_volume_left_db(0, 0), AudioServer.get_bus_peak_volume_right_db(0, 0))
+		pk = maxf(pk, l)
+		if wb >= 0:
+			wpk = maxf(wpk, AudioServer.get_bus_peak_volume_left_db(wb, 0))
+		n += 1
+		acc += db_to_linear(l)
+		if l > -30.0:
+			loud += 1
+	print("AUDTEST driver %s, playback type %s, frames %d: master peak %.1f dB, mean level %.4f (%.1f dB), frames above -30 dB %d%%, world bus peak %.1f dB, music setting %.2f, volume %.2f" % [
+		AudioServer.get_driver_name(), str(ProjectSettings.get_setting("audio/general/default_playback_type", "?")), n, pk, acc / maxf(n, 1), linear_to_db(maxf(acc / maxf(n, 1), 0.00001)), int(100.0 * loud / maxf(n, 1)), wpk, G.settings["music"], G.settings["volume"]])
+	get_tree().quit()
+
+# --meleeshot=DIR: pictures and numbers for close-quarters work: a man throwing (grenade in his hand),
+# a man with a wall in front of him refusing to throw, a shove at a zombie, the militia's vehicles next
+# to the army's, and a supply lorry's driver shut in his cab
+func _melee_shot(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	G.settings["time"] = "day"
+	apply_time()
+	G.ui.visible = false
+	G.pc.force_free = true
+	await _wait(0.3)
+	G.factions = ["army", "militia"]
+	start_game({"map": "field", "mode": "sandbox", "size": 0, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(0.5)
+	var out = []
+	var p0: Vector3 = G.main._free_spot(Vector3(0, 0, 60))
+	# 1. a throw
+	var a = spawn_soldier(0, p0.x, p0.z, "rifle")
+	a.order = {"mode": "hold", "point": a.pos}
+	a.set_meta("frozen_ai", true)
+	a.body_yaw = 0.0
+	a.aim_yaw = 0.0
+	a.grenades = 3
+	a.smokes = 2
+	await _wait(1.2)
+	var g0 = a.grenades
+	Combat.throw_grenade(a, a.pos + Vector3(0, 0, 22), "frag")
+	out.append("throw started: pending %s, throw_t %.2f" % [a.has_meta("throw_pending"), a.throw_t])
+	var hp: Vector3 = a.pos + Vector3(0, 1.4, 0)
+	await _wait(0.1)
+	var tf = Vector3(sin(a.body_yaw), 0, cos(a.body_yaw))
+	var tr = Vector3(tf.z, 0, -tf.x)
+	await _look(hp + tf * 1.9 + tr * 1.5 + Vector3(0, 0.3, 0), hp)
+	# (the picture machine runs at a frame a second, so each stage of the throw is set by hand)
+	for k in range(8):
+		a.throw_t = 1.2
+		await get_tree().physics_frame
+	await _snap(dir, "throw_1_pin")
+	for k in range(8):          # (held there a few frames so the arm has time to get to it)
+		a.throw_t = 0.78
+		await get_tree().physics_frame
+	out.append("  grenade in hand shown: %s (throw_t %.2f)" % [a.nade_mesh != null and a.nade_mesh.visible, a.throw_t])
+	await _snap(dir, "throw_2_back")
+	await _wait(0.25)
+	await _snap(dir, "throw_3_over")
+	await _wait(0.6)
+	out.append("  after: grenades %d -> %d, in hand shown %s" % [g0, a.grenades, a.nade_mesh != null and a.nade_mesh.visible])
+	await _wait(3.5)
+	# 2. a wall right in front of him: no throw
+	G.world.add_box(a.pos.x, 0.0, a.pos.z + 1.0, 3.0, 2.6, 0.3, Color(0.5, 0.5, 0.48), {})
+	await _wait(0.3)
+	a.nade_cd = 0.0
+	var g1 = a.grenades
+	Combat.throw_grenade(a, a.pos + Vector3(0, 0, 22), "frag")
+	await _wait(1.6)
+	out.append("wall 1 m in front: throw started %s, grenades %d -> %d" % [a.throw_t > 0.0 or a.grenades != g1, g1, a.grenades])
+	# 3. a shove at a zombie
+	var b = spawn_soldier(0, p0.x + 8.0, p0.z, "rifle")
+	b.set_meta("frozen_ai", true)
+	b.body_yaw = 0.0
+	b.aim_yaw = 0.0
+	for m in [a, b]:          # (nobody shoots it: the shove alone is being measured)
+		m.mag = 0
+		m.reserve = 0
+		m.grenades = 0
+	var z = spawn_soldier(1, p0.x + 8.0, p0.z + 1.2, "rifle")
+	Modes.make_zombie(z)
+	z.set_meta("frozen_ai", true)
+	await _wait(1.0)
+	z.pos = b.pos + Vector3(0, 0, 1.15)
+	b.body_yaw = 0.0
+	b.aim_yaw = 0.0
+	z.body_yaw = PI
+	await get_tree().physics_frame
+	var zh = z.hp
+	var zp: Vector3 = z.pos
+	Combat.shove(b, z)
+	var zh1 = z.hp
+	var bh: Vector3 = b.pos + Vector3(0, 1.25, 0.55)
+	await _look(bh + Vector3(2.6, 0.3, 0.0), bh)
+	b.throw_t = 0.22
+	await get_tree().process_frame
+	await _snap(dir, "shove")
+	var far = 0.0
+	for k in range(40):
+		await get_tree().physics_frame
+		far = maxf(far, G.dist2d(z.pos, zp))
+	out.append("shove: zombie hp %.0f -> %.0f from the one blow, sent back up to %.1f m in the next 40 ticks (%s)" % [zh, zh1, far, z.state])
+	# 4. the militia's vehicles beside the army's
+	var vp: Vector3 = G.main._free_spot(Vector3(-40, 0, 20))
+	var kinds = [["tank", 0], ["oldtank", 1], ["armoredcar", 0], ["gunbus", 1]]
+	for i in range(kinds.size()):
+		spawn_vehicle(kinds[i][0], kinds[i][1], Vector3(vp.x + i * 7.5, 0, vp.z), PI * 0.75, false)
+	await _wait(1.5)
+	var mid = Vector3(vp.x + 11.0, 1.2, vp.z)
+	await _look(mid + Vector3(-3.0, 8.5, -17.0), mid)
+	await _snap(dir, "militia_vehicles")
+	await _look(Vector3(vp.x + 7.5, 1.5, vp.z) + Vector3(-7.0, 3.2, -8.0), Vector3(vp.x + 5.0, 1.4, vp.z))
+	await _snap(dir, "militia_tank")
+	# 5. a fleet lorry: its driver
+	var lv = spawn_vehicle("supplytruck", 0, G.main._free_spot(Vector3(0, 0, 30)), 0.0, true)
+	await _wait(1.5)
+	Logistics.fleet[0].append(lv)
+	lv.set_meta("fleet", true)
+	# the lorry on a run whose stop has the enemy at it: it turns round
+	var drop: Vector3 = lv.pos + Vector3(-70, 0, 0)
+	lv.mission = {"type": "supply", "fleet": true, "drop": drop, "exit": lv.pos + Vector3(70, 0, 0), "stage": 0, "wait": 0.0, "site": null, "pts": 0}
+	Logistics._turn_back(0, lv)
+	var st_clear = lv.mission["stage"]
+	var raider = spawn_soldier(1, drop.x - 12.0, drop.z + 5.0, "rifle")
+	raider.order = {"mode": "hold", "point": raider.pos}
+	await _wait(0.3)
+	Logistics._turn_back(0, lv)
+	out.append("lorry on a run: stage %d with its stop clear, stage %d with an enemy 13 m from the stop (2 = heading home); a stop counts as under attack: %s" % [st_clear, lv.mission["stage"] if lv.mission != null else -1, Logistics._hot(0, drop, 60.0)])
+	raider.hp = 0.0
+	Combat.kill(raider, null, false)
+	lv.mission = null
+	var d = lv.driver()
+	if d != null:
+		d._hide_inside()
+		var dh = d.hp
+		# rifle and machine-gun fire into the cab from the side, then a shell close by
+		var foe = spawn_soldier(1, lv.pos.x + 14.0, lv.pos.z + 1.5, "lmg")
+		foe.order = {"mode": "hold", "point": foe.pos}
+		for k in range(40):
+			var from: Vector3 = foe.pos + Vector3(0, 1.4, 0)
+			var to: Vector3 = d.parts[1].global_position + Vector3(randf_range(-0.2, 0.2), randf_range(-0.2, 0.2), randf_range(-0.2, 0.2))
+			Combat.fire_weapon(foe, from, (to - from).normalized(), 0.0)
+		await _wait(2.0)
+		out.append("lorry: driver hidden %s, layer %d, hp %.0f -> %.0f after 40 machine-gun rounds aimed at his seat; lorry hp %.0f/%.0f, wrecked %s" % [d.hidden_in_vehicle, d.parts[0].collision_layer, dh, d.hp, lv.hp, lv.spec["hp"], lv.dead])
+	else:
+		out.append("lorry: no driver spawned")
+	for l in out:
+		print("MELEESHOT ", l)
+	get_tree().quit()
+
 # --warfight: the three ways into a campaign battle really start one, and each ends back on the map:
 # an attack fought as a soldier, a defence commanded from above (with free defences), the Ministry stage
 func _war_fight() -> void:
@@ -3913,6 +4213,9 @@ func _war_test() -> void:
 	var called_off = 0
 	var finale = 0
 	var turns = int(_arg("turns", "40"))
+	var stack_max = [0, 0]
+	var stacked = [0, 0]
+	var held_on = 0
 	Campaign.new_campaign(_arg("short", "") != "")
 	for turn in range(turns):
 		D = Campaign.data
@@ -3934,6 +4237,10 @@ func _war_test() -> void:
 				Campaign.add_men(a, more, 2)
 				opts.sort_custom(func(x, y): return Campaign.REGIONS[x]["p"].x > Campaign.REGIONS[y]["p"].x)
 				opts = opts.slice(0, 1)
+			# (somebody always stays to hold our own HQ: now that companies can share a region, a player who
+			# sends every one of them forward together leaves the door open behind him)
+			if a["region"] == Campaign.HQ[0] and Campaign.armies_at(Campaign.HQ[0], 0).size() <= 1:
+				continue
 			if opts.is_empty() or (randf() < 0.25 and _arg("strong", "") == ""):
 				continue
 			# buy something now and then
@@ -3957,9 +4264,11 @@ func _war_test() -> void:
 		if Campaign.over() >= 0:
 			break
 		var lines = Campaign.end_turn()
-		for l in lines:
+		for l in lines + D["log"].slice(maxi(0, D["log"].size() - 6)):
 			if str(l).find("calls off") >= 0:
 				called_off += 1
+			if str(l).find("still holds") >= 0:
+				held_on += 1
 		var guard2 = 0
 		while Campaign.pending_battle() != null and guard2 < 3:
 			guard2 += 1
@@ -3976,8 +4285,17 @@ func _war_test() -> void:
 				bad.append("army %s over strength" % a["name"])
 		for i in range(D["owner"].size()):
 			var here = D["armies"].filter(func(x): return x["region"] == i)
-			if here.size() > 1:
-				bad.append("%d armies in %s at turn %d" % [here.size(), Campaign.REGIONS[i]["name"], turn])
+			var sides = {}
+			for ha in here:
+				sides[ha["team"]] = sides.get(ha["team"], 0) + 1
+			if sides.size() > 1:
+				bad.append("both sides' armies in %s at turn %d" % [Campaign.REGIONS[i]["name"], turn])
+			for tk in sides:
+				stack_max[tk] = maxi(stack_max[tk], sides[tk])
+				if sides[tk] > 1:
+					stacked[tk] += 1
+				if sides[tk] > Campaign.STACK:
+					bad.append("%d armies of one side in %s at turn %d" % [sides[tk], Campaign.REGIONS[i]["name"], turn])
 			if D["short"] and not (i in Campaign.SHORT_REGIONS) and D["owner"][i] != -1:
 				bad.append("region %d out of play but owned" % i)
 		if D["funds"][0] < 0 or D["funds"][1] < 0:
@@ -3988,6 +4306,7 @@ func _war_test() -> void:
 	print("CAMPTEST %s: ended turn %d, result %d | %d battles (%d at the Ministry), %d questions, %d planned moves seen, %d called off | regions %d:%d | armies %d:%d | fallen %d | last headline: %s" % [
 		"short" if D["short"] else "full", D["turn"], Campaign.over(), battles, finale, choices, plans, called_off, D["owner"].count(0), D["owner"].count(1),
 		D["armies"].filter(func(x): return x["team"] == 0).size(), D["armies"].filter(func(x): return x["team"] == 1).size(), D["fallen"].size(), str(D["headline"]["head"])])
+	print("CAMPTEST stacking: most companies in one region ours %d, Bravo's %d | region-turns with a stack ours %d, Bravo's %d | 'still holds' lines seen %d" % [stack_max[0], stack_max[1], stacked[0], stacked[1], held_on])
 	print("CAMPTEST trouble: %s" % (str(bad.slice(0, 6)) if not bad.is_empty() else "none"))
 	get_tree().quit()
 

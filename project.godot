@@ -11,7 +11,7 @@ config/features=PackedStringArray("4.6", "GL Compatibility")
 
 [audio]
 
-general/text_to_speech=true
+general/text_to_speech=false
 
 [autoload]
 

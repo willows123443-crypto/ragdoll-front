@@ -26,8 +26,12 @@ func _ready() -> void:
 	visible = false
 
 func _rebuild() -> void:
+	# (each entry is [button, floor]: freeing the entry itself did nothing, so every new battle in the
+	# building added another set of buttons under the old ones)
 	for b in btns:
-		b.queue_free()
+		if is_instance_valid(b[0]):
+			panel.remove_child(b[0])
+			b[0].queue_free()
 	btns = []
 	var labels = ["Whole building"]
 	for k in range(Levels.n - 1, -1, -1):

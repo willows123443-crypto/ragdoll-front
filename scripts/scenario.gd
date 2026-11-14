@@ -116,7 +116,7 @@ static func can_save() -> String:
 	if not G.started or G.over or G.attract:
 		return "there's no battle to save"
 	if Campaign.active:
-		return "campaign battles can't be saved part way (the campaign map is saved between them)"
+		return "not in a campaign battle: the campaign saves itself"
 	if G.tutorial:
 		return "the first battle can't be saved"
 	return ""
@@ -162,7 +162,7 @@ static func capture_battle() -> Dictionary:
 	d["tickets"] = Obj.tickets.duplicate()
 	d["pts"] = Obj.points.map(func(p): return [int(p.get("owner", -1)), float(p.get("prog", 0.0))])
 	d["horde"] = [Modes.horde_wave, Modes.horde_left, Modes.horde_side]
-	d["elapsed"] = G.sim_time
+	d["elapsed"] = G.game_time
 	d["weather"] = G.settings.get("weather", "clear")
 	return d
 
@@ -283,5 +283,6 @@ static func load_battle() -> String:
 		Modes.horde_left = int(d["horde"][1])
 		Modes.horde_side = int(d["horde"][2])
 		Modes.horde_t = Modes.BREAK
+	G.game_time = float(d.get("elapsed", 0.0))       # (the battle clock carries on from where it was)
 	G.main.refresh_markers()
 	return "Saved battle loaded: %d men back on the field" % d.get("men", []).size()

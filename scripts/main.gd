@@ -18,9 +18,20 @@ func queue_spawn(f: Callable) -> void:
 var sim_ms = 0.0        # smoothed cost of one simulation tick, for the performance readout
 var tick_n = 0
 
+# The interface is laid out for a window of 1280 x 720 or more. In a smaller one (a small browser window, a
+# phone held sideways) it is drawn smaller instead of running off the edges: the campaign screen alone is
+# over 1200 wide.
+func _fit_ui() -> void:
+	var s = Vector2(get_window().size)
+	var k = clampf(minf(s.x / 1280.0, s.y / 720.0), 0.5, 1.0)
+	if absf(get_window().content_scale_factor - k) > 0.005:
+		get_window().content_scale_factor = k
+
 func _ready() -> void:
 	G.main = self
 	randomize()
+	get_window().size_changed.connect(_fit_ui)
+	_fit_ui()
 	_build_environment()
 	G.fx = preload("res://scripts/fx.gd").new()
 	add_child(G.fx)
@@ -504,6 +515,10 @@ func quit_to_title() -> void:
 	var m = G.map_id if G.map_id != "custom" else "town"
 	Modes.daily = {}
 	Campaign.active = false
+	G.storm = false
+	G.fx.set_storm(false)
+	Weather.reset()
+	apply_time()
 	preview_map(m)
 
 func preview_map(id: String) -> void:
@@ -563,6 +578,9 @@ func start_game(o: Dictionary) -> void:
 	G.storm = false
 	G.fx.set_storm(false)
 	Weather.reset()
+	# (the sky put back as well: a campaign storm left its grey sky, weak sun and fog on whatever battle
+	# was started next, without the rain)
+	apply_time()
 	if G.ui.title != null:
 		G.ui.title.visible = false
 		G.ui.menu.visible = false
@@ -4568,6 +4586,7 @@ func _aud_test() -> void:
 	if not G.audio.mixes.is_empty():
 		print("AUDTEST browser mixes: playing %s (calm, tense, hot), current %d at %.1f dB, switches %d, intensity %.2f" % [str(G.audio.mixes.map(func(m): return m.playing)), G.audio.mix_cur, G.audio.mixes[maxi(G.audio.mix_cur, 0)].volume_db, G.audio.mix_switches, G.audio.intensity])
 	print("AUDTEST music layers playing %s at %s dB, loop restarts %d, title tune playing %s" % [str(G.audio.music.map(func(m): return m.playing)), str(G.audio.music.map(func(m): return snappedf(m.volume_db, 0.1))), G.audio.loop_restarts, G.audio.menu_player != null and G.audio.menu_player.playing])
+	print("AUDTEST loops started part-way through and put back to the top at their end: %d" % G.audio.loop_wraps)
 	print("AUDTEST driver %s, playback type %s, frames %d: master peak %.1f dB, mean level %.4f (%.1f dB), frames above -30 dB %d%%, world bus peak %.1f dB, music setting %.2f, volume %.2f" % [
 		AudioServer.get_driver_name(), str(ProjectSettings.get_setting("audio/general/default_playback_type", "?")), n, pk, acc / maxf(n, 1), linear_to_db(maxf(acc / maxf(n, 1), 0.00001)), int(100.0 * loud / maxf(n, 1)), wpk, G.settings["music"], G.settings["volume"]])
 	get_tree().quit()

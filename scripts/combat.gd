@@ -391,7 +391,10 @@ static func kill(s, attacker, head: bool) -> void:
 	Morale.on_death(s, attacker)
 	if attacker != null and attacker.team != s.team:
 		G.score[attacker.team] += 1
-		Support.earn(attacker.team, 2)
+		# (not against the horde: a zombie has its own price above. With this on top and the trickle, a
+		# game played in the browser had 1,100 points unspent by wave 7, with men at 6 points each.)
+		if G.mode != "horde":
+			Support.earn(attacker.team, 2)
 	G.main.on_kill(s, attacker)
 	G.ui.feed(attacker, s, head, "", cause)
 	cause = ""

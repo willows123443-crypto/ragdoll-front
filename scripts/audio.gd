@@ -254,6 +254,11 @@ func deafen(k: float) -> void:
 		ui_player2.play()
 
 func _process(dt: float) -> void:
+	if web:
+		_loop_wrap(menu_player)
+		_loop_wrap(horde_player)
+		for m in mixes:
+			_loop_wrap(m)
 	_ear_tick()
 	_engine_loops()
 	echo_budget = minf(echo_budget + dt * 9.0, 4.0)
@@ -479,7 +484,7 @@ func _build_menu_music() -> void:
 # as the fight heats and cools; a browser can't turn a playing sound up or down. So there the same
 # material is made into three finished mixes (calm: the drone; tense: drone and drums; hot: drone, drums
 # and strings) and only one plays at a time. A change is made on a bar line, from the same place in the
-# loop, and not more often than every six seconds, so it comes in on the beat and doesn't chatter.
+# loop, and not more often than every ten seconds, so it comes in on the beat and doesn't chatter.
 const BAR_S = 2.5                 # one bar at 96 to the minute
 var mixes: Array = []             # AudioStreamPlayer for calm, tense, hot
 var mix_cur = -1
@@ -526,8 +531,8 @@ func _mix_tick(k: float, mv: float, on: bool) -> void:
 		mix_ms = now
 		_loop_vol(mixes[mix_cur], db, true)
 		return
-	if mix_want != mix_cur and now - mix_ms > 6000:
-		var pos: float = mixes[mix_cur].get_playback_position()
+	if mix_want != mix_cur and now - mix_ms > 10000:
+		var pos: float = _loop_pos(mixes[mix_cur])
 		if fmod(pos, BAR_S) < 0.2:
 			mixes[mix_cur].stop()
 			mix_cur = mix_want
@@ -555,7 +560,7 @@ func _loop_vol(pl: AudioStreamPlayer, db: float, on: bool, sync_pos: float = -1.
 	var cur: float = pl.get_meta("vol", -999.0)
 	if pl.playing and absf(cur - db) < 4.0:
 		return
-	var at = pl.get_playback_position() if pl.playing else maxf(sync_pos, 0.0)
+	var at = _loop_pos(pl) if pl.playing else maxf(sync_pos, 0.0)
 	var L = pl.stream.get_length() if pl.stream != null else 0.0
 	if L > 0.0:
 		at = fmod(at, L)
@@ -563,9 +568,49 @@ func _loop_vol(pl: AudioStreamPlayer, db: float, on: bool, sync_pos: float = -1.
 	pl.stop()
 	pl.volume_db = db
 	pl.set_meta("vol", db)
+	pl.set_meta("wrap", at > 0.02)
+	pl.set_meta("t0", _clock() - at)
 	pl.play(at)
 
 var loop_restarts = 0
+var loop_wraps = 0
+
+# In a browser the engine loops a sound by starting it again when it ends, and it starts it again at the
+# place it was first started from, not at the beginning. A loop that was restarted part-way through (see
+# _loop_vol) would go round its last bars for ever: seen in the browser, battle music stuck on its last
+# five seconds. So the first time such a sound reaches its end it is started from the top here, and from
+# then on the engine's own looping is right.
+#
+# Where a loop has got to is kept by the clock, not asked of the player: in a browser the player's answer
+# runs up to a second behind, which is no good for changing music on a bar line.
+var paused_ms = 0          # time spent with the game paused (sounds stop then, the clock doesn't)
+var pause_at = -1
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PAUSED:
+		pause_at = Time.get_ticks_msec()
+	elif what == NOTIFICATION_UNPAUSED and pause_at >= 0:
+		paused_ms += Time.get_ticks_msec() - pause_at
+		pause_at = -1
+
+func _clock() -> float:
+	return (Time.get_ticks_msec() - paused_ms) / 1000.0
+
+func _loop_pos(pl: AudioStreamPlayer) -> float:
+	if not web or pl.stream == null:
+		return pl.get_playback_position()
+	var L: float = pl.stream.get_length()
+	return fmod(maxf(_clock() - float(pl.get_meta("t0", _clock())), 0.0), L) if L > 0.0 else 0.0
+
+func _loop_wrap(pl: AudioStreamPlayer) -> void:
+	if pl == null or not pl.playing or pl.stream == null or not pl.get_meta("wrap", false):
+		return
+	if _clock() - float(pl.get_meta("t0", _clock())) >= pl.stream.get_length() - 0.03:
+		pl.stop()
+		pl.set_meta("wrap", false)
+		pl.set_meta("t0", _clock())
+		pl.play(0.0)
+		loop_wraps += 1
 
 # the effects slider (everything but the music), as decibels
 func fx_db() -> float:

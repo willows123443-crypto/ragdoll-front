@@ -2122,7 +2122,7 @@ func _build_title() -> void:
 	title_tip = _label("", 13, Color(0.86, 0.86, 0.8))
 	title_tip.autowrap_mode = TextServer.AUTOWRAP_WORD
 	title_tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_place(title_tip, Control.PRESET_BOTTOM_RIGHT, -560, -46, 530, 36)
+	_place(title_tip, Control.PRESET_BOTTOM_RIGHT, -560, -60, 530, 44)       # (room for two lines)
 	title.add_child(title_tip)
 	tip_i = randi() % TITLE_TIPS.size()
 	title_tip.text = "TIP  ·  " + TITLE_TIPS[tip_i]
@@ -2267,6 +2267,10 @@ func _quick(mode: String) -> void:
 func show_menu() -> void:
 	_fill_title()
 	title.visible = true
+	if dock != null:
+		dock.visible = false
+		tip.visible = false
+		_radio_place()
 	_fade_in(title)
 	menu.visible = false
 	if G.started and not G.over:
@@ -2604,7 +2608,11 @@ func update_hud(dt: float) -> void:
 	btn_reinf.visible = G.mode == "sandbox"        # in a battle the mode decides
 	side.visible = show_game
 	var ctl = G.player != null
-	dock.visible = show_game and not ctl
+	# (not under the title or the pause menu: the dock and its hint line showed through both, and the
+	# pause menu's tip was printed across the dock)
+	dock.visible = show_game and not ctl and not title.visible
+	tip.visible = dock.visible
+	_radio_place()
 	if dock.visible:
 		_dock_points()
 	phud.visible = ctl
@@ -2723,7 +2731,7 @@ func show_report() -> void:
 	for ti in range(G.team_count()):
 		grid.add_child(_cell(G.TEAM_NAMES[ti], 150, G.TEAM_BAND[ti].lightened(0.35), 16))
 	var rows = [["Soldiers deployed", "spawned"], ["Killed in action", "deaths"], ["Enemies killed", "kills"], ["Headshots", "heads"],
-		["Shots fired", "shots"], ["Accuracy", "acc"], ["Times a soldier broke and ran", "routs"], ["Friendly-fire kills", "teamkills"]]
+		["Shots fired", "shots"], ["Accuracy", "acc"], ["Broke and ran", "routs"], ["Friendly-fire kills", "teamkills"]]
 	for r in rows:
 		grid.add_child(_cell(r[0], 170, Color(0.7, 0.72, 0.74)))
 		for ti in range(G.team_count()):
@@ -3263,6 +3271,17 @@ func _select_map(i: int) -> void:
 # ---------------------------------------------------------------- radio chatter
 var radio_box: VBoxContainer = null
 
+# The radio's lines sit just above the dock's hint line, however many rows of cards the dock has (with two
+# rows the newest line used to be half under the dock, and the hint line was printed across it), and they
+# are not shown over the title or the pause menu.
+func _radio_place() -> void:
+	if radio_box == null:
+		return
+	radio_box.visible = not title.visible
+	var base = (dock.offset_top - 30.0) if (dock != null and dock.visible) else -150.0
+	radio_box.offset_bottom = base
+	radio_box.offset_top = base - 180.0
+
 func radio(team: int, text: String) -> void:
 	# you only hear your own side's radio (the enemy's orders would be cheating)
 	if team < 0 or (team > 0 and G.mode != "sandbox"):
@@ -3275,7 +3294,7 @@ func radio(team: int, text: String) -> void:
 		root.add_child(radio_box)
 	# (in command of a battle the hint line and the row of orders run along just above the dock: the
 	# radio's lines sit above those instead of underneath them)
-	_place(radio_box, Control.PRESET_BOTTOM_LEFT, 12, -400 if (G.mode == "commander" and G.player == null) else -330, 420, 180)
+	_radio_place()
 	# a radio line: a dark strip with the side's colour down its edge, the same as the alerts
 	var line = PanelContainer.new()
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE

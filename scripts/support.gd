@@ -177,8 +177,8 @@ static func step(dt: float) -> void:
 				hq_t[t] = hq_t[t] + 1
 				if hq_t[t] % 3 != 0 and Build.hq(t) != null and Build.alive(Build.hq(t)):
 					_pay(t, 1)
-			else:
-				_pay(t, 1)
+			elif G.mode != "horde":
+				_pay(t, 1)          # (against the horde, points come from kills and supply drops only)
 	# AI sides spend what they have (once the battle's actually under way)
 	if G.builder or Prep.active() or G.sim_time < 20.0 or G.tutorial:
 		return

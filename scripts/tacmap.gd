@@ -90,7 +90,7 @@ func _draw() -> void:
 		var p = _to_screen(v.pos)
 		var f = Vector2(sin(v.yaw), cos(v.yaw))
 		var pts = PackedVector2Array([p + f * 8.0, p + Vector2(-f.y, f.x) * 5.0 - f * 5.0, p - Vector2(-f.y, f.x) * 5.0 - f * 5.0])
-		draw_colored_polygon(pts, G.team_color(v.team))
+		_poly(pts, G.team_color(v.team))
 	# soldiers: ours as dots, squad leaders labelled
 	for s in G.soldiers:
 		if s.state == "dead" or s.state == "riding":
@@ -160,3 +160,9 @@ func _gui_input(ev: InputEvent) -> void:
 		G.fx.order_marker(p)
 		G.ui.message("Squad %d: %s" % [sel["id"] + 1, "hold your position" if hold else "move to " + AI.grid_ref(p)])
 		accept_event()
+
+# A polygon that can't be cut into triangles (its corners in a line, or not numbers at all: the map is asked
+# to draw before it has a size) is an error in the browser's console every time. Those are skipped.
+func _poly(pts: PackedVector2Array, col: Color) -> void:
+	if pts.size() >= 3 and not Geometry2D.triangulate_polygon(pts).is_empty():
+		draw_colored_polygon(pts, col)

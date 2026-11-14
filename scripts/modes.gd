@@ -1019,7 +1019,7 @@ const SHOP = {
 	"flamer": {"name": "Flamethrower", "cost": 10, "tip": "Click near your men: the closest gets a flamethrower"},
 	"ammo": {"name": "Ammo for all", "cost": 5, "tip": ""},
 	"heal": {"name": "Patch everyone up", "cost": 6, "tip": ""},
-	"man": {"name": "Extra man", "cost": 6, "tip": ""},
+	"man": {"name": "Extra man", "cost": 7, "tip": ""},
 	"keep": {"name": "Fall back to the keep", "cost": 0, "tip": "Everyone runs to the building in the middle and holds it"},
 }
 

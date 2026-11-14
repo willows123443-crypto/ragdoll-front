@@ -89,7 +89,7 @@ func _minimap(r: Rect2) -> void:
 		elif show_all or _seen(s.pos, my_team):
 			draw_circle(p4, 2.4, Color(1.0, 0.3, 0.25))
 	# you, at the centre, pointing up
-	draw_colored_polygon(PackedVector2Array([mid + Vector2(0, -6), mid + Vector2(4, 4), mid + Vector2(-4, 4)]), Color(1, 1, 1))
+	_poly(PackedVector2Array([mid + Vector2(0, -6), mid + Vector2(4, 4), mid + Vector2(-4, 4)]), Color(1, 1, 1))
 	draw_rect(r, Color(0, 0, 0, 0.9), false, 2.0)
 	draw_string(font, r.position + Vector2(4, 13), "N", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, 0.0))
 
@@ -145,7 +145,7 @@ func _compass(c: Vector2, yaw: float) -> void:
 			if absf(om) <= 60.0:
 				var xm = c.x - om / 60.0 * (w / 2.0)
 				draw_circle(Vector2(xm, r.position.y + 12), 3.5, Color(1.0, 0.4, 0.35) if m.state == "wounded" else Color(0.55, 1.0, 0.55))
-	draw_colored_polygon(PackedVector2Array([Vector2(c.x, r.end.y - 2), Vector2(c.x - 5, r.end.y + 5), Vector2(c.x + 5, r.end.y + 5)]), Color(1, 0.85, 0.3))
+	_poly(PackedVector2Array([Vector2(c.x, r.end.y - 2), Vector2(c.x - 5, r.end.y + 5), Vector2(c.x + 5, r.end.y + 5)]), Color(1, 0.85, 0.3))
 
 # ---------------------------------------------------------------- squad status
 func _squad(at: Vector2, me) -> void:
@@ -235,7 +235,7 @@ func _wheel(c: Vector2) -> void:
 				var aa = lerpf(a0, a1, k / 8.0)
 				pts.append(c + Vector2(sin(aa), -cos(aa)) * 128.0)
 			pts.append(c + Vector2(sin(a1), -cos(a1)) * 36.0)
-			draw_colored_polygon(pts, Color(1.0, 0.82, 0.3, 0.35))
+			_poly(pts, Color(1.0, 0.82, 0.3, 0.35))
 		draw_line(c + Vector2(sin(a0), -cos(a0)) * 36.0, c + Vector2(sin(a0), -cos(a0)) * 128.0, Color(1, 1, 1, 0.2), 1.0)
 		var lp = c + Vector2(sin(a), -cos(a)) * 84.0
 		var t: String = items[i][1]
@@ -283,10 +283,15 @@ func _bubbles() -> void:
 		bubble_sb.border_color = Color(tc.r, tc.g, tc.b, 0.85 * a).lightened(0.3)
 		draw_style_box(bubble_sb, r)
 		# the little tail down to the speaker
-		draw_colored_polygon(PackedVector2Array([Vector2(p.x - 5, r.end.y - 1), Vector2(p.x + 5, r.end.y - 1), Vector2(p.x, r.end.y + 6)]), Color(bg.r, bg.g, bg.b, bg.a * a))
+		_poly(PackedVector2Array([Vector2(p.x - 5, r.end.y - 1), Vector2(p.x + 5, r.end.y - 1), Vector2(p.x, r.end.y + 6)]), Color(bg.r, bg.g, bg.b, bg.a * a))
 		var x = r.position.x + 7.0
 		var tx = Hud.TEXT
 		if icon != "":
 			draw_texture_rect(Icons.get_icon(icon), Rect2(x, r.position.y + 6.0, 17.0, 7.0), false, Color(Hud.ACCENT.r, Hud.ACCENT.g, Hud.ACCENT.b, a))
 			x += iw
 		draw_string(font, Vector2(x, r.position.y + 15.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(tx.r, tx.g, tx.b, a))
+
+# (a shape that can't be cut into triangles is an error in the browser's console every time: skipped)
+func _poly(pts: PackedVector2Array, col: Color) -> void:
+	if pts.size() >= 3 and not Geometry2D.triangulate_polygon(pts).is_empty():
+		draw_colored_polygon(pts, col)

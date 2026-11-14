@@ -470,7 +470,7 @@ func _minimap(r: Rect2) -> void:
 			var d = Vector2(vel.x / b.size.x, vel.z / b.size.y).normalized()
 			var tipp = pc + d * 14.0
 			draw_line(pc + d * 5.0, tipp, Color(0.75, 0.9, 1.0), 2.0)
-			draw_colored_polygon(PackedVector2Array([tipp + d * 4.0, tipp + Vector2(-d.y, d.x) * 3.5, tipp - Vector2(-d.y, d.x) * 3.5]), Color(0.75, 0.9, 1.0))
+			_poly(PackedVector2Array([tipp + d * 4.0, tipp + Vector2(-d.y, d.x) * 3.5, tipp - Vector2(-d.y, d.x) * 3.5]), Color(0.75, 0.9, 1.0))
 	# vehicles: a tank with its gun, lorries as long boxes, the rest small squares
 	for v in G.vehicles:
 		if v.dead or (v.team != 0 and not v.visible) or v.spec.get("air", false):
@@ -482,7 +482,7 @@ func _minimap(r: Rect2) -> void:
 		var L = 4.5 if v.spec["tracked"] or v.kind.ends_with("truck") or v.kind == "truck" else 3.0
 		var W = 2.6
 		var pts = PackedVector2Array([p5 + f * L + sd * W, p5 + f * L - sd * W, p5 - f * L - sd * W, p5 - f * L + sd * W])
-		draw_colored_polygon(pts, col2)
+		_poly(pts, col2)
 		pts.append(pts[0])
 		draw_polyline(pts, Color(0, 0, 0, 0.9), 1.0)
 		if v.turret != null and v.spec["tracked"]:
@@ -696,7 +696,7 @@ func _order_icons() -> void:
 		match tag:
 			"hold", "cover":
 				var sh = PackedVector2Array([p + Vector2(-6, -6), p + Vector2(6, -6), p + Vector2(6, 0), p + Vector2(0, 7), p + Vector2(-6, 0)])
-				draw_colored_polygon(sh, col)
+				_poly(sh, col)
 				if tag == "cover":
 					draw_line(p + Vector2(-3, -1), p + Vector2(3, -1), Color(0, 0, 0, 0.8), 1.5)
 			"amove":
@@ -715,5 +715,11 @@ func _order_icons() -> void:
 				var tipp = p + dir * 7.0
 				var sidev = Vector2(-dir.y, dir.x)
 				draw_line(p - dir * 6.0, tipp - dir * 2.0, col, 2.5)
-				draw_colored_polygon(PackedVector2Array([tipp + dir * 2.0, tipp - dir * 4.0 + sidev * 4.5, tipp - dir * 4.0 - sidev * 4.5]), col)
+				_poly(PackedVector2Array([tipp + dir * 2.0, tipp - dir * 4.0 + sidev * 4.5, tipp - dir * 4.0 - sidev * 4.5]), col)
 		draw_string(font, p + Vector2(-3, 22), str(q["id"] + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.8))
+
+# A polygon that can't be cut into triangles (its corners in a line, or not numbers at all: the map is asked
+# to draw before it has a size) is an error in the browser's console every time. Those are skipped.
+func _poly(pts: PackedVector2Array, col: Color) -> void:
+	if pts.size() >= 3 and not Geometry2D.triangulate_polygon(pts).is_empty():
+		draw_colored_polygon(pts, col)

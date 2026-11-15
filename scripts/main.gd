@@ -93,6 +93,8 @@ func _ready() -> void:
 			_horde_x_test()
 		if a == "--forttest":
 			_fort_test()
+		if a == "--brutestage":
+			_brute_stage()
 		if a.begins_with("--fortshot="):
 			_fort_shot(a.substr(11))
 		if a == "--mintest":
@@ -4589,6 +4591,76 @@ func _horde_shot(dir: String) -> void:
 	await _wait(0.6)
 	await _snap(dir, "horde_over_menu")
 	get_tree().quit()
+
+# --brutestage: one brute, one sandbag wall, nobody shooting. Staged to be watched (in a browser too:
+# add ?args=--brutestage to the page's address). The brute is put down twenty metres from a sandbag
+# wall with one unarmed man standing well behind it; it walks at him, puts its weight through the wall
+# and carries on. Then the wall is built again and another brute comes, six times over, so there is
+# time to look. What happened each time is printed (BRUTESTAGE lines; in a browser, in the console).
+func _brute_stage() -> void:
+	await _wait(0.5)
+	stop_attract()
+	G.ui.title.visible = false
+	seed(3)
+	start_game({"map": "field", "mode": "horde", "size": 4, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.5)
+	Modes.horde_t = 99999.0
+	Modes.auto_board = false
+	var c = G.world.capture
+	var wp = _free_spot(c + Vector3(30.0, 0, 30.0))
+	# the men are sent well away and told to hold their fire; one stands behind the wall as the bait
+	var men = G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive")
+	var bait = men[0]
+	for m in men:
+		m.set_meta("hold_fire", 1)
+		m.mag = 0
+		m.reserve = 0
+		m.grenades = 0
+		if m != bait:
+			m.move_to(_free_spot(c + Vector3(-70.0, 0, -50.0)))
+	G.builder = true                  # (nobody moves: the bait stays where he's put)
+	bait.move_to(Vector3(wp.x, G.world.ground_y(wp.x, wp.z + 12.0), wp.z + 12.0))
+	var eye = wp + Vector3(9.0, 4.5, 2.0)
+	await _look(eye, wp + Vector3(0, 0.8, -1.0))
+	for round_i in range(6):
+		var st = Build.place("sandbags", 0, wp, Vector3(0, 0, -1), true, false)
+		await _wait(1.0)
+		var cols0 = st["cols"].filter(func(x): return x.alive).size() if st != null else 0
+		var bp = Vector3(wp.x, 0, wp.z - 20.0)
+		Soldier.zombie_next = "brute"
+		var z = spawn_soldier(1, bp.x, bp.z, "pistol")
+		Soldier.zombie_next = ""
+		Modes.make_zombie(z, "brute")
+		z.target = bait
+		var smashed0 = Modes.smashed
+		var t_wall = -1.0
+		var t_past = -1.0
+		for i in range(120):
+			await _wait(0.25)
+			await _look(eye, wp + Vector3(0, 0.8, -1.0))
+			if t_wall < 0.0 and Modes.smashed > smashed0:
+				t_wall = (i + 1) * 0.25
+			if t_past < 0.0 and z.pos.z > wp.z + 1.5:
+				t_past = (i + 1) * 0.25
+				break
+		print("BRUTESTAGE %d: a sandbag wall of %d pieces, a brute 20 m off | %s | pieces standing after: %d | %s" % [round_i + 1, cols0,
+			("it put its weight through the wall %.1f s after setting off" % t_wall) if t_wall >= 0.0 else "the wall was NOT smashed",
+			st["cols"].filter(func(x): return x.alive).size() if st != null else 0,
+			("past the wall after %.1f s" % t_past) if t_past >= 0.0 else "it did not get past in 30 s (it is %.1f m short)" % (wp.z - z.pos.z)])
+		await _wait(1.5)
+		z.hp = 0.0
+		Combat.kill(z, null, false)
+		if st != null:
+			for cc in st["cols"]:
+				if cc.alive:
+					G.world.destroy_col(cc)
+		bait.hp = 100.0
+		if bait.state != "alive":
+			break
+		await _wait(1.0)
+	print("BRUTESTAGE done")
+	if DisplayServer.get_name() == "headless":
+		get_tree().quit()
 
 # --fortshot=DIR: the horde chooser with its difficulty row, men boarding up the keep, the keep shut
 # with the dead at the planks, and the giant of the tenth wave

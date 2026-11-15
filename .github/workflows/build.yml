@@ -73,6 +73,10 @@ jobs:
             sed -i "s/\"executable\":\"index\"/\"executable\":\"index\",\"mainPack\":\"game-$SHORT.pck\"/; s/\"index.pck\":/\"game-$SHORT.pck\":/" build/web/index.html
             grep -o 'GODOT_CONFIG = {[^}]*}' build/web/index.html
           fi
+          # test flags from the page's address (...?args=--brutestage, separated by spaces), so that the
+          # staged checks can be watched in a browser as well as on a desktop
+          sed -i 's|^const engine = new Engine(GODOT_CONFIG);|try { const qa = new URLSearchParams(location.search).get("args"); if (qa) { GODOT_CONFIG.args = ["--"].concat(qa.split(/\\s+/).filter(Boolean)); } } catch (e) {}\nconst engine = new Engine(GODOT_CONFIG);|' build/web/index.html
+          grep -c 'URLSearchParams' build/web/index.html
           touch build/web/.nojekyll
           ls -la build/web
 

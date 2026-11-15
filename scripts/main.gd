@@ -1069,8 +1069,30 @@ func _shadow_auto(dt: float) -> void:
 		shadow_high_t = 0.0
 		apply_shadows()
 
+# In a browser a big battle's physics step can take nearly the whole sixtieth of a second it stands for.
+# The engine then runs up to eight steps for every picture to keep the clock true, and the picture rate
+# collapses: 100 men measured 7.6 steps and 118 ms of physics to a picture, 9 ms of drawing, 8 pictures
+# a second. So when the steps are heavy, no more than two are run to a picture: the battle runs a
+# little slow instead (about five-sixths speed in that case) at three times the picture rate.
+var step_avg = 0.0
+var step_cap_t = 0.0
+
+func _step_cap(dt: float) -> void:
+	if not OS.has_feature("web") and not ("--stepcap" in OS.get_cmdline_user_args()):
+		return
+	step_avg = lerpf(step_avg, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, 0.05)
+	step_cap_t -= dt
+	if step_cap_t > 0.0:
+		return
+	step_cap_t = 1.0
+	if step_avg > 8.0:
+		Engine.max_physics_steps_per_frame = 2
+	elif step_avg < 5.5:
+		Engine.max_physics_steps_per_frame = 8
+
 func _process(dt: float) -> void:
 	_shadow_auto(dt)
+	_step_cap(dt)
 	if G.started:
 		_cycle_step(dt * Engine.time_scale)
 	G.fx.update_callouts(dt)

@@ -1821,7 +1821,9 @@ static func _auto_up(dt: float) -> void:
 				break
 		if low < 0 or low >= Levels.n - 1:
 			return
-		if dead[low] >= maxi(5, men[low]) or (men[low] <= 3 and dead[low] >= 3):
+		# (overrun: half as many again of the dead on the floor as men, and six at least; or the last
+		# two or three men with as many of the dead. Seven of them among five riflemen is a fight, not a rout.)
+		if dead[low] >= maxi(6, int(ceil(men[low] * 1.5))) or (men[low] <= 3 and dead[low] >= 3):
 			var msg = _fall_back_floor()
 			ups += 1
 			up_t = 15.0

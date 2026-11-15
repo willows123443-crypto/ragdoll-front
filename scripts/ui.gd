@@ -81,6 +81,15 @@ const MODE_IDS = ["sandbox", "commander", "horde"]
 var opt_size: OptionButton
 var opt_limit: OptionButton
 var opt_reinf: OptionButton
+var row_ais: Control
+var row_seed: Control
+var opt_style_m: OptionButton
+var opt_diff_m: OptionButton
+var opt_hdiff: OptionButton
+const SIZES = ["5", "8", "10", "15", "20", "30", "50", "100"]
+const SIZES_HORDE = ["4", "6", "8", "10", "12"]
+# where a mode is known to work properly (a mode not listed here is offered every map)
+const MODE_MAPS = {"horde": ["town", "office"]}
 var opt_armor: OptionButton
 var opt_teams: OptionButton
 var opt_fac0: OptionButton
@@ -424,6 +433,13 @@ func _tabs() -> Array:
 		return [["recruit", "Recruit"], ["armour", "Vehicles"], ["logistics", "Supply"], ["support", "Fire support"], ["build", "Defences"], ["bases", "Bases"], ["upgrades", "Upgrades"]]
 	if Rules.free_tools():
 		return [["units", "Units"], ["vehicles", "Vehicles"], ["support", "Call-ins"], ["build", "Build"], ["command", "Command"], ["fun", "Effects"]]
+	# Against the dead: the orders that matter, what the points buy, and what can be built. (It was five
+	# tabs: Command, Soldiers, Call-ins, Build and Armoury.)
+	if G.mode == "horde":
+		var ho = [["command", "Orders"], ["armoury", "Supplies"]]
+		if not Rules.build(0).is_empty():
+			ho.append(["build", "Build"])
+		return ho
 	# a real battle: you command your own side, with what this mode gives it
 	var out = [["command", "Command"], ["units", "Soldiers"]]
 	if not Rules.callins(0).is_empty():
@@ -483,6 +499,9 @@ func _cards(t: String) -> Array:
 			if t == "build" or G.mode != "commander":
 				out += [["up", "Upgrade", "click a structure"], ["camo", "Camo net", "click a structure"], ["rep", "Repair", "click a damaged structure"], ["dis", "Dismantle", "click anything built"]]
 		"command", "orders":
+			if G.mode == "horde":
+				return [["sel", "Select", "click or drag a box"], ["mv", "Send everyone", "click a point"], ["o:hold", "Hold", "selected soldiers"],
+					["o:free", "Act freely", "selected soldiers"], ["ctl", "Take control", "click one of your soldiers · F"], ["o:clear", "Deselect", ""]]
 			out = [["sel", "Select", "click or drag a box"], ["o:hold", "Hold", "selected soldiers"], ["o:charge", "Charge", "selected soldiers"],
 				["o:dismount", "Dismount", "troops out of vehicles"], ["o:free", "Act freely", "selected soldiers"], ["o:clear", "Deselect", ""]]
 			if t == "command":
@@ -492,6 +511,10 @@ func _cards(t: String) -> Array:
 			for k in Modes.SHOP:
 				var sh = Modes.SHOP[k]
 				out.append(["h:" + k, Modes.shop_name(k), ("%d pts" % sh["cost"]) if sh["cost"] > 0 else "free"])
+			# (the guns and the bombers, which had a tab to themselves)
+			for k in Support.COSTS.keys():
+				if k != "supplytruck" and Faction.support_ok(0, k) and Rules.callin_ok(0, k) and Support.unlocked(0, k):
+					out.append(["sup:" + k, Support.NAMES[k].split(" (")[0], "%d pts" % Support.COSTS[k] + ("" if k in INSTANT else " · click the map")])
 		"upgrades":
 			for k in Prod.UPGRADES:
 				var u = Prod.UPGRADES[k]
@@ -1137,16 +1160,25 @@ func _build_menu() -> void:
 		G.save_prefs())
 	opt_ais.tooltip_text = "In a sandbox, whether the AI commanders buy vehicles and call in artillery, air strikes, paratroopers and helicopters by themselves. Other modes always allow it."
 	_row(v, "AI support in sandbox", opt_ais)
+	row_ais = v.get_child(v.get_child_count() - 1)
 	var diffs = ["easy", "normal", "hard"]
 	var opt_diff = _option(["Easy: slower, poorer, worse shots", "Normal", "Hard: quicker, richer, better shots"], maxi(0, diffs.find(G.settings.get("difficulty", "normal"))))
 	opt_diff.item_selected.connect(func(i): G.settings["difficulty"] = diffs[i])
 	opt_diff.tooltip_text = "How good the enemy is. Easy: it earns less supply, buys and shells less often, shoots wider, and gives you about a minute and a half before its first move. Hard: the reverse, and it moves at once."
 	_row(v, "Difficulty", opt_diff)
+	opt_diff_m = opt_diff
 	var styles = ["random", "reckless", "cautious", "cunning"]
 	var opt_style = _option(["Any (picked at random)", "Reckless: attacks at once and keeps coming", "Cautious: digs in and waits for the numbers", "Cunning: probes with scouts, hits weak spots"], maxi(0, styles.find(G.settings.get("ai_style", "random"))))
 	opt_style.item_selected.connect(func(i): G.settings["ai_style"] = styles[i])
 	opt_style.tooltip_text = "The enemy commander's temperament"
 	_row(v, "Enemy commander", opt_style)
+	opt_style_m = opt_style
+	opt_hdiff = _option(["Easy", "Normal", "Hard"], Modes.diff())
+	opt_hdiff.item_selected.connect(func(i):
+		G.settings["horde_diff"] = i
+		G.save_prefs())
+	opt_hdiff.tooltip_text = "How many of the dead come, how tough and fast they are, and what a kill pays"
+	_row(v, "The dead", opt_hdiff)
 	_section(v, "World")
 	opt_time = _option(["Day", "Dusk", "Night", "Dawn till nightfall (time passes)", "Endless day and night cycle"], maxi(0, ["day", "dusk", "night", "dawn", "cycle"].find(G.settings["time"])))
 	opt_time.item_selected.connect(func(i):
@@ -1167,16 +1199,17 @@ func _build_menu() -> void:
 	seed_edit.custom_minimum_size = Vector2(120, 0)
 	seed_edit.text_submitted.connect(func(t):
 		G.random_seed = int(t) if t.is_valid_int() else t.hash()
-		if MAP_IDS[opt_map.selected] == "random":
+		if _map_key(opt_map.selected) == "random":
 			G.main.preview_map("random"))
 	var seed_row = HBoxContainer.new()
 	seed_row.add_child(seed_edit)
 	seed_row.add_child(_button("New seed", func():
 		G.random_seed = randi() % 1000000
 		seed_edit.text = str(G.random_seed)
-		if opt_map.selected < MAP_IDS.size() and MAP_IDS[opt_map.selected] == "random":
+		if _map_key(opt_map.selected) == "random":
 			G.main.preview_map("random")))
 	_row(v, "Random map seed", seed_row)
+	row_seed = v.get_child(v.get_child_count() - 1)
 	# right: start, and everything else
 	var r = VBoxContainer.new()
 	r.add_theme_constant_override("separation", 8)
@@ -2062,10 +2095,44 @@ func _mode_settings(id: String) -> void:
 		opt_time.select(2)
 	# the other side is the walking dead
 	opt_fac1.disabled = id == "horde"
+	# Against the dead a good many of these mean nothing (how many sides, how the other side's troops
+	# arrive, its vehicles, its army, its commander and how good he is): they are taken off the screen, not
+	# greyed, and what the dead have instead is shown. The team is a handful, and only the maps the mode
+	# is known to work on are offered.
+	var hz = id == "horde"
+	for o in [opt_teams, opt_reinf, opt_armor, opt_fac1, opt_style_m, opt_diff_m]:
+		if o != null and o.get_parent() != null:
+			o.get_parent().visible = not hz
+	for rw in [row_ais, row_seed]:
+		if rw != null:
+			rw.visible = not hz
+	if opt_hdiff != null:
+		opt_hdiff.get_parent().visible = hz
+		opt_hdiff.select(Modes.diff())
+	_fill_sizes(id)
+	refresh_maps()
 	# where more men come in later, the number set here is what each side starts with
 	if size_lbl != null:
 		size_lbl.text = {"laststand": "Defenders", "horde": "Survivors at the start", "sabotage": "Raiders", "commander": "Starting troops per side",
 			"general": "Soldiers per side"}.get(id, "Soldiers per side at the start" if id != "sandbox" or opt_reinf.selected != 4 else "Soldiers per side")
+
+func _fill_sizes(id: String) -> void:
+	if opt_size == null:
+		return
+	var want: Array = SIZES_HORDE if id == "horde" else SIZES
+	var have = []
+	for i in range(opt_size.item_count):
+		have.append(opt_size.get_item_text(i))
+	if have == want:
+		return
+	var cur = opt_size.get_item_text(opt_size.selected) if opt_size.selected >= 0 else "10"
+	opt_size.clear()
+	for t in want:
+		opt_size.add_item(t)
+	var i2 = want.find(cur)
+	if i2 < 0:
+		i2 = want.find("10")
+	opt_size.select(maxi(i2, 0))
 
 # the title screen (and, during a battle, the pause menu)
 var title: Control
@@ -2404,10 +2471,9 @@ func _show_horde() -> void:
 		var mid: String = mp[0]
 		pv.add_child(_button("  Start  ", func():
 			horde_panel.visible = false
-			var mi = MAP_IDS.find(mid)
-			if mi >= 0:
-				opt_map.select(mi)
-			_quick("horde")))
+			_pick_map(mid)
+			_quick("horde")
+			_pick_map(mid)))
 		cols.add_child(pc)
 	var hb = HBoxContainer.new()
 	hb.add_child(_button("  Back  ", func(): horde_panel.visible = false))
@@ -3409,22 +3475,53 @@ func sel_box_changed() -> void:
 # ---------------------------------------------------------------- custom maps in the menu
 var custom_names: Array = []
 
+# The maps on offer are the ones the chosen mode works on (every map, and your own, where the mode has
+# no list). Each entry carries its map's name, so the list can be any subset in any order.
 func refresh_maps() -> void:
 	if opt_map == null:
 		return
-	var sel = opt_map.selected
-	while opt_map.item_count > MAP_IDS.size():
-		opt_map.remove_item(opt_map.item_count - 1)
+	var cur = _map_key(opt_map.selected) if opt_map.item_count > 0 and opt_map.selected >= 0 else "town"
+	var id = MODE_IDS[clampi(opt_mode.selected, 0, MODE_IDS.size() - 1)] if opt_mode != null else "sandbox"
+	var only: Array = MODE_MAPS.get(id, [])
+	opt_map.clear()
+	for i in range(MAP_IDS.size()):
+		if only.is_empty() or MAP_IDS[i] in only:
+			opt_map.add_item(MAP_NAMES[i] if i < MAP_NAMES.size() else MAP_IDS[i])
+			opt_map.set_item_metadata(opt_map.item_count - 1, MAP_IDS[i])
 	custom_names = G.editor.list_maps() if G.editor != null else []
-	for n in custom_names:
-		opt_map.add_item("Your map: " + n)
-	if sel < opt_map.item_count:
-		opt_map.select(sel)
+	if only.is_empty():
+		for n in custom_names:
+			opt_map.add_item("Your map: " + n)
+			opt_map.set_item_metadata(opt_map.item_count - 1, "custom:" + n)
+	var sel = 0
+	for i in range(opt_map.item_count):
+		if str(opt_map.get_item_metadata(i)) == cur:
+			sel = i
+	opt_map.select(sel)
+	if _map_key(sel) != cur and not G.started and G.main != null:
+		_select_map(sel)
+
+func _map_key(i: int) -> String:
+	if opt_map == null or i < 0 or i >= opt_map.item_count:
+		return "town"
+	var m = opt_map.get_item_metadata(i)
+	if m != null:
+		return str(m)
+	return MAP_IDS[i] if i < MAP_IDS.size() else "town"
+
+func _pick_map(key: String) -> void:
+	if opt_map == null:
+		return
+	for i in range(opt_map.item_count):
+		if _map_key(i) == key:
+			opt_map.select(i)
+			return
 
 func _map_id(i: int) -> String:
-	if i < MAP_IDS.size():
-		return MAP_IDS[i]
-	var m = G.editor.load_file(custom_names[i - MAP_IDS.size()])
+	var key = _map_key(i)
+	if not key.begins_with("custom:"):
+		return key
+	var m = G.editor.load_file(key.substr(7))
 	if m.is_empty():
 		return "town"
 	G.custom_map = m

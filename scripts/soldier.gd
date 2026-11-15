@@ -761,8 +761,10 @@ func _build_body() -> void:
 		for ch in parts[la].get_children():
 			if ch is MeshInstance3D:
 				ch.free()
-		_mesh(parts[la], Vector3(0.05, 0.1, 0.05), Vector3(0, 0.12, 0), _mat("zbone", Color(0.8, 0.77, 0.66), false))
-		_mesh(parts[la - 1], Vector3(0.14, 0.06, 0.14), Vector3(0, -0.15, 0), _mat("zblood", Color(0.32, 0.05, 0.04), false))
+		# (at the elbow end of the upper arm. They were put at the other end of each bone: the red cap sat
+		# up by the shoulder and the bit of bone hung in the air where the hand had been.)
+		_mesh(parts[la - 1], Vector3(0.14, 0.06, 0.14), Vector3(0, 0.15, 0), _mat("zblood", Color(0.32, 0.05, 0.04), false))
+		_mesh(parts[la - 1], Vector3(0.05, 0.08, 0.05), Vector3(0, 0.21, 0), _mat("zbone", Color(0.8, 0.77, 0.66), false))
 	_size_up()
 	# joints
 	var right = (P[6] - P[3]).normalized()
@@ -2737,6 +2739,15 @@ const ZHAIR = [Color(0.16, 0.12, 0.09), Color(0.08, 0.07, 0.07), Color(0.45, 0.4
 # A round patch lying in the skin of the head (an eye socket, an eye, a mouth, a stain): a flattened ball
 # set into the head where the line `dirn` from its middle comes out, turned to lie flat on it there and
 # standing `proud` out of it. Nothing on a face is a box stuck on the front any more.
+# a ball on the body (a belly, a sore)
+func _ball(parent: Node3D, size: Vector3, at: Vector3, mat: Material) -> void:
+	var mi = MeshInstance3D.new()
+	mi.mesh = _hm("ball")
+	mi.scale = size
+	mi.position = at
+	mi.material_override = mat
+	parent.add_child(mi)
+
 func _hset(head: Node3D, dirn: Vector3, size: Vector2, mat: Material, proud: float = 0.002, thick: float = 0.02, hr: Vector3 = HEAD_R, hc: Vector3 = Vector3.ZERO) -> MeshInstance3D:
 	var d = dirn.normalized()
 	var k = 1.0 / sqrt(pow(d.x / hr.x, 2.0) + pow(d.y / hr.y, 2.0) + pow(d.z / hr.z, 2.0))
@@ -2791,20 +2802,10 @@ func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
 		_hset(head, Vector3(0.012, -0.118 - jaw * 0.3, -0.07), Vector2(0.05, 0.045) * fk, blood, 0.002, 0.016, hr, hc)
 		_mesh(head, Vector3(0.06, 0.08, 0.006), Vector3(0.012, -0.175, -0.047), blood)
 	_hset(head, Vector3(0.035, 0.085, -0.1), Vector2(0.085, 0.04) * fk, blood, 0.002, 0.016, hr, hc)
-	# hair
-	var plain = ztype in ["walker", "runner", "crawler", "spitter", "bloater"]
-	if ztype != "armored":
-		var hm = _mat("zhair%d" % (hsh % ZHAIR.size()), ZHAIR[hsh % ZHAIR.size()], false)
-		match (hsh / 3) % 5:
-			0:  # bald, the scalp laid open
-				_hset(head, Vector3(-0.03, 0.13, 0.01), Vector2(0.09, 0.11) * fk, blood, 0.002, 0.016, hr, hc)
-			1, 2:
-				_hround(head, "dome", Vector3(0.276, 0.2, 0.286), Vector3(0, 0.055, 0.008), hm, 0.1)
-			3:  # long, hanging down the back
-				_hround(head, "dome", Vector3(0.28, 0.21, 0.29), Vector3(0, 0.05, 0.01), hm, 0.14)
-				_mesh(head, Vector3(0.23, 0.2, 0.05), Vector3(0, -0.06, 0.125), hm)
-			4:  # what's left of it
-				_hround(head, "dome", Vector3(0.2, 0.15, 0.24), Vector3(0.03, 0.075, 0.03), hm, 0.2)
+	# (no hair: every head is bare, and one in four has the scalp laid open)
+	var plain = ztype in ["walker", "runner", "crawler", "spitter"]
+	if hsh % 4 == 0 and ztype != "armored":
+		_hset(head, Vector3(-0.03, 0.13, 0.01), Vector2(0.09, 0.11) * fk, blood, 0.002, 0.016, hr, hc)
 	# the same stains they all carry
 	_mesh(parts[1], Vector3(0.2, 0.22, 0.02), Vector3(0.06, 0.04, -0.142), blood)
 	_mesh(parts[1], Vector3(0.1, 0.1, 0.02), Vector3(0.1, -0.05, 0.142), dark)
@@ -2830,9 +2831,8 @@ func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
 					_mesh(parts[i], Vector3(0.176, 0.3, 0.176), Vector3(0, -0.08, 0), sk)
 				for i in [8, 10]:
 					_mesh(parts[i], Vector3(0.156, 0.3, 0.156), Vector3(0, 0.05, 0), sk)
-			4:  # a hood, still up
+			4:  # a hooded top, the hood down on the shoulders
 				var hood = _mat("zhood", Color(0.2, 0.21, 0.23), false)
-				_hround(head, "dome", Vector3(0.31, 0.31, 0.32), Vector3(0, 0.02, 0.03), hood, 0.3)
 				_mesh(parts[1], Vector3(0.3, 0.1, 0.16), Vector3(0, 0.26, 0.1), hood)
 			5:  # overalls: a bib and braces
 				_mesh(parts[1], Vector3(0.28, 0.3, 0.02), Vector3(0, -0.02, -0.143), uni2)
@@ -2885,11 +2885,25 @@ func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
 		for i in [3, 5, 7, 9]:
 			_mesh(parts[i], Vector3(0.16, 0.14, 0.16), Vector3(0, 0.0, 0), riot)
 	elif ztype == "bloater":
-		# swollen and sickly green, the gut ready to burst
-		var bloat = _mat("zbloat", Color(0.5, 0.56, 0.32), false)
-		_mesh(parts[1], Vector3(0.62, 0.52, 0.5), Vector3(0, -0.04, -0.06), bloat)
-		_mesh(parts[0], Vector3(0.5, 0.26, 0.42), Vector3(0, 0.02, -0.04), bloat)
-		_mesh(parts[1], Vector3(0.18, 0.14, 0.03), Vector3(0.08, -0.08, -0.31), blood)
+		# Swollen with gas till the skin is tight: a round belly out in front of what's left of the shirt,
+		# heavy hips, a goitre under the jaw, sores that glow, and a split where it is about to give.
+		# (It was a green box.)
+		var flesh = _mat("zbloat2", Color(0.63, 0.64, 0.5), false)
+		var pus = _mat_glow("zpus", Color(0.8, 0.8, 0.32))
+		var bc = Vector3(0, -0.12, -0.14)
+		var br = Vector3(0.4, 0.35, 0.4)
+		_ball(parts[1], br * 2.0, bc, flesh)
+		_ball(parts[1], Vector3(0.6, 0.44, 0.5), Vector3(0, 0.14, -0.02), uni)
+		_ball(parts[0], Vector3(0.6, 0.36, 0.56), Vector3(0, 0.03, -0.06), uni2)
+		_ball(parts[2], Vector3(0.2, 0.16, 0.18), Vector3(0, -0.17, -0.04), flesh)
+		# (the sores and the split lie on the skin of the belly, wherever on it they are)
+		for sp in [[-0.2, 0.1, 0.1], [0.18, -0.12, 0.12], [0.02, 0.2, 0.08], [0.3, 0.02, 0.09], [-0.1, -0.24, 0.08], [-0.31, -0.08, 0.09], [0.05, 0.0, 0.0]]:
+			var zz = -br.z * sqrt(maxf(0.0, 1.0 - pow(sp[0] / br.x, 2.0) - pow(sp[1] / br.y, 2.0)))
+			var at = bc + Vector3(sp[0], sp[1], zz)
+			if sp[2] > 0.0:
+				_ball(parts[1], Vector3(sp[2], sp[2], sp[2] * 0.6), at, pus)
+			else:
+				_ball(parts[1], Vector3(0.24, 0.09, 0.05), at, blood)
 	elif ztype == "spitter":
 		# thin, the jaw hanging open over a swollen, glowing throat
 		var acid = _mat_glow("zacid", Color(0.55, 0.85, 0.15))
@@ -3247,16 +3261,19 @@ func start_vault(c) -> bool:
 		return false
 	var thin_x: bool = (c.hi.x - c.lo.x) < (c.hi.z - c.lo.z)
 	var wl = Vector2(want.x, want.z).length()
-	if wl < 1.3:
+	# (the dead don't pick their line: one coming at a low wall at a slant, or slowly, goes over it all
+	# the same. Held to a man's rule, square on and at a walk, they slid along it and heaped up.)
+	if wl < (0.6 if zombie else 1.3):
 		return false
+	var square = 0.25 if zombie else 0.55
 	var tx = pos.x
 	var tz = pos.z
 	if thin_x:
-		if absf(want.x) < wl * 0.55:
+		if absf(want.x) < wl * square:
 			return false
 		tx = c.hi.x + 0.45 if want.x > 0.0 else c.lo.x - 0.45
 	else:
-		if absf(want.z) < wl * 0.55:
+		if absf(want.z) < wl * square:
 			return false
 		tz = c.hi.z + 0.45 if want.z > 0.0 else c.lo.z - 0.45
 	var ty: float = G.world.surface_y(tx, tz, pos.y + 0.5)

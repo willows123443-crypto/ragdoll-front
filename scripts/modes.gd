@@ -1079,6 +1079,7 @@ static func _horde(dt: float) -> void:
 	_step_rocks(dt)
 	_fortify(dt)
 	_auto_up(dt)
+	_upstairs_duty(dt)
 	_quartermaster(dt)
 	if Levels.on and not horde_in and G.sim_time > 1.0:
 		# (the Ministry: nobody waits for them in the yard)
@@ -1204,11 +1205,10 @@ static func _horde(dt: float) -> void:
 	if horde_wave >= 2:
 		_new_drop()
 
-# Indoors a lobbed grenade hits the ceiling and comes down among the men who fired it (two of three
-# friendly-fire deaths in one Ministry battle). Holding the Ministry, grenadiers carry rifles.
+# Indoors a lobbed grenade hits the ceiling or the window frame and comes down among the men who fired
+# it (two of three friendly-fire deaths in one Ministry battle, and the last ones left in the town, where
+# the men fight from houses). Against the dead, grenadiers carry rifles.
 static func _no_launchers() -> void:
-	if not Levels.on:
-		return
 	for m in G.soldiers:
 		if m.team == 0 and not m.zombie and not m.is_player and m.state != "dead" and m.wid == "gl":
 			m.set_weapon("rifle")
@@ -1788,8 +1788,12 @@ static func _fortify(dt: float) -> void:
 			why = "done"
 		elif G.sim_time - float(j["t0"]) > 30.0:
 			why = "took too long"
-		elif _zombie_within(m.pos, 6.5):
+		elif _zombie_within(m.pos, 13.0):
+			# (thirteen metres, where it was six and a half: a man backs away from one of the dead at
+			# eight, and from a runner at twelve, so with one between those and the job still his he
+			# walked off, came back to the window, and walked off again for as long as it stood there)
 			why = "the dead too close"
+			j["f"]["skip_t"] = G.sim_time + 8.0
 		if why != "":
 			job_ends[why] = int(job_ends.get(why, 0)) + 1
 			_job_end(j)
@@ -1830,7 +1834,7 @@ static func _fortify(dt: float) -> void:
 		for j in jobs:
 			if j["f"] == f:
 				taken = true
-		if taken or _zombie_within(f["c"], 7.0):
+		if taken or _zombie_within(f["c"], 14.0):
 			continue
 		any_win = any_win or f["kind"] == "win"
 		cands.append(f)
@@ -1846,7 +1850,7 @@ static func _fortify(dt: float) -> void:
 			continue
 		if Levels.on and Levels.level_of(s.pos) != 0:
 			continue
-		if _zombie_within(s.pos, 9.0):
+		if _zombie_within(s.pos, 14.0):
 			continue
 		men.append(s)
 	if men.is_empty():
@@ -1907,8 +1911,8 @@ static func fort_tick(s) -> void:
 		if s.move_target == null or G.dist2d(s.move_target, p) > 0.5:
 			# (the walk ended somewhere else: there's no way to it. Leave that one for a while.)
 			j["stall"] = int(j.get("stall", 0)) + 1
-			if int(j["stall"]) > 4:
-				f["skip_t"] = G.sim_time + 40.0
+			if int(j["stall"]) > 2:
+				f["skip_t"] = G.sim_time + 90.0
 				job_ends["no way to it"] = int(job_ends.get("no way to it", 0)) + 1
 				_job_end(j)
 				return
@@ -2062,7 +2066,7 @@ static func new_men(n: int) -> void:
 		var s2 = G.soldiers[i]
 		if s2.team != 0 or s2.zombie:
 			continue
-		if Levels.on and s2.wid == "gl" and not s2.is_player:
+		if s2.wid == "gl" and not s2.is_player:
 			s2.set_weapon("rifle")
 			s2.mag = int(s2.W["mag"])
 			s2.reserve = int(s2.W["mag"]) * 6
@@ -2446,7 +2450,9 @@ static func zombie_tick(s) -> void:
 			s.set_meta("smash_t", G.sim_time + 1.2)
 			s.want = Vector3.ZERO
 			return
-	if level and s.bad_t < G.sim_time and (d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
+	# (straight at him when he's close or in plain view; not when there's a wall between that can't be
+	# got over, however close he is: they used to press up against it for as long as he stood behind it)
+	if level and s.bad_t < G.sim_time and ((d < 7.0 and not _walled_off(s, t)) or (d >= 7.0 and d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
 		AI.stop_move(s)
 		var dir = to / d
 		# slide round posts and corners rather than pushing into them
@@ -2475,14 +2481,18 @@ static func zombie_tick(s) -> void:
 		s.want = dir * (spd * surge / s.W["speed"])
 		# not getting anywhere (a wall, a fence, a crowd)? find a way round for a while
 		s.prog_t += G.DT
-		if s.prog_t > 1.5:
+		if s.prog_t > 1.2:
 			if G.dist2d(s.pos, s.prog_p) < 0.6 and s.vault == null:
 				# boarded-up windows and doors in the way get torn at
 				var tore = _tear(s, 1.3)
 				if not tore:
 					tore = _smash(s, 1.3, 30.0)
+				# a low wall it has been leaning on: over it, square on, whatever line it came in at
+				if not tore and _over_wall(s):
+					tore = true
+					walls_over += 1
 				if not tore:
-					s.bad_t = G.sim_time + 6.0
+					s.bad_t = G.sim_time + 10.0
 					AI.go_to(s, t.pos, spd)
 			s.prog_t = 0.0
 			s.prog_p = s.pos
@@ -2490,7 +2500,7 @@ static func zombie_tick(s) -> void:
 		# A crawler following a route (round a building, in at a door, up a staircase) that isn't getting
 		# anywhere hauls itself upright: the routes are for men on their feet, who step over a low wall
 		# and climb stairs, and a crawler left at the foot of either kept the wave from ever ending.
-		if s.ztype == "crawler" and not s.has_meta("risen"):
+		if s.ztype == "crawler" and not s.has_meta("risen") and not s.has_meta("legless"):
 			if G.sim_time - float(s.get_meta("cr_t", -99.0)) > 5.0:
 				if s.has_meta("cr_p") and G.sim_time - float(s.get_meta("cr_t", -99.0)) < 7.0 and G.dist2d(s.pos, s.get_meta("cr_p")) < 1.2:
 					s.set_meta("risen", true)
@@ -2634,6 +2644,102 @@ static func _tear(s, reach: float) -> bool:
 		G.world.destroy_col(bc)
 	return true
 
+# is there something between it and him that it can't climb over?
+static func _walled_off(s, t) -> bool:
+	var W = G.world
+	var dv = G.flat(t.pos - s.pos)
+	var L = dv.length()
+	if L < 0.3:
+		return false
+	var n = int(ceil(L / 0.3))
+	for i in range(1, n):
+		var p = s.pos + dv * (float(i) / n)
+		for c in W.cell_at(p.x, p.z):
+			if c.alive and c.hi.y > s.pos.y + 0.3 and c.lo.y < s.pos.y + 1.2 and p.x > c.lo.x and p.x < c.hi.x and p.z > c.lo.z and p.z < c.hi.z and W.blocks_at(c, s.pos.y) and not W.vaultable(c):
+				return true
+	return false
+
+# a low wall within reach of one of the dead that's getting nowhere: it turns square to it and goes over
+static var walls_over = 0
+static func _over_wall(s) -> bool:
+	if s.ztype == "brute" or s.ztype == "crawler" or s.state != "alive":
+		return false
+	var W = G.world
+	for c in W.cols_in_rect(s.pos.x - 0.9, s.pos.z - 0.9, s.pos.x + 0.9, s.pos.z + 0.9):
+		if not c.alive or not W.vaultable(c) or c.hi.y < s.pos.y + 0.3 or c.lo.y > s.pos.y + 1.0:
+			continue
+		var thin_x: bool = (c.hi.x - c.lo.x) < (c.hi.z - c.lo.z)
+		var mid = (c.lo + c.hi) * 0.5
+		var perp = Vector3(1.0 if mid.x > s.pos.x else -1.0, 0, 0) if thin_x else Vector3(0, 0, 1.0 if mid.z > s.pos.z else -1.0)
+		var w0: Vector3 = s.want
+		s.want = perp * 2.5
+		if s.start_vault(c):
+			return true
+		s.want = w0
+	return false
+
+# ---------------------------------------------------------------- upstairs, with the dead below
+# Fallen back up a floor, one man in three stays covering the head of the stairs. The others go to the
+# windows of that floor, the side the wave is coming from first, to fire down on what's outside, and
+# move on to another window every twenty seconds or so. (They used to stand where they had stopped by
+# the stairs until the wave was over.)
+static var duty_t = 0.0
+static var duties = 0
+
+static func _upstairs_duty(dt: float) -> void:
+	duty_t -= dt
+	if duty_t > 0.0 or not Levels.on or G.over or Office.ups.is_empty():
+		return
+	duty_t = 2.0
+	var side_v: Vector3 = [Vector3(-1, 0, 0), Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 0, 1)][clampi(horde_side, 0, 3)]
+	var held = []
+	for s in G.soldiers:
+		if s.team == 0 and not s.zombie and s.state == "alive" and s.order != null and s.order.has("duty"):
+			held.append(s.order["point"])
+	for s in G.soldiers:
+		if s.team != 0 or s.zombie or s.is_player or s.state != "alive" or s.vehicle != null or s.grab_t > 0.0 or s.id % 3 == 0:
+			continue
+		if not Levels.inside(s.pos, 0.0):
+			continue
+		var k = Levels.level_of(s.pos)
+		if k <= 0 or s.order == null or str(s.order.get("tag", "")) != "fallback" or AI._falling_back(s):
+			continue
+		if s.task in ["medic", "stretcher", "drag", "fortify"] or s.dragging != null or G.sim_time < float(s.get_meta("duty_t", 0.0)):
+			continue
+		if _zombie_within(s.pos, 10.0):
+			continue
+		var best = null
+		var bs = 1e9
+		for tries in range(12):
+			var f: Dictionary = Office.ups[randi() % Office.ups.size()]
+			if int(f["k"]) != k:
+				continue
+			var q: Vector3 = f["c"] - f["n"] * 1.3
+			q.y = Levels.floor_y(k)
+			var dq = G.dist2d(q, s.pos)
+			if dq < 3.0 or dq > 40.0 or not Levels.walkable(k, q):
+				continue
+			var free = true
+			for hp in held:
+				if G.dist2d(hp, q) < 2.0 and absf(hp.y - q.y) < 1.0:
+					free = false
+					break
+			if not free:
+				continue
+			var sc = dq - (16.0 if f["n"].dot(side_v) > 0.5 else 0.0) + randf() * 8.0
+			if sc < bs:
+				bs = sc
+				best = [q, f["n"]]
+		if best == null:
+			s.set_meta("duty_t", G.sim_time + 6.0)
+			continue
+		var nv: Vector3 = best[1]
+		s.order = {"mode": "move", "point": best[0], "tag": "fallback", "face": atan2(nv.x, nv.z), "in": Levels.bi, "duty": true}
+		s.decide_t = 0.0
+		s.set_meta("duty_t", G.sim_time + randf_range(18.0, 30.0))
+		held.append(best[0])
+		duties += 1
+
 # how many of them are pressed up against one boarded opening just now
 static var press = {}                # by the opening's middle: {"seen": {id: when}, "t", "over_t"}
 static var pile_said = -1
@@ -2690,8 +2796,8 @@ static func lose_leg(z, sd: int) -> void:
 	for ch in z.parts[shin].get_children():
 		if ch is MeshInstance3D:
 			ch.queue_free()
-	z._mesh(z.parts[shin - 1], Vector3(0.16, 0.05, 0.16), Vector3(0, -0.215, 0), z._mat("zblood", Color(0.32, 0.05, 0.04), false))
-	z._mesh(z.parts[shin - 1], Vector3(0.05, 0.08, 0.05), Vector3(0, -0.26, 0), z._mat("zbone", Color(0.8, 0.77, 0.66), false))
+	z._mesh(z.parts[shin - 1], Vector3(0.16, 0.05, 0.16), Vector3(0, 0.215, 0), z._mat("zblood", Color(0.32, 0.05, 0.04), false))
+	z._mesh(z.parts[shin - 1], Vector3(0.05, 0.08, 0.05), Vector3(0, 0.26, 0), z._mat("zbone", Color(0.8, 0.77, 0.66), false))
 	G.fx.debris(kp, Vector3(randf_range(-1.2, 1.2), 1.6, randf_range(-1.2, 1.2)), 0.5, Color(0.2, 0.2, 0.2), Vector3(0.14, 0.42, 0.14))
 	G.fx.bleed(kp, Vector3.UP, false)
 	G.fx.bleed(kp, Vector3.DOWN, false)

@@ -115,6 +115,12 @@ func _ready() -> void:
 			_zed_walk()
 		if a == "--reacttest":
 			_react_test()
+		if a.begins_with("--menushot="):
+			_menu_shot(a.substr(11))
+		if a == "--zwalltest":
+			_zwall_test()
+		if a == "--yardtest":
+			_yard_test()
 		if a == "--brutestage":
 			_brute_stage()
 		if a.begins_with("--fortshot="):
@@ -4672,7 +4678,7 @@ func _horde_play() -> void:
 					int(Stats.teams[0]["kills"]), int(Stats.teams[0]["kills"]) - kills0, Modes.boarded_n, Modes.doors_n, Modes.torn_n, Modes.ups, Modes.downs, str(Modes.bought), Modes.stragglers,
 					(" | floors: ground %d, first %d, second %d, outside %d" % st) if Levels.on else "",
 					(" | slams %d, rocks %d, brood %d" % [Modes.slams, Modes.throws, Modes.brood_n]) if last_wave % 10 == 0 else ""])
-				print("%s:   so far: over the top %d, through the boards %d | grabbed %d: threw it off %d, hauled clear %d, borne down %d | legs shot off %d | friendly fire %s" % [tag, Modes.piled, Modes.reached, Modes.grabs, Modes.shoved, Modes.pulled, Modes.dragged, Modes.legs_off, str(Stats.tk_log)])
+				print("%s:   so far: over the top %d, through the boards %d | grabbed %d: threw it off %d, hauled clear %d, borne down %d | legs shot off %d | over a low wall when stuck %d | sent to an upstairs window %d | shoves %d | friendly fire %s" % [tag, Modes.piled, Modes.reached, Modes.grabs, Modes.shoved, Modes.pulled, Modes.dragged, Modes.legs_off, Modes.walls_over, Modes.duties, Combat.shove_n, str(Stats.tk_log)])
 				kills0 = int(Stats.teams[0]["kills"])
 				lowest = men
 			last_wave = Modes.horde_wave
@@ -5183,6 +5189,140 @@ func _zed_atk(dir: String, c: Vector3) -> void:
 		man.hp = 100.0
 		await _wait(2.5)
 	print("ZEDSHOT grip pictured: ", held)
+
+# --yardtest [--map=town|office --n=30 --secs=80]: men who may not shoot (and can't be hurt) where the
+# battle puts them, and a pack of the dead from the edge of the map. Every ten seconds: how many of
+# the dead have not moved a metre since the last look and aren't within reach of a man; at the end,
+# what each of those is standing against.
+func _yard_test() -> void:
+	await _wait(1.0)
+	stop_attract()
+	G.ui.title.visible = false
+	seed(int(_arg("seed", "4")))
+	start_game({"map": _arg("map", "office"), "mode": "horde", "size": 8, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(4.0)
+	Modes.horde_t = 99999.0
+	Modes.auto_board = false
+	Modes.auto_buy = false
+	G.builder = true
+	Modes.horde_side = 1
+	var n0 = G.soldiers.size()
+	Modes._spawn_pack(int(_arg("n", "30")))
+	var zs = G.soldiers.slice(n0).filter(func(z): return z.zombie)
+	var men = G.soldiers.filter(func(m): return m.team == 0 and not m.zombie)
+	var last = {}
+	for z in zs:
+		last[z.id] = z.pos
+	var out = []
+	var stuck = []
+	var t0 = G.sim_time
+	var secs = float(_arg("secs", "80"))
+	var mark = 10.0
+	while G.sim_time - t0 < secs:
+		await get_tree().physics_frame
+		for m in men:
+			if m.state != "dead":
+				m.hp = 100.0
+		if G.sim_time - t0 >= mark:
+			mark += 10.0
+			stuck = []
+			var reach = 0
+			for z in zs:
+				if z.state == "dead":
+					continue
+				var near_man = men.any(func(m): return m.state != "dead" and G.dist2d(m.pos, z.pos) < 3.0 and absf(m.pos.y - z.pos.y) < 2.0)
+				if near_man:
+					reach += 1
+				elif G.dist2d(z.pos, last[z.id]) < 1.0:
+					stuck.append(z)
+				last[z.id] = z.pos
+			out.append("%ds: %d stuck, %d at a man" % [int(G.sim_time - t0), stuck.size(), reach])
+	print("YARDTEST ", _arg("map", "office"), ", ", zs.size(), " of the dead: ", " | ".join(out), " | over a low wall when stuck: ", Modes.walls_over)
+	var W = G.world
+	for z in stuck.slice(0, 8):
+		var what = "nothing"
+		for c in W.cols_in_rect(z.pos.x - 0.8, z.pos.z - 0.8, z.pos.x + 0.8, z.pos.z + 0.8):
+			if c.alive and c.hi.y > z.pos.y + 0.3 and c.lo.y < z.pos.y + 1.5:
+				what = "a piece %.1f x %.1f m, %.2f m high, %s%s" % [c.hi.x - c.lo.x, c.hi.z - c.lo.z, c.hi.y - c.gy, "can be climbed" if W.vaultable(c) else "can't be climbed", ", boarded" if c.has_meta("board") else ""]
+				break
+		print("YARDTEST   stuck at (%.0f, %.1f, %.0f) %s: against %s | %.0f m from %s | following a path %s, a route %s, at a breach %s, speed wanted %.1f" % [z.pos.x, z.pos.y, z.pos.z, z.ztype, what, G.dist2d(z.pos, z.target.pos) if z.target != null else -1.0, z.target.sname if z.target != null else "nobody", str(z.move_target != null), str(z.route != null), str(z.has_meta("breach")), z.want.length()])
+	get_tree().quit()
+
+# --zwalltest: a low wall of sandbags sixty metres long, a man who may not shoot six metres behind it, and
+# twelve of the dead starting close to it forty metres along, so that their line to him runs nearly along it: how long until the first is over,
+# how many are over after twenty seconds, and how many are left leaning on it.
+func _zwall_test() -> void:
+	await _wait(1.0)
+	stop_attract()
+	G.ui.title.visible = false
+	seed(9)
+	start_game({"map": "field", "mode": "horde", "size": 4, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.5)
+	Modes.horde_t = 99999.0
+	Modes.auto_board = false
+	Modes.auto_buy = false
+	G.builder = true
+	var c = _free_spot(G.world.capture + Vector3(40.0, 0, 40.0))
+	G.world.build_now(func():
+		for i in range(16):
+			G.world.sandbags(c.x - 48.0 + i * 4.0, c.z, 4.0, true))
+	var men = G.soldiers.filter(func(s): return s.team == 0 and not s.zombie)
+	for i in range(men.size()):
+		men[i].move_to(Vector3(c.x + 70.0 + i * 2.0, G.world.ground_y(c.x + 70.0, c.z), c.z + 60.0))
+	var man = men[0]
+	man.move_to(Vector3(c.x, G.world.ground_y(c.x, c.z + 6.0), c.z + 6.0))
+	var zs = []
+	for i in range(12):
+		var z = Modes.spawn_zombie("walker", c.x - 38.0 + (i % 6) * 1.4, c.z - 5.0 - (i / 6) * 2.0)
+		zs.append(z)
+	var first = -1.0
+	var t0 = G.sim_time
+	var over = 0
+	while G.sim_time - t0 < 20.0:
+		await get_tree().physics_frame
+		man.hp = 100.0
+		over = zs.filter(func(z): return z.pos.z > c.z + 0.5).size()
+		if over > 0 and first < 0.0:
+			first = G.sim_time - t0
+	var leaning = zs.filter(func(z): return z.pos.z <= c.z + 0.5 and absf(z.pos.z - c.z) < 1.6).size()
+	print("WALLTEST twelve of the dead at a low wall, their line to the man running nearly along it: the first over after %.1f s | over after 20 s: %d of 12 | still against it: %d | went over square after getting nowhere: %d" % [first, over, leaning, Modes.walls_over])
+	get_tree().quit()
+
+# --menushot=DIR: the battle setup screen with the zombie mode chosen and with the sandbox chosen, and the
+# dock in a zombie battle (its two tabs)
+func _menu_shot(dir: String) -> void:
+	await _wait(1.0)
+	stop_attract()
+	G.ui._open_setup()
+	await _wait(0.4)
+	G.ui.opt_mode.select(G.ui.MODE_IDS.find("horde"))
+	G.ui._show_mode_info()
+	await _wait(0.4)
+	await _snap(dir, "setup_horde")
+	var maps = []
+	for i in range(G.ui.opt_map.item_count):
+		maps.append(G.ui.opt_map.get_item_text(i))
+	var sizes = []
+	for i in range(G.ui.opt_size.item_count):
+		sizes.append(G.ui.opt_size.get_item_text(i))
+	print("MENUSHOT zombie mode: maps offered ", maps, " | survivors ", sizes, " | enemy commander row shown: ", G.ui.opt_style_m.get_parent().visible, " | 'The dead' row shown: ", G.ui.opt_hdiff.get_parent().visible)
+	G.ui.opt_mode.select(G.ui.MODE_IDS.find("sandbox"))
+	G.ui._show_mode_info()
+	await _wait(0.4)
+	await _snap(dir, "setup_sandbox")
+	print("MENUSHOT sandbox: maps offered ", G.ui.opt_map.item_count, " | sizes ", G.ui.opt_size.item_count, " | enemy commander row shown: ", G.ui.opt_style_m.get_parent().visible)
+	G.ui.title.visible = false
+	start_game({"map": "town", "mode": "horde", "size": 8, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(7.0)
+	G.ui._render_tools()
+	await _wait(0.3)
+	await _snap(dir, "dock_orders")
+	G.ui.tab = "armoury"
+	G.ui._render_tools()
+	await _wait(0.3)
+	await _snap(dir, "dock_supplies")
+	print("MENUSHOT dock tabs: ", G.ui._tabs().map(func(t): return t[1]), " | orders: ", G.ui._cards("command").map(func(c): return c[1]), " | supplies: ", G.ui._cards("armoury").map(func(c): return c[1]))
+	get_tree().quit()
 
 # --reacttest: (1) ten riflemen and thirty of the dead walking at them from 70 m: how often a hit makes
 # one flinch, how many lose a leg and crawl on, and how they die (head, body, limb). (2) Eight men who

@@ -2481,7 +2481,7 @@ static func _keep_from_zombies(s) -> void:
 	# he used to back out of the front door instead)
 	if (_falling_back(s) or (s.task == "post" and s.route != null and G.mode == "horde")) and s.task != "medic" and s.dragging == null:
 		# (one in his way gets the butt of the rifle, and he's past it)
-		if zd < 1.9 and s.throw_t <= 0.0 and absf(near.pos.y - s.pos.y) < 1.0:
+		if zd < 1.9 and s.throw_t <= 0.0 and absf(near.pos.y - s.pos.y) < 1.0 and G.sim_time > float(s.get_meta("shove_t", 0.0)):
 			Combat.shove(s, near)
 		return
 	# don't head toward them: cancel any move that closes the distance

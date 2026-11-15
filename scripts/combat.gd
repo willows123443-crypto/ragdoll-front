@@ -531,7 +531,9 @@ static func shove(s, t) -> void:
 			t.vel = dir * 6.5
 			t.stun = maxf(t.stun, 0.5)
 	s.fire_cd = maxf(s.fire_cd, 0.45)
-	s.set_meta("shove_t", G.sim_time + 1.3)
+	# (a shove, then two or three seconds before the next: at one every second and a third a man in a
+	# corridor did nothing else)
+	s.set_meta("shove_t", G.sim_time + randf_range(2.2, 3.0))
 	if randf() < 0.3:
 		G.fx.callout(s, G.pick(["Get off!", "Back!", "Get back!", "Off me!"]))
 
@@ -558,7 +560,7 @@ static func spade(s, t) -> void:
 		t.fall(randf_range(0.8, 1.4))
 		t.push(1, dir * 3.0 + Vector3(0, 0.5, 0), 0.4)
 	s.fire_cd = maxf(s.fire_cd, 0.6)
-	s.set_meta("shove_t", G.sim_time + 1.0)
+	s.set_meta("shove_t", G.sim_time + randf_range(1.6, 2.2))
 
 # has he anything left to shoot with at all
 static func dry(s) -> bool:

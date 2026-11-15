@@ -296,18 +296,49 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 			G.audio.voice(s, "scream")
 		kill(s, attacker, kind == "head")
 		b.apply_impulse(imp * b.mass * (0.5 if kind == "head" else 0.4), point - b.global_position)
+		if s.zombie:
+			# How one of the dead goes down says where it was hit. Through the head: it drops where it
+			# stands, the head snapped back. In the body: it is thrown over backwards. A limb shot away
+			# under it: it pitches on to its face.
+			var flat_d = G.flat(dir).normalized()
+			if kind == "head":
+				for p2 in s.parts:
+					p2.linear_velocity = Vector3(p2.linear_velocity.x * 0.2, minf(p2.linear_velocity.y, -1.2), p2.linear_velocity.z * 0.2)
+				s.parts[2].apply_central_impulse((flat_d * 2.6 + Vector3(0, 1.2, 0)) * s.parts[2].mass)
+				G.fx.bleed(point, -dir, true)
+				Modes.zdeaths[0] += 1
+			elif kind == "torso":
+				s.push(1, flat_d * 2.8 + Vector3(0, 0.7, 0), 0.45)
+				Modes.zdeaths[1] += 1
+			else:
+				s.push(1, Vector3(sin(s.body_yaw), 0, cos(s.body_yaw)) * 1.9 + Vector3(0, -0.6, 0), 0.3)
+				Modes.zdeaths[2] += 1
 		_cap(s, 5.5)
 		return
 	Medical.wound(s, dmg * mult)
 	if randf() < 0.4:
 		G.audio.voice(s, "pain")
 	b.apply_impulse(imp * b.mass * 0.8, point - b.global_position)
+	if s.zombie and (s.state == "alive" or s.state == "down" or s.state == "getup"):
+		s.zflinch(dir, part)
+		Modes.flinches += 1
+		if kind == "leg":
+			# enough through one leg and it comes off at the knee: the thing goes down and crawls on
+			var sd = 0 if part <= 8 else 1
+			s.zleg[sd] += dmg * mult
+			if s.zleg[sd] > 20.0:
+				Modes.lose_leg(s, sd)
 	if s.state == "alive" or s.state == "riding":
 		s.limb[Soldier.PART_REG[part]] = 0.05
 		if kind == "torso" or kind == "head":
 			s.stun = maxf(s.stun, 0.18 + force * 0.03)
 		var running = s.state == "alive" and s.want.length() > 3.5
-		if kind == "leg" and randf() < (0.55 if running else 0.3):
+		# (a giant isn't knocked off its feet by a bullet: one through the leg used to put it on its back
+		# three times in ten)
+		var big = s.zombie and s.has_meta("boss")
+		if big:
+			pass
+		elif kind == "leg" and randf() < (0.55 if running else 0.3):
 			s.fall()
 		elif force > 6.0 and randf() < 0.5:
 			s.fall()
@@ -591,7 +622,7 @@ static func step_rockets() -> void:
 					if hs.hp <= 0.0:
 						kill(hs, r["owner"], false)
 			G.bal_add("boom: " + (("shell from a " + r["veh"].kind) if r.get("veh") != null and is_instance_valid(r["veh"]) else ("rocket" if r.get("power", 1.25) > 0.8 else "rifle grenade")))
-			explode(at - stepv.normalized() * 0.1, r["owner"] if is_instance_valid(r["owner"]) else null, r.get("power", 1.25))
+			boom("rocket", at - stepv.normalized() * 0.1, r["owner"] if is_instance_valid(r["owner"]) else null, r.get("power", 1.25))
 			r["mesh"].queue_free()
 			rockets.remove_at(i)
 			continue
@@ -799,7 +830,18 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 			return          # one in the hand already
 		# (not where his own side is standing: in a horde battle fifteen of forty-seven dead were killed
 		# by their own, most of them by grenades thrown at a pack that was already among the men)
-		if type == "frag" and friend_near(s, target, 7.0) != null:
+		# (against the dead, who come right in among the men: a wider berth, and nothing thrown at one
+		# already within a dozen metres of the thrower, where it only ever fell among his own)
+		var crowded = false
+		if type == "frag" and G.mode == "horde" and Doors.building_at(s.pos) >= 0:
+			crowded = true          # (nor from inside a house: it comes back off the window frame into the room)
+		elif type == "frag" and G.mode == "horde":
+			# (nor with one of them within a few paces: the grenade hits it and drops at his feet)
+			for o in G.soldiers:
+				if o.zombie and o.state != "dead" and G.dist2d(o.pos, s.pos) < 7.0 and absf(o.pos.y - s.pos.y) < 2.5:
+					crowded = true
+					break
+		if type == "frag" and (crowded or friend_near(s, target, 9.0 if G.mode == "horde" else 7.0) != null or (G.mode == "horde" and not s.is_player and G.dist2d(s.pos, target) < 12.0)):
 			s.nade_cd = maxf(s.nade_cd, 4.0)
 			held_n += 1
 			return
@@ -829,7 +871,7 @@ static func release_throw(s) -> void:
 	if s.state != "alive":
 		return
 	# (a second look as it leaves his hand: the men he's throwing past have had a second and more to move)
-	if pend[1] == "frag" and not s.is_player and friend_near(s, pend[0], 5.5) != null:
+	if pend[1] == "frag" and not s.is_player and friend_near(s, pend[0], 7.5 if G.mode == "horde" else 5.5) != null:
 		s.nade_cd = maxf(s.nade_cd, 4.0)
 		s.throw_t = 0.0
 		held_n += 1
@@ -966,17 +1008,17 @@ static func step_grenades() -> void:
 				_marker_popped(g.global_position, owner_s)
 			elif gtype == "satchel":
 				G.bal_add("boom: satchel")
-				explode(g.global_position, owner_s, 2.1)
+				boom("satchel", g.global_position, owner_s, 2.1)
 			elif gtype == "molotov":
 				molotov(g.global_position, owner_s)
 			elif gtype == "sticky":
 				var sv = g.get_meta("stuck_v") if g.has_meta("stuck_v") else null
 				if sv != null and is_instance_valid(sv) and not sv.dead:
 					sv.take_damage(1100.0, owner_s, g.global_position)
-				explode(g.global_position, owner_s, 0.9)
+				boom("sticky bomb", g.global_position, owner_s, 0.9)
 			else:
 				G.bal_add("boom: grenade")
-				explode(g.global_position, owner_s, 1.0)
+				boom("grenade", g.global_position, owner_s, 1.0)
 			g.queue_free()
 			G.grenades.remove_at(i)
 	for i in range(G.smoke_clouds.size() - 1, -1, -1):
@@ -1110,6 +1152,20 @@ static func launch_rifle_grenade(s, origin: Vector3, target: Vector3) -> void:
 # ---------------------------------------------------------------- explosions
 static var soft = false       # a blast that hurts and throws men but leaves walls, doors and windows alone
 static func explode(pos: Vector3, owner_s, power: float) -> void:
+	var was = Stats.cause
+	if was == "shot":
+		Stats.cause = "blast"
+	_explode(pos, owner_s, power)
+	Stats.cause = was
+
+# (the same, saying what it was that went off: for the friendly-fire log)
+static func boom(what: String, pos: Vector3, owner_s, power: float) -> void:
+	var was = Stats.cause
+	Stats.cause = what
+	_explode(pos, owner_s, power)
+	Stats.cause = was
+
+static func _explode(pos: Vector3, owner_s, power: float) -> void:
 	if power >= float(last_boom["pow"]) or G.sim_time - float(last_boom["t"]) > 4.0:
 		last_boom = {"t": G.sim_time, "p": pos, "pow": power}
 	# a shell into the river throws up a tall column of spray
@@ -1353,7 +1409,7 @@ static func step_mines() -> void:
 						G.ui.radio(v.team, "%s hit a mine, %s gone!" % [v.spec["name"], "track" if v.spec["tracked"] else "wheel"])
 					break
 		if boom:
-			explode(m["p"] + Vector3(0, 0.2, 0), m["owner"] if m["owner"] != null and is_instance_valid(m["owner"]) else null, 0.9 if m["kind"] == "ap" else (2.2 if m["kind"] == "ied" else 1.5))
+			boom("mine", m["p"] + Vector3(0, 0.2, 0), m["owner"] if m["owner"] != null and is_instance_valid(m["owner"]) else null, 0.9 if m["kind"] == "ap" else (2.2 if m["kind"] == "ied" else 1.5))
 			m["node"].queue_free()
 			mines.remove_at(i)
 

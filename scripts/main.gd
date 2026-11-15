@@ -113,6 +113,8 @@ func _ready() -> void:
 			_zed_shot(a.substr(10))
 		if a == "--zedwalk":
 			_zed_walk()
+		if a == "--reacttest":
+			_react_test()
 		if a == "--brutestage":
 			_brute_stage()
 		if a.begins_with("--fortshot="):
@@ -4648,6 +4650,7 @@ func _horde_play() -> void:
 					int(Stats.teams[0]["kills"]), int(Stats.teams[0]["kills"]) - kills0, Modes.boarded_n, Modes.doors_n, Modes.torn_n, Modes.ups, Modes.downs, str(Modes.bought), Modes.stragglers,
 					(" | floors: ground %d, first %d, second %d, outside %d" % st) if Levels.on else "",
 					(" | slams %d, rocks %d, brood %d" % [Modes.slams, Modes.throws, Modes.brood_n]) if last_wave % 10 == 0 else ""])
+				print("%s:   so far: over the top %d, through the boards %d | grabbed %d: threw it off %d, hauled clear %d, borne down %d | legs shot off %d | friendly fire %s" % [tag, Modes.piled, Modes.reached, Modes.grabs, Modes.shoved, Modes.pulled, Modes.dragged, Modes.legs_off, str(Stats.tk_log)])
 				kills0 = int(Stats.teams[0]["kills"])
 				lowest = men
 			last_wave = Modes.horde_wave
@@ -4661,8 +4664,8 @@ func _horde_play() -> void:
 		how = "WON: wave %d beaten with %d men" % [Modes.horde_wave, men2]
 	elif G.sim_time - t0 >= secs:
 		how = "out of time in wave %d with %d men and %d of the dead on the field" % [last_wave, men2, G.soldiers.filter(func(s): return s.zombie and s.state != "dead").size()]
-	print("%s RESULT: %s | %.1f min | kills %d | friendly-fire kills %d | points left %d | bought %s" % [tag, how, (G.sim_time - t0) / 60.0, int(Stats.teams[0]["kills"]),
-		int(Stats.teams[0]["teamkills"]), Support.points[0], str(Modes.bought)])
+	print("%s RESULT: %s | %.1f min | kills %d | friendly-fire kills %d | points left %d | bought %s | friendly fire: %s" % [tag, how, (G.sim_time - t0) / 60.0, int(Stats.teams[0]["kills"]),
+		int(Stats.teams[0]["teamkills"]), Support.points[0], str(Modes.bought), str(Stats.tk_log)])
 	get_tree().quit()
 
 # --uptest: a house with an upstairs in the town, held against the dead. Men on the ground floor with
@@ -4848,6 +4851,9 @@ func _boss_test() -> void:
 	await _wait(1.5)
 	var bz = G.soldiers.filter(func(o): return o.zombie and o.has_meta("boss"))
 	out.append("after loading: %d of the big ones, %s, head %.2f m up, status line '%s'" % [bz.size(), bz[0].sname if not bz.is_empty() else "-", (bz[0].parts[2].global_position.y - bz[0].pos.y) if not bz.is_empty() else 0.0, Modes.status_text()])
+	if not bz.is_empty():
+		var q = bz[0]
+		out.append("  (it is: state %s, kind %s, lying %s, size %.2f, pose head %.2f m up, far %s, held %s, vault %s)" % [q.state, q.ztype, str(q.prone), q.size_k, q._J(1).y - q.pos.y, str(q._lod_far()), str(q.zhold != null), str(q.vault != null)])
 	Scenario.delete_slot(5)
 	for l in out:
 		print("BOSSTEST ", l)
@@ -4978,6 +4984,11 @@ func _zed_shot(dir: String) -> void:
 	var st = await _zed_stage()
 	var c: Vector3 = st[0]
 	var man = st[1]
+	if _arg("only", "") == "atk":
+		await _wait(6.5)
+		await _zed_atk(dir, c)
+		get_tree().quit()
+		return
 	var rows = []
 	for r in range(2):
 		var row = []
@@ -5042,12 +5053,26 @@ func _zed_shot(dir: String) -> void:
 	for z in rows[0]:
 		_zed_hold(z, 0.0)
 		z.move_to(Vector3(c.x - 80.0, c.y, c.z - 44.0))
+	await _zed_atk(dir, c)
+	get_tree().quit()
+
+# the attacks, a hit, a leg gone and the grip, for --zedshot
+func _zed_atk(dir: String, c: Vector3) -> void:
 	# ---- attacking: one at a time, slowed down, against a man who is kept alive and on his feet
 	var mp = Vector3(c.x + 1.0, c.y, c.z + 20.0)
-	man.move_to(Vector3(mp.x, G.world.ground_y(mp.x, mp.z), mp.z))
-	man.face(-PI / 2.0)
+	var spare = G.soldiers.filter(func(s): return s.team == 0 and not s.zombie)
+	var man = spare[0]
+	var ti = 0
 	var todo = [["walker", 0, "grab"], ["walker", 1, "swipe"], ["brute", 3, "smash"], ["runner", 0, "runner"]]
 	for td in todo:
+		# (a fresh man for each: the last one may be on his back)
+		man.move_to(Vector3(c.x + 60.0, G.world.ground_y(c.x + 60.0, c.z + 30.0 + ti), c.z + 30.0 + ti))
+		man = spare[ti % spare.size()]
+		ti += 1
+		man.move_to(Vector3(mp.x, G.world.ground_y(mp.x, mp.z), mp.z))
+		man.face(-PI / 2.0)
+		man.hp = 100.0
+		await _wait(0.4)
 		var z = Modes.spawn_zombie(td[0], mp.x - 3.2, mp.z)
 		z.face(PI / 2.0)
 		z.think = 0.0
@@ -5083,6 +5108,119 @@ func _zed_shot(dir: String) -> void:
 		if man.state != "alive":
 			await _wait(3.0)
 		await _wait(0.3)
+	# ---- hit, a leg gone, and a man in its grip
+	man.move_to(Vector3(c.x + 60.0, G.world.ground_y(c.x + 60.0, c.z + 40.0), c.z + 40.0))
+	man = spare[ti % spare.size()]
+	man.move_to(Vector3(mp.x, G.world.ground_y(mp.x, mp.z), mp.z))
+	man.face(-PI / 2.0)
+	man.hp = 100.0
+	var zf = Modes.spawn_zombie("walker", mp.x - 7.0, mp.z)
+	zf.face(PI / 2.0)
+	zf.think = 0.0
+	await _look(Vector3(mp.x - 3.2, c.y + 1.6, mp.z + 3.4), Vector3(mp.x - 4.6, c.y + 1.05, mp.z))
+	await _wait(0.9)
+	Engine.max_physics_steps_per_frame = 1
+	zf.zflinch(Vector3(-1, 0, 0), 5)
+	for k in range(8):
+		await get_tree().physics_frame
+	G.ui.dock.visible = false
+	await _look(Vector3(zf.pos.x + 1.6, c.y + 1.6, mp.z + 3.2), Vector3(zf.pos.x, c.y + 1.05, mp.z))
+	await _snap(dir, "zed_hit")
+	Engine.max_physics_steps_per_frame = 8
+	Modes.lose_leg(zf, 0)
+	await _wait(3.2)
+	G.ui.dock.visible = false
+	await _look(Vector3(zf.pos.x + 1.4, c.y + 1.3, zf.pos.z + 2.8), Vector3(zf.pos.x, c.y + 0.4, zf.pos.z))
+	await _snap(dir, "zed_legless")
+	_zed_hold(zf, 0.0)
+	zf.move_to(Vector3(c.x - 80.0, c.y, c.z - 56.0))
+	# (the grip: one after another until one of them takes hold)
+	var held = false
+	for tries in range(6):
+		var zg = Modes.spawn_zombie("walker", mp.x - 2.6, mp.z)
+		zg.face(PI / 2.0)
+		zg.think = 0.0
+		zg.atk_n = (0 - zg.id - 1) % 3 + 3
+		var t1 = G.sim_time
+		while G.sim_time - t1 < 6.0 and man.grab_t <= 0.0:
+			man.hp = 100.0
+			await get_tree().physics_frame
+		if man.grab_t > 0.0:
+			Engine.max_physics_steps_per_frame = 1
+			for k in range(22):
+				await get_tree().physics_frame
+			G.ui.dock.visible = false
+			await _look(Vector3(man.pos.x + 0.4, c.y + 1.7, man.pos.z + 3.0), Vector3(man.pos.x - 0.5, c.y + 1.1, man.pos.z))
+			await _snap(dir, "zed_grip")
+			Engine.max_physics_steps_per_frame = 8
+			held = true
+		_zed_hold(zg, 0.0)
+		zg.move_to(Vector3(c.x - 80.0, c.y, c.z - 60.0 - tries))
+		if held:
+			break
+		man.hp = 100.0
+		await _wait(2.5)
+	print("ZEDSHOT grip pictured: ", held)
+
+# --reacttest: (1) ten riflemen and thirty of the dead walking at them from 70 m: how often a hit makes
+# one flinch, how many lose a leg and crawl on, and how they die (head, body, limb). (2) Eight men who
+# may not shoot with eight of the dead among them: grabs, and how each ends.
+func _react_test() -> void:
+	await _wait(1.0)
+	stop_attract()
+	G.ui.title.visible = false
+	seed(5)
+	start_game({"map": "field", "mode": "horde", "size": 10, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.5)
+	Modes.horde_t = 99999.0
+	Modes.auto_board = false
+	Modes.auto_buy = false
+	var men = G.soldiers.filter(func(s): return s.team == 0 and not s.zombie)
+	var c: Vector3 = men[0].pos
+	var zs = []
+	for i in range(30):
+		var z = Modes.spawn_zombie("walker", c.x + 70.0 + (i % 6) * 2.0, c.z - 12.0 + (i / 6) * 5.0)
+		zs.append(z)
+	var crawl_kills = 0
+	var t0 = G.sim_time
+	while G.sim_time - t0 < 45.0 and zs.any(func(z): return is_instance_valid(z) and z.state != "dead"):
+		await get_tree().physics_frame
+		for m in men:
+			if m.state != "dead":
+				m.hp = maxf(m.hp, 60.0)
+	for z in zs:
+		if is_instance_valid(z) and z.state == "dead" and z.has_meta("legless"):
+			crawl_kills += 1
+	var deadn = zs.filter(func(z): return not is_instance_valid(z) or z.state == "dead").size()
+	print("REACTTEST shot at: 30 of the dead from 70 m against %d rifles, %.0f s: %d put down | hits that made one flinch %d | legs shot off %d (of which %d were finished off crawling) | put down through the head %d, the body %d, a limb %d" % [men.size(), G.sim_time - t0, deadn, Modes.flinches, Modes.legs_off, crawl_kills, Modes.zdeaths[0], Modes.zdeaths[1], Modes.zdeaths[2]])
+	# ---- the grip
+	for z in G.soldiers.duplicate():
+		if z.zombie and z.state != "dead":
+			z.hp = 0.0
+			Combat.kill(z, null, false)
+	await _wait(1.0)
+	G.builder = true
+	men = G.soldiers.filter(func(s): return s.team == 0 and not s.zombie and s.state == "alive")
+	var use = men.slice(0, 8)
+	var p0 = _free_spot(G.world.capture + Vector3(30.0, 0, 30.0))
+	for i in range(use.size()):
+		var q = Vector3(p0.x + (i % 4) * 5.0, 0, p0.z + (i / 4) * 5.0)
+		use[i].move_to(Vector3(q.x, G.world.ground_y(q.x, q.z), q.z))
+		use[i].hp = 100.0
+	for m in men:
+		if not (m in use):
+			m.move_to(Vector3(p0.x - 80.0, G.world.ground_y(p0.x - 80.0, p0.z), p0.z))
+	for i in range(use.size()):
+		Modes.spawn_zombie("walker", use[i].pos.x + 2.2, use[i].pos.z)
+	var hurt = 0.0
+	t0 = G.sim_time
+	while G.sim_time - t0 < 30.0:
+		await get_tree().physics_frame
+		for m in use:
+			if m.state != "dead" and m.hp < 50.0:
+				hurt += 100.0 - m.hp
+				m.hp = 100.0
+	print("REACTTEST grabbed: 8 men who may not shoot, one of the dead each, 30 s: taken hold of %d times | threw it off %d | hauled clear by another man %d | borne to the ground %d | still held at the end %d" % [Modes.grabs, Modes.shoved, Modes.pulled, Modes.dragged, use.filter(func(m): return m.grab_t > 0.0).size()])
 	get_tree().quit()
 
 # --zedwalk: do their feet stay put? Twelve of the dead walk at a man for ten seconds; for each foot, how
@@ -5093,12 +5231,15 @@ func _zed_walk() -> void:
 	var man = st[1]
 	man.move_to(Vector3(c.x + 50.0, G.world.ground_y(c.x + 50.0, c.z), c.z))
 	var zs = []
-	for i in range(12):
-		var z = Modes.spawn_zombie("walker" if i < 10 else "runner", c.x - (i % 4) * 1.6, c.z - 3.0 + (i / 4) * 3.0)
+	var kind = _arg("kind", "")
+	var far_cam = _arg("far", "0") == "1"
+	var camz = 70.0 if far_cam else 8.0
+	for i in range(12 if kind == "" else 3):
+		var z = Modes.spawn_zombie(("walker" if i < 10 else "runner") if kind == "" else kind, c.x - (i % 4) * (1.6 if kind == "" else 5.0), c.z - 3.0 + (i / 4) * 3.0)
 		z.face(PI / 2.0)
 		zs.append(z)
-	G.pc.free_pos = c + Vector3(8.0, 3.0, 8.0)
-	await _look(c + Vector3(8.0, 3.0, 8.0), c + Vector3(8.0, 1.0, 0.0))
+	G.pc.free_pos = c + Vector3(8.0, 3.0, camz)
+	await _look(c + Vector3(8.0, 3.0, camz), c + Vector3(8.0, 1.0, 0.0))
 	await _wait(2.0)
 	# every foot's place, every tick; then "on the ground" is within 2.5 cm of the lowest it ever was
 	var rec = {}
@@ -5107,25 +5248,27 @@ func _zed_walk() -> void:
 	var far = 0
 	for n in range(600):
 		await get_tree().physics_frame
-		G.pc.free_pos = Vector3(zs[0].pos.x, c.y + 3.0, c.z + 8.0)
+		G.pc.free_pos = Vector3(zs[0].pos.x, c.y + 3.0, c.z + camz)
 		man.hp = 100.0
 		for z in zs:
-			if z.state != "alive" or z.lunge_t > 0.0 or z.pos.distance_to(man.pos) < 4.0:
+			if z.state != "alive" or z.lunge_t > 0.0 or z.pos.distance_to(man.pos) < 6.0:
 				continue
 			if n == 300 and z._lod_far():
 				far += 1
-			rec[z.id][0].append(z.P[11] - Vector3(0, G.world.ground_y(z.P[11].x, z.P[11].z), 0))
-			rec[z.id][1].append(z.P[14] - Vector3(0, G.world.ground_y(z.P[14].x, z.P[14].z), 0))
+			var fa: Vector3 = z._J(11)
+			var fb: Vector3 = z._J(14)
+			rec[z.id][0].append(fa - Vector3(0, G.world.ground_y(fa.x, fa.z), 0))
+			rec[z.id][1].append(fb - Vector3(0, G.world.ground_y(fb.x, fb.z), 0))
 			rec[z.id][2].append(z.pos)
 	var out = []
-	for kind in ["walker", "runner"]:
+	for kind2 in (["walker", "runner"] if kind == "" else ["brute"]):
 		var slide = 0.0
 		var went = 0.0
 		var air = 0
 		var ticks = 0
 		var steps = 0
 		for z in zs:
-			if z.ztype != kind:
+			if z.ztype != kind2:
 				continue
 			var r = rec[z.id]
 			var m = r[2].size()
@@ -5150,7 +5293,7 @@ func _zed_walk() -> void:
 					air += 1
 				ticks += 1
 				went += Vector2(r[2][i].x - r[2][i - 1].x, r[2][i].z - r[2][i - 1].z).length()
-		out.append("%ss: went %.1f m at %.2f m/s, feet slid %.1f m while down (%.0f%% of the way), %d footfalls (%.2f m each), both feet up %.1f%% of the time" % [kind, went, went * 60.0 / maxf(ticks, 1), slide, 100.0 * slide / maxf(went, 0.01), steps, went / maxf(steps, 1), 100.0 * air / maxf(ticks, 1)])
+		out.append("%ss: went %.1f m at %.2f m/s, feet slid %.1f m while down (%.0f%% of the way), %d footfalls (%.2f m each), both feet up %.1f%% of the time" % [kind2 if kind == "" else kind, went, went * 60.0 / maxf(ticks, 1), slide, 100.0 * slide / maxf(went, 0.01), steps, went / maxf(steps, 1), 100.0 * air / maxf(ticks, 1)])
 	print("ZEDWALK ", " | ".join(out), " | only posed (far from the camera): ", far, " of ", zs.size())
 	get_tree().quit()
 
@@ -5666,6 +5809,10 @@ func _fort_test() -> void:
 	await _wait(6.0)
 	var bs = Modes.boss
 	if bs != null and is_instance_valid(bs):
+		# (nothing is to be bought while the reward is being counted: it used to read "+-2 points", the
+		# thirty for the giant less five men bought in the same moment)
+		Modes.auto_buy = false
+		Modes.auto_board = false
 		var pts0 = Support.points[0]
 		var shooter = G.soldiers.filter(func(x): return x.team == 0 and x.state == "alive")[0]
 		var hp_b = bs.hp
@@ -6684,7 +6831,23 @@ func _perf_run() -> void:
 		prof2 = [0, 0, 0, 0, 0, 0]
 		Soldier.pf = [0, 0, 0, 0]
 		AI.pf = {}
-		await _wait(float(_arg("secs", "20")))
+		# (how the time divides: physics steps run, pictures drawn and wall-clock seconds over the window)
+		var pf0 = Engine.get_physics_frames()
+		var df0 = Engine.get_process_frames()
+		var w0 = Time.get_ticks_msec()
+		var phys_sum = 0.0
+		var phys_n = 0
+		var secs_w = float(_arg("secs", "20"))
+		var tw0 = G.sim_time
+		while G.sim_time - tw0 < secs_w:
+			await get_tree().process_frame
+			phys_sum += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
+			phys_n += 1
+		var wall = (Time.get_ticks_msec() - w0) / 1000.0
+		var steps = Engine.get_physics_frames() - pf0
+		var drawn = Engine.get_process_frames() - df0
+		print("PERF %d clock: %.1f s of battle took %.1f s (%.0f%% of full speed) | %d pictures drawn (%.1f a second, %.0f ms each) | %.2f physics steps to a picture, %.1f ms a step on average | so about %.0f ms of each picture is physics and %.0f ms the drawing and the rest | draw calls %d" % [k, secs_w, wall, 100.0 * secs_w / maxf(wall, 0.01), drawn, drawn / maxf(wall, 0.01), 1000.0 * wall / maxf(drawn, 1),
+			float(steps) / maxf(drawn, 1), phys_sum / maxf(phys_n, 1), float(steps) / maxf(drawn, 1) * phys_sum / maxf(phys_n, 1), 1000.0 * wall / maxf(drawn, 1) - float(steps) / maxf(drawn, 1) * phys_sum / maxf(phys_n, 1), int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))])
 		var n = maxi(tick_n, 1)
 		var frozen = 0
 		var alive = 0

@@ -4,11 +4,14 @@ extends RefCounted
 
 static var roster: Array = []
 static var teams: Array = []
+static var cause = "shot"          # what is doing the damage just now: a shot or a blast
+static var tk_log: Array = []
 static var timeline: Array = []     # [game_time, [alive per team], [score per team]]
 static var sample_t = 0.0
 
 static func reset() -> void:
 	roster = []
+	tk_log = []
 	teams = []
 	for t in range(G.team_count()):
 		teams.append({"spawned": 0, "deaths": 0, "kills": 0, "shots": 0, "hits": 0, "dmg": 0.0, "heads": 0, "routs": 0, "teamkills": 0, "heals": 0, "vehicles_lost": 0})
@@ -51,6 +54,12 @@ static func killed(victim, attacker, head: bool) -> void:
 				teams[attacker.team]["heads"] += 1
 		else:
 			teams[attacker.team]["teamkills"] += 1
+			# (how it happened, for the tests)
+			if not attacker.zombie:
+				var how = "%s, %s, %d m" % [cause, attacker.wid, int(attacker.pos.distance_to(victim.pos))]
+				if attacker == victim:
+					how = cause + ", his own"
+				tk_log.append(how)
 
 static func rout(s) -> void:
 	if _ok(s):

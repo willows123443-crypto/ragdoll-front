@@ -1046,10 +1046,54 @@ func zstride(sp: float) -> float:
 		return clampf(0.55 + 0.2 * sp, 0.65, 1.1) / zgait
 	return clampf(0.42 + 0.17 * sp, 0.5, 1.0) / zgait
 
+# (for the giants, whose bodies are a man's pose spread out: a stride that much longer, at a man's
+# pace scaled down to match)
 func zrate(sp: float) -> float:
-	return PI / zstride(sp)
+	return PI / (zstride(sp / size_k) * size_k)
+
+# The giants plant their feet too. The pose is worked out at a man's size and spread from the ground
+# under the hips afterwards, so a foot that is to stay where it is in the world has to be found in the
+# pose's own scale each tick: into it, plant, and back out again.
+func _plant_foot_k(side: int, hip: Vector3, base: Vector3, f: Vector3, r: Vector3, cz: float, sp: float, gy: float) -> Vector3:
+	if size_k == 1.0:
+		return _plant_foot(side, hip, base, f, r, cz, sp, gy)
+	var g = Vector3((P[9].x + P[12].x) * 0.5, gy + 0.07, (P[9].z + P[12].z) * 0.5)
+	foot_w[side] = g + (foot_w[side] - g) / size_k
+	foot_from[side] = g + (foot_from[side] - g) / size_k
+	var v0 = vel
+	vel = vel / size_k
+	var p = _plant_foot(side, hip, base, f, r, cz, sp / size_k, gy)
+	vel = v0
+	foot_w[side] = g + (foot_w[side] - g) * size_k
+	foot_from[side] = g + (foot_from[side] - g) * size_k
+	return p
 
 # ---- how one of the dead attacks
+# ---- one of the dead flinching from a hit, and what its legs have taken
+var zhit_t = 0.0
+var zhit_back = 0.0       # +1 rocked back (hit from in front), -1 pitched forward (from behind)
+var zhit_side = 0.0
+var zleg = [0.0, 0.0]
+var zhold = null          # the man it has hold of
+var zhold_t = 0.0
+# ---- a man with one of the dead hanging on to him
+var grab_by = null
+var grab_t = 0.0
+
+# A hit that doesn't put it down still tells: it rocks away from the round, a shoulder is knocked
+# round, and it loses its stride for a moment. (They used to walk through fire as if nothing had
+# touched them, the far ones especially, which are only posed and take no push from a bullet.)
+func zflinch(dir: Vector3, part: int) -> void:
+	var f = Vector3(sin(body_yaw), 0, cos(body_yaw))
+	var d = G.flat(dir).normalized()
+	zhit_t = 0.4
+	zhit_back = clampf(-d.dot(f), -1.0, 1.0)
+	var reg: int = PART_REG[part]
+	zhit_side = 1.0 if reg == 2 or reg == 4 else (-1.0 if reg == 1 or reg == 3 else (0.5 if randf() < 0.5 else -0.5))
+
+func _zhit_k() -> float:
+	return sin(PI * pow(clampf(1.0 - zhit_t / 0.4, 0.0, 1.0), 0.6)) if zhit_t > 0.0 else 0.0
+
 var atk_kind = 0          # 0 the grab and bite, 1 and 2 a swipe with one arm, 3 both fists brought down (the big ones)
 var atk_n = 0
 var atk_len = 0.55
@@ -1058,9 +1102,13 @@ var lunge_prev = 0.0
 
 # 0 to 1 through the wind-up, and 0 to 1 (eased) through the strike
 func _atk_u() -> float:
+	if zhold_t > 0.0:
+		return 1.0
 	return clampf(1.0 - (lunge_t - 0.3) / maxf(atk_len - 0.3, 0.05), 0.0, 1.0) if lunge_t > 0.0 else 0.0
 
 func _atk_v() -> float:
+	if zhold_t > 0.0:
+		return 1.0
 	if lunge_t <= 0.0 or lunge_t > 0.3:
 		return 0.0
 	var v = 1.0 - lunge_t / 0.3
@@ -1096,7 +1144,7 @@ func _plant_foot(side: int, hip: Vector3, base: Vector3, f: Vector3, r: Vector3,
 	var moving = spd > 0.3
 	var ph = wrapf(phase + (PI if side == 1 else 0.0), -PI, PI)
 	var swing_ph = absf(ph) < PI * 0.5
-	var w = maxf(spd * (zrate(spd) if zombie else gait_k(spd)), 0.5)
+	var w = maxf(spd * (PI / zstride(spd) if zombie else gait_k(spd)), 0.5)
 	# one of the dead with a bad leg: which leg it is, and what's wrong with it
 	var zbad = zombie and ztype != "runner" and side == id % 2
 	var zdrag = zbad and (zstyle == 0 or zstyle == 3)
@@ -1396,11 +1444,11 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 			hammer_hit = false
 	elif zombie:
 		var zt = G.sim_time + seed_
-		if lunge_t > 0.0:
+		if lunge_t > 0.0 or zhold_t > 0.0:
 			var au = _atk_u()
 			var av = _atk_v()
 			var up = Vector3.UP
-			match atk_kind:
+			match (0 if zhold_t > 0.0 else atk_kind):
 				0:
 					# the grab: both arms thrown wide and back, then clapped in on him at throat height
 					var r0 = rsh - uf * 0.08 - ur * 0.34 + up * 0.22
@@ -1593,9 +1641,9 @@ func stand_pose() -> void:
 	var breath = sin(t * 1.7) * 0.006
 	var pY = 0.98 - 0.42 * c + bob * 0.5
 	# striding out, the hips ride lower: a straight leg can't reach a foot planted ahead or behind
-	# (the dead plant their feet too, the ones near enough to see it: not the giants, whose joints are
-	# spread from the feet after the pose is worked out, and not the far-off ones, which are only posed)
-	var plant = PLANT and (not zombie or (size_k == 1.0 and not _lod_far())) and not swim and vault == null and climb == null and vy >= -0.5 and stumble <= 0.0
+	# (the dead plant their feet too, giants and the far-off ones that are only posed included: it costs
+	# no more than the paddling they did before, which looked up the ground under each foot as well)
+	var plant = PLANT and not swim and vault == null and climb == null and vy >= -0.5 and stumble <= 0.0
 	if zombie:
 		# an attack beginning: which kind this time
 		if lunge_t > lunge_prev + 0.1:
@@ -1622,6 +1670,10 @@ func stand_pose() -> void:
 	if swim:
 		al = 1.05 + sin(t * 3.2) * 0.05
 	var th = lean * 0.42
+	if grab_t > 0.0 and not zombie:
+		# one of the dead has hold of him: he leans away from it and wrenches from side to side
+		al -= 0.16
+		th += sin(G.sim_time * 13.0 + seed_) * 0.17
 	if plant and not prone:
 		# leaning into a start, back against a stop, and into a swerve
 		al += clampf(acc_lp.dot(f) * 0.013, -0.1, 0.15)
@@ -1635,7 +1687,10 @@ func stand_pose() -> void:
 		# straightens slowly afterwards. The hips go back and then through with it.
 		var au = _atk_u()
 		var av = _atk_v()
-		if lunge_t > 0.0:
+		if zhold_t > 0.0:
+			# it has hold of a man: bent in over him, worrying at him
+			al += 0.22 + 0.06 * sin(t * 13.0)
+		elif lunge_t > 0.0:
 			var back = 0.3 if atk_kind == 3 else 0.2
 			var fwd = 0.42 if atk_kind == 3 else (0.55 if ztype == "runner" else 0.28)
 			al += -back * au * (1.0 - av) + fwd * av
@@ -1646,6 +1701,10 @@ func stand_pose() -> void:
 				P[hi4] = P[hi4] + f * (-0.07 * au * (1.0 - av) + 0.1 * av) - Vector3(0, 0.05 * av, 0)
 		elif atk_rec > 0.0:
 			al += 0.3 * (atk_rec / 0.4)
+		# hit: rocked back (or pitched forward, from behind), the trunk knocked to one side
+		var hk = _zhit_k()
+		al -= 0.42 * zhit_back * hk
+		th += 0.26 * zhit_side * hk
 		# Walking: the body rocks over whichever foot is down and the head rides a beat behind. A leg
 		# that drags takes the weight badly: the hip drops on it and the trunk tips that way.
 		var wk = clampf(spd / 0.8, 0.0, 1.0)
@@ -1674,8 +1733,8 @@ func stand_pose() -> void:
 			al += 0.14          # the other kind of runner: bent lower and fast
 	var tw = clampf(G.wrap_a(aim_yaw - body_yaw), -1.1, 1.1)
 	if zombie:
-		# the shoulders swing against the hips as it walks
-		tw += sin(phase) * 0.2 * clampf(spd / 0.8, 0.0, 1.0)
+		# the shoulders swing against the hips as it walks (and are knocked round by a hit)
+		tw += sin(phase) * 0.2 * clampf(spd / 0.8, 0.0, 1.0) + 0.55 * zhit_side * _zhit_k()
 	var uy = body_yaw + tw
 	var uf = Vector3(sin(uy), 0, cos(uy))
 	var ur = Vector3(-cos(uy), 0, sin(uy))
@@ -1727,7 +1786,7 @@ func stand_pose() -> void:
 		var wide = 0.1 if zombie and zstyle == 2 else 0.0
 		var foot = base + r * (sd * (0.13 + wide) + lmx * sw * A) + f * (lmz * sw * A + cz)
 		if plant:
-			foot = _plant_foot(side, P[hi], base, f, r, cz, spd, gy)
+			foot = _plant_foot_k(side, P[hi], base, f, r, cz, spd, gy)
 			if side == 1 and kick_t > 0.0:
 				var kk2 = sin(PI * (1.0 - kick_t / 0.38))
 				foot = foot.lerp(base + kick_dir * 0.72 + r * 0.1 + Vector3(0, 0.5, 0), kk2)
@@ -3023,6 +3082,9 @@ var fell_at = null          # where he was standing when he was knocked down
 func fall(t: float = -1.0) -> void:
 	if state == "dead":
 		return
+	# (nothing knocks one of the giants off its feet: a man with a spade used to)
+	if zombie and has_meta("boss"):
+		return
 	if state == "alive":
 		fell_at = pos
 	if climb != null:
@@ -3969,6 +4031,8 @@ func _tick_alive() -> void:
 			if not zombie and vehicle == null:
 				G.fx.footprint(pos, body_yaw, sin(phase) > 0.0)
 	stumble = maxf(0.0, stumble - G.DT)
+	zhit_t = maxf(0.0, zhit_t - G.DT)
+	zhold_t = maxf(0.0, zhold_t - G.DT)
 	kick_t = maxf(0.0, kick_t - G.DT)
 	# far away in a big battle: pose and body only every third tick, and no balance checks
 	var far = _lod_far()

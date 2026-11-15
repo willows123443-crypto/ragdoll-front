@@ -2215,6 +2215,10 @@ static func update(s) -> void:
 	if s.zombie:
 		Modes.zombie_tick(s)
 		return
+	# one of the dead has hold of him: he can do nothing else until he's free of it or under it
+	if s.grab_t > 0.0:
+		Modes.grab_tick(s)
+		return
 	# battle builder: everyone stands where he was put until the battle starts
 	if G.builder and not s.is_player:
 		s.want = Vector3.ZERO
@@ -3141,6 +3145,10 @@ static func scavenge(s, body) -> void:
 # would this shot (or its spread, or a rocket's blast) endanger a friend?
 static func friendly_in_line(s, from: Vector3, dir: Vector3, L: float):
 	var rocket = s.W["rocket"]
+	# (a launched grenade bursts too: six of seven men killed by their own side in one battle against the
+	# dead were killed by blasts, four of them from the grenade launcher, which only ever looked along
+	# the line of the shot and never at who was standing where it would land)
+	var burst_r = (12.0 if G.mode == "horde" else 8.0) if rocket else (6.5 if s.W["gl"] else 0.0)
 	# (a flamethrower's fan is far wider than a bullet's path and reaches 17 m whatever he's aiming at)
 	var flame: bool = s.W["flame"]
 	var end = from + dir * L
@@ -3148,14 +3156,18 @@ static func friendly_in_line(s, from: Vector3, dir: Vector3, L: float):
 		if o == s or o.team != s.team or o.state == "dead":
 			continue
 		var c = o.chest()
-		if rocket and c.distance_to(end) < 8.0:
+		if burst_r > 0.0 and c.distance_to(end) < burst_r:
 			return o
 		var v = c - from
 		var t = v.dot(dir)
-		if t < 0.0 or t > (17.5 if flame else L + 4.0):
+		# (against the dead the men stand all round, shooting inwards and across: a round that misses goes
+		# on into whoever is beyond, so the look goes a good way past the target there)
+		if t < 0.0 or t > (17.5 if flame else L + (25.0 if G.mode == "horde" else 4.0)):
 			continue
 		var perp = (v - dir * t).length()
-		if perp < ((1.1 + t * 0.2) if flame else (0.75 + t * 0.03)):
+		# (a shotgun's pattern is wider than a bullet's path: two men were killed by the man beside them
+		# firing one at something that had hold of them)
+		if perp < ((1.1 + t * 0.2) if flame else ((1.0 + t * 0.14) if s.wid == "shotgun" else (0.75 + t * 0.03))):
 			return o
 	# our own vehicles in the way (or, for a rocket, near where it'll burst)
 	var own = s.vehicle if s.vehicle != null and is_instance_valid(s.vehicle) else null

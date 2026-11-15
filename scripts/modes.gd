@@ -52,7 +52,7 @@ static func reset() -> void:
 	koth_t = KOTH_EVERY
 	koth_moves = 0
 	horde_wave = 0
-	horde_endless = false
+	horde_endless = int(G.settings.get("horde_len", 0)) == 1
 	horde_in = false
 	horde_left = 0
 	horde_t = 10.0
@@ -106,7 +106,10 @@ static func setup() -> void:
 			if not G.tutorial:
 				G.ui.message("You command Alpha. Destroy the enemy HQ to win. Buy squads, vehicles and fire support with supply points, and mark out buildings for your engineers. Click or drag to select, right-click to send. WASD pans, wheel zooms, Q/E turn")
 		"horde":
-			G.ui.message("Hold out! Wave after wave of the dead are coming. Survive %d waves" % HORDE_WIN)
+			if horde_endless:
+				G.ui.message("Hold out! Wave after wave of the dead are coming, each bigger than the last, for as long as you can stand. Best here: wave %d" % horde_best(G.map_id))
+			else:
+				G.ui.message("Hold out! Wave after wave of the dead are coming. Survive %d waves" % HORDE_WIN)
 
 static func _setup_escort() -> void:
 	var W = G.world
@@ -790,7 +793,7 @@ static func rec_key(map_id: String, d: int = -1) -> String:
 static func kill_pay(z) -> int:
 	if z.has_meta("boss"):
 		return 40 if str(z.get_meta("boss")) == "mother" else 30
-	var f: float = float({"brute": 4, "armored": 3, "bloater": 2, "spitter": 2}.get(z.ztype, 1)) * [1.4, 1.0, 0.7 if Levels.on else 0.6][diff()]
+	var f: float = float({"brute": 4, "armored": 3, "bloater": 2, "spitter": 2}.get(z.ztype, 1)) * [1.4, 1.0, 0.85 if Levels.on else 0.6][diff()]
 	if Levels.on:
 		f *= 1.25
 	return int(f) + (1 if randf() < f - floorf(f) else 0)
@@ -1217,13 +1220,14 @@ static func _no_launchers() -> void:
 
 # How many come in a wave. In the open they can be shot down a long way off, so there are more of them
 # there, the later waves grow faster, and Hard brings nearly half as many again. Inside the Ministry
-# every one of them arrives at arm's length: the first waves are a little over half the size there and
-# it builds to five in six of the open's by the fifth, and a kill pays a quarter more. (Nobody giving orders, the town was won on Hard and the Ministry lost in wave 4.)
+# every one of them arrives at arm's length: the first waves are half the size there and it builds to
+# under three-quarters of the open's by the fifth, and a kill pays a quarter more. (At five-sixths the
+# men, left to themselves, lost on Normal in wave 9 as often as they won.) (Nobody giving orders, the town was won on Hard and the Ministry lost in wave 4.)
 static func wave_size(w: int) -> int:
 	var n = 10.0 + w * 8.0 + G.team_size
 	if Levels.on:
-		n *= lerpf(0.55, 0.85, clampf((w - 1) / 4.0, 0.0, 1.0))
-		return int(round(n * [0.75, 1.0, 1.25][diff()]))
+		n *= lerpf(0.5, 0.72, clampf((w - 1) / 4.0, 0.0, 1.0))
+		return int(round(n * [0.75, 1.0, 1.1][diff()]))
 	n += 0.5 * w * w
 	return int(round(n * [0.75, 1.0, 1.45][diff()]))
 
@@ -2240,7 +2244,8 @@ static func _auto_up(dt: float) -> void:
 		# Overrun: half as many again of the dead on the floor as men, and six at least; or the last two
 		# or three men with as many of the dead. Seven of them among five riflemen is a fight, not a rout.
 		for k in range(Levels.n - 2, -1, -1):
-			if men[k] > 0 and (dead[k] >= maxi(6, int(ceil(men[k] * 1.5))) or (men[k] <= 3 and dead[k] >= 3)):
+			var early = "--upearly" in OS.get_cmdline_user_args()
+			if men[k] > 0 and (dead[k] >= (maxi(4, men[k]) if early else maxi(6, int(ceil(men[k] * 1.5)))) or (men[k] <= 3 and dead[k] >= (2 if early else 3))):
 				var msg = _fall_back_floor(k + 1)
 				ups += 1
 				up_t = 12.0
@@ -2330,7 +2335,7 @@ static func make_zombie(z, kind: String = "walker") -> void:
 	z.satchels = 0
 	z.rgren = 0
 	z.gun_node.visible = false
-	z.hp = (zs["hp"] + horde_wave * zs["hpw"]) * [0.85, 1.0, 1.15 if Levels.on else 1.45][diff()]
+	z.hp = (zs["hp"] + horde_wave * zs["hpw"]) * [0.85, 1.0, 1.1 if Levels.on else 1.45][diff()]
 	z.zspeed = randf_range(zs["speed"][0], zs["speed"][1]) * (1.2 if G.main.is_night() else 1.0) * [0.95, 1.0, 1.06 if Levels.on else 1.12][diff()]
 	z.think = randf_range(0.0, 0.6)
 	z.groan_t = randf_range(0.5, 6.0)
@@ -2542,23 +2547,9 @@ static func zombie_tick(s) -> void:
 					s.aim_yaw = G.turn_to(s.aim_yaw, atan2(tb.x, tb.z), 4.0 * G.DT)
 					if G.sim_time > float(s.get_meta("tear_t", 0.0)):
 						s.set_meta("tear_t", G.sim_time + 0.9)
-						# a man standing close behind the boards: an arm through the gap for him
-						var vic = null
-						for o in G.soldiers:
-							if not o.zombie and o.team != s.team and o.state == "alive" and G.dist2d(o.pos, br["c"]) < 1.7 and absf(o.pos.y - s.pos.y) < 1.5:
-								vic = o
-								break
-						if vic != null and randf() < 0.5:
-							s.lunge_t = 0.5
-							s.lunge_dir = G.flat(vic.pos - s.pos).normalized()
-							s.melee_t = 1.0
-							_claw(s, vic, 0.5, false)
-							reached += 1
-							if reach_said != horde_wave:
-								reach_said = horde_wave
-								G.ui.radio(0, "They're reaching through the boards at %s: stand back from it" % AI.grid_ref(br["c"]))
-						else:
-							_tear(s, 2.0)
+						# (They used to put an arm through the gaps for a man standing close behind the
+						# boards. In every battle played, nobody ever stood there: it is taken out.)
+						_tear(s, 2.0)
 					return
 		# (Up the stairs of a house after a man at an upstairs window, too: the way there is by the foot
 		# of the stairs and the head of them. They used to walk to the spot underneath him and stand there,
@@ -2811,8 +2802,14 @@ static func lose_leg(z, sd: int) -> void:
 # A grab that lands takes hold. For a second or so he can do nothing but wrench at it; then he either
 # throws it off (likelier if he's unhurt, surer if a friend is beside him to haul it away, harder with
 # more of them on him) and it goes down, or it bears him to the ground and goes on biting.
+static var held_men: Array = []      # the men in a grip just now
+static var test_rescue = false       # (a test: men who may not shoot may still haul the dead off each other)
+static var wrenches = 0
+static var p_grabs = 0
+static var p_free = 0
+
 static func _grab(z, t) -> bool:
-	if t.is_player or t.grab_t > 0.0 or t.state != "alive" or t.vehicle != null:
+	if t.grab_t > 0.0 or t.state != "alive" or t.vehicle != null:
 		return false
 	if z.ztype == "brute" or z.ztype == "crawler" or z.ztype == "spitter" or z.has_meta("boss") or z.atk_kind != 0 or z.has_meta("breach"):
 		return false
@@ -2820,6 +2817,18 @@ static func _grab(z, t) -> bool:
 		return false
 	t.grab_by = z
 	t.grab_t = randf_range(0.9, 1.4)
+	held_men = held_men.filter(func(h): return is_instance_valid(h) and h.grab_t > 0.0)
+	held_men.append(t)
+	if t.is_player:
+		# You get longer, and it is in your hands: three wrenches (F or Space) throw it off.
+		t.grab_t = 2.4
+		wrenches = 0
+		p_grabs += 1
+		z.zhold = t
+		z.zhold_t = 0.3
+		grabs += 1
+		G.ui.message("It has hold of you! Hammer F (or Space) to throw it off")
+		return true
 	z.zhold = t
 	z.zhold_t = 0.3
 	grabs += 1
@@ -2833,6 +2842,106 @@ static func _grab_end(s) -> void:
 		z.zhold = null
 	s.grab_by = null
 	s.grab_t = 0.0
+	held_men.erase(s)
+	if s.has_meta("rescuer"):
+		s.remove_meta("rescuer")
+
+# ---- the player in its grip: nothing but wrenching at it until it's off him or he's under it
+static func player_grab_tick(s) -> void:
+	var z = s.grab_by
+	if z == null or not is_instance_valid(z) or z.state != "alive" or s.state != "alive" or G.dist2d(z.pos, s.pos) > 2.4:
+		_grab_end(s)
+		return
+	s.grab_t -= G.DT
+	s.want = Vector3(sin(G.sim_time * 11.0), 0, cos(G.sim_time * 8.0)) * 0.22
+	s.ads = false
+	if s.grab_t > 0.0:
+		return
+	var away = -G.flat(z.pos - s.pos).normalized()
+	dragged += 1
+	s.hp -= randf_range(8.0, 14.0)
+	G.fx.bleed(s.chest(), away, false)
+	_grab_end(s)
+	if s.hp <= 0.0:
+		Combat.kill(s, z, false)
+		return
+	s.fall(1.6)
+	z.melee_t = 0.6
+	G.ui.message("It bore you down")
+
+static func player_wrench(s) -> void:
+	var z = s.grab_by
+	if s.grab_t <= 0.0 or z == null or not is_instance_valid(z):
+		return
+	wrenches += 1
+	s.kick_t = 0.2
+	G.audio.kick(s.pos)
+	if wrenches < 3:
+		G.ui.message("Again! %d of 3" % wrenches)
+		return
+	var away = G.flat(z.pos - s.pos).normalized()
+	z.fall(1.4)
+	z.push(1, away * 4.0 + Vector3(0, 1.4, 0), 0.5)
+	z.melee_t = 1.6
+	shoved += 1
+	p_free += 1
+	_grab_end(s)
+	G.ui.message("Thrown off")
+
+# ---- hauling one of the dead off the man next to you
+# A man already beside one in a grip (within two and a half metres) hauls the thing off him: it goes
+# down and the other is free. One man to each. Nobody runs in from further off to do it: tried at five
+# metres, it took men into the crowd and the Ministry was lost sooner. (They used to fire at it, and
+# what was left of the friendly fire was nearly all shots from under a metre into the man it had hold of.)
+static func rescue(s) -> bool:
+	if held_men.is_empty() or s.is_player or s.state != "alive" or s.vehicle != null or s.dragging != null or s.grab_t > 0.0:
+		return false
+	if "--norescue" in OS.get_cmdline_user_args():
+		return false
+	# (not a man on his way up the stairs or back to a post, and not one carrying or tending another)
+	if s.route != null or AI._falling_back(s) or s.task in ["medic", "stretcher", "drag", "help_walk"]:
+		return false
+	for h in held_men:
+		if not is_instance_valid(h) or h == s or h.grab_t <= 0.0 or h.team != s.team:
+			continue
+		var z = h.grab_by
+		if z == null or not is_instance_valid(z) or z.state != "alive":
+			continue
+		var rid = int(h.get_meta("rescuer", -1))
+		if rid != -1 and rid != s.id:
+			continue
+		var to = G.flat(z.pos - s.pos)
+		var d = to.length()
+		if d > 2.5 or absf(z.pos.y - s.pos.y) > 1.2:
+			continue
+		h.set_meta("rescuer", s.id)
+		s.ready_ = false
+		s.prone_t = false
+		s.aim_yaw = G.turn_to(s.aim_yaw, atan2(to.x, to.z), 8.0 * G.DT)
+		if d < 2.5:
+			s.set_meta("shove_t", 0.0)
+			Combat.shove(s, z)
+			if z.state == "alive":
+				z.fall(1.4)
+				z.push(1, to.normalized() * 3.5 + Vector3(0, 1.2, 0), 0.5)
+			z.melee_t = 1.6
+			pulled += 1
+			if not h.is_player:
+				_grab_end(h)
+			else:
+				_grab_end(h)
+				G.ui.message("%s hauled it off you" % s.sname)
+			if randf() < 0.6:
+				G.fx.callout(s, G.pick(["Got it! You're clear!", "I've got it, go!", "Off him!"]))
+			return true
+		return true
+	return false
+
+# (Tried and taken out: in a building, a man with nobody of his own within five metres went and stood by
+# the nearest one who was. Played with nobody giving orders, the Ministry was lost in wave 5 or 6 with
+# it and held longer without: the men spent their time walking to each other, and a pair caught
+# together was lost together.)
+static var pairings = 0
 
 static func grab_tick(s) -> void:
 	var z = s.grab_by

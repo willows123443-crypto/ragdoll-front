@@ -523,6 +523,10 @@ static func _satchel_site(s, reach: float) -> int:
 static func _rifle_grenade(s, known: bool, threat: Vector3) -> void:
 	if s.rgren <= 0 or s.wid != "rifle" or s.job_cd > 0.0 or not known:
 		return
+	# (not from under a roof: lobbed from indoors it comes back off the ceiling or the window frame. The
+	# last blasts that killed men on their own side in the Ministry were these, logged as "rocket, rifle".)
+	if Doors.building_at(s.pos) >= 0 or (Levels.on and Levels.inside(s.pos, 0.0)):
+		return
 	var tgt = s.vis_t
 	var p: Vector3 = threat
 	if tgt != null and is_instance_valid(tgt):

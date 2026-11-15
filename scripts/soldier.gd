@@ -3471,6 +3471,8 @@ func _sync_mask() -> void:
 		if b.collision_layer == G.L_BODY:
 			b.collision_mask = (G.L_WORLD | G.L_BODY | G.L_DEBRIS | G.L_VEH) if full else (G.L_WORLD | G.L_BODY)
 
+static var pfx = [0, 0]      # microseconds: the tick before he thinks, and between thinking and posing
+
 func tick() -> void:
 	# a body that's come to rest has nothing left to work out but whether what it lies on is still there
 	if state == "dead" and settled and pooled and dragger == null and carried_by == null and glint == null and flashlight == null and tool_node == null and carried == null and detector == null:
@@ -3851,6 +3853,7 @@ func _turn_body(goal: float, max_rate: float) -> void:
 		body_yaw += yaw_v * G.DT
 
 func _tick_alive() -> void:
+	var q0 = Time.get_ticks_usec() if PERF else 0
 	# a man on his feet who has ended up under the ground (got up from where a vehicle pushed him through
 	# it, say) is put back on top of it
 	bury_t += 1
@@ -3884,14 +3887,17 @@ func _tick_alive() -> void:
 			set_meta("duck_after_t", G.sim_time + 1.2)
 	for r in range(5):
 		limb[r] = minf(1.0, limb[r] + 1.1 * G.DT)
+	var q1 = 0
 	if is_player:
 		G.pc.player_update(self)
 		if bandage_t > 0.0:
 			Medical.bandage_tick(self)
 	elif PERF:
 		var pt0 = Time.get_ticks_usec()
+		pfx[0] += pt0 - q0
 		AI.update(self)
-		pf[0] += Time.get_ticks_usec() - pt0
+		q1 = Time.get_ticks_usec()
+		pf[0] += q1 - pt0
 	else:
 		AI.update(self)
 	if state != "alive":
@@ -4057,6 +4063,7 @@ func _tick_alive() -> void:
 		check_gun_clip()
 	if PERF:
 		var pt1 = Time.get_ticks_usec()
+		pfx[1] += pt1 - q1
 		_pose_now()
 		var pt2 = Time.get_ticks_usec()
 		strength = 0.42 * (1.0 - 0.8 * minf(1.0, stun / 0.25))

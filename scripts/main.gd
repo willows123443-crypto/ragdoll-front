@@ -1095,6 +1095,10 @@ func _step_cap(dt: float) -> void:
 		Engine.max_physics_steps_per_frame = 2
 	elif step_avg < 5.5:
 		Engine.max_physics_steps_per_frame = 8
+	# (Drawing in the distance inside which bodies are fully simulated while the steps are heavy was tried
+	# here: with the camera down among 100 men it took the simulated living from 16 to 3 and the battle
+	# ran 1.5% faster. Simulated bodies are not where the time goes: about two-thirds of a step is the
+	# game's own per-man logic, spread thin, and the physics engine itself about an eighth.)
 
 func _process(dt: float) -> void:
 	_shadow_auto(dt)
@@ -4678,7 +4682,7 @@ func _horde_play() -> void:
 					int(Stats.teams[0]["kills"]), int(Stats.teams[0]["kills"]) - kills0, Modes.boarded_n, Modes.doors_n, Modes.torn_n, Modes.ups, Modes.downs, str(Modes.bought), Modes.stragglers,
 					(" | floors: ground %d, first %d, second %d, outside %d" % st) if Levels.on else "",
 					(" | slams %d, rocks %d, brood %d" % [Modes.slams, Modes.throws, Modes.brood_n]) if last_wave % 10 == 0 else ""])
-				print("%s:   so far: over the top %d, through the boards %d | grabbed %d: threw it off %d, hauled clear %d, borne down %d | legs shot off %d | over a low wall when stuck %d | sent to an upstairs window %d | shoves %d | friendly fire %s" % [tag, Modes.piled, Modes.reached, Modes.grabs, Modes.shoved, Modes.pulled, Modes.dragged, Modes.legs_off, Modes.walls_over, Modes.duties, Combat.shove_n, str(Stats.tk_log)])
+				print("%s:   so far: over the top %d, through the boards %d | grabbed %d: threw it off %d, hauled clear %d, borne down %d | legs shot off %d | over a low wall when stuck %d | sent to an upstairs window %d | went to stand by another man %d | shoves %d | friendly fire %s" % [tag, Modes.piled, Modes.reached, Modes.grabs, Modes.shoved, Modes.pulled, Modes.dragged, Modes.legs_off, Modes.walls_over, Modes.duties, Modes.pairings, Combat.shove_n, str(Stats.tk_log)])
 				kills0 = int(Stats.teams[0]["kills"])
 				lowest = men
 			last_wave = Modes.horde_wave
@@ -5311,6 +5315,19 @@ func _menu_shot(dir: String) -> void:
 	await _wait(0.4)
 	await _snap(dir, "setup_sandbox")
 	print("MENUSHOT sandbox: maps offered ", G.ui.opt_map.item_count, " | sizes ", G.ui.opt_size.item_count, " | enemy commander row shown: ", G.ui.opt_style_m.get_parent().visible)
+	G.ui.opt_mode.select(G.ui.MODE_IDS.find("horde"))
+	G.ui._show_mode_info()
+	await _wait(0.3)
+	await _snap(dir, "setup_horde")
+	print("MENUSHOT records line: ", G.ui.horde_rec.text, " | waves option shown: ", G.ui.opt_hlen.get_parent().visible)
+	G.ui._show_horde()
+	await _wait(0.4)
+	await _snap(dir, "chooser")
+	G.ui.horde_panel.visible = false
+	G.ui._show_sounds()
+	await _wait(0.4)
+	await _snap(dir, "sounds")
+	G.ui.sounds_panel.visible = false
 	G.ui.title.visible = false
 	start_game({"map": "town", "mode": "horde", "size": 8, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
 	await _wait(7.0)
@@ -5383,6 +5400,61 @@ func _react_test() -> void:
 				hurt += 100.0 - m.hp
 				m.hp = 100.0
 	print("REACTTEST grabbed: 8 men who may not shoot, one of the dead each, 30 s: taken hold of %d times | threw it off %d | hauled clear by another man %d | borne to the ground %d | still held at the end %d" % [Modes.grabs, Modes.shoved, Modes.pulled, Modes.dragged, use.filter(func(m): return m.grab_t > 0.0).size()])
+	# ---- two together: the same, the men in pairs two and a half metres apart, one of the dead to a pair
+	for z in G.soldiers.duplicate():
+		if z.zombie and z.state != "dead":
+			z.hp = 0.0
+			Combat.kill(z, null, false)
+	await _wait(1.0)
+	var g0 = [Modes.grabs, Modes.shoved, Modes.pulled, Modes.dragged]
+	Modes.test_rescue = true
+	use = use.filter(func(m): return m.state != "dead")
+	for i in range(use.size()):
+		var q2 = Vector3(p0.x + (i / 2) * 9.0 + (i % 2) * 2.5, 0, p0.z + 30.0)
+		use[i].move_to(Vector3(q2.x, G.world.ground_y(q2.x, q2.z), q2.z))
+		use[i].hp = 100.0
+	for i in range(use.size() / 2):
+		Modes.spawn_zombie("walker", use[i * 2].pos.x, use[i * 2].pos.z + 2.4)
+	t0 = G.sim_time
+	while G.sim_time - t0 < 30.0:
+		await get_tree().physics_frame
+		for m in use:
+			if m.state != "dead" and m.hp < 50.0:
+				m.hp = 100.0
+	print("REACTTEST in pairs: %d men two and a half metres apart, one of the dead to a pair, 30 s: taken hold of %d times | threw it off himself %d | hauled clear by the other man %d | borne to the ground %d" % [use.size(), Modes.grabs - g0[0], Modes.shoved - g0[1], Modes.pulled - g0[2], Modes.dragged - g0[3]])
+	Modes.test_rescue = false
+	# ---- the player in its grip: once wrenching at it three times, once doing nothing
+	var pm = use[0]
+	pm.is_player = true
+	var outc = []
+	for trial in range(2):
+		for z in G.soldiers.duplicate():
+			if z.zombie and z.state != "dead":
+				z.hp = 0.0
+				Combat.kill(z, null, false)
+		await _wait(0.5)
+		pm.hp = 100.0
+		if pm.state != "alive":
+			await _wait(3.0)
+		var zz = Modes.spawn_zombie("walker", pm.pos.x, pm.pos.z + 1.2)
+		zz.atk_kind = 0
+		var ok = false
+		for tries in range(40):
+			if Modes._grab(zz, pm):
+				ok = true
+				break
+		var hp0 = pm.hp
+		var n = 0
+		var t1 = G.sim_time
+		while pm.grab_t > 0.0 and G.sim_time - t1 < 4.0:
+			await get_tree().physics_frame
+			Modes.player_grab_tick(pm)
+			n += 1
+			if trial == 0 and n % 20 == 0:
+				Modes.player_wrench(pm)
+		outc.append("%s: held %s, free after %.1f s, hurt %.0f, on his feet %s, the thing on its feet %s" % ["wrenching three times" if trial == 0 else "doing nothing", str(ok), G.sim_time - t1, hp0 - pm.hp, str(pm.state == "alive"), str(zz.state == "alive")])
+	pm.is_player = false
+	print("REACTTEST the player gripped: ", " | ".join(outc))
 	get_tree().quit()
 
 # --zedwalk: do their feet stay put? Twelve of the dead walk at a man for ten seconds; for each foot, how
@@ -6992,8 +7064,11 @@ func _perf_run() -> void:
 		prof = [0, 0]
 		prof2 = [0, 0, 0, 0, 0, 0]
 		Soldier.pf = [0, 0, 0, 0]
+		Soldier.pfx = [0, 0]
 		AI.pf = {}
 		# (how the time divides: physics steps run, pictures drawn and wall-clock seconds over the window)
+		if "--nophys" in OS.get_cmdline_user_args():
+			PhysicsServer3D.set_active(false)      # (an experiment: what a step costs with the physics engine itself switched off)
 		var pf0 = Engine.get_physics_frames()
 		var df0 = Engine.get_process_frames()
 		var w0 = Time.get_ticks_msec()
@@ -7001,8 +7076,29 @@ func _perf_run() -> void:
 		var phys_n = 0
 		var secs_w = float(_arg("secs", "20"))
 		var tw0 = G.sim_time
+		var near_cam = "--near" in OS.get_cmdline_user_args()
+		var sim_n = 0
+		var sim_k = 0
 		while G.sim_time - tw0 < secs_w:
 			await get_tree().process_frame
+			if near_cam:
+				# (the camera down among them, where most of the living are inside the simulated distance)
+				var cmid = Vector3.ZERO
+				var ncn = 0
+				for m in G.soldiers:
+					if m.state == "alive":
+						cmid += m.pos
+						ncn += 1
+				if ncn > 0:
+					cmid /= ncn
+					G.pc.free_pos = cmid + Vector3(0, 8.0, 10.0)
+					var cam3 = get_viewport().get_camera_3d()
+					if cam3 != null:
+						cam3.global_position = cmid + Vector3(0, 8.0, 10.0)
+				sim_k += 1
+				for m in G.soldiers:
+					if m.state == "alive" and not m.lod_frozen:
+						sim_n += 1
 			phys_sum += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
 			phys_n += 1
 		var wall = (Time.get_ticks_msec() - w0) / 1000.0
@@ -7010,6 +7106,8 @@ func _perf_run() -> void:
 		var drawn = Engine.get_process_frames() - df0
 		print("PERF %d clock: %.1f s of battle took %.1f s (%.0f%% of full speed) | %d pictures drawn (%.1f a second, %.0f ms each) | %.2f physics steps to a picture, %.1f ms a step on average | so about %.0f ms of each picture is physics and %.0f ms the drawing and the rest | draw calls %d" % [k, secs_w, wall, 100.0 * secs_w / maxf(wall, 0.01), drawn, drawn / maxf(wall, 0.01), 1000.0 * wall / maxf(drawn, 1),
 			float(steps) / maxf(drawn, 1), phys_sum / maxf(phys_n, 1), float(steps) / maxf(drawn, 1) * phys_sum / maxf(phys_n, 1), 1000.0 * wall / maxf(drawn, 1) - float(steps) / maxf(drawn, 1) * phys_sum / maxf(phys_n, 1), int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))])
+		if near_cam:
+			print("PERF %d near: the living fully simulated at any moment, on average: %.1f" % [k, float(sim_n) / maxf(sim_k, 1)])
 		var n = maxi(tick_n, 1)
 		var frozen = 0
 		var alive = 0
@@ -7018,6 +7116,7 @@ func _perf_run() -> void:
 				frozen += 1
 			if s.state == "alive":
 				alive += 1
+		print("PERF %d other: before thinking %.2f ms, between thinking and posing (moving, colliding) %.2f ms" % [k, Soldier.pfx[0] / 1000.0 / n, Soldier.pfx[1] / 1000.0 / n])
 		print("PERF %d: men %d (alive %d, far %d) vehicles %d | tick %.2f ms = vehicles %.2f + soldiers %.2f (think %.2f, pose %.2f, body %.2f, glide %.2f, other %.2f) + combat %.2f + effects %.2f + squads %.2f + support/fog %.2f + commander %.2f" % [k, G.soldiers.size(), alive, frozen, G.vehicles.size(),
 			tick_us / 1000.0 / n, prof[0] / 1000.0 / n, prof[1] / 1000.0 / n, Soldier.pf[0] / 1000.0 / n, Soldier.pf[1] / 1000.0 / n, Soldier.pf[2] / 1000.0 / n,
 			Soldier.pf[3] / 1000.0 / n, (prof[1] - Soldier.pf[0] - Soldier.pf[1] - Soldier.pf[2] - Soldier.pf[3]) / 1000.0 / n,

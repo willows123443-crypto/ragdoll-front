@@ -86,10 +86,29 @@ var row_seed: Control
 var opt_style_m: OptionButton
 var opt_diff_m: OptionButton
 var opt_hdiff: OptionButton
+var opt_hlen: OptionButton
+var setup_sub: Label
+var horde_rec: Label
+var horde_wave_row: Control
+
+# the furthest you have got on the chosen map, on each of the three difficulties
+func _horde_recs() -> void:
+	if horde_rec == null or opt_mode == null:
+		return
+	var hz = MODE_IDS[clampi(opt_mode.selected, 0, MODE_IDS.size() - 1)] == "horde"
+	horde_rec.visible = hz
+	if not hz or opt_map == null or opt_map.item_count == 0:
+		return
+	var key = _map_key(opt_map.selected)
+	var bits = []
+	for d in range(3):
+		var b = Modes.horde_best(key, d)
+		bits.append("%s %s" % [Modes.DIFF_NAMES[d], ("wave %d" % b) if b > 0 else "not played"])
+	horde_rec.text = "Best on %s:  %s" % [opt_map.get_item_text(opt_map.selected), "  ·  ".join(bits)]
 const SIZES = ["5", "8", "10", "15", "20", "30", "50", "100"]
 const SIZES_HORDE = ["4", "6", "8", "10", "12"]
 # where a mode is known to work properly (a mode not listed here is offered every map)
-const MODE_MAPS = {"horde": ["town", "office"]}
+const MODE_MAPS = {"horde": ["town", "office", "city", "factory"]}
 var opt_armor: OptionButton
 var opt_teams: OptionButton
 var opt_fac0: OptionButton
@@ -1100,6 +1119,7 @@ func _build_menu() -> void:
 	top.add_child(tl)
 	outer.add_child(top)
 	var d = _label("Two armies fight it out on their own. Drop in soldiers, call in strikes, command from above or take control of anyone on the field.", 14, Color(0.75, 0.77, 0.75))
+	setup_sub = d
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD
 	d.custom_minimum_size = Vector2(860, 0)
 	outer.add_child(d)
@@ -1179,6 +1199,15 @@ func _build_menu() -> void:
 		G.save_prefs())
 	opt_hdiff.tooltip_text = "How many of the dead come, how tough and fast they are, and what a kill pays"
 	_row(v, "The dead", opt_hdiff)
+	opt_hdiff.item_selected.connect(func(_i): _horde_recs())
+	opt_hlen = _option(["Ten waves", "Endless"], int(G.settings.get("horde_len", 0)))
+	opt_hlen.item_selected.connect(func(i):
+		G.settings["horde_len"] = i
+		G.save_prefs())
+	opt_hlen.tooltip_text = "Ten waves to win, or no end: each wave bigger than the last, a giant every tenth"
+	_row(v, "Waves", opt_hlen)
+	horde_rec = _label("", 13, Color(1.0, 0.85, 0.4))
+	v.add_child(horde_rec)
 	_section(v, "World")
 	opt_time = _option(["Day", "Dusk", "Night", "Dawn till nightfall (time passes)", "Endless day and night cycle"], maxi(0, ["day", "dusk", "night", "dawn", "cycle"].find(G.settings["time"])))
 	opt_time.item_selected.connect(func(i):
@@ -2109,8 +2138,14 @@ func _mode_settings(id: String) -> void:
 	if opt_hdiff != null:
 		opt_hdiff.get_parent().visible = hz
 		opt_hdiff.select(Modes.diff())
+	if setup_sub != null:
+		setup_sub.text = "A handful of survivors against wave after wave of the dead. Command from above or take control of any of them." if hz else "Two armies fight it out on their own. Drop in soldiers, call in strikes, command from above or take control of anyone on the field."
+	if opt_hlen != null:
+		opt_hlen.get_parent().visible = hz
+		opt_hlen.select(int(G.settings.get("horde_len", 0)))
 	_fill_sizes(id)
 	refresh_maps()
+	_horde_recs()
 	# where more men come in later, the number set here is what each side starts with
 	if size_lbl != null:
 		size_lbl.text = {"laststand": "Defenders", "horde": "Survivors at the start", "sabotage": "Raiders", "commander": "Starting troops per side",
@@ -2425,7 +2460,7 @@ func _show_horde() -> void:
 	if horde_panel != null:
 		horde_panel.queue_free()
 	horde_panel = _panel(Color(0.1, 0.12, 0.14, 0.98))
-	_place(horde_panel, Control.PRESET_CENTER, -380, -190, 760, 380)
+	_place(horde_panel, Control.PRESET_CENTER, -380, -335, 760, 670)
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	v.add_child(_label("Zombie horde", 26, Color(0.97, 0.93, 0.82)))
@@ -2445,12 +2480,29 @@ func _show_horde() -> void:
 			db.add_theme_color_override("font_color", Color(1.0, 0.86, 0.4))
 		dr.add_child(db)
 	dr.add_child(_label(Modes.DIFF_TIPS[Modes.diff()], 13, Color(0.7, 0.72, 0.7)))
+	var wr = HBoxContainer.new()
+	wr.add_theme_constant_override("separation", 8)
+	wr.add_child(_label("Waves", 14, Color(0.9, 0.91, 0.88)))
+	for li in range(2):
+		var lon = int(G.settings.get("horde_len", 0)) == li
+		var lb = _button(("  ● %s  " if lon else "  %s  ") % ["Ten", "Endless"][li], func():
+			G.settings["horde_len"] = li
+			G.save_prefs()
+			_show_horde())
+		lb.tooltip_text = ["Beat the tenth wave and you have won (you can keep fighting after)", "No end: each wave bigger than the last, a giant every tenth, for as long as you can stand"][li]
+		wr.add_child(lb)
+	horde_wave_row = wr
 	v.add_child(dr)
-	var cols = HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 12)
+	v.add_child(horde_wave_row)
+	var cols = GridContainer.new()
+	cols.columns = 2
+	cols.add_theme_constant_override("h_separation", 12)
+	cols.add_theme_constant_override("v_separation", 12)
 	v.add_child(cols)
 	for mp in [["town", "Town ruins", "Streets and houses round a crossroads. Barricade the roads and fall back to a house when the streets are lost: the men in it board up its windows and doors."],
-			["office", "The Ministry", "One big building, three floors. The men board up the ground floor and hold it; when a floor is overrun they fall back up the stairs and hold the head of them."]]:
+			["office", "The Ministry", "One big building, three floors. The men board up the ground floor and hold it; when a floor is overrun they fall back up the stairs and hold the head of them."],
+			["city", "City blocks", "Tall blocks on a grid of streets: long lines of fire down the avenues, and a great many windows to board."],
+			["factory", "The factory", "Sheds, yards and a works building. Open ground between the walls, and plenty of them to get behind."]]:
 		var pc = PanelContainer.new()
 		var sb = StyleBoxFlat.new()
 		sb.bg_color = Color(0.13, 0.15, 0.16, 1.0)
@@ -2464,7 +2516,7 @@ func _show_horde() -> void:
 		pv.add_child(_label(mp[1], 20, Color(0.96, 0.85, 0.5)))
 		var dl = _label(mp[2], 14, Color(0.9, 0.91, 0.88))
 		dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		dl.custom_minimum_size = Vector2(300, 84)
+		dl.custom_minimum_size = Vector2(300, 62)
 		pv.add_child(dl)
 		var best = Modes.horde_best(mp[0])
 		pv.add_child(_label(("Best on %s: wave %d" % [Modes.DIFF_NAMES[Modes.diff()].to_lower(), best]) if best > 0 else "Not played yet on %s" % Modes.DIFF_NAMES[Modes.diff()].to_lower(), 14, Color(1.0, 0.86, 0.4) if best > 0 else Color(0.65, 0.66, 0.64)))
@@ -3278,6 +3330,7 @@ func _show_settings() -> void:
 	hb.add_child(_button("Default keys", func():
 		Keys.reset()
 		_show_settings()))
+	hb.add_child(_button("Try the sounds…", func(): _show_sounds()))
 	hb.add_child(_button("Done", func():
 		binding = ""
 		G.save_prefs()
@@ -3285,6 +3338,65 @@ func _show_settings() -> void:
 	v.add_child(hb)
 	settings_panel.add_child(v)
 	root.add_child(settings_panel)
+
+# ---------------------------------------------------------------- the sounds, one at a time
+# Each button plays one sound a few metres in front of the camera, as it is heard in a battle, so that
+# one that is wrong or too loud can be named. The slider turns the dead's own noises up or down.
+var sounds_panel: PanelContainer = null
+
+func _show_sounds() -> void:
+	if sounds_panel != null:
+		sounds_panel.queue_free()
+	sounds_panel = _panel(Color(0.1, 0.12, 0.14, 0.98))
+	_place(sounds_panel, Control.PRESET_CENTER, -230, -200, 460, 400)
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	v.add_child(_label("Try the sounds", 20, Color(0.96, 0.85, 0.5)))
+	v.add_child(_label("Each plays a few metres in front of you, as in a battle.", 13, Color(0.7, 0.72, 0.7)))
+	var fl = HFlowContainer.new()
+	fl.add_theme_constant_override("h_separation", 6)
+	fl.add_theme_constant_override("v_separation", 6)
+	var cam = get_viewport().get_camera_3d()
+	var at = func() -> Vector3:
+		var c = get_viewport().get_camera_3d()
+		return c.global_position - c.global_transform.basis.z * 4.0 if c != null else Vector3.ZERO
+	var list = [
+		["A shove", func(): G.audio.kick(at.call())],
+		["Hammering a plank", func(): G.audio.hammer(at.call())],
+		["A plank torn off", func(): G.audio.tear(at.call())],
+		["The dead: a groan", func(): G.audio.groan(at.call(), "")],
+		["The dead: a snarl", func(): G.audio.groan(at.call(), "snarl")],
+		["A runner's screech", func(): G.audio.groan(at.call(), "screech")],
+		["A brute", func(): G.audio.groan(at.call(), "brute")],
+		["A giant's stamp", func(): G.audio.slam(at.call())],
+		["A giant's roar", func(): G.audio.roar(at.call())],
+		["Glass", func(): G.audio.glass(at.call())],
+		["A grenade", func(): G.audio.boom(at.call())],
+	]
+	for it in list:
+		fl.add_child(_button("  %s  " % it[0], it[1]))
+	v.add_child(fl)
+	var zr = HBoxContainer.new()
+	zr.add_theme_constant_override("separation", 8)
+	zr.add_child(_label("The dead's noises", 14, Color(0.9, 0.91, 0.88)))
+	var sl = HSlider.new()
+	sl.min_value = 0.0
+	sl.max_value = 1.5
+	sl.step = 0.05
+	sl.value = float(G.settings.get("zed_vol", 1.0))
+	sl.custom_minimum_size = Vector2(200, 20)
+	var pc = _label("%d%%" % int(round(sl.value * 100.0)), 14, Color(0.9, 0.91, 0.88))
+	sl.value_changed.connect(func(x):
+		G.settings["zed_vol"] = x
+		pc.text = "%d%%" % int(round(x * 100.0)))
+	zr.add_child(sl)
+	zr.add_child(pc)
+	v.add_child(zr)
+	v.add_child(_button("Done", func():
+		G.save_prefs()
+		sounds_panel.visible = false))
+	sounds_panel.add_child(v)
+	root.add_child(sounds_panel)
 
 # ---------------------------------------------------------------- order card
 # pops up just above the dock whenever you have soldiers selected: what they are, and what you can tell them to do
@@ -3528,6 +3640,7 @@ func _map_id(i: int) -> String:
 	return "custom"
 
 func _select_map(i: int) -> void:
+	_horde_recs()
 	G.main.preview_map(_map_id(i))
 
 # ---------------------------------------------------------------- radio chatter

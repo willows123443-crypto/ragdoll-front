@@ -2219,6 +2219,9 @@ static func update(s) -> void:
 	if s.grab_t > 0.0:
 		Modes.grab_tick(s)
 		return
+	# it has hold of the man next to him: that comes before anything else he was doing
+	if not Modes.held_men.is_empty() and (not G.builder or Modes.test_rescue) and Modes.rescue(s):
+		return
 	# battle builder: everyone stands where he was put until the battle starts
 	if G.builder and not s.is_player:
 		s.want = Vector3.ZERO
@@ -3144,6 +3147,9 @@ static func scavenge(s, body) -> void:
 
 # would this shot (or its spread, or a rocket's blast) endanger a friend?
 static func friendly_in_line(s, from: Vector3, dir: Vector3, L: float):
+	# nobody fires at one of the dead that has hold of a man: the man is in the shot
+	if s.target != null and is_instance_valid(s.target) and s.target.zombie and s.target.zhold != null and is_instance_valid(s.target.zhold) and not s.is_player:
+		return s.target.zhold
 	var rocket = s.W["rocket"]
 	# (a launched grenade bursts too: six of seven men killed by their own side in one battle against the
 	# dead were killed by blasts, four of them from the grenade launcher, which only ever looked along

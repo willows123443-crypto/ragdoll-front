@@ -858,8 +858,8 @@ func slam(pos: Vector3, vol_db: float = 6.0) -> void:
 
 # one of the big ones giving voice: the snarl, an octave down
 func roar(pos: Vector3) -> void:
-	if cam_dist(pos) < 120.0:
-		play(s_snarl, pos, 5.0, randf_range(0.45, 0.55))
+	if cam_dist(pos) < 120.0 and float(G.settings.get("zed_vol", 1.0)) > 0.01:
+		play(s_snarl, pos, 5.0 + zed_db(), randf_range(0.45, 0.55))
 
 func kick(pos: Vector3) -> void:
 	if cam_dist(pos) < 70.0:
@@ -916,18 +916,24 @@ func _groan(len_s: float, f0: float, rough: float) -> AudioStreamWAV:
 		out[i] = lp * env * 1.6
 	return _wav(out)
 
+# how loud the dead's own noises are set (Settings, Try the sounds): 0 is off, 1 as made
+func zed_db() -> float:
+	var v = float(G.settings.get("zed_vol", 1.0))
+	return linear_to_db(maxf(v, 0.0001))
+
 func groan(pos: Vector3, kind: String) -> void:
-	if cam_dist(pos) > 45.0:
+	if cam_dist(pos) > 45.0 or float(G.settings.get("zed_vol", 1.0)) <= 0.01:
 		return
+	var zd = zed_db()
 	match kind:
 		"snarl":
-			play(s_snarl, pos, -2.0, randf_range(0.8, 1.1))
+			play(s_snarl, pos, -2.0 + zd, randf_range(0.8, 1.1))
 		"screech":
-			play(s_screech, pos, -1.0, randf_range(0.9, 1.15))
+			play(s_screech, pos, -1.0 + zd, randf_range(0.9, 1.15))
 		"brute":
-			play(s_groans[randi() % s_groans.size()], pos, 2.0, 0.6)
+			play(s_groans[randi() % s_groans.size()], pos, 2.0 + zd, 0.6)
 		_:
-			play(s_groans[randi() % s_groans.size()], pos, -5.0, randf_range(0.8, 1.15))
+			play(s_groans[randi() % s_groans.size()], pos, -5.0 + zd, randf_range(0.8, 1.15))
 
 # a footfall, by what's underfoot: a dull pad on earth and grass, a harder scuff on a road, a hollow
 # knock on the boards and concrete of a floor indoors

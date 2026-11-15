@@ -198,6 +198,10 @@ func leave_soldier() -> void:
 
 func player_update(s) -> void:
 	var W = s.W
+	# one of the dead has hold of you: no walking, no shooting, only wrenching at it (F or Space)
+	if s.grab_t > 0.0:
+		Modes.player_grab_tick(s)
+		return
 	s.morale_t -= G.DT
 	if s.morale_t <= 0.0:
 		s.morale_t = 0.5
@@ -1084,6 +1088,8 @@ func _key(k: int) -> void:
 					b.remove_collision_exception_with(v.body)
 				s.mount(v, i)
 				G.ui.message("Seat %d: %s" % [i + 1, v.spec["seats"][i]["role"]])
+		elif (k == KEY_F or k == KEY_SPACE) and s.grab_t > 0.0:
+			Modes.player_wrench(s)
 		elif k == KEY_F and s.state == "alive" and _knife_target(s) != null:
 			Combat.knife(s, _knife_target(s))
 		elif k == KEY_F and s.state == "alive" and Faction.player_tunnel(s):

@@ -1314,6 +1314,13 @@ static func _initiative(s, known: bool, threat: Vector3, dT: float) -> bool:
 			return true
 	return false
 
+# ordered to fall back, and not yet where he was sent
+static func _falling_back(s) -> bool:
+	if s.order == null or str(s.order.get("tag", "")) != "fallback" or s.order.get("point") == null:
+		return false
+	var fp: Vector3 = s.order["point"]
+	return G.dist2d(s.pos, fp) > (1.3 if s.order.has("in") else 5.0) or absf(fp.y - s.pos.y) > 1.6
+
 static func decide(s) -> void:
 	s.decide_t = randf_range(1.6, 2.6)
 	# the floor he was keeping watch from (or its stairs or ladder) has been blown away: forget that spot
@@ -1325,7 +1332,20 @@ static func decide(s) -> void:
 		s.tower = null
 	if s.task == "stretcher" and Stretcher.busy(s):
 		return
-	if s.task == "flee" or s.route != null or s.task == "board" or s.task == "get_radio":
+	if s.task == "flee" or s.route != null or s.task == "board" or s.task == "get_radio" or s.task == "fortify":
+		if not (s.task == "get_radio" and _falling_back(s)):
+			return
+	# Told to fall back and not there yet: that comes before whatever his squad had him doing (working
+	# round a flank, clearing a room, fetching the radio). Only a man carrying or tending someone
+	# finishes that first. (Men sent up a floor went off to clear rooms on the floor they were leaving.)
+	if _falling_back(s) and not s.is_player and s.vehicle == null and s.dragging == null and not (s.task in ["medic", "stretcher", "drag", "help_walk"]):
+		if s.cover != null:
+			release_cover(s)
+		s.task = "move"
+		s.prone_t = false
+		s.kneel = false
+		route_to(s, s.order["point"], 5.8)
+		s.decide_t = 0.8
 		return
 	# nothing left to fight with but a pistol and a knife: straight at the nearest enemy
 	if s.has_meta("lastditch"):
@@ -1590,7 +1610,11 @@ static func decide(s) -> void:
 		var k1 = (s.id * 37) % 9 - 4
 		var k2 = (s.id * 13) % 5 - 2
 		var goal: Vector3 = order["point"] if s.order != null else order["point"] + Vector3(k2 * 1.8, 0, k1 * 1.8)
-		if G.dist2d(s.pos, goal) > 5.0 or absf(goal.y - s.pos.y) > 1.6:
+		# (sent into a particular house: "there" is the spot inside it, not the nearest cover within five
+		# metres, which for a small house was the outside of its walls. Nine men in twelve sent to the
+		# keep took cover round it.)
+		var in_b: int = int(s.order.get("in", -1)) if s.order != null else -1
+		if G.dist2d(s.pos, goal) > (1.3 if in_b >= 0 else 5.0) or absf(goal.y - s.pos.y) > 1.6:
 			if s.in_cover and s.supp > 1.1:
 				return
 			# attack-move: an enemy in sight on the way, so get into cover near here and fight it out;
@@ -1627,7 +1651,8 @@ static func decide(s) -> void:
 				release_cover(s)
 			s.task = "move"
 			s.prone_t = false
-			route_to(s, goal, 4.4)
+			# (told to fall back, he runs)
+			route_to(s, goal, 5.8 if (s.order != null and str(s.order.get("tag", "")) == "fallback") else 4.4)
 			return
 		# a patrol: at the end of the beat he waits a few seconds, and if it's quiet walks back the other way
 		if s.order != null and s.order.has("patrol"):
@@ -1657,7 +1682,16 @@ static func decide(s) -> void:
 			threat = goal + Vector3(sin(fy), 0, cos(fy)) * 30.0
 			s.threat = threat
 			s.has_threat = true
-		if s.cover == null or s.cover_bad >= 2:
+		if in_b >= 0:
+			if s.cover != null and Doors.building_at(s.cover.p) != in_b:
+				release_cover(s)
+			if s.cover == null:
+				var c3 = find_cover(s, threat, "hold")
+				if c3 != null and Doors.building_at(c3.p) == in_b:
+					take_cover(s, c3)
+				else:
+					stop_move(s)
+		elif s.cover == null or s.cover_bad >= 2:
 			var c2 = find_cover(s, threat, "hold")
 			if c2 != null:
 				take_cover(s, c2)
@@ -1848,7 +1882,7 @@ static func decide(s) -> void:
 		s.task = "fight"
 		if s.supp > 1.2 and s.smokes > 0:
 			Combat.throw_grenade(s, s.pos + G.flat(threat - s.pos).normalized() * 4.0, "smoke")
-		if s.supp > 0.8 or W["id"] == "sniper":
+		if (s.supp > 0.8 or W["id"] == "sniper") and G.mode != "horde":
 			s.prone_t = true
 		else:
 			s.kneel = true
@@ -2256,6 +2290,8 @@ static func update(s) -> void:
 			return
 	if s.task == "fetch":
 		fetch_tick(s)
+	if s.task == "fortify":
+		Modes.fort_tick(s)
 	if ClassAI.busy(s):
 		ClassAI.work(s)
 	# climbing into a vehicle
@@ -2429,6 +2465,14 @@ static func _keep_from_zombies(s) -> void:
 	if near == null or not is_instance_valid(near) or near.state == "dead":
 		return
 	var zd = G.dist2d(near.pos, s.pos)
+	# Told to fall back and not there yet: he keeps running. (Men sent up a floor used to stop and back
+	# away from every one of the dead that came within eight metres, which with the dead in the corridor
+	# meant they never reached the stairs.)
+	if _falling_back(s) and s.task != "medic" and s.dragging == null:
+		# (one in his way gets the butt of the rifle, and he's past it)
+		if zd < 1.9 and s.throw_t <= 0.0 and absf(near.pos.y - s.pos.y) < 1.0:
+			Combat.shove(s, near)
+		return
 	# don't head toward them: cancel any move that closes the distance
 	# (a man who's been ordered somewhere goes, unless they're almost on him: the rule used to stop
 	# anyone you sent toward the middle whenever one of the dead was nearer to it than he was)
@@ -2771,6 +2815,9 @@ static func aim_and_fire(s) -> void:
 		if s.mag < W["mag"] * 0.5 and s.vis_t == null:
 			s.start_reload()
 
+static var crawl_saved = 0       # ticks on which a pinned man ran for it where he would have crawled
+static var crawl_old = false     # (for measuring only: pinned men crawl as they used to)
+
 static func stance(s) -> void:
 	s.lean_t = 0.0
 	# a grenade just thrown: heads down until it's gone off
@@ -2805,14 +2852,22 @@ static func stance(s) -> void:
 	# a medic going in under fire crawls the last stretch to the man he's after
 	if s.task == "medic" and s.patient != null and is_instance_valid(s.patient) and s.dragging == null and s.has_seen and G.sim_time - s.seen_t < 6.0:
 		var dp = G.dist2d(s.patient.pos, s.pos)
-		if dp > 1.3 and dp < 9.0:
+		if dp > 1.3 and dp < (9.0 if crawl_old else 4.0):
 			s.prone_t = true
 	# a machine gunner out in the open with a target goes down behind the gun and gets the bipod on the ground
-	if (s.wid == "lmg" or s.wid == "atrifle") and s.vis_t != null and not s.in_cover and s.want.length_squared() < 0.1 and s.vault == null and s.dragging == null and not ClassAI.busy(s):
+	# (not against the dead: they only bite, and a man lying down is a man caught)
+	if (s.wid == "lmg" or s.wid == "atrifle") and s.vis_t != null and not s.in_cover and s.want.length_squared() < 0.1 and s.vault == null and s.dragging == null and not ClassAI.busy(s) and G.mode != "horde":
 		s.prone_t = true
-	# pinned down in the open: flat on the ground, crawling for cover
-	if s.supp > 1.1 and not s.in_cover and s.task != "flank_move" and s.task != "medic" and s.dragging == null and s.vault == null and not s.zombie and not ClassAI.busy(s):
-		s.prone_t = true
+	# Pinned down in the open with nowhere to go: flat on the ground. A man who has somewhere to go runs
+	# for it. (He used to crawl there: slow, in the open the whole way, and shot on his belly. Men were
+	# crawling across half a field after two rounds had gone past.)
+	if s.supp > 1.1 and not s.in_cover and s.task != "flank_move" and s.task != "medic" and s.dragging == null and s.vault == null and not s.zombie and not ClassAI.busy(s) and G.mode != "horde":
+		if crawl_old or (s.want.length_squared() < 0.1 and s.move_target == null):
+			s.prone_t = true
+		else:
+			s.prone_t = false
+			s.crouch_t = maxf(s.crouch_t, 0.5)       # (head down as he goes)
+			crawl_saved += 1
 	if s.in_cover and s.cover != null:
 		var cp = s.cover
 		var peek_now = s.want_peek and (s.peek_vis or s.force_peek)

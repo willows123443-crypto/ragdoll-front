@@ -60,6 +60,18 @@ static func reset() -> void:
 	horde_side = -1
 	smashed = 0
 	smash_said = -1
+	forts = []
+	forts_made = false
+	jobs = []
+	job_ends = {}
+	fort_t = 0.0
+	boarded_n = 0
+	doors_n = 0
+	torn_n = 0
+	up_t = 0.0
+	ups = 0
+	boss = null
+	boss_due = 0
 	clear_drops()
 	keep_b = -1
 	check_t = 0.0
@@ -677,11 +689,18 @@ static func fall_back() -> String:
 		var p = c
 		if k >= 0:
 			var b = G.world.buildings[k]
-			p = Vector3(b["x"] + randf_range(-0.5, 0.5) * (b["w"] - 2.4), c.y, b["z"] + randf_range(-0.5, 0.5) * (b["d"] - 2.4))
+			# (a clear bit of floor inside it)
+			for tries in range(12):
+				p = Vector3(b["x"] + randf_range(-0.5, 0.5) * (b["w"] - 2.0), c.y, b["z"] + randf_range(-0.5, 0.5) * (b["d"] - 2.0))
+				if not G.world.solid_at(p.x, p.z, 0.3, p.y) and not G.world.astar.is_point_solid(G.world.nav_cell(p.x, p.z)):
+					break
 		else:
 			p = G.main._free_spot(c + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6)))
 		s.order = {"mode": "move", "point": p, "tag": "fallback"}
+		if k >= 0:
+			s.order["in"] = k
 		s.decide_t = 0.0
+		_drop_job(s)
 		n += 1
 	G.audio.radio_click()
 	return "%d men falling back to %s" % [n, "the keep" if k >= 0 else "the middle"]
@@ -715,6 +734,7 @@ static func _fall_back_floor() -> String:
 		var p = Levels.spot_on(k, near, 5.0 if k > 0 else 4.0)
 		s.order = {"mode": "move", "point": p, "tag": "fallback"}
 		s.decide_t = 0.0
+		_drop_job(s)
 		n += 1
 	G.audio.radio_click()
 	if n == 0:
@@ -723,15 +743,35 @@ static func _fall_back_floor() -> String:
 
 # ---------------------------------------------------------------- records, regrouping, rebuilding
 # the furthest wave beaten on each map, kept between sessions
-static func horde_best(map_id: String) -> int:
-	return int(G.settings.get("horde_best", {}).get(map_id, 0))
+static func horde_best(map_id: String, d: int = -1) -> int:
+	return int(G.settings.get("horde_best", {}).get(rec_key(map_id, d), 0))
+
+# Easy, Normal, Hard: how many of them come, how much it takes to put one down, how fast they are and
+# what a kill pays. Each has its own record (Normal's is the one that was kept before there were three).
+const DIFF_NAMES = ["Easy", "Normal", "Hard"]
+const DIFF_TIPS = ["A quarter fewer of them, weaker and a little slower, and a kill pays more",
+	"As it was",
+	"A third more of them, tougher and a little faster, and a kill pays less"]
+
+static func diff() -> int:
+	return clampi(int(G.settings.get("horde_diff", 1)), 0, 2)
+
+static func rec_key(map_id: String, d: int = -1) -> String:
+	return map_id + ["/easy", "", "/hard"][diff() if d < 0 else d]
+
+# what a kill is worth
+static func kill_pay(z) -> int:
+	if z.has_meta("boss"):
+		return 30
+	var f: float = float({"brute": 4, "armored": 3, "bloater": 2, "spitter": 2}.get(z.ztype, 1)) * [1.4, 1.0, 0.75][diff()]
+	return int(f) + (1 if randf() < f - floorf(f) else 0)
 
 static func _record_wave() -> void:
 	if G.attract or not OS.get_cmdline_user_args().is_empty() and not ("--keeprecord" in OS.get_cmdline_user_args()):
 		return            # (not from the automatic tests)
 	var hb: Dictionary = G.settings.get("horde_best", {})
-	if horde_wave > int(hb.get(G.map_id, 0)):
-		hb[G.map_id] = horde_wave
+	if horde_wave > int(hb.get(rec_key(G.map_id), 0)):
+		hb[rec_key(G.map_id)] = horde_wave
 		G.settings["horde_best"] = hb
 		G.save_prefs()
 
@@ -785,6 +825,8 @@ static func rebuild(p: Vector3) -> int:
 			continue
 		if c.has_meta("rebuilt") and c.get_meta("rebuilt").alive:
 			continue
+		if c.has_meta("roof"):
+			continue          # (roofs go back last: see below)
 		var m: Vector3 = (c.lo + c.hi) * 0.5
 		if absf(m.x - b["x"]) > b["w"] / 2.0 + 0.8 or absf(m.z - b["z"]) > b["d"] / 2.0 + 0.8 or G.dist2d(m, p) > 14.0:
 			continue
@@ -795,10 +837,10 @@ static func rebuild(p: Vector3) -> int:
 				break
 		if clear:
 			list.append(c)
-	if list.is_empty():
-		return 0
 	list.sort_custom(func(x, y): return G.dist2d((x.lo + x.hi) * 0.5, p) < G.dist2d((y.lo + y.hi) * 0.5, p))
 	list = list.slice(0, 60)
+	# (walls first, lowest first, so that what goes on top of them has something under it)
+	list.sort_custom(func(x, y): return x.lo.y < y.lo.y)
 	for c in list:
 		var before = W.cols.size()
 		W.build_now(func():
@@ -811,8 +853,53 @@ static func rebuild(p: Vector3) -> int:
 			bld["cols"].append(nc)
 			if c.lo.y - c.gy < 0.5:
 				bld["fallen"] = maxi(0, int(bld["fallen"]) - 1)
+	# The pitched roof: back on once two walls stand under it (the same rule that brings one down). It
+	# used to be left off, and a house put back together stood open to the sky.
+	var roofs = 0
+	for c in W.roof_cols.duplicate():
+		if c.alive or not c.has_meta("bld") or not is_same(c.get_meta("bld"), b):
+			continue
+		if c.has_meta("rebuilt") and c.get_meta("rebuilt").alive:
+			continue
+		var under = 0
+		for o in b["cols"]:
+			if o.alive and o.lo.y - o.gy < 1.0 and o.hi.y - o.gy > 1.7 and not o.has_meta("furn") \
+					and o.hi.x > c.lo.x - 0.4 and o.lo.x < c.hi.x + 0.4 and o.hi.z > c.lo.z - 0.4 and o.lo.z < c.hi.z + 0.4:
+				under += 1
+		if under < 3:
+			continue
+		var rw: float = c.hi.x - c.lo.x
+		var rd: float = c.hi.z - c.lo.z
+		var rh: float = float(c.get_meta("rh", minf(rw, rd) * 0.32 + 0.4))
+		var mx: float = (c.lo.x + c.hi.x) * 0.5
+		var mz: float = (c.lo.z + c.hi.z) * 0.5
+		var made = []
+		W.build_now(func():
+			var ref
+			if rw >= rd:
+				ref = W.add_box(mx, c.lo.y, mz, rw + 0.6, rh, rd + 0.7, c.color, {"shape": "prism", "ry": PI / 2.0, "abs": true, "collide": false})
+			else:
+				ref = W.add_box(mx, c.lo.y, mz, rw + 0.7, rh, rd + 0.6, c.color, {"shape": "prism", "abs": true, "collide": false})
+			var nc = W.add_col(mx, c.lo.y, mz, rw, minf(rh, 0.6), rd)
+			nc.vis = [ref]
+			made.append(nc))
+		if made.is_empty():
+			continue
+		var nr = made[0]
+		nr.set_meta("roof", true)
+		nr.set_meta("rh", rh)
+		nr.set_meta("bld", b)
+		nr.dest = true
+		nr.hp = 160.0
+		nr.color = c.color
+		W.roof_cols.append(nr)
+		b["cols"].append(nr)
+		c.set_meta("rebuilt", nr)
+		roofs += 1
+	if list.is_empty() and roofs == 0:
+		return 0
 	G.audio.hammer(p)
-	return list.size()
+	return list.size() + roofs
 
 # ---------------------------------------------------------------- what men say against the dead
 # The drill for fighting men who shoot back (pin them, flank them, bound forward under covering fire)
@@ -855,6 +942,11 @@ static func _new_drop() -> void:
 		p = G.main._free_spot(p)
 		if G.dist2d(p, c) > 38.0 and Doors.building_at(p) < 0:
 			break
+	make_drop(p, DROP_TIME, true)
+
+# (also how a drop that was waiting on the ground when the battle was saved is put back)
+static func make_drop(p: Vector3, t: float, tell: bool) -> void:
+	var c = G.world.capture
 	p.y = G.world.ground_y(p.x, p.z)
 	var node = Node3D.new()
 	var crate = MeshInstance3D.new()
@@ -892,7 +984,9 @@ static func _new_drop() -> void:
 	node.add_child(beam)
 	G.world.add_child(node)
 	node.global_position = p
-	drops.append({"p": p, "t": DROP_TIME, "node": node})
+	drops.append({"p": p, "t": t, "node": node})
+	if not tell:
+		return
 	G.ui.message("Supply drop at %s: get a man to it within %d s (green light)" % [AI.grid_ref(p), int(DROP_TIME)])
 	G.ui.radio(0, "Supplies dropped at %s, %d m out. Fetch them before the dead get there" % [AI.grid_ref(p), int(G.dist2d(p, c))])
 
@@ -953,6 +1047,8 @@ static func _keep_rest(dt: float) -> void:
 
 static func _horde(dt: float) -> void:
 	_step_drops(dt)
+	_fortify(dt)
+	_auto_up(dt)
 	if Levels.on and not horde_in and G.sim_time > 1.0:
 		# (the Ministry: nobody waits for them in the yard)
 		horde_in = true
@@ -966,7 +1062,7 @@ static func _horde(dt: float) -> void:
 			G.pc.free_pos = from
 			G.pc.free_yaw = atan2(dv.x, dv.z)
 			G.pc.free_pitch = atan2(dv.y, Vector2(dv.x, dv.z).length())
-		G.ui.message("The Ministry. Get everyone inside and hold it floor by floor: when a floor is lost, \"Up a floor\" (Armoury tab) sends the men up to hold the stairs")
+		G.ui.message("The Ministry. Your men board up the ground floor and hold it; when a floor is overrun they fall back up the stairs by themselves (\"Up a floor\" in the Armoury tab sends them up sooner)")
 	var dead_walking = 0
 	for s in G.soldiers:
 		if s.team == 1 and s.state != "dead":
@@ -1019,7 +1115,7 @@ static func _horde(dt: float) -> void:
 		var was_best = horde_best(G.map_id)
 		_record_wave()
 		var rec = ("  A new best for this map (it was %d)." % was_best) if (horde_wave > was_best and was_best > 0) else ""
-		G.ui.message("Wave %d beaten: %d s to dig in. Build barricades, board up windows, buy weapons (Armoury tab). Men in the keep rest and restock.%s" % [horde_wave, int(BREAK), rec])
+		G.ui.message("Wave %d beaten: %d s to dig in. Build barricades and buy weapons (Armoury tab); the men board up the windows and doors of the house they hold. Men in the keep rest and restock.%s" % [horde_wave, int(BREAK), rec])
 		G.ui.radio(0, "Wave %d done. Points for kills: %d to spend" % [horde_wave, Support.points[0]])
 		_regroup()
 	horde_t -= dt
@@ -1028,16 +1124,20 @@ static func _horde(dt: float) -> void:
 		return
 	horde_wave += 1
 	horde_side = randi() % 4
-	horde_left = 10 + horde_wave * 8 + G.team_size
+	horde_left = int(round((10 + horde_wave * 8 + G.team_size) * [0.75, 1.0, 1.3][diff()]))
 	# after dark they come in greater numbers (and faster: see make_zombie)
 	if G.main.is_night():
 		horde_left = int(horde_left * 1.4)
 		G.ui.radio(0, "It's dark: there'll be more of them, and they're faster")
 	horde_t = BREAK
-	var fresh = G.team_size - G.alive_count(0)
-	for i in range(maxi(0, fresh)):
-		G.main.base_spawn(0)
-	G.ui.message("Wave %d: %d of them, most from the %s" % [horde_wave, horde_left, SIDE_NAMES[horde_side]])
+	new_men(maxi(0, G.team_size - G.alive_count(0)))
+	# every tenth wave something much bigger comes with them
+	boss_due = horde_wave / 10 if horde_wave % 10 == 0 else 0
+	if boss_due > 0:
+		horde_left += boss_due
+	G.ui.message("Wave %d: %d of them, most from the %s%s" % [horde_wave, horde_left, SIDE_NAMES[horde_side], "" if boss_due == 0 else (". Something very big is with them" if boss_due == 1 else ". %d very big ones are with them" % boss_due)])
+	if boss_due > 0:
+		G.ui.radio(0, "There's a giant in that lot. Everything you've got on it, and don't let it reach the walls")
 	G.ui.radio(0, "They're coming from the %s. Turn the line to face them" % SIDE_NAMES[horde_side])
 	if horde_wave >= 2:
 		_new_drop()
@@ -1067,7 +1167,10 @@ static func _spawn_pack(n: int) -> void:
 	for i in range(n):
 		var q = G.main._free_spot(p + Vector3(randf_range(-5, 5), 0, randf_range(-5, 5)))
 		var kind = _pick_type()
-		Soldier.zombie_next = kind
+		if boss_due > 0:
+			boss_due -= 1
+			kind = "boss"
+		Soldier.zombie_next = "brute" if kind == "boss" else kind
 		var z = G.main.spawn_soldier(1, q.x, q.z, "pistol")
 		Soldier.zombie_next = ""
 		if z != null:
@@ -1101,7 +1204,18 @@ const ZOMBIES = {
 	"armored": {"hp": 220.0, "hpw": 8.0, "speed": [2.3, 2.9], "dmg": [18.0, 26.0], "name": "Armoured"},
 	"bloater": {"hp": 90.0, "hpw": 4.0, "speed": [2.0, 2.5], "dmg": [14.0, 20.0], "name": "Bloater"},
 	"spitter": {"hp": 80.0, "hpw": 4.0, "speed": [2.6, 3.2], "dmg": [10.0, 15.0], "name": "Spitter"},
+	# the giant of every tenth wave: a brute three times over. Rifles wear it down slowly; machine guns,
+	# grenades and fire do it quicker, and it goes through a barricade or a boarded door without stopping
+	"boss": {"hp": 2200.0, "hpw": 45.0, "speed": [2.5, 2.7], "dmg": [55.0, 75.0], "name": "Goliath"},
 }
+static var boss = null
+static var boss_due = 0
+
+static func boss_down(z) -> void:
+	if boss == z:
+		boss = null
+	G.ui.message("The giant is down")
+	G.ui.radio(0, "It's down! The big one is down!")
 
 # a spitter keeps its distance and lobs acid: a hit burns, and where it lands it leaves a puddle that
 # burns anyone who stands in it for a while
@@ -1218,7 +1332,7 @@ const BREAK = 30.0
 
 # the zombie-mode shop: points come from kills and pay for weapons, supplies and boarding up windows
 const SHOP = {
-	"board": {"name": "Board up", "cost": 6, "tip": "Click a building: planks go up over every window (the dead have to tear them down)"},
+	"board": {"name": "Boarding: on", "cost": 0, "tip": "Your men board up the house they hold by themselves: a point a window, two a door (doors once everyone is inside), whenever there are points and none of the dead are close. Click to stop them and keep the points"},
 	"lmg": {"name": "Machine guns", "cost": 12, "tip": "Click near your men: the three closest get machine guns"},
 	"shotgun": {"name": "Shotguns ×4", "cost": 8, "tip": "Click near your men: the four closest get shotguns"},
 	"flamer": {"name": "Flamethrower", "cost": 10, "tip": "Click near your men: the closest gets a flamethrower"},
@@ -1226,17 +1340,19 @@ const SHOP = {
 	"heal": {"name": "Patch all up", "cost": 6, "tip": ""},
 	"man": {"name": "Extra man", "cost": 7, "tip": ""},
 	"men5": {"name": "5 extra men", "cost": 32, "tip": ""},
-	"rebuild": {"name": "Rebuild walls", "cost": 12, "tip": "Click a damaged building: the walls and floors it has lost within 14 m of the click are put back (not where someone is standing, and not a pitched roof)"},
+	"rebuild": {"name": "Rebuild walls", "cost": 12, "tip": "Click a damaged building: the walls and floors it has lost within 14 m of the click are put back (not where someone is standing), and its roof once there are walls to carry it"},
 	"keep": {"name": "To the keep", "cost": 0, "tip": "Everyone runs to the building in the middle and holds it"},
 }
 
 static func shop_instant(k: String) -> bool:
-	return k in ["ammo", "heal", "man", "men5", "keep"]
+	return k in ["ammo", "heal", "man", "men5", "keep", "board"]
 
 # (on the Ministry map the free order is a different one)
 static func shop_name(k: String) -> String:
 	if k == "keep" and Levels.on:
 		return "Up a floor"
+	if k == "board":
+		return "Boarding: on" if auto_board else "Boarding: off"
 	return SHOP[k]["name"]
 
 static func shop_tip(k: String) -> String:
@@ -1251,11 +1367,11 @@ static func shop(k: String, p: Vector3) -> String:
 		return "Not enough points: %s costs %d, you have %d (kills earn points)" % [SHOP[k]["name"], c, Support.points[0]]
 	match k:
 		"board":
-			var n = board_up(p)
-			if n == 0:
-				return "No windows to board up there: click a building"
-			Support.points[0] -= c
-			return "%d windows boarded up" % n
+			auto_board = not auto_board
+			if not auto_board:
+				for j in jobs.duplicate():
+					_job_end(j)
+			return "The men will board up the house they hold by themselves" if auto_board else "No more boarding up: the points are yours to spend"
 		"lmg", "shotgun", "flamer":
 			var want = {"lmg": 3, "shotgun": 4, "flamer": 1}[k]
 			var men = G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive" and not s.is_player and s.wid != k)
@@ -1285,12 +1401,11 @@ static func shop(k: String, p: Vector3) -> String:
 			return "Everyone patched up"
 		"man":
 			Support.points[0] -= c
-			G.main.base_spawn(0)
+			new_men(1)
 			return "A survivor joins you"
 		"men5":
 			Support.points[0] -= c
-			for i in range(5):
-				G.main.base_spawn(0)
+			new_men(5)
 			return "Five survivors join you"
 		"rebuild":
 			var nr = rebuild(p)
@@ -1302,47 +1417,482 @@ static func shop(k: String, p: Vector3) -> String:
 			return fall_back()
 	return ""
 
-# planks over every window of the building at p: they block the window until torn or blown down
+# ---------------------------------------------------------------- the men board the place up themselves
+# The house the survivors are holding gets its windows boarded by the men in it, one man to a window,
+# whenever there are points to pay for the planks (one a window, two a door) and none of the dead are
+# close. Doors are left till everyone is inside. (It used to be a card: the player bought "Board up"
+# and clicked a building.) The card that is left turns it off, for anyone who'd rather keep the points.
+static var auto_board = true
+static var forts: Array = []          # every door and ground-floor window: {"kind", "c", "n", "horiz", "w", "y0", "y1", "b", "cols"}
+static var forts_made = false
+static var jobs: Array = []           # {"s": the man, "f": the opening, "p": where he stands, "w": time worked, "t0", "cost"}
+static var fort_t = 0.0
+static var boarded_n = 0              # windows boarded this battle
+static var doors_n = 0                # ...and doors
+static var torn_n = 0                 # planks the dead have torn down
+static var up_t = 0.0
+static var ups = 0                    # times the men have gone up a floor without being told
+static var job_ends = {}              # how the boarding jobs ended (for the tests)
+
+static func _fort_list() -> Array:
+	if forts_made:
+		return forts
+	forts_made = true
+	forts = []
+	var W = G.world
+	for pn in Doors.panes:
+		var c: Vector3 = pn["c"]
+		if c.y - W.ground_y(c.x, c.z) > 2.6:
+			continue          # (upstairs windows are out of their reach)
+		forts.append({"kind": "win", "c": c, "n": pn["n"], "horiz": pn["horiz"], "w": pn["w"] + 0.2, "y0": c.y - pn["h"] * 0.42, "y1": c.y + pn["h"] * 0.42, "b": pn["b"], "pane": pn, "cols": []})
+	for d in Doors.doors:
+		var c2: Vector3 = d["c"]
+		forts.append({"kind": "door", "c": c2, "n": d["n"], "horiz": absf(d["along"].x) > 0.5, "w": d["pw"] + 0.5, "y0": c2.y - 0.8, "y1": c2.y + 0.9, "b": d["b"], "door": d, "cols": []})
+	if Levels.on:
+		for o in Office.outs:
+			var f: Dictionary = o.duplicate()
+			f["b"] = Levels.bi
+			f["cols"] = []
+			forts.append(f)
+	return forts
+
+static func fort_boarded(f: Dictionary) -> bool:
+	for c in f["cols"]:
+		if c.alive:
+			return true
+	return false
+
+# is the wall the opening is in still standing?
+static func _fort_ok(f: Dictionary) -> bool:
+	var src = f.get("pane", f.get("door"))
+	return src == null or src["col"] == null or src["col"].alive
+
+static func _zombie_within(p: Vector3, r: float) -> bool:
+	for z in G.soldiers:
+		if z.zombie and z.state != "dead" and G.dist2d(z.pos, p) < r and absf(z.pos.y - p.y) < 3.0:
+			return true
+	return false
+
+# the building most of the survivors are in (-1: they aren't in one)
+static func held_building() -> int:
+	var cnt = {}
+	var total = 0
+	for s in G.soldiers:
+		if s.team == 0 and s.state == "alive" and not s.zombie:
+			total += 1
+			var b = Doors.building_at(s.pos)
+			if b >= 0:
+				cnt[b] = int(cnt.get(b, 0)) + 1
+	var best = -1
+	var bn = 0
+	for b in cnt:
+		if cnt[b] > bn:
+			bn = cnt[b]
+			best = b
+	return best if bn >= mini(3, total) and bn > 0 else -1
+
+static func _everyone_in(b: int) -> bool:
+	for s in G.soldiers:
+		if s.team == 0 and not s.zombie and s.state != "dead" and Doors.building_at(s.pos) != b:
+			return false
+	return true
+
+# every door of it is boarded: nobody walks in
+static func sealed(b: int) -> bool:
+	var n = 0
+	for f in forts:
+		if f["b"] == b and f["kind"] == "door" and _fort_ok(f):
+			if not fort_boarded(f):
+				return false
+			n += 1
+	return n > 0
+
+static func _stand(f: Dictionary):
+	var y = Levels.gy if (Levels.on and f["b"] == Levels.bi) else G.world.ground_y(f["c"].x, f["c"].z)
+	# (somewhere the route-finder counts as open floor. A spot hard against the wall isn't, and a man sent
+	# to one was taken to the nearest open ground instead, which for a window was the ground outside it:
+	# he climbed out and stood there.)
+	var along = Vector3(1, 0, 0) if f["horiz"] else Vector3(0, 0, 1)
+	for side in [0.0, 0.5, -0.5]:
+		for back in [1.2, 1.5, 1.0]:
+			var p: Vector3 = f["c"] - f["n"] * back + along * side
+			p.y = y
+			if not G.world.solid_at(p.x, p.z, 0.25, y) and not G.world.astar.is_point_solid(G.world.nav_cell(p.x, p.z)):
+				return p
+	return null
+
+static func _job_end(j: Dictionary) -> void:
+	jobs.erase(j)
+	var s = j["s"]
+	if is_instance_valid(s) and s.task == "fortify":
+		s.task = null
+		s.decide_t = 0.0
+		AI.stop_move(s)
+
+static func _drop_job(s) -> void:
+	for j in jobs.duplicate():
+		if j["s"] == s:
+			_job_end(j)
+
+static func _fortify(dt: float) -> void:
+	for j in jobs.duplicate():
+		var m = j["s"]
+		var why = ""
+		if not is_instance_valid(m) or m.state != "alive":
+			why = "man down"
+		elif m.task != "fortify":
+			why = "called away (%s)" % str(m.task)
+		elif fort_boarded(j["f"]):
+			why = "done"
+		elif G.sim_time - float(j["t0"]) > 30.0:
+			why = "took too long"
+		elif _zombie_within(m.pos, 6.5):
+			why = "the dead too close"
+		if why != "":
+			job_ends[why] = int(job_ends.get(why, 0)) + 1
+			_job_end(j)
+	fort_t -= dt
+	if fort_t > 0.0 or not auto_board or G.over:
+		return
+	fort_t = 1.0
+	var b = held_building()
+	if b < 0 or jobs.size() >= 4:
+		return
+	var free_pts: int = Support.points[0]
+	for j in jobs:
+		free_pts -= int(j["cost"])
+	if free_pts < 1:
+		return
+	var doors_ok = _everyone_in(b)
+	var cands = []
+	var any_win = false
+	for f in _fort_list():
+		if f["b"] != b or fort_boarded(f) or G.sim_time < float(f.get("skip_t", 0.0)) or not _fort_ok(f):
+			continue
+		if f["kind"] == "door" and (not doors_ok or free_pts < 2):
+			continue
+		var taken = false
+		for j in jobs:
+			if j["f"] == f:
+				taken = true
+		if taken or _zombie_within(f["c"], 7.0):
+			continue
+		any_win = any_win or f["kind"] == "win"
+		cands.append(f)
+	if cands.is_empty():
+		return
+	var men = []
+	for s in G.soldiers:
+		if s.team != 0 or s.state != "alive" or s.is_player or s.zombie or s.vehicle != null or Doors.building_at(s.pos) != b:
+			continue
+		if s.task in ["fortify", "medic", "stretcher", "drag", "fetch", "flee", "rout", "board", "post"] or s.dragging != null or ClassAI.busy(s):
+			continue
+		if s.order != null and str(s.order.get("tag", "")) == "fallback" and s.order.get("point") != null and G.dist2d(s.pos, s.order["point"]) > 6.0:
+			continue
+		if Levels.on and Levels.level_of(s.pos) != 0:
+			continue
+		if _zombie_within(s.pos, 9.0):
+			continue
+		men.append(s)
+	if men.is_empty():
+		return
+	# the nearest man to an opening; the side this wave is coming from first, windows before doors
+	var side_v = [Vector3(-1, 0, 0), Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 0, 1)][maxi(horde_side, 0)]
+	var bf = null
+	var bm = null
+	var bs = 1e9
+	for f in cands:
+		if any_win and f["kind"] == "door":
+			continue
+		var bonus = -14.0 if (horde_side >= 0 and f["n"].dot(side_v) > 0.5) else 0.0
+		for s in men:
+			var sc = G.dist2d(s.pos, f["c"]) + bonus
+			if sc < bs:
+				bs = sc
+				bf = f
+				bm = s
+	if bf == null:
+		return
+	var p = _stand(bf)
+	if p == null:
+		bf["skip_t"] = G.sim_time + 25.0
+		return
+	jobs.append({"s": bm, "f": bf, "p": p, "w": 0.0, "t0": G.sim_time, "cost": 1 if bf["kind"] == "win" else 2})
+	AI.release_cover(bm)
+	bm.task = "fortify"
+	AI.go_to(bm, p, 4.6)
+	fort_t = 0.3
+
+# the man's side of it: to the window, then hammer till the planks are up
+static func fort_tick(s) -> void:
+	var j = null
+	for q in jobs:
+		if q["s"] == s:
+			j = q
+			break
+	if j == null:
+		s.task = null
+		s.decide_t = 0.0
+		return
+	var f: Dictionary = j["f"]
+	var p: Vector3 = j["p"]
+	# (there: on the inside of it and within arm's reach of the planks)
+	var there = (s.pos - f["c"]).dot(f["n"]) < -0.2 and G.dist2d(s.pos, f["c"]) < 1.75 and absf(s.pos.y - p.y) < 1.2
+	if not there:
+		if s.move_target == null or G.dist2d(s.move_target, p) > 0.5:
+			# (the walk ended somewhere else: there's no way to it. Leave that one for a while.)
+			j["stall"] = int(j.get("stall", 0)) + 1
+			if int(j["stall"]) > 4:
+				f["skip_t"] = G.sim_time + 40.0
+				job_ends["no way to it"] = int(job_ends.get("no way to it", 0)) + 1
+				_job_end(j)
+				return
+			AI.go_to(s, p, 4.6)
+		return
+	AI.stop_move(s)
+	s.want = Vector3.ZERO
+	var to = G.flat(f["c"] - s.pos)
+	s.aim_yaw = G.turn_to(s.aim_yaw, atan2(to.x, to.z), 5.0 * G.DT)
+	s.hand_t = f["c"] - f["n"] * 0.12 + Vector3(0, sin(G.sim_time * 3.0 + s.seed_) * (f["y1"] - f["y0"]) * 0.3, 0)
+	s.tool_mode = "hammer"
+	s.crouch_t = 0.0
+	s.prone_t = false
+	var w0: float = j["w"]
+	j["w"] = w0 + G.DT
+	if int(w0 / 0.6) != int(float(j["w"]) / 0.6):
+		G.audio.hammer(s.pos)
+	if float(j["w"]) < (2.4 if f["kind"] == "win" else 3.6):
+		return
+	var cost: int = j["cost"]
+	if Support.points[0] >= cost and not fort_boarded(f):
+		Support.points[0] -= cost
+		_board(f)
+		job_ends["done"] = int(job_ends.get("done", 0)) + 1
+		if f["kind"] == "door":
+			G.fx.callout(s, G.pick(["Door's shut!", "That'll hold them a while!", "Door's boarded!"]))
+	_job_end(j)
+
+# The planks themselves: three across a window, more across a door. What stops anyone is one sheet the
+# size of the opening behind them (a plank at chest height on its own is something to duck under, and
+# the dead walked in at boarded doors); the planks are what you see, and they come off from the top as
+# it's torn at. Nothing fired from inside hits it: the men shoot out between the planks. (As boxes that
+# stopped bullets, the boards were shot away by the defenders themselves in a few seconds.)
+static func _board(f: Dictionary) -> void:
+	var W = G.world
+	var win: bool = f["kind"] == "win"
+	var made = []
+	W.build_now(func():
+		if f.has("pane"):
+			Doors.shatter(f["pane"], false)
+			f["pane"]["boarded"] = true
+		var c: Vector3 = f["c"] + f["n"] * (0.07 if win else -0.1)
+		var w: float = f["w"]
+		var y0: float = float(f["y0"])
+		var h: float = float(f["y1"]) - y0
+		var n = 3 if win else clampi(int(round(h / 0.42)), 4, 6)
+		var planks = []
+		for k in range(n):
+			var y = y0 + h * (k + 0.5) / n
+			var sz = Vector3(w, 0.16, 0.05) if f["horiz"] else Vector3(0.05, 0.16, w)
+			planks.append(W.add_box(c.x, y - 0.08, c.z, sz.x, sz.y, sz.z, Color(0.5, 0.38, 0.24).darkened(randf_range(0.0, 0.2)), {"abs": true, "collide": false}))
+		var base = y0 if win else y0 - 0.3
+		var sheet = W.add_col(c.x, base, c.z, w if f["horiz"] else 0.08, float(f["y1"]) - base, 0.08 if f["horiz"] else w)
+		sheet.vis = planks
+		sheet.dest = true
+		sheet.color = Color(0.5, 0.38, 0.24)
+		sheet.set_meta("per", 140.0 if win else 200.0)
+		sheet.hp = float(sheet.get_meta("per")) * n
+		sheet.set_meta("board", true)
+		made.append(sheet))
+	f["cols"] = made
+	for pc in made:
+		# (marked as something a bullet or a line of sight goes through: see G.ray. It still stops anyone
+		# walking into it, and a body knocked flying against it.)
+		if is_instance_valid(pc.body):
+			pc.body.set_meta("thru", true)
+	if win:
+		boarded_n += 1
+	else:
+		doors_n += 1
+
+# every ground-floor window of the building at p, at once (what the old card did: the tests still use it)
 static func board_up(p: Vector3) -> int:
 	var b = Doors.building_at(p)
 	if b < 0:
 		return 0
-	var list = []
-	for pn in Doors.panes:
-		if pn["b"] == b and not pn.get("boarded", false):
-			list.append(pn)
-	if list.is_empty():
-		return 0
-	var before = G.world.cols.size()
-	G.world.build_now(func():
-		for pn in list:
-			Doors.shatter(pn, false)
-			pn["boarded"] = true
-			var c: Vector3 = pn["c"] + pn["n"] * 0.07
-			var w: float = pn["w"] + 0.2
-			for k in range(3):
-				var y = c.y - pn["h"] * 0.32 + k * pn["h"] * 0.32
-				var sz = Vector3(w, 0.16, 0.05) if pn["horiz"] else Vector3(0.05, 0.16, w)
-				G.world.add_box(c.x, y - 0.08, c.z, sz.x, sz.y, sz.z, Color(0.5, 0.38, 0.24).darkened(randf_range(0.0, 0.2)), {"abs": true, "dest": true, "hp": 140.0}))
-	for i in range(before, G.world.cols.size()):
-		G.world.cols[i].set_meta("board", true)
-	G.audio.hammer(p)
-	return list.size()
+	var n = 0
+	for f in _fort_list():
+		if f["b"] == b and f["kind"] == "win" and not fort_boarded(f) and _fort_ok(f):
+			_board(f)
+			n += 1
+	if n > 0:
+		G.audio.hammer(p)
+	return n
+
+# what's boarded, for a saved battle, and putting it back
+static func boards_state() -> Array:
+	var out = []
+	for f in forts:
+		if fort_boarded(f):
+			out.append([f["c"].x, f["c"].y, f["c"].z])
+	return out
+
+static func boards_restore(list: Array) -> int:
+	var n = 0
+	for q in list:
+		var p = Vector3(float(q[0]), float(q[1]), float(q[2]))
+		for f in _fort_list():
+			if f["c"].distance_to(p) < 0.4 and not fort_boarded(f):
+				_board(f)
+				n += 1
+				break
+	return n
+
+# Men who join during the battle. They come on at the edge of the map and walk in, unless the house is
+# shut (every door boarded) or the survivors have gone upstairs in the Ministry: then they are found
+# inside, with the others, rather than left to hammer on the door with the dead behind them.
+static func new_men(n: int) -> void:
+	var n0 = G.soldiers.size()
+	for i in range(n):
+		G.main.base_spawn(0)
+	var b = held_building()
+	if b < 0:
+		return
+	var up = false
+	if Levels.on and b == Levels.bi:
+		var low = 99
+		for s in G.soldiers:
+			if s.team == 0 and s.state == "alive" and not s.zombie and Levels.inside(s.pos, 0.0):
+				low = mini(low, Levels.level_of(s.pos))
+		up = low != 99 and low > 0
+	if not up and not sealed(b):
+		return
+	for i in range(n0, G.soldiers.size()):
+		var s2 = G.soldiers[i]
+		if s2.team == 0 and not s2.zombie:
+			s2.move_to(_inside_spot(b))
+
+static func _inside_spot(b: int) -> Vector3:
+	var inside = G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive" and not s.zombie and Doors.building_at(s.pos) == b)
+	var bd = G.world.buildings[b]
+	var fallback = Vector3(bd["x"], G.world.ground_y(bd["x"], bd["z"]), bd["z"])
+	if inside.is_empty():
+		return fallback
+	if Levels.on and b == Levels.bi:
+		# (with the ones highest up)
+		inside.sort_custom(func(x, y): return x.pos.y > y.pos.y)
+		var m = inside[0]
+		return Levels.spot_on(Levels.level_of(m.pos), m.pos, 4.0)
+	for k in range(14):
+		var m2 = inside[randi() % inside.size()]
+		var q: Vector3 = m2.pos + Vector3(randf_range(-2.0, 2.0), 0, randf_range(-2.0, 2.0))
+		q.y = G.world.ground_y(q.x, q.z)
+		if Doors.building_at(q) == b and not G.world.solid_at(q.x, q.z, 0.3, q.y):
+			return q
+	return Vector3(inside[0].pos.x, G.world.ground_y(inside[0].pos.x, inside[0].pos.z), inside[0].pos.z)
+
+# ---------------------------------------------------------------- up a floor without being told
+# The Ministry: when the lowest floor the survivors hold has more of the dead on it than men, the men
+# on it go up to the next and hold the heads of the stairs (what the "Up a floor" card does). A house
+# with an upstairs: when the dead are in downstairs, the men downstairs go up to the windows above.
+static func _auto_up(dt: float) -> void:
+	up_t -= dt
+	if up_t > 0.0 or G.over:
+		return
+	up_t = 2.0
+	if Levels.on:
+		var men = []
+		var dead = []
+		for k in range(Levels.n):
+			men.append(0)
+			dead.append(0)
+		for s in G.soldiers:
+			if s.state == "dead" or not Levels.inside(s.pos, 0.0):
+				continue
+			var k2 = Levels.level_of(s.pos)
+			if s.zombie:
+				dead[k2] += 1
+			elif s.team == 0 and s.state == "alive":
+				men[k2] += 1
+		var low = -1
+		for k in range(Levels.n):
+			if men[k] > 0:
+				low = k
+				break
+		if low < 0 or low >= Levels.n - 1:
+			return
+		if dead[low] >= maxi(5, men[low]) or (men[low] <= 3 and dead[low] >= 3):
+			var msg = _fall_back_floor()
+			ups += 1
+			up_t = 15.0
+			G.ui.message("The %s is overrun (%d of the dead on it, %d men): %s" % [Levels.names[low].to_lower(), dead[low], men[low], msg.to_lower() if msg.begins_with("Everyone") else msg])
+			G.ui.radio(0, "They're in on the %s! Up the stairs, everybody up!" % Levels.names[low].to_lower())
+		return
+	for T in G.world.towers:
+		if T.get("ladder", false) or not G.world.tower_ok(T):
+			continue
+		var down = []
+		var zn = 0
+		for s in G.soldiers:
+			if s.state == "dead" or absf(s.pos.x - T["x"]) > T["w"] / 2.0 or absf(s.pos.z - T["z"]) > T["d"] / 2.0:
+				continue
+			if s.pos.y - G.world.ground_y(s.pos.x, s.pos.z) > 1.5:
+				continue
+			if s.zombie:
+				zn += 1
+			elif s.team == 0 and s.state == "alive" and not s.is_player and s.vehicle == null and s.task != "post":
+				down.append(s)
+		if down.is_empty() or zn < maxi(2, (down.size() + 1) / 2):
+			continue
+		var went = 0
+		for s in down:
+			var best = null
+			var bd = 1e9
+			for cp in T["cps"]:
+				if AI.cover_free(cp, s) and cp.ban < G.sim_time and G.world.cp_ok(cp) and cp.p.distance_to(s.pos) < bd:
+					bd = cp.p.distance_to(s.pos)
+					best = cp
+			if best == null:
+				continue
+			_drop_job(s)
+			AI.release_cover(s)
+			s.order = {"mode": "hold", "point": best.p, "tag": "garrison"}
+			AI.take_post(s, best)
+			went += 1
+		if went > 0:
+			ups += 1
+			up_t = 8.0
+			G.ui.radio(0, "They're in downstairs at %s: %d of us going up" % [AI.grid_ref(Vector3(T["x"], 0, T["z"])), went])
+
 
 static func make_zombie(z, kind: String = "walker") -> void:
 	var zs = ZOMBIES[kind]
 	z.zombie = true
-	z.ztype = kind
+	z.ztype = "brute" if kind == "boss" else kind
+	if kind == "boss":
+		# built like a brute and half as big again: a slab of a chest, arms like a man's thighs, eyes that glow
+		z.set_meta("boss", true)
+		boss = z
+		var hide = z._mat("zboss", Color(0.3, 0.13, 0.11), false)
+		z._mesh(z.parts[1], Vector3(0.9, 0.7, 0.6), Vector3(0, 0.1, 0.02), hide)
+		z._mesh(z.parts[0], Vector3(0.62, 0.36, 0.48), Vector3.ZERO, hide)
+		for i in [3, 5]:
+			z._mesh(z.parts[i], Vector3(0.32, 0.44, 0.32), Vector3.ZERO, hide)
+		for i in [4, 6]:
+			z._mesh(z.parts[i], Vector3(0.28, 0.4, 0.28), Vector3(0, -0.02, 0), hide)
+		z._mesh(z.parts[1], Vector3(0.5, 0.2, 0.3), Vector3(0, 0.46, 0.06), hide)
+		z._mesh(z.parts[2], Vector3(0.2, 0.035, 0.02), Vector3(0, 0.03, -0.15), z._mat_glow("zeyes", Color(1.0, 0.3, 0.1)))
 	z.grenades = 0
 	z.smokes = 0
 	z.satchels = 0
 	z.rgren = 0
 	z.gun_node.visible = false
-	z.hp = zs["hp"] + horde_wave * zs["hpw"]
-	z.zspeed = randf_range(zs["speed"][0], zs["speed"][1]) * (1.2 if G.main.is_night() else 1.0)
+	z.hp = (zs["hp"] + horde_wave * zs["hpw"]) * [0.85, 1.0, 1.2][diff()]
+	z.zspeed = randf_range(zs["speed"][0], zs["speed"][1]) * (1.2 if G.main.is_night() else 1.0) * [0.95, 1.0, 1.06][diff()]
 	z.think = randf_range(0.0, 0.6)
 	z.groan_t = randf_range(0.5, 6.0)
 	z.sname = zs["name"]
+	z.set_meta("hp0", z.hp)
 	if kind == "crawler":
 		z.prone_t = true
 		z.prone = true
@@ -1422,7 +1972,7 @@ static func zombie_tick(s) -> void:
 		return
 	if s.ztype == "brute" and d < 40.0 and G.sim_time > float(s.get_meta("smash_t", 0.0)):
 		s.set_meta("smash_t", G.sim_time + 1.2)
-		if _smash(s, 1.5, 230.0):
+		if _smash(s, 1.5, 230.0 if not s.has_meta("boss") else 700.0) or (s.has_meta("boss") and _tear(s, 1.8)):
 			s.want = Vector3.ZERO
 			return
 	if level and s.bad_t < G.sim_time and (d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
@@ -1449,18 +1999,8 @@ static func zombie_tick(s) -> void:
 		s.prog_t += G.DT
 		if s.prog_t > 1.5:
 			if G.dist2d(s.pos, s.prog_p) < 0.6 and s.vault == null:
-				# boarded-up windows in the way get torn at
-				var tore = false
-				for c in G.world.cols_in_rect(s.pos.x - 1.3, s.pos.z - 1.3, s.pos.x + 1.3, s.pos.z + 1.3):
-					if c.alive and c.has_meta("board"):
-						c.hp -= 55.0 if s.ztype != "brute" else 140.0
-						s.lunge_t = 0.5
-						s.lunge_dir = G.flat(((c.lo + c.hi) * 0.5) - s.pos).normalized()
-						G.audio.hammer(s.pos)
-						if c.hp <= 0.0:
-							G.world.destroy_col(c)
-						tore = true
-						break
+				# boarded-up windows and doors in the way get torn at
+				var tore = _tear(s, 1.3)
 				if not tore:
 					tore = _smash(s, 1.3, 30.0)
 				if not tore:
@@ -1479,14 +2019,42 @@ static func zombie_tick(s) -> void:
 					risen_n += 1
 				s.set_meta("cr_t", G.sim_time)
 				s.set_meta("cr_p", s.pos)
-		if s.move_target == null or G.dist2d(s.move_target, t.pos) > 4.0:
-			AI.go_to(s, t.pos, spd)
+		# The way in is boarded up and there's no other: he goes to the nearest boarded door or window and
+		# tears at it. (Before doors could be boarded there was always a way in. With every way shut, the
+		# route-finder took the dead as near as it could get and left them standing at the wall.)
+		var goal: Vector3 = t.pos
+		var br = s.get_meta("breach") if s.has_meta("breach") else null
+		if br != null:
+			if not fort_boarded(br) or G.sim_time > float(s.get_meta("breach_t", 0.0)):
+				s.remove_meta("breach")
+				br = null
+			else:
+				goal = br["c"] + br["n"] * 0.75
+				goal.y = s.pos.y
+				if G.dist2d(s.pos, goal) < 1.5:
+					AI.stop_move(s)
+					s.want = Vector3.ZERO
+					var tb = G.flat(br["c"] - s.pos)
+					s.aim_yaw = G.turn_to(s.aim_yaw, atan2(tb.x, tb.z), 4.0 * G.DT)
+					if G.sim_time > float(s.get_meta("tear_t", 0.0)):
+						s.set_meta("tear_t", G.sim_time + 0.9)
+						_tear(s, 2.0)
+					return
+		if s.move_target == null or G.dist2d(s.move_target, goal) > 4.0:
+			AI.go_to(s, goal, spd)
 		if s.route != null and not (s.route["i"] == 0 and s.route["nav"]):
 			AI.follow_route(s)
 		else:
 			var res = AI.follow_path(s)
 			if res == "stuck" or res == "arrived":
 				AI.stop_move(s)
+				if br == null and d > 2.5 and G.sim_time > float(s.get_meta("tear_t", 0.0)):
+					s.set_meta("tear_t", G.sim_time + 1.0)
+					if not _tear(s, 1.6):
+						var nb = _nearest_boarded(s.pos, 45.0)
+						if nb != null:
+							s.set_meta("breach", nb)
+							s.set_meta("breach_t", G.sim_time + 40.0)
 
 # The dead against what you've built. A brute doesn't go round or over a barricade: he puts his weight
 # through it (sandbags go in one blow, a concrete wall in two). The others only claw at one when it's
@@ -1519,6 +2087,41 @@ static func _smash(s, reach: float, dmg: float) -> bool:
 			return true
 	return false
 
+# claw at whatever is nailed over a door or window within reach
+# claw at whatever is nailed over a door or window within reach: the planks come off one at a time, from the top
+static func _tear(s, reach: float) -> bool:
+	var bc = null
+	for c in G.world.cols_in_rect(s.pos.x - reach, s.pos.z - reach, s.pos.x + reach, s.pos.z + reach):
+		if c.alive and c.has_meta("board") and c.lo.y < s.pos.y + 2.4 and c.hi.y > s.pos.y:
+			bc = c
+			break
+	if bc == null:
+		return false
+	bc.hp -= 400.0 if s.has_meta("boss") else (140.0 if s.ztype == "brute" else 55.0)
+	s.lunge_t = 0.5
+	s.lunge_dir = G.flat(((bc.lo + bc.hi) * 0.5) - s.pos).normalized()
+	G.audio.hammer(s.pos)
+	var left = int(ceil(maxf(bc.hp, 0.0) / float(bc.get_meta("per", 140.0))))
+	while bc.vis.size() > left:
+		var r = bc.vis.pop_back()
+		if r[1] == -2 and is_instance_valid(r[0]):
+			var pp: Vector3 = r[0].global_position
+			r[0].queue_free()
+			G.fx.debris(pp, Vector3(randf_range(-1.5, 1.5), randf_range(0.5, 2.0), randf_range(-1.5, 1.5)), 0.3, bc.color, Vector3(0.7, 0.14, 0.05))
+		torn_n += 1
+	if bc.hp <= 0.0:
+		G.world.destroy_col(bc)
+	return true
+
+static func _nearest_boarded(p: Vector3, r: float):
+	var best = null
+	var bd = r
+	for f in forts:
+		if fort_boarded(f) and G.dist2d(f["c"], p) < bd and absf(f["c"].y - p.y) < 3.0:
+			bd = G.dist2d(f["c"], p)
+			best = f
+	return best
+
 static func _vaultable_ahead(s, dir: Vector3) -> bool:
 	for c in G.world.cell_at(s.pos.x + dir.x * 0.7, s.pos.z + dir.z * 0.7):
 		if G.world.vaultable(c):
@@ -1526,7 +2129,7 @@ static func _vaultable_ahead(s, dir: Vector3) -> bool:
 	return false
 
 static func _claw(z, t) -> void:
-	var zr = ZOMBIES.get(z.ztype, ZOMBIES["walker"])["dmg"]
+	var zr = ZOMBIES["boss" if z.has_meta("boss") else z.ztype]["dmg"] if (z.has_meta("boss") or ZOMBIES.has(z.ztype)) else ZOMBIES["walker"]["dmg"]
 	var dmg = randf_range(zr[0], zr[1])
 	t.hp -= dmg
 	t.last_attacker = z
@@ -1577,9 +2180,14 @@ static func status_text() -> String:
 				extra += " from the %s" % SIDE_NAMES[horde_side]
 			if not drops.is_empty():
 				extra += " · supply drop %s, %d s" % [AI.grid_ref(drops[0]["p"]), int(drops[0]["t"])]
+			if boss != null and is_instance_valid(boss) and boss.state != "dead":
+				extra += " · the giant: %d%%" % int(clampf(boss.hp / maxf(1.0, float(boss.get_meta("hp0", boss.hp))), 0.0, 1.0) * 100.0)
+			if not jobs.is_empty():
+				extra += " · %d boarding up" % jobs.size()
+			var dn = "" if diff() == 1 else " (%s)" % DIFF_NAMES[diff()].to_lower()
 			if horde_endless:
-				return "wave %d, endless (best %d) · %d coming%s" % [horde_wave, horde_best(G.map_id), n + horde_left, extra]
-			return "wave %d of %d · %d coming%s" % [horde_wave, HORDE_WIN, n + horde_left, extra]
+				return "wave %d%s, endless (best %d) · %d coming%s" % [horde_wave, dn, horde_best(G.map_id), n + horde_left, extra]
+			return "wave %d of %d%s · %d coming%s" % [horde_wave, HORDE_WIN, dn, n + horde_left, extra]
 	return ""
 
 # ---------------------------------------------------------------- the daily challenge

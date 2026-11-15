@@ -810,6 +810,21 @@ func blocks_at(c, y: float) -> bool:
 func blocks_move(c) -> bool:
 	return blocks_at(c, c.gy)
 
+# is there something a man can't walk through (a wall, a sill, boards over a door) on the straight line
+# between two spots on the same level?
+func wall_between(a: Vector3, b: Vector3) -> bool:
+	var d = G.flat(b - a)
+	var L = d.length()
+	if L < 0.05:
+		return false
+	var n = int(ceil(L / 0.15))
+	for i in range(n + 1):
+		var p = a + d * (float(i) / n)
+		for c in cell_at(p.x, p.z):
+			if c.alive and c.hi.y > a.y + 0.3 and c.lo.y < a.y + 1.2 and p.x > c.lo.x and p.x < c.hi.x and p.z > c.lo.z and p.z < c.hi.z and blocks_at(c, a.y):
+				return true
+	return false
+
 func push_out_circle(pos: Vector3, r: float) -> Array:
 	# returns [new_pos, collider_hit_or_null]
 	var hit = null
@@ -893,9 +908,26 @@ func _nav_mark(c) -> void:
 	var ix1 = mini(NW - 1, int(floor((c.hi.x + r - NX0) / NCS)))
 	var iz0 = maxi(0, int(floor((c.lo.z - r - NZ0) / NCS)))
 	var iz1 = mini(NH - 1, int(floor((c.hi.z + r - NZ0) / NCS)))
+	# Inside the building with floors a cell is shut when its middle is within a man's half-width of the
+	# wall, as upstairs; everywhere else when any part of it is. (That takes anything up to 0.8 m off
+	# each side of a gap, which a house's 1.6 m door stands and the Ministry's 1.4 m office doors did
+	# not: four in ten of its ground-floor offices could not be walked into, and a man sent to a window
+	# in one was taken to the nearest open ground, outside it.)
+	var mid_test = Levels.on and Levels.inside((c.lo + c.hi) * 0.5, 1.0)
+	if mid_test:
+		r = 0.35
+		ix0 = maxi(0, int(floor((c.lo.x - r - NX0) / NCS)))
+		ix1 = mini(NW - 1, int(floor((c.hi.x + r - NX0) / NCS)))
+		iz0 = maxi(0, int(floor((c.lo.z - r - NZ0) / NCS)))
+		iz1 = mini(NH - 1, int(floor((c.hi.z + r - NZ0) / NCS)))
 	for iz in range(iz0, iz1 + 1):
 		for ix in range(ix0, ix1 + 1):
 			var p = Vector2i(ix, iz)
+			if mid_test:
+				var mx = NX0 + (ix + 0.5) * NCS
+				var mz = NZ0 + (iz + 0.5) * NCS
+				if mx < c.lo.x - r or mx > c.hi.x + r or mz < c.lo.z - r or mz > c.hi.z + r:
+					continue
 			if v:
 				if not astar.is_point_solid(p):
 					astar.set_point_weight_scale(p, 4.0)
@@ -2367,6 +2399,7 @@ func _pitched_roof(x: float, z: float, w: float, d: float, h: float, rc: Color, 
 		ref = add_box(x, gy + h, z, w + 0.7, rh, d + 0.6, rc, {"shape": "prism", "abs": true, "collide": false})
 	var c = add_col(x, gy + h, z, w, minf(rh, 0.6), d)
 	c.set_meta("roof", true)
+	c.set_meta("rh", rh)
 	roof_cols.append(c)
 	c.vis = [ref]
 	c.dest = true

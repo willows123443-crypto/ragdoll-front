@@ -96,7 +96,7 @@ func soldiers_near(p: Vector3) -> Array:
 			if a != null:
 				out.append_array(a)
 	return out
-var settings = {"horde_best": {}, "sens": 1.0, "invert_y": false, "volume": 0.8, "sfx": 1.0, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "shadow_mode": "auto", "sandbox_ai_support": false, "grass": true, "time": "day", "weather": "clear", "difficulty": "normal", "ai_style": "random", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true, "finish_cam": true, "render_scale": 1.0, "ai_side": false, "keys": {}}
+var settings = {"horde_best": {}, "horde_diff": 1, "sens": 1.0, "invert_y": false, "volume": 0.8, "sfx": 1.0, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "shadow_mode": "auto", "sandbox_ai_support": false, "grass": true, "time": "day", "weather": "clear", "difficulty": "normal", "ai_style": "random", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true, "finish_cam": true, "render_scale": 1.0, "ai_side": false, "keys": {}}
 
 # ---------------------------------------------------------------- teams: names, armband colours and uniforms
 const UNIFORMS = {
@@ -375,7 +375,17 @@ func ray(from: Vector3, to: Vector3, mask: int, exclude: Array = []) -> Dictiona
 		var ex: Array[RID] = []
 		ex.assign(exclude)
 		q.exclude = ex
-	return space.intersect_ray(q)
+	var hit = space.intersect_ray(q)
+	# Boards nailed over a door or window are solid to anyone walking or thrown against them, and nothing
+	# to a bullet or a line of sight: the men inside shoot out between the planks. The ray carries on past.
+	var n = 0
+	while not hit.is_empty() and n < 4 and hit.collider.has_meta("thru"):
+		n += 1
+		var ex2: Array[RID] = q.exclude
+		ex2.append(hit.rid)
+		q.exclude = ex2
+		hit = space.intersect_ray(q)
+	return hit
 
 # is the straight line a->b blocked by the world (and optionally smoke)?
 func blocked(a: Vector3, b: Vector3, smoke: bool = false) -> bool:

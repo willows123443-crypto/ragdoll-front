@@ -372,7 +372,9 @@ static func kill(s, attacker, head: bool) -> void:
 		attacker = null
 	# zombie mode: kills earn points to spend between waves
 	if G.mode == "horde" and s.zombie and attacker != null and attacker.team == 0:
-		Support.earn(0, {"brute": 4, "armored": 3, "bloater": 2, "spitter": 2}.get(s.ztype, 1))
+		Support.earn(0, Modes.kill_pay(s))
+	if s.zombie and s.has_meta("boss"):
+		Modes.boss_down(s)
 	Tactics.note_death(s)
 	Campaign.note_death(s)
 	if s.squad != null:
@@ -1179,6 +1181,10 @@ static func explode(pos: Vector3, owner_s, power: float) -> void:
 			s.supp = 1.5
 			if d < R:
 				var edmg = 130.0 * (1.0 - d / R) * (1.0 if exposed else 0.3) * ((0.0 if not Modes.rescued else 0.3) if s == Modes.pilot else 1.0)
+				# (a bloater's burst is gas: it knocks a living man flat and hurts him, a third of what
+				# a charge that size would do. A man a stride and a half away used to go from 100 to 14.)
+				if soft and not s.zombie:
+					edmg *= 0.35
 				s.hp -= edmg
 				Medical.wound(s, edmg * 0.6)
 				if s == G.player:

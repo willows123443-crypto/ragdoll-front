@@ -29,11 +29,17 @@ static func step(dt: float) -> void:
 		if q["members"].is_empty() or q.get("guard", false):
 			continue
 		_trail(q)
-		_bounding(q)
-		_flank(q)
-		_breach(q)
+		# (against the dead nobody bounds forward, works round a flank or goes into a house after them:
+		# every one of those is a way of getting closer to something that only bites. Men who had fallen
+		# back up a floor of the Ministry were sent down again to clear the rooms they had just left.)
+		var vs_dead = G.mode == "horde"
+		if not vs_dead:
+			_bounding(q)
+			_flank(q)
+			_breach(q)
 		_suppress(q)
-		_smoke_cross(q)
+		if not vs_dead:
+			_smoke_cross(q)
 		_fall_back(q)
 		Tactics.squad(q)
 		release_fallback(q)
@@ -294,6 +300,10 @@ static func _fall_back(q) -> void:
 		if is_instance_valid(e) and e.state == "alive" and G.sim_time - L.intel[e]["t"] < 10.0 and G.dist2d(L.intel[e]["p"], L.pos) < 45.0:
 			close += 1
 	if close < n * 2 + 1:
+		return
+	# (holding the Ministry against the dead there's no rear to run to: the way back is up the stairs, and
+	# that is given as its own order. This one sent a beaten squad out of the building into the yard.)
+	if G.mode == "horde" and Levels.on:
 		return
 	var back = G.world.fallback_point(L.team, L.pos)
 	# the smoke goes out first, then everyone runs for it behind the screen

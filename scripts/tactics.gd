@@ -75,6 +75,9 @@ static func squad(q) -> void:
 	var L = Squad.leader_of(q)
 	if L == null or not is_instance_valid(L) or L.is_player or L.zombie:
 		return
+	if G.mode == "horde":
+		_call_help(q, L)
+		return
 	_pinned(q, L)
 	_call_help(q, L)
 	_danger_cross(q, L)

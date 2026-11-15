@@ -1810,7 +1810,7 @@ func _obey(s, to: Vector3) -> void:
 		return
 	if s.cover != null:
 		AI.release_cover(s)
-	if s.task in ["medic", "stretcher", "construct", "repair", "board", "fetch", "flee", "rout", "flank_move", "clear", "support"]:
+	if s.task in ["medic", "stretcher", "construct", "repair", "board", "fetch", "fortify", "flee", "rout", "flank_move", "clear", "support"]:
 		if s.task == "stretcher":
 			return
 		if s.dragging != null:

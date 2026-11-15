@@ -105,13 +105,18 @@ static func apply(d: Dictionary) -> void:
 
 
 # ---------------------------------------------------------------- a battle in progress
-# One slot. What's kept: the map and what's been destroyed on it, every man still standing (his name,
+# Two slots: one for a quick battle and one for the campaign's battle, so saving either leaves the other
+# alone. (There was one, and a campaign battle saved over a quick one.) What's kept: the map and what's been destroyed on it, every man still standing (his name,
 # rank, weapon, wounds and ammunition), every vehicle and how badly it's hit, what's been built, the
 # orders, the score, the points held, supply, the squads, who was aboard which vehicle, the battle
-# clock, the wave in a zombie battle, and in a campaign battle each man's place in the campaign, the
+# clock, the wave in a zombie battle with what's boarded up and any supply drop waiting to be fetched, and in a campaign battle each man's place in the campaign, the
 # reserves still to come and who has fallen so far. What isn't: shells in the air, fires, bodies, and
 # what each man was in the middle of doing.
 const SAVE_PATH = "user://battle.save"
+const CAMP_PATH = "user://campaign_battle.save"
+
+static func slot_path(camp: bool) -> String:
+	return CAMP_PATH if camp else SAVE_PATH
 static var pending_ruins: Array = []
 
 static func can_save() -> String:
@@ -152,7 +157,7 @@ static func capture_battle() -> Dictionary:
 		if sq >= 0 and not d["squads"].has(sq):
 			d["squads"][sq] = {"crew": bool(s.squad.get("crew", false)), "form": str(s.squad.get("form", "wedge")), "guard": bool(s.squad.get("guard", false)), "follow": bool(s.squad.get("follow", false))}
 		var m = {"t": s.team, "x": snappedf(s.pos.x, 0.1), "z": snappedf(s.pos.z, 0.1), "y": snappedf(G.world.ground_y(s.pos.x, s.pos.z) if foot else s.pos.y, 0.1), "cls": s.cls, "w": s.wid, "hp": s.hp, "mag": s.mag, "res": s.reserve,
-			"gr": s.grenades, "sm": s.smokes, "name": s.sname, "vet": s.vet, "zk": s.ztype if s.zombie else "", "sq": sq,
+			"gr": s.grenades, "sm": s.smokes, "name": s.sname, "vet": s.vet, "zk": ("boss" if s.has_meta("boss") else s.ztype) if s.zombie else "", "sq": sq,
 			"ord": [s.order["mode"], s.order["point"].x, s.order["point"].z] if s.order != null and s.order.get("point") != null and s.order["mode"] in ["move", "hold"] else null}
 		if s.vehicle != null and not foot:
 			m["veh"] = [vidx[s.vehicle], s.seat]
@@ -180,6 +185,10 @@ static func capture_battle() -> Dictionary:
 	if Campaign.active:
 		d["camp"] = Campaign.battle_state()
 	d["endless"] = Modes.horde_endless
+	if G.mode == "horde":
+		d["boards"] = Modes.boards_state()
+		d["drops"] = Modes.drops.map(func(q): return [q["p"].x, q["p"].z, q["t"]])
+		d["hdiff"] = Modes.diff()
 	d["score"] = G.score.duplicate()
 	d["sup"] = Support.points.duplicate()
 	d["tickets"] = Obj.tickets.duplicate()
@@ -193,44 +202,53 @@ static func save_battle() -> String:
 	var why = can_save()
 	if why != "":
 		return "Not saved: " + why
-	var f = FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	var f = FileAccess.open(slot_path(Campaign.active), FileAccess.WRITE)
 	if f == null:
 		return "Not saved: the save file couldn't be written"
 	var d = capture_battle()
 	f.store_var(d)
 	f.close()
-	return "%s saved: %d men, %d vehicles, %d pieces of the map in ruins" % ["Campaign battle" if d.has("camp") else "Battle", d["men"].size(), d["vehicles"].size(), d["ruins"].size()]
+	var more = ""
+	if G.mode == "horde" and (d["boards"].size() > 0 or d["drops"].size() > 0):
+		more = ", %d boarded-up doors and windows, %d supply drops waiting" % [d["boards"].size(), d["drops"].size()]
+	return "%s saved: %d men, %d vehicles, %d pieces of the map in ruins%s" % ["Campaign battle" if d.has("camp") else "Battle", d["men"].size(), d["vehicles"].size(), d["ruins"].size(), more]
 
 # the saved battle, if there is one and it can be read
-static func _read_save():
-	if not has_save():
+static func _read_file(path: String):
+	if not FileAccess.file_exists(path):
 		return null
-	var f = FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var f = FileAccess.open(path, FileAccess.READ)
 	var d = f.get_var() if f != null else null
 	return d if (d is Dictionary and d.get("battle", false)) else null
 
+# what's in a slot. (A campaign battle saved when there was only the one slot is still found there.)
+static func _read_save(camp: bool = false):
+	var d = _read_file(slot_path(camp))
+	if camp:
+		if d == null:
+			d = _read_file(SAVE_PATH)
+		return d if d != null and d.has("camp") else null
+	return d if d != null and not d.has("camp") else null
+
 # is the saved battle the campaign battle that's waiting to be fought?
 static func campaign_save_ok() -> bool:
-	var d = _read_save()
-	return d != null and d.has("camp") and Campaign.resume_check(d["camp"]) == ""
+	var d = _read_save(true)
+	return d != null and Campaign.resume_check(d["camp"]) == ""
 
 # a campaign battle that has since been fought (or settled some other way) is no longer worth keeping
 static func forget_campaign_save() -> void:
-	var d = _read_save()
+	if FileAccess.file_exists(CAMP_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(CAMP_PATH))
+	var d = _read_file(SAVE_PATH)
 	if d != null and d.has("camp"):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
 
-static func has_save() -> bool:
-	return FileAccess.file_exists(SAVE_PATH)
+static func has_save(camp: bool = false) -> bool:
+	return _read_save(camp) != null
 
-static func save_text() -> String:
-	if not has_save():
-		return ""
-	var f = FileAccess.open(SAVE_PATH, FileAccess.READ)
-	if f == null:
-		return ""
-	var d = f.get_var()
-	if not (d is Dictionary) or not d.get("battle", false):
+static func save_text(camp: bool = false) -> String:
+	var d = _read_save(camp)
+	if d == null:
 		return ""
 	var mins = int(float(d.get("elapsed", 0.0)) / 60.0)
 	var where = G.world.MAPS.get(d["map"], {}).get("name", d["map"]) if G.world != null else str(d["map"])
@@ -240,13 +258,12 @@ static func save_text() -> String:
 		return "Campaign: the battle for %s, %d min in, %d men" % [Campaign.REGIONS[int(d["camp"]["region"])]["name"], mins, d["men"].size()]
 	return "%s on %s, %d min in, %d men" % [str(d["mode"]).capitalize(), where, mins, d["men"].size()]
 
-static func load_battle() -> String:
-	if not has_save():
+static func load_battle(from_camp: bool = false) -> String:
+	var d = _read_save(from_camp)
+	if d == null:
 		return "No saved battle"
-	var f = FileAccess.open(SAVE_PATH, FileAccess.READ)
-	var d = f.get_var() if f != null else null
-	if not (d is Dictionary) or not d.get("battle", false):
-		return "The saved battle couldn't be read"
+	if d.has("hdiff"):
+		G.settings["horde_diff"] = int(d["hdiff"])
 	var camp = d.get("camp")
 	if camp != null:
 		var why = Campaign.resume_check(camp)
@@ -287,7 +304,7 @@ static func load_battle() -> String:
 		for m in groups[key]:
 			var zk = str(m.get("zk", ""))
 			if zk != "":
-				Soldier.zombie_next = zk
+				Soldier.zombie_next = "brute" if zk == "boss" else zk
 			var s = G.main.spawn_soldier(int(m["t"]), float(m["x"]), float(m["z"]), "pistol" if zk != "" else str(m["w"]))
 			Soldier.zombie_next = ""
 			if s == null:
@@ -341,6 +358,10 @@ static func load_battle() -> String:
 		Modes.horde_side = int(d["horde"][2])
 		Modes.horde_t = Modes.BREAK
 		Modes.horde_endless = bool(d.get("endless", false))
+		# what was boarded up, and any supply drop that was waiting to be fetched
+		Modes.boards_restore(d.get("boards", []))
+		for q in d.get("drops", []):
+			Modes.make_drop(Vector3(float(q[0]), 0, float(q[1])), float(q[2]), false)
 	if camp != null:
 		Campaign.resume_end(camp)
 	if d.has("obj"):

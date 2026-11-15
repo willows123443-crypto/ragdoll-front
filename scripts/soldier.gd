@@ -346,9 +346,16 @@ static func _hm(key: String) -> Mesh:
 			sm.radius = 0.5
 			sm.height = 0.5
 			sm.is_hemisphere = true
-			sm.radial_segments = 12
-			sm.rings = 4
+			sm.radial_segments = 18
+			sm.rings = 5
 			m = sm
+		"ball":
+			var bl = SphereMesh.new()
+			bl.radius = 0.5
+			bl.height = 1.0
+			bl.radial_segments = 16
+			bl.rings = 8
+			m = bl
 		"flare":
 			var cm = CylinderMesh.new()
 			cm.top_radius = 0.48
@@ -461,6 +468,52 @@ func _detail(parent: Node3D, mesh: Mesh, at: Vector3, mat: Material, sc: Vector3
 static var face_quad: QuadMesh = null
 static var unit_box: BoxMesh = null
 
+# Heads are rounded now (they were boxes, and nothing worn on a box sits right: the corners stuck out from
+# under every helmet). Half the head's width, height and depth:
+const HEAD_R = Vector3(0.13, 0.1375, 0.134)
+static var face_patch: ArrayMesh = null
+
+# The painted face, laid over the front of the head and curved with it. Seen from in front the features
+# are where they were on the flat face; they wrap round with the cheeks instead of standing off them.
+static func _face_patch() -> ArrayMesh:
+	if face_patch != null:
+		return face_patch
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var NX = 12
+	var NY = 12
+	var w = 0.25
+	var h = 0.236
+	var cy = -0.012
+	var grid = []
+	for j in range(NY + 1):
+		var row = []
+		for i in range(NX + 1):
+			var px = -w / 2.0 + w * i / NX
+			var py = cy - h / 2.0 + h * j / NY
+			var k = 1.0 - pow(px / HEAD_R.x, 2.0) - pow(py / HEAD_R.y, 2.0)
+			if k < 0.03:
+				row.append(null)
+				continue
+			var pz = -HEAD_R.z * sqrt(k)
+			var n = Vector3(px / (HEAD_R.x * HEAD_R.x), py / (HEAD_R.y * HEAD_R.y), pz / (HEAD_R.z * HEAD_R.z)).normalized()
+			row.append([Vector3(px, py, pz) + n * 0.0025, n, Vector2(0.5 - px / w, 0.5 - (py - cy) / h)])
+		grid.append(row)
+	for j in range(NY):
+		for i in range(NX):
+			var a = grid[j][i]
+			var b = grid[j][i + 1]
+			var c = grid[j + 1][i + 1]
+			var d = grid[j + 1][i]
+			if a == null or b == null or c == null or d == null:
+				continue
+			for v in [a, b, c, a, c, d]:
+				st.set_normal(v[1])
+				st.set_uv(v[2])
+				st.add_vertex(v[0])
+	face_patch = st.commit()
+	return face_patch
+
 func _face(head: Node3D, sk: Material, militia: bool) -> void:
 	if face_quad == null:
 		face_quad = QuadMesh.new()
@@ -476,14 +529,15 @@ func _face(head: Node3D, sk: Material, militia: bool) -> void:
 		beard = 1
 	var balaclava = militia and id % 4 == 0
 	# the head and torso pieces have +z pointing out of the back, so the face goes on -z
-	var z = 0.1375 if balaclava else 0.1265
-	# set a little low on the head so brows and eyes sit clear of any helmet rim
-	var fq = _detail(head, face_quad, Vector3(0, -0.012, -z), _face_mat(brow, beard, balaclava, skin if balaclava else Color(0, 0, 0, 0)))
-	fq.rotation.y = PI
+	# (set a little low on the head so brows and eyes sit clear of any helmet rim; over a balaclava it
+	# stands a little further out, on the wool)
+	var fq = _detail(head, _face_patch(), Vector3.ZERO, _face_mat(brow, beard, balaclava, skin if balaclava else Color(0, 0, 0, 0)))
+	if balaclava:
+		fq.scale = Vector3(1.075, 1.07, 1.075)
 	if not balaclava:
-		_detail(head, unit_box, Vector3(0, -0.04, -0.138), sk, Vector3(0.045, 0.07, 0.04))
+		_detail(head, unit_box, Vector3(0, -0.04, -0.136), sk, Vector3(0.045, 0.07, 0.04))
 	for e in [-1.0, 1.0]:
-		_detail(head, unit_box, Vector3(e * 0.132, 0.0, 0.005), sk, Vector3(0.025, 0.07, 0.05))
+		_detail(head, unit_box, Vector3(e * 0.13, 0.0, 0.005), sk, Vector3(0.025, 0.07, 0.05))
 
 # webbing, belt and pouches for the regulars
 func _kit(vest: Material, helm: Material) -> void:
@@ -542,35 +596,40 @@ func drop_helmet() -> void:
 	G.fx.debris_list.append({"b": rb, "t": 150.0})
 
 func _helmet_parts(head: Node3D, helm: Material, band: Material, cloth: Material) -> void:
-	# The heads are boxes, so the helmets are shells shaped to fit them: a rounded-off square crown sitting
-	# down over the top of the head, just clear of the brows, with each side's own brim or skirt.
-	var by = 0.072
-	var bs = 0.308
+	# Round crowns on round heads. Each helmet is a dome that clears the skull all the way round, set down
+	# to just above the brows and tipped back a little, so it comes lower over the ears and the back of the
+	# neck than over the eyes; a rim, a skirt or a brim makes each side's own shape, and a band in the
+	# side's colour runs round it.
 	match team % 4:
-		0:  # a steel pot pulled well down: low over the top of the head, round the sides over the ears and
-			# down the back of the neck, with a short rolled rim over the brow
-			_hbox(head, Vector3(0.298, 0.135, 0.304), Vector3(0, 0.106, 0.004), helm, 0.058)
-			_hbox(head, Vector3(0.292, 0.016, 0.03), Vector3(0, 0.044, -0.146), helm, 0.007)
-			_hbox(head, Vector3(0.298, 0.1, 0.02), Vector3(0, 0.012, 0.15), helm, 0.008)
-			for e in [-1.0, 1.0]:
-				_hbox(head, Vector3(0.02, 0.085, 0.235), Vector3(e * 0.147, 0.02, 0.035), helm, 0.008)
-		1:  # a crown, a short peak over the eyes, and a skirt flaring out over the ears and the back of the neck
-			_hbox(head, Vector3(0.294, 0.14, 0.302), Vector3(0, 0.108, 0.01), helm, 0.058)
-			_hbox(head, Vector3(0.25, 0.016, 0.05), Vector3(0, 0.05, -0.15), helm, 0.006, Vector3(0.28, 0, 0))
-			_hbox(head, Vector3(0.26, 0.075, 0.018), Vector3(0, 0.035, 0.16), helm, 0.006, Vector3(-0.38, 0, 0))
-			for e in [-1.0, 1.0]:
-				_hbox(head, Vector3(0.018, 0.07, 0.21), Vector3(e * 0.148, 0.036, 0.035), helm, 0.006, Vector3(0, 0, e * 0.36))
-		2:  # a bowl pulled down on the head with a wide flat brim
-			_hbox(head, Vector3(0.288, 0.11, 0.288), Vector3(0, 0.118, 0.0), helm, 0.048)
-			_hbox(head, Vector3(0.37, 0.014, 0.37), Vector3(0, 0.07, 0.0), helm, 0.007)
-			by = 0.084
-			bs = 0.292
+		0:  # a steel pot: deep, plain, with a narrow rolled rim
+			_hround(head, "dome", Vector3(0.312, 0.296, 0.338), Vector3(0, 0.017, 0.004), helm, 0.16)
+			_hround(head, "cyl", Vector3(0.33, 0.012, 0.356), Vector3(0, 0.018, 0.004), helm, 0.16)
+			_hround(head, "cyl", Vector3(0.318, 0.02, 0.344), Vector3(0, 0.042, 0.004), band, 0.16)
+		1:  # a crown with a short peak over the eyes and a skirt flaring out over the ears and the neck
+			_hround(head, "dome", Vector3(0.306, 0.286, 0.328), Vector3(0, 0.038, 0.006), helm, 0.12)
+			_hround(head, "flare", Vector3(0.32, 0.05, 0.342), Vector3(0, 0.022, 0.006), helm, 0.24)
+			_hbox(head, Vector3(0.22, 0.014, 0.05), Vector3(0, 0.054, -0.17), helm, 0.006, Vector3(0.3, 0, 0))
+			_hround(head, "cyl", Vector3(0.312, 0.02, 0.334), Vector3(0, 0.064, 0.006), band, 0.12)
+		2:  # a shallow bowl with a wide flat brim, worn high
+			_hround(head, "dome", Vector3(0.292, 0.2, 0.302), Vector3(0, 0.078, 0.0), helm, 0.06)
+			_hround(head, "cyl", Vector3(0.41, 0.012, 0.42), Vector3(0, 0.076, 0.0), helm, 0.06)
+			_hround(head, "cyl", Vector3(0.298, 0.02, 0.308), Vector3(0, 0.094, 0.0), band, 0.06)
 		_:  # a soft field cap with a peak
-			_hbox(head, Vector3(0.268, 0.09, 0.268), Vector3(0, 0.15, 0.0), cloth, 0.03)
-			_hbox(head, Vector3(0.2, 0.014, 0.085), Vector3(0, 0.112, -0.165), cloth, 0.006, Vector3(0.12, 0, 0))
-			by = 0.125
-			bs = 0.274
-	_hbox(head, Vector3(bs, 0.022, bs), Vector3(0, by, 0.004 if team % 4 < 2 else 0.0), band, 0.01)
+			_hround(head, "cyl", Vector3(0.272, 0.075, 0.284), Vector3(0, 0.118, 0.0), cloth, 0.04)
+			_hbox(head, Vector3(0.2, 0.014, 0.085), Vector3(0, 0.086, -0.17), cloth, 0.006, Vector3(0.12, 0, 0))
+			_hround(head, "cyl", Vector3(0.278, 0.02, 0.29), Vector3(0, 0.094, 0.0), band, 0.04)
+
+# A piece of headgear set on the head and tipped back with the rest of it: every piece of one helmet shares
+# a tilt about the middle of the head. (Leaning back lowers the back of it and lifts the front.)
+func _hround(head: Node3D, key: String, sc: Vector3, at: Vector3, mat: Material, tilt: float = 0.0) -> void:
+	var mi = MeshInstance3D.new()
+	mi.mesh = _hm(key)
+	mi.position = Basis(Vector3.RIGHT, tilt) * at
+	mi.rotation = Vector3(tilt, 0, 0)
+	mi.scale = sc
+	mi.material_override = mat
+	mi.layers = 2
+	head.add_child(mi)
 
 # a bevelled box (rounded edges), for helmets and the like
 func _hbox(parent: Node3D, size: Vector3, at: Vector3, mat: Material, bevel: float, rot: Vector3 = Vector3.ZERO) -> void:
@@ -628,7 +687,7 @@ func _build_body() -> void:
 	_mesh(parts[1], Vector3(0.42, 0.52, 0.24), Vector3.ZERO, uni)
 	_mesh(parts[1], Vector3(0.45, 0.3, 0.27), Vector3(0, 0.06, 0), vest)
 	_mesh(parts[1], Vector3(0.3, 0.26, 0.06), Vector3(0, 0.05, -0.15), vest)
-	_mesh(parts[2], Vector3(0.25, 0.26, 0.25), Vector3.ZERO, sk)
+	_hpart(parts[2], "ball", HEAD_R * 2.0, Vector3.ZERO, sk)
 	# a neck down into the collar, so the head doesn't float above the shoulders
 	_mesh(parts[2], Vector3(0.12, 0.13, 0.12), Vector3(0, -0.185, 0.015), sk)
 	if not zombie:
@@ -1835,6 +1894,18 @@ func lod_glide(cheap: bool = false) -> void:
 	if gun_node != null and gun_body == null and vehicle == null:
 		compute_muzzle()
 
+# put him somewhere else, body and all (a new man found inside a house that's boarded shut, a saved man
+# back on the floor he was on)
+func move_to(p: Vector3) -> void:
+	var d = p - pos
+	pos = p
+	vel = Vector3.ZERO
+	for b in parts:
+		b.global_position += d
+		b.linear_velocity = Vector3.ZERO
+	if gun_node != null and gun_body == null:
+		gun_node.global_position += d
+
 # a far-off man riding: between his full updates he's just carried along with his seat
 func rider_glide() -> void:
 	if vehicle == null or not is_instance_valid(vehicle) or parts.is_empty() or mount_t > 0.0:
@@ -2108,9 +2179,9 @@ func _class_kit(c: String) -> void:
 			_mesh(parts[5], Vector3(0.145, 0.09, 0.145), Vector3(0, -0.02, 0), white)
 			_mesh(parts[5], Vector3(0.15, 0.025, 0.15), Vector3(0, -0.02, 0), red)
 			for x in [-1.0, 1.0]:
-				_mesh(parts[2], Vector3(0.012, 0.09, 0.09), Vector3(x * 0.16, 0.12, 0.0), white)
-				_mesh(parts[2], Vector3(0.016, 0.065, 0.02), Vector3(x * 0.163, 0.12, 0.0), red)
-				_mesh(parts[2], Vector3(0.016, 0.02, 0.065), Vector3(x * 0.163, 0.12, 0.0), red)
+				_mesh(parts[2], Vector3(0.012, 0.075, 0.075), Vector3(x * 0.146, 0.09, 0.0), white)
+				_mesh(parts[2], Vector3(0.016, 0.055, 0.018), Vector3(x * 0.149, 0.09, 0.0), red)
+				_mesh(parts[2], Vector3(0.016, 0.018, 0.055), Vector3(x * 0.149, 0.09, 0.0), red)
 			_mesh(parts[0], Vector3(0.1, 0.15, 0.2), Vector3(-0.22, -0.02, 0.02), white)
 			_mesh(parts[0], Vector3(0.104, 0.05, 0.02), Vector3(-0.22, -0.02, 0.02), red)
 			_mesh(parts[0], Vector3(0.104, 0.02, 0.06), Vector3(-0.22, -0.02, 0.02), red)
@@ -2428,7 +2499,7 @@ func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
 	for e in [-1.0, 1.0]:
 		_mesh(parts[2], Vector3(0.05, 0.03, 0.02), Vector3(e * 0.06, 0.03, -0.126), eye)
 	_mesh(parts[2], Vector3(0.12, 0.05, 0.05), Vector3(0, -0.11, -0.1), dark)
-	_mesh(parts[2], Vector3(0.14, 0.04, 0.03), Vector3(0.03, 0.09, -0.12), blood)
+	_mesh(parts[2], Vector3(0.14, 0.04, 0.03), Vector3(0.03, 0.09, -0.098), blood)
 	_mesh(parts[1], Vector3(0.22, 0.26, 0.02), Vector3(0.05, 0.02, -0.165), blood)
 	_mesh(parts[1], Vector3(0.12, 0.14, 0.02), Vector3(-0.12, -0.14, -0.13), blood)
 	_mesh(parts[1], Vector3(0.1, 0.1, 0.02), Vector3(0.1, -0.05, 0.155), dark)
@@ -2444,7 +2515,7 @@ func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
 		for i in [4, 6]:
 			_mesh(parts[i], Vector3(0.2, 0.32, 0.2), Vector3(0, -0.02, 0), sk)
 			_mesh(parts[i], Vector3(0.16, 0.14, 0.16), Vector3(0, 0.17, 0), dark)
-		_mesh(parts[2], Vector3(0.3, 0.2, 0.26), Vector3(0, -0.04, 0), sk)
+		_hpart(parts[2], "ball", Vector3(0.31, 0.25, 0.29), Vector3(0, -0.035, 0), sk)
 	elif ztype == "runner":
 		_mesh(parts[1], Vector3(0.38, 0.5, 0.2), Vector3.ZERO, sk)
 		_mesh(parts[1], Vector3(0.3, 0.07, 0.21), Vector3(0, 0.08, 0.0), blood)
@@ -2649,9 +2720,13 @@ func drop_gun() -> void:
 	gun_node.reparent(gun_body, true)
 
 # ---------------------------------------------------------------- state changes
+var fell_at = null          # where he was standing when he was knocked down
+
 func fall(t: float = -1.0) -> void:
 	if state == "dead":
 		return
+	if state == "alive":
+		fell_at = pos
 	if climb != null:
 		climb = null
 		release_ladder_gun(false)
@@ -2750,6 +2825,12 @@ func start_getup() -> void:
 	var pel: Vector3 = parts[0].global_position
 	pos = Vector3(pel.x, 0, pel.z)
 	pos.y = G.world.surface_y(pos.x, pos.z, pel.y)
+	# He gets up on the side of the wall he went down on. (A body lying against a wall has its hips in
+	# it as often as not, and being pushed clear of the wall put him on whichever side was nearer: the
+	# dead got into a boarded-up house by being knocked over against it.)
+	if fell_at != null and G.dist2d(fell_at, pos) < 4.0 and absf(fell_at.y - pos.y) < 1.0 and G.world.wall_between(fell_at, pos):
+		pos = fell_at
+	fell_at = null
 	pos = G.world.push_out_circle(pos, 0.35)[0]
 	var up = torso_facing_up()
 	var yaw: float
@@ -2817,6 +2898,15 @@ func start_vault(c) -> bool:
 	var ty: float = G.world.surface_y(tx, tz, pos.y + 0.5)
 	if G.world.inside_any(tx, tz, 0.3, ty) or absf(ty - pos.y) > 0.9:
 		return false
+	# nobody climbs out of an upstairs window of the Ministry (there's a ledge outside each floor, which
+	# looked like somewhere to land: men backing away from the dead on the first floor went out over it)
+	if Levels.on and Levels.inside(pos, 0.0) and pos.y - Levels.gy > 1.5 and not Levels.inside(Vector3(tx, ty, tz), -0.3):
+		return false
+	# a window that's boarded up isn't a way through. (Nothing looked: the dead climbed in at boarded
+	# windows as if the planks weren't there.)
+	for o in G.world.cols_in_rect(c.lo.x, c.lo.z, c.hi.x, c.hi.z):
+		if o.alive and o.has_meta("board") and o.hi.y > c.hi.y and o.lo.y < c.hi.y + 1.0 and o.hi.x > c.lo.x and o.lo.x < c.hi.x and o.hi.z > c.lo.z and o.lo.z < c.hi.z:
+			return false
 	# nobody goes over a wall while looking the other way: a beat to turn and face it first
 	var vyaw = atan2(tx - pos.x, tz - pos.z)
 	var turn_first = absf(G.wrap_a(body_yaw - vyaw)) > 0.9

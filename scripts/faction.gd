@@ -69,16 +69,16 @@ static func headgear(s, head: Node3D) -> void:
 	var band = s._mat("band" + G.TEAM_BAND[s.team].to_html(), G.TEAM_BAND[s.team], false)
 	match k:
 		0:  # balaclava: knitted over the whole head, a slit for the eyes (the face texture shows skin there)
-			s._mesh(head, Vector3(0.272, 0.282, 0.272), Vector3(0, 0.006, 0), dark)
-			s._hpart(head, "dome", Vector3(0.27, 0.12, 0.27), Vector3(0, 0.145, 0), dark)
+			s._hpart(head, "ball", Vector3(0.274, 0.288, 0.282), Vector3(0, 0.002, 0), dark)
 		1:  # shemagh wrapped round head and face
-			s._hpart(head, "dome", Vector3(0.3, 0.42, 0.31), Vector3(0, 0.06, 0), dark)
-			s._hpart(head, "cyl", Vector3(0.27, 0.1, 0.27), Vector3(0, -0.06, -0.02), dark)
+			s._hround(head, "dome", Vector3(0.3, 0.3, 0.312), Vector3(0, 0.035, 0.002), dark, 0.16)
+			s._hpart(head, "cyl", Vector3(0.268, 0.1, 0.272), Vector3(0, -0.062, -0.012), dark)
 		2:  # beanie and a face scarf
-			s._hpart(head, "dome", Vector3(0.28, 0.36, 0.29), Vector3(0, 0.09, 0), dark)
-			s._hpart(head, "cyl", Vector3(0.26, 0.09, 0.26), Vector3(0, -0.07, -0.025), band)
-		_:  # bare head, headband in the side's colour
-			s._hpart(head, "cyl", Vector3(0.27, 0.04, 0.27), Vector3(0, 0.07, 0), band)
+			s._hround(head, "dome", Vector3(0.286, 0.27, 0.296), Vector3(0, 0.04, 0.002), dark, 0.14)
+			s._hpart(head, "cyl", Vector3(0.262, 0.09, 0.268), Vector3(0, -0.07, -0.012), band)
+		_:  # bare head: cropped hair, and a headband in the side's colour
+			s._hround(head, "dome", Vector3(0.266, 0.2, 0.274), Vector3(0, 0.045, 0.004), s._mat("milhair" + str(s.id % 3), [Color(0.12, 0.09, 0.07), Color(0.28, 0.2, 0.12), Color(0.08, 0.08, 0.08)][s.id % 3], false), 0.2)
+			s._hround(head, "cyl", Vector3(0.272, 0.03, 0.28), Vector3(0, 0.05, 0.004), band, 0.2)
 
 # chest rig, a tracksuit or a jacket, trainers or boots: no two fighters kitted out the same
 static func rig(s, vest: Material, uni: Material, uni2: Material) -> void:

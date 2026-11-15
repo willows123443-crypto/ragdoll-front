@@ -1433,9 +1433,9 @@ func _show_campaign(result: String = "") -> void:
 				camp_result = ""
 				_close_title()
 				G.main.stop_attract()
-				message(Scenario.load_battle()))
+				message(Scenario.load_battle(true)))
 			cb2.add_theme_font_size_override("font_size", 17)
-			cb2.tooltip_text = Scenario.save_text()
+			cb2.tooltip_text = Scenario.save_text(true)
 			h.add_child(cb2)
 		for opt in [["  Command from above  ", "command", "You give the orders from the commander's view" + (", and place your defences before they arrive" if pend["attacker"] == 1 and not st2 else "")],
 				["  Fight as a soldier  ", "soldier", "The AI commands your side and you go in as one of the men (you can still switch between them)"]]:
@@ -2219,7 +2219,7 @@ func _fill_title() -> void:
 				_close_title()
 				_deploy())
 		if not G.over:
-			_title_button("Save this battle", ("one slot: carry on later from the campaign screen or the title" if Campaign.active else "one slot: it can be carried on later from the title screen") if Scenario.can_save() == "" else Scenario.can_save(), func():
+			_title_button("Save this battle", ("the campaign's own slot: carry on later from the campaign screen or the title (a saved quick battle is left alone)" if Campaign.active else "the quick-battle slot: it can be carried on later from the title screen (a saved campaign battle is left alone)") if Scenario.can_save() == "" else Scenario.can_save(), func():
 				message(Scenario.save_battle())
 				_close_title())
 		_title_button("New battle…", "pick a map, a mode and your forces", func(): _open_setup())
@@ -2233,6 +2233,13 @@ func _fill_title() -> void:
 				title.visible = false
 				menu.visible = false
 				message(Scenario.load_battle()))
+		# (the campaign's battle has a slot of its own)
+		if Scenario.save_text(true) != "":
+			_title_button("Continue campaign battle", Scenario.save_text(true), func():
+				G.main.stop_attract()
+				title.visible = false
+				menu.visible = false
+				message(Scenario.load_battle(true)))
 		_title_header("PLAY")
 		_title_button("First battle", "a guided fight: learn to command in five minutes", func():
 			G.main.stop_attract()
@@ -2288,12 +2295,28 @@ func _show_horde() -> void:
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	v.add_child(_label("Zombie horde", 26, Color(0.97, 0.93, 0.82)))
-	v.add_child(_label("Ten waves, each bigger than the last. Beat them and you can keep going for as long as you can hold.", 13, Color(0.8, 0.8, 0.78)))
+	v.add_child(_label("Ten waves, each bigger than the last, and a giant with the tenth. Beat them and you can keep going for as long as you can hold.", 13, Color(0.8, 0.8, 0.78)))
+	# how hard: each has its own record
+	var dr = HBoxContainer.new()
+	dr.add_theme_constant_override("separation", 8)
+	dr.add_child(_label("Difficulty", 14, Color(0.9, 0.91, 0.88)))
+	for di in range(3):
+		var on = Modes.diff() == di
+		var db = _button(("  ● %s  " if on else "  %s  ") % Modes.DIFF_NAMES[di], func():
+			G.settings["horde_diff"] = di
+			G.save_prefs()
+			_show_horde())
+		db.tooltip_text = Modes.DIFF_TIPS[di]
+		if on:
+			db.add_theme_color_override("font_color", Color(1.0, 0.86, 0.4))
+		dr.add_child(db)
+	dr.add_child(_label(Modes.DIFF_TIPS[Modes.diff()], 13, Color(0.7, 0.72, 0.7)))
+	v.add_child(dr)
 	var cols = HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 12)
 	v.add_child(cols)
-	for mp in [["town", "Town ruins", "Streets and houses round a crossroads. Barricade the roads, board up a house and fall back to it when the streets are lost."],
-			["office", "The Ministry", "One big building, three floors. Get inside and hold it floor by floor: when a floor is lost, fall back up the stairs and hold the head of them."]]:
+	for mp in [["town", "Town ruins", "Streets and houses round a crossroads. Barricade the roads and fall back to a house when the streets are lost: the men in it board up its windows and doors."],
+			["office", "The Ministry", "One big building, three floors. The men board up the ground floor and hold it; when a floor is overrun they fall back up the stairs and hold the head of them."]]:
 		var pc = PanelContainer.new()
 		var sb = StyleBoxFlat.new()
 		sb.bg_color = Color(0.13, 0.15, 0.16, 1.0)
@@ -2310,7 +2333,7 @@ func _show_horde() -> void:
 		dl.custom_minimum_size = Vector2(300, 84)
 		pv.add_child(dl)
 		var best = Modes.horde_best(mp[0])
-		pv.add_child(_label(("Best: wave %d" % best) if best > 0 else "Not played yet", 14, Color(1.0, 0.86, 0.4) if best > 0 else Color(0.65, 0.66, 0.64)))
+		pv.add_child(_label(("Best on %s: wave %d" % [Modes.DIFF_NAMES[Modes.diff()].to_lower(), best]) if best > 0 else "Not played yet on %s" % Modes.DIFF_NAMES[Modes.diff()].to_lower(), 14, Color(1.0, 0.86, 0.4) if best > 0 else Color(0.65, 0.66, 0.64)))
 		var mid: String = mp[0]
 		pv.add_child(_button("  Start  ", func():
 			horde_panel.visible = false

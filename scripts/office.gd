@@ -19,10 +19,12 @@ const T_IN = 0.3
 
 static var w = null
 static var doors_at = {}     # wall key -> [[c, half width], ...] so furniture keeps out of doorways
+static var outs: Array = []  # the ways in at ground level (doors and windows in the outside walls), for boarding up
 
 static func build(world) -> void:
 	w = world
 	doors_at = {}
+	outs = []
 	var W2 = w.TW / 2.0
 	var D2 = w.TH_ / 2.0
 	w.flatten_rect(-W2 + 8.0, -D2 + 8.0, W2 - 8.0, D2 - 8.0, 6.0)
@@ -128,6 +130,13 @@ static func _wall(horiz: bool, fixed: float, a0: float, a1: float, k: int, color
 	for gp in gaps:
 		var g0 = clampf(gp[0] - gp[1] / 2.0, a0, a1)
 		var g1 = clampf(gp[0] + gp[1] / 2.0, a0, a1)
+		if k == 0 and t >= T_OUT and gp[2] != "door":
+			var wn: bool = gp[2] == "win"
+			var oy0 = Levels.gy + (1.05 if wn else 0.3)
+			var oy1 = Levels.gy + (2.15 if wn else 2.3)
+			var oc = Vector3((g0 + g1) / 2.0, (oy0 + oy1) / 2.0, fixed) if horiz else Vector3(fixed, (oy0 + oy1) / 2.0, (g0 + g1) / 2.0)
+			outs.append({"kind": "win" if wn else "door", "c": oc, "n": Vector3(0, 0, signf(fixed)) if horiz else Vector3(signf(fixed), 0, 0),
+				"horiz": horiz, "w": g1 - g0 + 0.2, "y0": oy0, "y1": oy1})
 		_solid(horiz, fixed, cur, g0, y0, 0.0, h, color, t, hp)
 		match gp[2]:
 			"door":
@@ -255,7 +264,9 @@ static func _storey(k: int, wells: Array) -> void:
 				if not wl.is_empty():
 					var u_aisle = cr[1] - 0.9 if wl["sx"] > 0 else cr[0] + 0.9
 					gaps.append([u_aisle, 1.2, "door"])
-				elif w.rng.randf() < 0.8:
+				else:
+					# every back office has a door from the office in front of it (one in five used to have
+					# none, and if the cross corridor gave it none either it was a sealed box)
 					gaps.append([_rnd_door(cr[0], cr[1]), 1.4, "door"])
 				_wall(true, sz * MIDZ, cr[0] + 0.15, cr[1] - 0.15, k, col_c, T_IN, gaps, 220.0, "m%d_%d_%d_%d" % [k, b, c, int(sz)])
 				# partitions between columns (not at the wing's ends: those are cross corridor or outside walls)

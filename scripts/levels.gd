@@ -107,7 +107,11 @@ static func mark(k: int, x0: float, z0: float, x1: float, z1: float) -> void:
 			var p = cpos(Vector2i(ix, iz), k)
 			g.set_point_solid(Vector2i(ix, iz), not _floor_under(p.x, p.z, ly))
 			g.set_point_weight_scale(Vector2i(ix, iz), 1.0)
-	var r = 0.3
+	# a cell is shut when its middle is within a man's half-width of something solid. (It used to be shut
+	# when any part of it was, which took anything up to 0.8 m off each side of a doorway: four doors in
+	# ten upstairs came out too narrow to be a way through at all, and the rooms behind them were dead
+	# ground that nobody could be sent into or find a way out of.)
+	var r = 0.35
 	for c in W.cols_in_rect(x0 - 1.0, z0 - 1.0, x1 + 1.0, z1 + 1.0):
 		if not c.alive or not W.blocks_at(c, ly):
 			continue
@@ -117,6 +121,9 @@ static func mark(k: int, x0: float, z0: float, x1: float, z1: float) -> void:
 		for iz in range(maxi(c0.y, a.y), mini(c1.y, b.y) + 1):
 			for ix in range(maxi(c0.x, a.x), mini(c1.x, b.x) + 1):
 				var q = Vector2i(ix, iz)
+				var m = cpos(q, k)
+				if m.x < c.lo.x - r or m.x > c.hi.x + r or m.z < c.lo.z - r or m.z > c.hi.z + r:
+					continue
 				if low:
 					if not g.is_point_solid(q):
 						g.set_point_weight_scale(q, 4.0)
@@ -125,11 +132,19 @@ static func mark(k: int, x0: float, z0: float, x1: float, z1: float) -> void:
 
 # a slab, landing or floor whose top is at this height under this spot (well in from its edges, so
 # nobody is sent to stand on the lip of a stairwell)
+# The floor is laid in several pieces (it's cut round the stairwells, and long runs are split), so "well
+# in" has to be judged against the floor as a whole: a spot counts when there's floor under it and under
+# the four points a hand's breadth to each side, whichever pieces those happen to be. (Judged a piece at
+# a time, every join between two pieces came out as a line nobody could cross: the corridor upstairs was
+# cut into five, and every stair landing was walled off from the floor it led to.)
 static func _floor_under(x: float, z: float, ly: float) -> bool:
+	return _slab_at(x, z, ly) and _slab_at(x - 0.2, z, ly) and _slab_at(x + 0.2, z, ly) and _slab_at(x, z - 0.2, ly) and _slab_at(x, z + 0.2, ly)
+
+static func _slab_at(x: float, z: float, ly: float) -> bool:
 	for c in G.world.cell_at(x, z):
 		if not c.alive or c.hi.y - c.lo.y > 0.7 or absf(c.hi.y - ly) > 0.15:
 			continue
-		if x > c.lo.x + 0.2 and x < c.hi.x - 0.2 and z > c.lo.z + 0.2 and z < c.hi.z - 0.2:
+		if x >= c.lo.x - 0.001 and x <= c.hi.x + 0.001 and z >= c.lo.z - 0.001 and z <= c.hi.z + 0.001:
 			return true
 	return false
 

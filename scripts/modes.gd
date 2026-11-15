@@ -1227,7 +1227,7 @@ static func wave_size(w: int) -> int:
 	var n = 10.0 + w * 8.0 + G.team_size
 	if Levels.on:
 		n *= lerpf(0.5, 0.72, clampf((w - 1) / 4.0, 0.0, 1.0))
-		return int(round(n * [0.75, 1.0, 1.1][diff()]))
+		return int(round(n * [0.75, 1.0, 1.0][diff()]))
 	n += 0.5 * w * w
 	return int(round(n * [0.75, 1.0, 1.45][diff()]))
 

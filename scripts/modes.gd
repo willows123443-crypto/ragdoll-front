@@ -781,7 +781,7 @@ static func horde_best(map_id: String, d: int = -1) -> int:
 const DIFF_NAMES = ["Easy", "Normal", "Hard"]
 const DIFF_TIPS = ["A quarter fewer of them, weaker and a little slower, and a kill pays more",
 	"As it was",
-	"Many more of them (nearly half as many again in the open), tougher and a little faster, and a kill pays less"]
+	"Tougher and a little faster, a kill pays less, and in the open nearly half as many again"]
 
 static func diff() -> int:
 	return clampi(int(G.settings.get("horde_diff", 1)), 0, 2)

@@ -75,6 +75,10 @@ func _ready() -> void:
 	s_squeal = _squeal()
 	s_hammer = _noise(0.09, 0.025, 0.55, 3.0, 30.0)
 	s_kick = _noise(0.35, 0.07, 0.12, 2.4, 70.0)
+	# a plank splitting as it's wrenched off (a longer, brighter rasp than the knock of a hammer), and
+	# the ground struck by something very heavy (long, dull and low)
+	s_tear = _noise(0.24, 0.07, 0.8, 1.5, 0.0)
+	s_slam = _noise(0.9, 0.28, 0.05, 3.2, 42.0)
 	s_glass = _glass_sound()
 	# guns: length, decay, brightness, punch, low thump
 	s_guns["rifle"] = _gun(0.42, 0.05, 0.5, 2.3, 70.0, 0.02)
@@ -839,6 +843,23 @@ func whistle(pos: Vector3) -> void:
 func hammer(pos: Vector3) -> void:
 	if cam_dist(pos) < 45.0:
 		play(s_hammer, pos, -6.0, randf_range(0.8, 1.25))
+
+var s_tear: AudioStreamWAV = null
+var s_slam: AudioStreamWAV = null
+
+func tear(pos: Vector3) -> void:
+	if cam_dist(pos) < 55.0:
+		play(s_tear, pos, -2.0, randf_range(0.75, 1.1))
+
+func slam(pos: Vector3, vol_db: float = 6.0) -> void:
+	notice(pos, 0.5)
+	if cam_dist(pos) < 110.0:
+		play(s_slam, pos, vol_db, randf_range(0.65, 0.8))
+
+# one of the big ones giving voice: the snarl, an octave down
+func roar(pos: Vector3) -> void:
+	if cam_dist(pos) < 120.0:
+		play(s_snarl, pos, 5.0, randf_range(0.45, 0.55))
 
 func kick(pos: Vector3) -> void:
 	if cam_dist(pos) < 70.0:

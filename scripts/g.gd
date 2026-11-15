@@ -56,6 +56,7 @@ var reinforce = true
 var limit = 50
 var started = false
 var attract = false       # the little battle playing behind the title screen
+var nav_mid = false       # the route grid shuts a cell by its middle on every map, not only in the Ministry (off: see --navtest)
 var builder = false       # battle builder: both armies being set out, holding still until Start
 var bal = {}              # counts of things that happen in a battle, for balance testing
 var win_team = -2

@@ -2220,19 +2220,27 @@ func _fill_title() -> void:
 				_deploy())
 		if not G.over:
 			_title_button("Save this battle", ("the campaign's own slot: carry on later from the campaign screen or the title (a saved quick battle is left alone)" if Campaign.active else "the quick-battle slot: it can be carried on later from the title screen (a saved campaign battle is left alone)") if Scenario.can_save() == "" else Scenario.can_save(), func():
-				message(Scenario.save_battle())
-				_close_title())
+				if Campaign.active:
+					message(Scenario.save_battle())
+					_close_title()
+				else:
+					_show_slots(true))
 		_title_button("New battle…", "pick a map, a mode and your forces", func(): _open_setup())
 		_title_button("Battle report", "who killed whom, and how", func(): show_report())
 	else:
 		title_sub.text = "Battles that play themselves, until you step in: drop in soldiers, take over anyone, or command from above."
 		_title_button("Quick battle", "pick a map, a mode and your forces", func(): _open_setup(), true)
-		if Scenario.save_text() != "":
-			_title_button("Continue saved battle", Scenario.save_text(), func():
+		# (one saved battle is carried on at a click; with more there's a list to pick from)
+		var used = Scenario.used_slots()
+		if used.size() == 1:
+			_title_button("Continue saved battle", Scenario.save_text(false, used[0]), func():
 				G.main.stop_attract()
 				title.visible = false
 				menu.visible = false
-				message(Scenario.load_battle()))
+				message(Scenario.load_battle(false, used[0])))
+			_title_button("Saved battles…", "the five slots: load one or clear it", func(): _show_slots(false))
+		elif used.size() > 1:
+			_title_button("Continue a saved battle…", "%d saved: pick one" % used.size(), func(): _show_slots(false))
 		# (the campaign's battle has a slot of its own)
 		if Scenario.save_text(true) != "":
 			_title_button("Continue campaign battle", Scenario.save_text(true), func():
@@ -2284,6 +2292,65 @@ func _close_title() -> void:
 	get_tree().paused = false
 	if G.player != null:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+# The five quick-battle slots: saving into one (with a name), or loading or clearing one
+var slots_panel: PanelContainer = null
+func _show_slots(saving: bool) -> void:
+	if slots_panel != null:
+		slots_panel.queue_free()
+	slots_panel = _panel(Color(0.1, 0.12, 0.14, 0.98))
+	_place(slots_panel, Control.PRESET_CENTER, -360, -200, 720, 400)
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	v.add_child(_label("Save this battle" if saving else "Saved battles", 24, Color(0.97, 0.93, 0.82)))
+	var name_edit: LineEdit = null
+	if saving:
+		v.add_child(_label("Pick a slot. A slot that's in use is overwritten. The campaign's battle has a slot of its own and isn't one of these.", 13, Color(0.8, 0.8, 0.78)))
+		var nr = HBoxContainer.new()
+		nr.add_theme_constant_override("separation", 8)
+		nr.add_child(_label("Name", 14, Color(0.9, 0.91, 0.88)))
+		name_edit = LineEdit.new()
+		name_edit.text = Scenario.default_name()
+		name_edit.max_length = 40
+		name_edit.custom_minimum_size = Vector2(420, 30)
+		name_edit.add_theme_font_size_override("font_size", 15)
+		nr.add_child(name_edit)
+		v.add_child(nr)
+	for e in Scenario.slot_list():
+		var row = HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var slot: int = e["slot"]
+		var empty: bool = e["text"] == ""
+		var lv = VBoxContainer.new()
+		lv.custom_minimum_size = Vector2(480, 40)
+		lv.add_theme_constant_override("separation", -2)
+		lv.add_child(_label("%d   %s" % [slot, "empty" if empty else e["name"]], 16, Color(0.6, 0.62, 0.6) if empty else Color(1.0, 0.86, 0.4)))
+		if not empty:
+			lv.add_child(_label("     " + e["text"], 12, Color(0.7, 0.72, 0.7)))
+		row.add_child(lv)
+		if saving:
+			row.add_child(_button("  Save here  " if empty else "  Overwrite  ", func():
+				message(Scenario.save_battle(slot, name_edit.text))
+				slots_panel.visible = false
+				_close_title()))
+		elif not empty:
+			row.add_child(_button("  Load  ", func():
+				slots_panel.visible = false
+				G.main.stop_attract()
+				title.visible = false
+				menu.visible = false
+				message(Scenario.load_battle(false, slot))))
+		if not empty and not saving:
+			row.add_child(_button("  Clear  ", func():
+				Scenario.delete_slot(slot)
+				_show_slots(false)))
+		v.add_child(row)
+	v.add_child(_button("  Back  ", func():
+		slots_panel.visible = false
+		if not saving:
+			show_menu()))
+	slots_panel.add_child(v)
+	root.add_child(slots_panel)
 
 # Zombie horde: which map to hold, with the furthest wave beaten on each
 var horde_panel: PanelContainer = null

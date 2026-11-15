@@ -92,6 +92,10 @@ static func step(dt: float) -> void:
 		if G.mode == "horde" and t == 1:
 			continue
 		var has = ok(t)
+		# (against the dead nothing goes to HQ by runner: what the survivors need they buy with points, and
+		# a man sent to the rear with a message was a man sent out of the house into the horde)
+		if G.mode == "horde":
+			has = true
 		if not has and need_reinf[t]:
 			wait_t[t] += 1.0
 		if has != had[t]:
@@ -123,6 +127,8 @@ static func _send_runner(t: int) -> void:
 		return
 	var r = runner[t]
 	if r != null and is_instance_valid(r) and r.state != "dead":
+		return
+	if G.mode == "horde":
 		return
 	var best = _pick_runner(t)
 	if best == null:

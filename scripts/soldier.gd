@@ -257,6 +257,7 @@ func setup(team_: int, x: float, z: float, weapon_id: String) -> void:
 	skin = G.pick(G.SKINS)
 	zombie = zombie_next != ""
 	ztype = zombie_next
+	size_k = size_next
 	# each of the dead moves its own way: a gait style and its own pace
 	zstyle = randi() % 5
 	zgait = randf_range(0.8, 1.25)
@@ -277,6 +278,36 @@ func setup(team_: int, x: float, z: float, weapon_id: String) -> void:
 	_build_body()
 	_build_gun()
 	compute_muzzle()
+
+# A body that is bigger all through (the giants of the tenth waves): the joints the pose works out are
+# spread from the feet by size_k, and every part's box, what's drawn on it and the ragdoll's joints are
+# built to match. Set size_next before spawning one, as with zombie_next.
+static var size_next = 1.0
+var size_k = 1.0
+
+# (spread from the ground under the hips, which the pose itself gives)
+func _J(i: int) -> Vector3:
+	if size_k == 1.0:
+		return P[i]
+	var b = Vector3((P[9].x + P[12].x) * 0.5, minf(P[11].y, P[14].y), (P[9].z + P[12].z) * 0.5)
+	return b + (P[i] - b) * size_k
+
+func _size_up() -> void:
+	if size_k == 1.0:
+		return
+	for b in parts:
+		for ch in b.get_children():
+			if ch is CollisionShape3D:
+				var sh = ch.shape.duplicate()
+				sh.size *= size_k
+				ch.shape = sh
+			elif ch is Node3D:
+				ch.position *= size_k
+				ch.scale *= size_k
+
+# more bulk on a part, in the body's own scale
+func bulk(i: int, size: Vector3, offset: Vector3, mat: Material) -> void:
+	_mesh(parts[i], size * size_k, offset * size_k, mat)
 
 func face(yaw: float) -> void:
 	body_yaw = yaw
@@ -718,19 +749,20 @@ func _build_body() -> void:
 	for i in range(11):
 		for j in range(i + 1, 11):
 			parts[i].add_collision_exception_with(parts[j])
+	_size_up()
 	# joints
 	var right = (P[6] - P[3]).normalized()
 	var up = (P[1] - P[2]).normalized()
-	_cone(0, 1, P[2] + up * 0.1, up, 0.5, 0.4)
-	_cone(1, 2, P[1], up, 0.6, 0.8)
-	_cone(1, 3, P[3], (P[4] - P[3]).normalized(), 1.7, 1.0)
-	_cone(1, 5, P[6], (P[7] - P[6]).normalized(), 1.7, 1.0)
-	_cone(0, 7, P[9], (P[10] - P[9]).normalized(), 1.2, 0.35)
-	_cone(0, 9, P[12], (P[13] - P[12]).normalized(), 1.2, 0.35)
-	_hinge(3, 4, P[4], right, -1.4 * G.ELBOW_SIGN, 1.4 * G.ELBOW_SIGN)
-	_hinge(5, 6, P[7], right, -1.4 * G.ELBOW_SIGN, 1.4 * G.ELBOW_SIGN)
-	_hinge(7, 8, P[10], right, -2.3 * G.KNEE_SIGN, 0.05 * G.KNEE_SIGN)
-	_hinge(9, 10, P[13], right, -2.3 * G.KNEE_SIGN, 0.05 * G.KNEE_SIGN)
+	_cone(0, 1, _J(2) + up * 0.1 * size_k, up, 0.5, 0.4)
+	_cone(1, 2, _J(1), up, 0.6, 0.8)
+	_cone(1, 3, _J(3), (P[4] - P[3]).normalized(), 1.7, 1.0)
+	_cone(1, 5, _J(6), (P[7] - P[6]).normalized(), 1.7, 1.0)
+	_cone(0, 7, _J(9), (P[10] - P[9]).normalized(), 1.2, 0.35)
+	_cone(0, 9, _J(12), (P[13] - P[12]).normalized(), 1.2, 0.35)
+	_hinge(3, 4, _J(4), right, -1.4 * G.ELBOW_SIGN, 1.4 * G.ELBOW_SIGN)
+	_hinge(5, 6, _J(7), right, -1.4 * G.ELBOW_SIGN, 1.4 * G.ELBOW_SIGN)
+	_hinge(7, 8, _J(10), right, -2.3 * G.KNEE_SIGN, 0.05 * G.KNEE_SIGN)
+	_hinge(9, 10, _J(13), right, -2.3 * G.KNEE_SIGN, 0.05 * G.KNEE_SIGN)
 
 func _basis_x(axis: Vector3) -> Basis:
 	var x = axis.normalized()
@@ -1689,23 +1721,28 @@ func _head_tick() -> void:
 
 func _compute_targets() -> void:
 	_head_tick()
-	var right: Vector3 = (P[6] - P[3]).normalized()
-	var up: Vector3 = P[1] - P[2]
+	var Q = P
+	if size_k != 1.0:
+		Q = []
+		for i in range(15):
+			Q.append(_J(i))
+	var right: Vector3 = (Q[6] - Q[3]).normalized()
+	var up: Vector3 = Q[1] - Q[2]
 	var tl = up.length()
-	targets[1] = _bone_xform(P[2], P[1], right)
-	targets[1].origin = P[2] + up * 0.55
-	var hipmid: Vector3 = (P[9] + P[12]) * 0.5
-	targets[0] = _bone_xform(P[2], P[1], (P[12] - P[9]).normalized())
-	targets[0].origin = hipmid + up / maxf(tl, 0.001) * 0.03
+	targets[1] = _bone_xform(Q[2], Q[1], right)
+	targets[1].origin = Q[2] + up * 0.55
+	var hipmid: Vector3 = (Q[9] + Q[12]) * 0.5
+	targets[0] = _bone_xform(Q[2], Q[1], (Q[12] - Q[9]).normalized())
+	targets[0].origin = hipmid + up / maxf(tl, 0.001) * 0.03 * size_k
 	var hright = right
 	if absf(head_turn) > 0.01:
-		var neck = (P[0] - P[1]).normalized()
+		var neck = (Q[0] - Q[1]).normalized()
 		if neck.length_squared() > 0.5:
 			hright = right.rotated(neck, head_turn)
-	targets[2] = _bone_xform(P[1], P[0], hright)
-	targets[2].origin = P[0]
+	targets[2] = _bone_xform(Q[1], Q[0], hright)
+	targets[2].origin = Q[0]
 	for i in range(3, 11):
-		targets[i] = _bone_xform(P[PART_SEG[i][0]], P[PART_SEG[i][1]], right)
+		targets[i] = _bone_xform(Q[PART_SEG[i][0]], Q[PART_SEG[i][1]], right)
 
 var lod_frozen = false
 var lod_n = 0
@@ -2905,6 +2942,10 @@ func start_vault(c) -> bool:
 	# nobody climbs out of an upstairs window of the Ministry (there's a ledge outside each floor, which
 	# looked like somewhere to land: men backing away from the dead on the first floor went out over it)
 	if Levels.on and Levels.inside(pos, 0.0) and pos.y - Levels.gy > 1.5 and not Levels.inside(Vector3(tx, ty, tz), -0.3):
+		return false
+	# holding the Ministry against the dead, nobody climbs out of it at all: a man backing away from them
+	# on the ground floor went out of a window and was left in the yard with the rest of the wave
+	if G.mode == "horde" and Levels.on and not zombie and not is_player and Levels.inside(pos, 0.0) and not Levels.inside(Vector3(tx, ty, tz), -0.3):
 		return false
 	# a window that's boarded up isn't a way through. (Nothing looked: the dead climbed in at boarded
 	# windows as if the planks weren't there.)

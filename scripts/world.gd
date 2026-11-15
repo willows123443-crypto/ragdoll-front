@@ -908,12 +908,13 @@ func _nav_mark(c) -> void:
 	var ix1 = mini(NW - 1, int(floor((c.hi.x + r - NX0) / NCS)))
 	var iz0 = maxi(0, int(floor((c.lo.z - r - NZ0) / NCS)))
 	var iz1 = mini(NH - 1, int(floor((c.hi.z + r - NZ0) / NCS)))
-	# Inside the building with floors a cell is shut when its middle is within a man's half-width of the
-	# wall, as upstairs; everywhere else when any part of it is. (That takes anything up to 0.8 m off
-	# each side of a gap, which a house's 1.6 m door stands and the Ministry's 1.4 m office doors did
-	# not: four in ten of its ground-floor offices could not be walked into, and a man sent to a window
-	# in one was taken to the nearest open ground, outside it.)
-	var mid_test = Levels.on and Levels.inside((c.lo + c.hi) * 0.5, 1.0)
+	# A cell is shut when its middle is within a man's half-width of the wall. (It used to be shut when
+	# any part of it was, which takes anything up to 0.8 m off each side of a gap. A house's 1.6 m door
+	# stands that; the Ministry's 1.4 m office doors did not, and four in ten of its ground-floor offices
+	# could not be walked into. So the Ministry goes by the middle. The other maps keep the old rule:
+	# --navtest tried the new one on eight of them and found no room cut off under either, and men
+	# stalling on corners more often under the new one on two, the city and the beach.)
+	var mid_test = G.nav_mid or (Levels.on and Levels.inside((c.lo + c.hi) * 0.5, 1.0))
 	if mid_test:
 		r = 0.35
 		ix0 = maxi(0, int(floor((c.lo.x - r - NX0) / NCS)))

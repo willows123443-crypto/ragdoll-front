@@ -816,6 +816,7 @@ static func follow_path(s) -> String:
 		s.prog_t = 0.0
 		if moved < 0.35 and s.vault == null:
 			s.stuck_n += 1
+			stuck_events += 1
 			s.need_path = true
 			# back off and step sideways before trying again
 			var side = Vector3(-dir.z, 0, dir.x) * (1.0 if randf() < 0.5 else -1.0)
@@ -823,6 +824,7 @@ static func follow_path(s) -> String:
 			s.unstick_t = 0.6 + 0.3 * s.stuck_n
 			if s.stuck_n >= 3:
 				s.stuck_n = 0
+				stuck_hard += 1
 				StuckLog.soldier(s)
 				s.bad_spot = s.move_target
 				s.bad_t = G.sim_time + 12.0
@@ -1313,6 +1315,9 @@ static func _initiative(s, known: bool, threat: Vector3, dT: float) -> bool:
 			take_cover(s, hcv)
 			return true
 	return false
+
+static var stuck_events = 0     # times a man following a path made no headway for a second (for the tests)
+static var stuck_hard = 0       # ...three times running
 
 # ordered to fall back, and not yet where he was sent
 static func _falling_back(s) -> bool:
@@ -2468,7 +2473,9 @@ static func _keep_from_zombies(s) -> void:
 	# Told to fall back and not there yet: he keeps running. (Men sent up a floor used to stop and back
 	# away from every one of the dead that came within eight metres, which with the dead in the corridor
 	# meant they never reached the stairs.)
-	if _falling_back(s) and s.task != "medic" and s.dragging == null:
+	# (the same for a man on his way up the stairs to a window: sent up when the dead got in downstairs,
+	# he used to back out of the front door instead)
+	if (_falling_back(s) or (s.task == "post" and s.route != null and G.mode == "horde")) and s.task != "medic" and s.dragging == null:
 		# (one in his way gets the butt of the rifle, and he's past it)
 		if zd < 1.9 and s.throw_t <= 0.0 and absf(near.pos.y - s.pos.y) < 1.0:
 			Combat.shove(s, near)

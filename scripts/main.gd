@@ -93,6 +93,22 @@ func _ready() -> void:
 			_horde_x_test()
 		if a == "--forttest":
 			_fort_test()
+		if a == "--navtest":
+			_nav_test()
+		if a == "--hordeplay":
+			_horde_play()
+		if a == "--uptest":
+			_up_test()
+		if a == "--slottest":
+			_slot_test()
+		if a.begins_with("--slotshot="):
+			_slot_shot(a.substr(11))
+		if a == "--bosstest":
+			_boss_test()
+		if a == "--soundcheck":
+			_sound_check()
+		if a.begins_with("--bossshot="):
+			_boss_shot(a.substr(11))
 		if a == "--brutestage":
 			_brute_stage()
 		if a.begins_with("--fortshot="):
@@ -4592,6 +4608,400 @@ func _horde_shot(dir: String) -> void:
 	await _snap(dir, "horde_over_menu")
 	get_tree().quit()
 
+# --hordeplay --map=town|office --diff=0|1|2 --waves=10 --secs=1800 [--buy=0] [--size=10]: a zombie
+# battle left to play itself (the men board up, buy and fall back on their own; nobody gives an order),
+# to the end of the given wave or until they're overrun. A line at the end of every wave and a result.
+func _horde_play() -> void:
+	await _wait(0.5)
+	var mp = _arg("map", "town")
+	var di = int(_arg("diff", "1"))
+	var waves = int(_arg("waves", "10"))
+	var secs = float(_arg("secs", "1800"))
+	seed(int(_arg("seed", "7")))
+	G.settings["horde_diff"] = di
+	Modes.auto_buy = _arg("buy", "1") != "0"
+	Modes.auto_board = true
+	start_game({"map": mp, "mode": "horde", "size": int(_arg("size", "10")), "limit": 9999, "reinforce": true, "armor": "none", "teams": 2})
+	await _wait(1.0)
+	var tag = "HORDEPLAY %s/%s%s" % [mp, Modes.DIFF_NAMES[di].to_lower(), "" if Modes.auto_buy else "/no buying"]
+	var last_wave = 0
+	var kills0 = 0
+	var t0 = G.sim_time
+	var lowest = 99
+	var ff0 = 0
+	while G.sim_time - t0 < secs and not G.over:
+		await _wait(1.0)
+		var men = G.soldiers.filter(func(s): return s.team == 0 and not s.zombie and s.state != "dead").size()
+		lowest = mini(lowest, men)
+		if Modes.horde_wave != last_wave:
+			if last_wave > 0:
+				var st = [0, 0, 0, 0]
+				if Levels.on:
+					for s in G.soldiers:
+						if s.team == 0 and s.state == "alive":
+							st[Levels.level_of(s.pos) if Levels.inside(s.pos, 0.0) else 3] += 1
+				print("%s: wave %d beaten at %.1f min | men %d (fewest %d) | points %d | kills %d (+%d) | boarded %d windows %d doors, planks torn %d | up a floor %d times, back down %d | bought %s | stragglers dropped %d%s%s" % [tag, last_wave, (G.sim_time - t0) / 60.0, men, lowest, Support.points[0],
+					int(Stats.teams[0]["kills"]), int(Stats.teams[0]["kills"]) - kills0, Modes.boarded_n, Modes.doors_n, Modes.torn_n, Modes.ups, Modes.downs, str(Modes.bought), Modes.stragglers,
+					(" | floors: ground %d, first %d, second %d, outside %d" % st) if Levels.on else "",
+					(" | slams %d, rocks %d, brood %d" % [Modes.slams, Modes.throws, Modes.brood_n]) if last_wave % 10 == 0 else ""])
+				kills0 = int(Stats.teams[0]["kills"])
+				lowest = men
+			last_wave = Modes.horde_wave
+			if last_wave > waves:
+				break
+	var men2 = G.soldiers.filter(func(s): return s.team == 0 and not s.zombie and s.state != "dead").size()
+	var how = "stopped after wave %d with %d men" % [last_wave - 1, men2]
+	if G.over and men2 == 0:
+		how = "OVERRUN in wave %d" % last_wave
+	elif G.over:
+		how = "WON: wave %d beaten with %d men" % [Modes.horde_wave, men2]
+	elif G.sim_time - t0 >= secs:
+		how = "out of time in wave %d with %d men and %d of the dead on the field" % [last_wave, men2, G.soldiers.filter(func(s): return s.zombie and s.state != "dead").size()]
+	print("%s RESULT: %s | %.1f min | kills %d | friendly-fire kills %d | points left %d | bought %s" % [tag, how, (G.sim_time - t0) / 60.0, int(Stats.teams[0]["kills"]),
+		int(Stats.teams[0]["teamkills"]), Support.points[0], str(Modes.bought)])
+	get_tree().quit()
+
+# --uptest: a house with an upstairs in the town, held against the dead. Men on the ground floor with
+# the dead let in among them: do the men go up to the windows above, and do the dead follow them up?
+func _up_test() -> void:
+	await _wait(0.5)
+	seed(5)
+	var out = []
+	start_game({"map": _arg("map", "town"), "mode": "horde", "size": 8, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.5)
+	Modes.horde_t = 99999.0
+	Modes.auto_board = false
+	Modes.auto_buy = false
+	var W = G.world
+	var T = null
+	for t in W.towers:
+		if not t.get("ladder", false) and W.tower_ok(t) and t["cps"].size() >= 2:
+			T = t
+			break
+	if T == null:
+		print("UPTEST no house with an upstairs on this map (%d towers)" % W.towers.size())
+		get_tree().quit()
+		return
+	var mid = Vector3(T["x"], W.ground_y(T["x"], T["z"]), T["z"])
+	out.append("a house with an upstairs at (%.0f, %.0f), %.0f x %.0f m, %d places at the upper windows, floor %.1f m up" % [T["x"], T["z"], T["w"], T["d"], T["cps"].size(), float(T.get("floor_y", 0.0)) - mid.y])
+	var men = G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive")
+	var inside = func(p: Vector3) -> bool:
+		return absf(p.x - T["x"]) < T["w"] / 2.0 and absf(p.z - T["z"]) < T["d"] / 2.0
+	var n_in = 0
+	for m in men:
+		for k in range(20):
+			var q = mid + Vector3(randf_range(-0.5, 0.5) * (T["w"] - 2.0), 0, randf_range(-0.5, 0.5) * (T["d"] - 2.0))
+			if not W.solid_at(q.x, q.z, 0.3, q.y) and not W.astar.is_point_solid(W.nav_cell(q.x, q.z)):
+				m.move_to(q)
+				m.order = {"mode": "hold", "point": q, "tag": "cover"}
+				n_in += 1
+				break
+	await _wait(2.0)
+	var zs = []
+	for i in range(6):
+		for k in range(20):
+			var q2 = mid + Vector3(randf_range(-0.5, 0.5) * (T["w"] - 2.0), 0, randf_range(-0.5, 0.5) * (T["d"] - 2.0))
+			if not W.solid_at(q2.x, q2.z, 0.3, q2.y) and not W.astar.is_point_solid(W.nav_cell(q2.x, q2.z)):
+				var z = Modes.spawn_zombie("walker", q2.x, q2.z)
+				z.hp = 3000.0
+				zs.append(z)
+				break
+	var up_of = func(list) -> int:
+		return list.filter(func(s): return is_instance_valid(s) and s.state != "dead" and inside.call(s.pos) and s.pos.y - W.ground_y(s.pos.x, s.pos.z) > 1.5).size()
+	var log = []
+	var first_up = -1.0
+	var first_z_up = -1.0
+	for i in range(45):
+		await _wait(1.0)
+		var mu = up_of.call(men)
+		var zu = up_of.call(zs)
+		if mu > 0 and first_up < 0.0:
+			first_up = i + 1.0
+		if zu > 0 and first_z_up < 0.0:
+			first_z_up = i + 1.0
+		if i % 5 == 4:
+			log.append("%ds: men upstairs %d, downstairs %d, outside %d, dead or down %d | the dead upstairs %d" % [i + 1, mu,
+				men.filter(func(s): return s.state == "alive" and inside.call(s.pos) and s.pos.y - W.ground_y(s.pos.x, s.pos.z) <= 1.5).size(),
+				men.filter(func(s): return s.state == "alive" and not inside.call(s.pos)).size(), men.filter(func(s): return s.state != "alive").size(), zu])
+	out.append("%d men put on its ground floor, then 6 of the dead (unkillable for the test) among them: %s" % [n_in, " | ".join(log)])
+	out.append("the dead started up the stairs %d times" % Modes.upstairs_n)
+	out.append("first man upstairs after %s | first of the dead upstairs after %s | went up without being told %d times" % [("%.0f s" % first_up) if first_up >= 0.0 else "never in 45 s", ("%.0f s" % first_z_up) if first_z_up >= 0.0 else "never in 45 s", Modes.ups])
+	for l in out:
+		print("UPTEST ", l)
+	get_tree().quit()
+
+# --soundcheck: the sounds of boarding up, of planks torn off, and of the big ones, measured (nobody
+# can listen to them here): how long each is and how loud, and what reaches the master output when
+# each is played ten metres from the camera. Run without --fixed-fps so it plays in real time.
+func _sound_check() -> void:
+	await _wait(1.0)
+	stop_attract()
+	G.ui.title.visible = false
+	start_game({"map": "field", "mode": "horde", "size": 2, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.5)
+	Modes.horde_t = 99999.0
+	G.builder = true
+	var cam = get_viewport().get_camera_3d()
+	var at: Vector3 = cam.global_position + (-cam.global_transform.basis.z) * 10.0
+	at.y = G.world.ground_y(at.x, at.z)
+	for pr in [["hammer", G.audio.s_hammer], ["plank torn", G.audio.s_tear], ["slam", G.audio.s_slam], ["roar (snarl)", G.audio.s_snarl], ["groan", G.audio.s_groans[0]]]:
+		var d: PackedByteArray = pr[1].data
+		var pkv = 0.0
+		var acc2 = 0.0
+		var nn = d.size() / 2
+		for i in range(nn):
+			var x = d.decode_s16(i * 2) / 32000.0
+			pkv = maxf(pkv, absf(x))
+			acc2 += x * x
+		print("SOUNDCHECK sample %-13s %.2f s long, peak %.2f, rms %.3f" % [pr[0], float(nn) / pr[1].mix_rate, pkv, sqrt(acc2 / maxf(nn, 1))])
+	var quiet = -200.0
+	for i in range(30):
+		await get_tree().process_frame
+		quiet = maxf(quiet, maxf(AudioServer.get_bus_peak_volume_left_db(0, 0), AudioServer.get_bus_peak_volume_right_db(0, 0)))
+	print("SOUNDCHECK with nothing played the master output peaks at %.1f dB" % quiet)
+	var plays = [["a hammer blow", func(): G.audio.hammer(at)], ["a plank torn off", func(): G.audio.tear(at)], ["the Goliath's stamp", func(): G.audio.slam(at)],
+		["a thrown rock landing", func(): G.audio.slam(at, 0.0)], ["one of the big ones roaring", func(): G.audio.roar(at)], ["a brute's groan", func(): G.audio.groan(at, "brute")]]
+	for pl in plays:
+		await _wait(0.8)
+		pl[1].call()
+		var pk = -200.0
+		for i in range(40):
+			await get_tree().process_frame
+			pk = maxf(pk, maxf(AudioServer.get_bus_peak_volume_left_db(0, 0), AudioServer.get_bus_peak_volume_right_db(0, 0)))
+		print("SOUNDCHECK %s, 10 m from the camera: master output peaks at %.1f dB" % [pl[0], pk])
+	get_tree().quit()
+
+# --bosstest: the three big ones. Which comes with which tenth wave, how big each is built, and what
+# each does to six men who are told not to shoot: the Goliath's stamp, the Hurler's rocks, the Brood
+# mother's young. Then a save and a load with one of them on the field.
+func _boss_test() -> void:
+	await _wait(0.5)
+	seed(9)
+	var out = []
+	start_game({"map": "field", "mode": "horde", "size": 6, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.5)
+	Modes.horde_t = 99999.0
+	Modes.auto_board = false
+	Modes.auto_buy = false
+	var sched = []
+	for w in [10, 20, 30, 40, 50, 60]:
+		var tens = w / 10 - 1
+		sched.append("wave %d: %d x %s" % [w, 1 + tens / 3, Modes.ZOMBIES[Modes.BOSS_ORDER[tens % 3]]["name"]])
+	out.append("who comes when: " + ", ".join(sched))
+	var c = _free_spot(G.world.capture + Vector3(30.0, 0, 30.0))
+	var men = G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive")
+	for kind in ["boss", "hurler", "mother"]:
+		for z in G.soldiers.duplicate():
+			if z.zombie and z.state != "dead":
+				z.hp = 0.0
+				Combat.kill(z, null, false)
+		Modes.slams = 0
+		Modes.throws = 0
+		Modes.brood_n = 0
+		var i = 0
+		for m in men:
+			if m.state == "dead":
+				continue
+			m.hp = 100.0
+			m.bleed = 0.0
+			if m.state != "alive":
+				m.start_getup()
+			m.set_meta("hold_fire", 1)
+			m.mag = 0
+			m.reserve = 0
+			m.grenades = 0
+			m.move_to(Vector3(c.x + (i % 3 - 1) * 2.0, G.world.ground_y(c.x, c.z), c.z + (i / 3) * 2.0))
+			i += 1
+		G.builder = true
+		await _wait(0.5)
+		var z2 = Modes.spawn_zombie(kind, c.x, c.z - (9.0 if kind == "boss" else 24.0))
+		var hp0 = 0.0
+		for m in men:
+			if m.state != "dead":
+				hp0 += m.hp
+		var alive0 = men.filter(func(m): return m.state != "dead").size()
+		var head = z2.parts[2].global_position.y - z2.pos.y
+		var box: Vector3 = z2.parts[1].get_child(0).shape.size
+		# (the men are patched up twice a second so that they last the 25 s: what's counted is what was done to them)
+		var lost = 0.0
+		var down = 0
+		for step in range(50):
+			await _wait(0.5)
+			for m in men:
+				if m.state == "dead":
+					continue
+				lost += maxf(0.0, 100.0 - m.hp)
+				if m.state != "alive" and step % 4 == 0:
+					down += 1
+				m.hp = 100.0
+				m.bleed = 0.0
+		out.append("%s (%d hp, head %.2f m up, chest %.2f m wide) against %d men who stand and don't shoot, 25 s: stamps %d, rocks thrown %d, young dropped %d | damage done to the men %d hp, %d killed outright, knocked off their feet %d times | young alive now %d" % [
+			z2.sname, int(z2.get_meta("hp0")), head, box.x, alive0, Modes.slams, Modes.throws, Modes.brood_n, int(lost), alive0 - men.filter(func(m): return m.state != "dead").size(), down,
+			G.soldiers.filter(func(o): return o.zombie and o.state != "dead" and o.has_meta("brood")).size()])
+		G.builder = false
+	out.append("save with the Brood mother on the field: " + Scenario.save_battle(5, "boss test"))
+	out.append("load: " + Scenario.load_battle(false, 5))
+	await _wait(1.5)
+	var bz = G.soldiers.filter(func(o): return o.zombie and o.has_meta("boss"))
+	out.append("after loading: %d of the big ones, %s, head %.2f m up, status line '%s'" % [bz.size(), bz[0].sname if not bz.is_empty() else "-", (bz[0].parts[2].global_position.y - bz[0].pos.y) if not bz.is_empty() else 0.0, Modes.status_text()])
+	Scenario.delete_slot(5)
+	for l in out:
+		print("BOSSTEST ", l)
+	get_tree().quit()
+
+# --slotshot=DIR: the list of saved battles on the title screen, and the save panel in a battle
+func _slot_shot(dir: String) -> void:
+	await _wait(1.0)
+	stop_attract()
+	G.ui.title.visible = false
+	for i in range(1, Scenario.SLOTS + 1):
+		Scenario.delete_slot(i)
+	start_game({"map": "town", "mode": "horde", "size": 8, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(2.0)
+	Modes.horde_wave = 4
+	Scenario.save_battle(1, "")
+	Scenario.save_battle(3, "Holding the bakery")
+	G.ui.show_menu()
+	await _wait(0.3)
+	G.ui._show_slots(true)
+	await _wait(0.5)
+	await _snap(dir, "slots_save")
+	G.ui.slots_panel.visible = false
+	quit_to_title()
+	await _wait(1.0)
+	G.ui._show_slots(false)
+	await _wait(0.6)
+	await _snap(dir, "slots_load")
+	for i in range(1, Scenario.SLOTS + 1):
+		Scenario.delete_slot(i)
+	get_tree().quit()
+
+# --slottest: the five named quick-battle slots
+func _slot_test() -> void:
+	await _wait(0.5)
+	var out = []
+	for i in range(1, Scenario.SLOTS + 1):
+		Scenario.delete_slot(i)
+	start_game({"map": "field", "mode": "capture", "size": 6, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(3.0)
+	out.append("save to 3: " + Scenario.save_battle(3, "Bridge fight, try two"))
+	out.append("save to 1 with no name: " + Scenario.save_battle(1, ""))
+	out.append("used slots: %s" % str(Scenario.used_slots()))
+	for e in Scenario.slot_list():
+		out.append("   slot %d: %s" % [e["slot"], ("'%s' — %s" % [e["name"], e["text"]]) if e["text"] != "" else "empty"])
+	var men0 = G.soldiers.size()
+	await _wait(5.0)
+	out.append("load 3: " + Scenario.load_battle(false, 3))
+	await _wait(1.0)
+	out.append("men when saved %d, after loading %d | clock %.0f s" % [men0, G.soldiers.size(), G.game_time])
+	Scenario.delete_slot(3)
+	out.append("slot 3 cleared: used slots now %s | load 3: %s" % [str(Scenario.used_slots()), Scenario.load_battle(false, 3)])
+	Scenario.delete_slot(1)
+	for l in out:
+		print("SLOTTEST ", l)
+	get_tree().quit()
+
+# --bossshot=DIR: the three big ones side by side with an ordinary one of the dead and a soldier for scale
+func _boss_shot(dir: String) -> void:
+	await _wait(1.0)
+	stop_attract()
+	G.ui.title.visible = false
+	seed(3)
+	start_game({"map": "field", "mode": "horde", "size": 4, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.5)
+	Modes.horde_t = 99999.0
+	Modes.auto_board = false
+	Modes.auto_buy = false
+	G.builder = true
+	var c = _free_spot(G.world.capture + Vector3(30.0, 0, 30.0))
+	var man = G.soldiers.filter(func(s): return s.team == 0)[0]
+	man.move_to(Vector3(c.x - 4.6, G.world.ground_y(c.x - 4.6, c.z), c.z))
+	man.face(0.0)
+	var kinds = ["walker", "brute", "boss", "hurler", "mother"]
+	var made = []
+	for i in range(kinds.size()):
+		var z = Modes.spawn_zombie(kinds[i], c.x - 2.6 + i * 1.9, c.z)
+		z.face(0.0)
+		z.think = 9999.0
+		z.target = null
+		made.append(z)
+	G.ui.dock.visible = false
+	await _wait(0.5)
+	for z in made:
+		z.face(0.0)
+	var eye = Vector3(c.x + 0.6, c.y + 1.9, c.z + 9.0)
+	G.pc.free_pos = eye
+	await _look(eye, c + Vector3(0.6, 1.25, 0))
+	await _wait(6.0)                 # (the opening message has gone by then)
+	for z in made:
+		z.face(0.0)
+	await _look(eye, c + Vector3(0.6, 1.25, 0))
+	await _wait(0.2)
+	await _snap(dir, "bosses")
+	var out = []
+	for z in made:
+		out.append("%s: head %.2f m up, %d hp" % [z.sname, z.parts[2].global_position.y - z.pos.y, int(z.hp)])
+	print("BOSSSHOT ", " | ".join(out), " | a soldier's head: %.2f m up" % (man.parts[2].global_position.y - man.pos.y))
+	get_tree().quit()
+
+# --navtest: the route grid under the old rule (a cell shut when any part of it is near a wall) and the
+# new (when its middle is). For each map: how much open floor inside buildings can't be walked to from
+# outside, in how many buildings, and how often men following a path got stuck in the same battle.
+func _nav_test() -> void:
+	await _wait(0.5)
+	var maps = _arg("maps", "town,city,factory,trenches,front,valley,beach,office").split(",")
+	var secs = float(_arg("secs", "45"))
+	for mp in maps:
+		var line = []
+		for rule in [false, true]:
+			G.nav_mid = rule
+			seed(21)
+			start_game({"map": mp, "mode": "capture", "size": 14, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+			await _wait(1.0)
+			var W = G.world
+			# every cell that can be walked to from the first team's start
+			var st = W._nearest_free(W.nav_cell(G.soldiers[0].pos.x, G.soldiers[0].pos.z))
+			var seen = PackedByteArray()
+			seen.resize(W.NW * W.NH)
+			var q = [st]
+			seen[st.y * W.NW + st.x] = 1
+			while not q.is_empty():
+				var c: Vector2i = q.pop_back()
+				for dv in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					var n2: Vector2i = c + dv
+					if n2.x < 0 or n2.y < 0 or n2.x >= W.NW or n2.y >= W.NH or seen[n2.y * W.NW + n2.x] == 1 or W.astar.is_point_solid(n2):
+						continue
+					seen[n2.y * W.NW + n2.x] = 1
+					q.append(n2)
+			var cut = 0
+			var open_in = 0
+			var bad_b = 0
+			for b in W.buildings:
+				if float(b["w"]) > 60.0:
+					continue
+				var c0 = W.nav_cell(b["x"] - b["w"] / 2.0 + 0.6, b["z"] - b["d"] / 2.0 + 0.6)
+				var c1 = W.nav_cell(b["x"] + b["w"] / 2.0 - 0.6, b["z"] + b["d"] / 2.0 - 0.6)
+				var mine = 0
+				for iz in range(c0.y, c1.y + 1):
+					for ix in range(c0.x, c1.x + 1):
+						if ix < 0 or iz < 0 or ix >= W.NW or iz >= W.NH or W.astar.is_point_solid(Vector2i(ix, iz)):
+							continue
+						open_in += 1
+						if seen[iz * W.NW + ix] == 0:
+							mine += 1
+				cut += mine
+				if mine >= 4:
+					bad_b += 1
+			AI.stuck_events = 0
+			AI.stuck_hard = 0
+			await _wait(secs)
+			line.append("%s: %d of %d open cells inside %d buildings can't be reached (%d buildings with a room cut off) | stuck for a second %d times, three times running %d, in %.0f s with %d men" % [
+				"new rule" if rule else "old rule", cut, open_in, W.buildings.size(), bad_b, AI.stuck_events, AI.stuck_hard, secs, G.soldiers.size()])
+		print("NAVTEST %s | %s" % [mp, " || ".join(line)])
+	G.nav_mid = false
+	print("NAVTEST done")
+	get_tree().quit()
+
 # --brutestage: one brute, one sandbag wall, nobody shooting. Staged to be watched (in a browser too:
 # add ?args=--brutestage to the page's address). The brute is put down twenty metres from a sandbag
 # wall with one unarmed man standing well behind it; it walks at him, puts its weight through the wall
@@ -5185,8 +5595,20 @@ func _ministry_test() -> void:
 	var men0 = G.alive_count(0)
 	var up_log = []
 	var t_all = -1.0
+	var was_in = {}
+	var left_how = []
 	for i in range(30):
-		await _wait(2.0)
+		# (who leaves the building, and how: looked at four times a second)
+		for sub in range(8):
+			await _wait(0.25)
+			for s in G.soldiers:
+				if s.team != 0 or s.state == "dead" or s.zombie:
+					continue
+				var inn = Levels.inside(s.pos, 0.0)
+				if was_in.get(s.id, true) and not inn and left_how.size() < 8:
+					left_how.append("%.1fs man %d %s at (%.1f, %.1f, %.1f), storey %d: %s | task %s | order %s | speed %.1f" % [i * 2.0 + sub * 0.25, s.id, s.state, s.pos.x, s.pos.y - Levels.gy, s.pos.z, Levels.level_of(s.pos),
+						"vaulting" if s.vault != null else ("on a route" if s.route != null else ("thrown or fallen" if s.state != "alive" else "walking")), str(s.task), str(s.order.get("tag", s.order.get("mode"))) if s.order != null else "none", s.vel.length()])
+				was_in[s.id] = inn
 		var on0 = G.soldiers.filter(func(s): return s.team == 0 and s.state == "alive" and Levels.inside(s.pos, 0.0) and Levels.level_of(s.pos) == 0).size()
 		if _arg("dbg", "") != "" and i % 3 == 1:
 			for s in G.soldiers:
@@ -5199,6 +5621,36 @@ func _ministry_test() -> void:
 		if on0 == 0 and t_all < 0.0 and Modes.ups > 0:
 			t_all = (i + 1) * 2.0
 	out.append("16 of the dead (unkillable for the test) put on the ground floor among them: " + " | ".join(up_log))
+	out.append("men who left the building, and how: %s" % ("none" if left_how.is_empty() else " || ".join(left_how)))
+	# the wave over: do they come back down?
+	for z9 in G.soldiers.duplicate():
+		if z9.zombie and z9.state != "dead":
+			z9.hp = 0.0
+			Combat.kill(z9, null, false)
+	# (six fresh men join the survivors where they are, so that there's somebody to send)
+	Modes.new_men(6)
+	await _wait(0.5)
+	var top_mid = Vector3(mid0.x, Levels.floor_y(Levels.n - 1), mid0.z)
+	for m8 in G.soldiers:
+		if m8.team == 0 and m8.state == "alive" and not Levels.inside(m8.pos, 0.0):
+			m8.move_to(Levels.spot_on(Levels.n - 1, top_mid + Vector3(randf_range(-20, 20), 0, 0), 4.0))
+	await _wait(1.0)
+	var before_down = storeys.call()
+	var sent = Modes._back_down()
+	var dl = []
+	for i in range(6):
+		await _wait(5.0)
+		dl.append("%ds: %s" % [(i + 1) * 5, storeys.call()])
+		if _arg("dbg", "") != "" and i < 3:
+			for m9 in G.soldiers:
+				if m9.team == 0 and m9.state == "alive" and Levels.level_of(m9.pos) == 2 and m9.order != null and m9.id % 2 == 0:
+					print("MINDBG pos man %d at (%.1f, %.1f, %.1f) | path %s | bad_spot %s bad_t %.0f now %.0f | stuck_n %d | need_path %s | decide_t %.1f | fresh path: %s" % [m9.id, m9.pos.x, m9.pos.y, m9.pos.z, str(m9.path).substr(0, 160), str(m9.bad_spot), m9.bad_t, G.sim_time, m9.stuck_n, str(m9.need_path), m9.decide_t,
+						str(Levels.path(m9.pos, m9.order["point"])).substr(0, 260) if m9.order != null and m9.order.get("point") != null else "-"])
+			for m9 in G.soldiers:
+				if m9.team == 0 and m9.state != "dead":
+					print("MINDBG down %ds: man %d %s storey %d hp %d | order %s -> %s | task %s | move_target %s | path %d/%d | vel %.1f | cover %s" % [(i + 1) * 5, m9.id, m9.state, Levels.level_of(m9.pos), int(m9.hp),
+						str(m9.order.get("tag", m9.order.get("mode"))) if m9.order != null else "none", str(m9.order.get("point")) if m9.order != null else "-", str(m9.task), str(m9.move_target), m9.path_i, m9.path.size(), m9.vel.length(), str(m9.cover != null)])
+	out.append("the dead cleared away and the men sent back down (%d of them; before: %s): %s" % [sent, before_down, " | ".join(dl)])
 	out.append("men %d -> %d | the last living man off the ground floor after %s | went up without being told %d times" % [men0, G.alive_count(0), ("%.0f s" % t_all) if t_all >= 0.0 else "never in 60 s", Modes.ups])
 	for l in out:
 		print("MINTEST ", l)

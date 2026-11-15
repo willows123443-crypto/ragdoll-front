@@ -500,7 +500,7 @@ func _cards(t: String) -> Array:
 				out += [["up", "Upgrade", "click a structure"], ["camo", "Camo net", "click a structure"], ["rep", "Repair", "click a damaged structure"], ["dis", "Dismantle", "click anything built"]]
 		"command", "orders":
 			if G.mode == "horde":
-				return [["sel", "Select", "click or drag a box"], ["mv", "Send everyone", "click a point"], ["o:hold", "Hold", "selected soldiers"],
+				return [["sel", "Select", "click or drag a box"], ["mv", "Send all", "click a point"], ["o:hold", "Hold", "selected soldiers"],
 					["o:free", "Act freely", "selected soldiers"], ["ctl", "Take control", "click one of your soldiers · F"], ["o:clear", "Deselect", ""]]
 			out = [["sel", "Select", "click or drag a box"], ["o:hold", "Hold", "selected soldiers"], ["o:charge", "Charge", "selected soldiers"],
 				["o:dismount", "Dismount", "troops out of vehicles"], ["o:free", "Act freely", "selected soldiers"], ["o:clear", "Deselect", ""]]

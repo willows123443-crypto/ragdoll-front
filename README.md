@@ -472,6 +472,8 @@ You don't need to install anything else. Every mesh, texture and sound is genera
 
 - **Staged checks in the browser.** Test flags can be given in the page's address: `...?args=--brutestage` plays one brute against one sandbag wall with nobody shooting, six times over, and prints what happened to the console; `?args=--perfrun --size=40 --secs=40` times a large battle.
 
+- **A brute goes through a barricade every time.** Staged in a browser (one brute, one sandbag wall), it smashed the wall two times in four and stepped over or round it the other two. A brute no longer climbs over anything, and strikes what blocks it at once.
+
 ## Controls
 **Free camera:** WASD fly, Space/E up, Q/C down, Shift faster, right-drag look, wheel zoom. 1–9 pick a tool, left-click uses it, F takes control of the soldier at the centre of the screen.
 **Command tab:** click a soldier (double-click for his squad) or drag a box to select, right-click the ground to send them there, a vehicle or mortar to get them in it, or a structure going up to have them build it. In the commander view right-drag draws a line for them to form up on (middle-drag turns the camera), and Shift + right-click adds stops to their route. Home jumps to the heaviest fighting and End to the next of your squads in contact; the wheel zooms toward the pointer.

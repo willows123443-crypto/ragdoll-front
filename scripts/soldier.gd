@@ -2881,6 +2881,10 @@ func make_wounded() -> void:
 	G.fx.callout(self, "Medic!")
 
 func start_vault(c) -> bool:
+	# (a brute climbs over nothing: what's in his way he goes through. One in three stepped over the
+	# sandbags it was meant to smash.)
+	if zombie and ztype == "brute":
+		return false
 	var thin_x: bool = (c.hi.x - c.lo.x) < (c.hi.z - c.lo.z)
 	var wl = Vector2(want.x, want.z).length()
 	if wl < 1.3:

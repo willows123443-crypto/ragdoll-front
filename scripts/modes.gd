@@ -1973,8 +1973,10 @@ static func zombie_tick(s) -> void:
 		s.want = Vector3.ZERO
 		return
 	if s.ztype == "brute" and d < 40.0 and G.sim_time > float(s.get_meta("smash_t", 0.0)):
-		s.set_meta("smash_t", G.sim_time + 1.2)
+		# (he looks for something to hit three times a second, and rests a second after a blow)
+		s.set_meta("smash_t", G.sim_time + 0.3)
 		if _smash(s, 1.5, 230.0 if not s.has_meta("boss") else 700.0) or (s.has_meta("boss") and _tear(s, 1.8)):
+			s.set_meta("smash_t", G.sim_time + 1.2)
 			s.want = Vector3.ZERO
 			return
 	if level and s.bad_t < G.sim_time and (d < 7.0 or (d < 30.0 and not G.blocked(s.pos + Vector3(0, 1.0, 0), t.pos + Vector3(0, 1.0, 0)))):
@@ -1982,6 +1984,13 @@ static func zombie_tick(s) -> void:
 		var dir = to / d
 		# slide round posts and corners rather than pushing into them
 		if G.world.solid_at(s.pos.x + dir.x * 0.6, s.pos.z + dir.z * 0.6, 0.22, s.pos.y) and not _vaultable_ahead(s, dir):
+			# (a brute with a barricade in front of him goes through it there and then. Staged in a
+			# browser, one brute against one sandbag wall, he walked round the end of it two times in four:
+			# the sidestep below came before the blow, which was only tried every second or so.)
+			if s.ztype == "brute" and _smash(s, 1.7, 230.0 if not s.has_meta("boss") else 700.0):
+				s.set_meta("smash_t", G.sim_time + 1.2)
+				s.want = Vector3.ZERO
+				return
 			for ang in [0.6, -0.6, 1.1, -1.1]:
 				var nd = dir.rotated(Vector3.UP, ang)
 				if not G.world.solid_at(s.pos.x + nd.x * 0.6, s.pos.z + nd.z * 0.6, 0.22, s.pos.y):

@@ -1072,8 +1072,8 @@ func _shadow_auto(dt: float) -> void:
 # In a browser a big battle's physics step can take nearly the whole sixtieth of a second it stands for.
 # The engine then runs up to eight steps for every picture to keep the clock true, and the picture rate
 # collapses: 100 men measured 7.6 steps and 118 ms of physics to a picture, 9 ms of drawing, 8 pictures
-# a second. So when the steps are heavy, no more than two are run to a picture: the battle runs a
-# little slow instead (about five-sixths speed in that case) at three times the picture rate.
+# a second. So when the steps are heavy, no more than two are run to a picture: the battle runs slow
+# instead (two-thirds speed, measured in that case) and shows 20 pictures a second.
 var step_avg = 0.0
 var step_cap_t = 0.0
 

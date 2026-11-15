@@ -258,6 +258,10 @@ func setup(team_: int, x: float, z: float, weapon_id: String) -> void:
 	zombie = zombie_next != ""
 	ztype = zombie_next
 	size_k = size_next
+	if zombie:
+		# the colour gone out of them: grey-green over whatever they were (ten tones in all, so the
+		# materials are shared)
+		skin = skin.lerp(Color(0.5, 0.57, 0.47), 0.45 if randf() < 0.5 else 0.62)
 	# each of the dead moves its own way: a gait style and its own pace
 	zstyle = randi() % 5
 	zgait = randf_range(0.8, 1.25)
@@ -688,11 +692,12 @@ func _build_body() -> void:
 		vest = _mat("mil" + cl[2].to_html(), cl[2], true)
 	var sk = _mat("skin" + skin.to_html(false), skin, false)
 	if zombie:
-		# torn, filthy clothes and no helmet
-		var rag = [Color(0.55, 0.5, 0.42), Color(0.62, 0.58, 0.5), Color(0.45, 0.48, 0.52), Color(0.58, 0.47, 0.4)][id % 4]
-		uni = _mat("zuni" + str(id % 4), rag, false)
-		uni2 = _mat("zuni2" + str(id % 3), rag.darkened(0.25 + 0.1 * (id % 3)), false)
-		vest = _mat("zvest" + str(id % 4), rag.darkened(0.15).lerp(Color(0.35, 0.1, 0.08), 0.25), false)
+		# what they were wearing when it happened, filthy now: ten shirts and five pairs of trousers
+		var zi = (id * 7 + 3) % ZSHIRTS.size()
+		var ti = (id * 5 + 1) % ZTROUSERS.size()
+		uni = _mat("zshirt%d" % zi, ZSHIRTS[zi], false)
+		uni2 = _mat("ztrou%d" % ti, ZTROUSERS[ti], false)
+		vest = _mat("zvest%d" % zi, ZSHIRTS[zi].darkened(0.16).lerp(Color(0.35, 0.1, 0.08), 0.2), false)
 	var boot = _mat("boot", Color(0.16, 0.14, 0.12), false)
 	for i in range(11):
 		var b = RigidBody3D.new()
@@ -717,7 +722,8 @@ func _build_body() -> void:
 	_mesh(parts[0], Vector3(0.36, 0.22, 0.25), Vector3.ZERO, uni2)
 	_mesh(parts[1], Vector3(0.42, 0.52, 0.24), Vector3.ZERO, uni)
 	_mesh(parts[1], Vector3(0.45, 0.3, 0.27), Vector3(0, 0.06, 0), vest)
-	_mesh(parts[1], Vector3(0.3, 0.26, 0.06), Vector3(0, 0.05, -0.15), vest)
+	if not zombie:
+		_mesh(parts[1], Vector3(0.3, 0.26, 0.06), Vector3(0, 0.05, -0.15), vest)
 	_hpart(parts[2], "ball", HEAD_R * 2.0, Vector3.ZERO, sk)
 	# a neck down into the collar, so the head doesn't float above the shoulders
 	_mesh(parts[2], Vector3(0.12, 0.13, 0.12), Vector3(0, -0.185, 0.015), sk)
@@ -749,6 +755,14 @@ func _build_body() -> void:
 	for i in range(11):
 		for j in range(i + 1, 11):
 			parts[i].add_collision_exception_with(parts[j])
+	if has_meta("lost_arm"):
+		# one of the dead with an arm gone at the elbow: the forearm and hand come off, a stub of bone is left
+		var la: int = get_meta("lost_arm")
+		for ch in parts[la].get_children():
+			if ch is MeshInstance3D:
+				ch.free()
+		_mesh(parts[la], Vector3(0.05, 0.1, 0.05), Vector3(0, 0.12, 0), _mat("zbone", Color(0.8, 0.77, 0.66), false))
+		_mesh(parts[la - 1], Vector3(0.14, 0.06, 0.14), Vector3(0, -0.15, 0), _mat("zblood", Color(0.32, 0.05, 0.04), false))
 	_size_up()
 	# joints
 	var right = (P[6] - P[3]).normalized()
@@ -1021,6 +1035,37 @@ static func step_len(spd: float) -> float:
 
 static var PLANT = true
 
+# The dead walk to their own measure: a step a little shorter than a man's at the same pace (a brute's
+# is longer, a runner's is a man's), and a little different for each. The rhythm is set from it, so that
+# a foot on the ground stays where it is; it used to turn over once every 2.7 m whatever the stride,
+# and their feet skated.
+func zstride(sp: float) -> float:
+	if ztype == "runner":
+		return step_len(sp) / zgait
+	if ztype == "brute":
+		return clampf(0.55 + 0.2 * sp, 0.65, 1.1) / zgait
+	return clampf(0.42 + 0.17 * sp, 0.5, 1.0) / zgait
+
+func zrate(sp: float) -> float:
+	return PI / zstride(sp)
+
+# ---- how one of the dead attacks
+var atk_kind = 0          # 0 the grab and bite, 1 and 2 a swipe with one arm, 3 both fists brought down (the big ones)
+var atk_n = 0
+var atk_len = 0.55
+var atk_rec = 0.0         # straightening up afterwards
+var lunge_prev = 0.0
+
+# 0 to 1 through the wind-up, and 0 to 1 (eased) through the strike
+func _atk_u() -> float:
+	return clampf(1.0 - (lunge_t - 0.3) / maxf(atk_len - 0.3, 0.05), 0.0, 1.0) if lunge_t > 0.0 else 0.0
+
+func _atk_v() -> float:
+	if lunge_t <= 0.0 or lunge_t > 0.3:
+		return 0.0
+	var v = 1.0 - lunge_t / 0.3
+	return v * v * (3.0 - 2.0 * v)
+
 static func gait_k(spd: float) -> float:
 	return PI / step_len(spd) if PLANT else 2.3
 
@@ -1051,7 +1096,11 @@ func _plant_foot(side: int, hip: Vector3, base: Vector3, f: Vector3, r: Vector3,
 	var moving = spd > 0.3
 	var ph = wrapf(phase + (PI if side == 1 else 0.0), -PI, PI)
 	var swing_ph = absf(ph) < PI * 0.5
-	var w = maxf(spd * gait_k(spd), 0.5)
+	var w = maxf(spd * (zrate(spd) if zombie else gait_k(spd)), 0.5)
+	# one of the dead with a bad leg: which leg it is, and what's wrong with it
+	var zbad = zombie and ztype != "runner" and side == id % 2
+	var zdrag = zbad and (zstyle == 0 or zstyle == 3)
+	var zstiff = zbad and zstyle == 4
 	if not foot_sw[side]:
 		var stretched = (foot_w[side] - hip).length() > 0.875
 		var lift_off = false
@@ -1082,11 +1131,22 @@ func _plant_foot(side: int, hip: Vector3, base: Vector3, f: Vector3, r: Vector3,
 		# reach has to be dragged straight back in)
 		var hv = hip.y - gy - 0.07
 		var rh = sqrt(maxf(0.86 * 0.86 - hv * hv, 0.01))
-		tgt = neutral + Vector3(vel.x, 0, vel.z) * t_rem + dirv * minf(step_len(spd) * 0.5, rh * 0.9)
+		var half = (zstride(spd) if zombie else step_len(spd)) * 0.5
+		if zdrag:
+			half *= 0.4          # the dragged leg is brought up barely past the other, never put out in front
+		tgt = neutral + Vector3(vel.x, 0, vel.z) * t_rem + dirv * minf(half, rh * 0.9)
 	tgt.y = G.world.surface_y(tgt.x, tgt.z, gy + 0.3) + 0.07
 	var e = u * u * (3.0 - 2.0 * u)
 	var p = foot_from[side].lerp(tgt, e)
-	p.y = lerpf(foot_from[side].y, tgt.y, e) + sin(PI * u) * (0.06 + minf(spd, 6.0) * 0.022)
+	var lift_k = 1.0
+	if zdrag:
+		lift_k = 0.25            # scraped along the ground
+	elif zstiff:
+		lift_k = 0.35            # swung round from the hip without bending
+		p += r * (sd * sin(PI * u) * 0.14)
+	elif zombie and zstyle == 1:
+		lift_k = 1.5             # the lurch: knees up
+	p.y = lerpf(foot_from[side].y, tgt.y, e) + sin(PI * u) * (0.06 + minf(spd, 6.0) * 0.022) * lift_k
 	foot_w[side] = p
 	if u >= 1.0:
 		foot_sw[side] = false
@@ -1336,14 +1396,47 @@ func _arms_and_gun(spd: float, sprint: bool, uf: Vector3, ur: Vector3, aim: Vect
 			hammer_hit = false
 	elif zombie:
 		var zt = G.sim_time + seed_
-		if lunge_t > 0.3:
-			# wind-up: arms come up
-			rh = rsh + uf * 0.15 + Vector3(0, 0.28, 0) - ur * 0.05
-			lh = lsh + uf * 0.15 + Vector3(0, 0.28, 0) + ur * 0.05
-		elif lunge_t > 0.0:
-			# the grab
-			rh = rsh + uf * 0.58 + Vector3(0, -0.02, 0) + ur * 0.04
-			lh = lsh + uf * 0.58 + Vector3(0, -0.02, 0) - ur * 0.04
+		if lunge_t > 0.0:
+			var au = _atk_u()
+			var av = _atk_v()
+			var up = Vector3.UP
+			match atk_kind:
+				0:
+					# the grab: both arms thrown wide and back, then clapped in on him at throat height
+					var r0 = rsh - uf * 0.08 - ur * 0.34 + up * 0.22
+					var l0 = lsh - uf * 0.08 + ur * 0.34 + up * 0.22
+					var r1 = rsh + uf * 0.6 + ur * 0.1 + up * 0.02
+					var l1 = lsh + uf * 0.6 - ur * 0.1 + up * 0.02
+					var rr = rsh + uf * 0.3 - ur * 0.02 - up * 0.1
+					var lr = lsh + uf * 0.3 + ur * 0.02 - up * 0.1
+					rh = rr.lerp(r0, au).lerp(r1, av) + uf * sin(PI * av) * 0.06
+					lh = lr.lerp(l0, au).lerp(l1, av) + uf * sin(PI * av) * 0.06
+				1, 2:
+					# a swipe: one hand up and back over the shoulder and down across him, the other out in front to hold him
+					var sgn = 1.0 if atk_kind == 1 else -1.0
+					var sh = rsh if atk_kind == 1 else lsh
+					var osh = lsh if atk_kind == 1 else rsh
+					var h0 = sh - uf * 0.12 - ur * 0.1 * sgn + up * 0.5
+					var h1 = sh + uf * 0.55 + ur * 0.3 * sgn - up * 0.3
+					var hr = sh + uf * 0.25 - up * 0.25
+					var hand = hr.lerp(h0, au).lerp(h1, av) + uf * sin(PI * av) * 0.18 + up * sin(PI * av) * 0.1
+					var other = osh + uf * (0.38 + 0.12 * av) + up * (0.0 - 0.06 * av)
+					if atk_kind == 1:
+						rh = hand
+						lh = other
+					else:
+						lh = hand
+						rh = other
+				_:
+					# both fists up over the head and brought down together
+					var t0r = rsh + uf * 0.02 + ur * 0.06 + up * 0.56
+					var t0l = lsh + uf * 0.02 - ur * 0.06 + up * 0.56
+					var t1r = rsh + uf * 0.5 + ur * 0.08 - up * 0.46
+					var t1l = lsh + uf * 0.5 - ur * 0.08 - up * 0.46
+					var trr = rsh + uf * 0.22 - ur * 0.18 - up * 0.32
+					var trl = lsh + uf * 0.22 + ur * 0.18 - up * 0.32
+					rh = trr.lerp(t0r, au).lerp(t1r, av) + uf * sin(PI * av) * 0.2
+					lh = trl.lerp(t0l, au).lerp(t1l, av) + uf * sin(PI * av) * 0.2
 		elif ztype == "runner":
 			var k = sin(phase)
 			rh = rsh + uf * (0.12 + 0.22 * k) + Vector3(0, -0.22 + 0.1 * absf(k), 0)
@@ -1500,7 +1593,19 @@ func stand_pose() -> void:
 	var breath = sin(t * 1.7) * 0.006
 	var pY = 0.98 - 0.42 * c + bob * 0.5
 	# striding out, the hips ride lower: a straight leg can't reach a foot planted ahead or behind
-	var plant = PLANT and not zombie and not swim and vault == null and climb == null and vy >= -0.5 and stumble <= 0.0
+	# (the dead plant their feet too, the ones near enough to see it: not the giants, whose joints are
+	# spread from the feet after the pose is worked out, and not the far-off ones, which are only posed)
+	var plant = PLANT and (not zombie or (size_k == 1.0 and not _lod_far())) and not swim and vault == null and climb == null and vy >= -0.5 and stumble <= 0.0
+	if zombie:
+		# an attack beginning: which kind this time
+		if lunge_t > lunge_prev + 0.1:
+			atk_n += 1
+			atk_len = maxf(lunge_t, 0.35)
+			atk_kind = 3 if ztype == "brute" else (id + atk_n) % 3
+		if lunge_prev > 0.0 and lunge_t <= 0.0:
+			atk_rec = 0.4
+		lunge_prev = lunge_t
+		atk_rec = maxf(0.0, atk_rec - G.DT)
 	if plant:
 		pY -= 0.075 * clampf(spd / 1.6, 0.0, 1.0) * (1.0 - 0.6 * c)
 	var gy = pos.y
@@ -1522,25 +1627,55 @@ func stand_pose() -> void:
 		al += clampf(acc_lp.dot(f) * 0.013, -0.1, 0.15)
 		th += clampf(acc_lp.dot(r) * 0.01, -0.1, 0.1)
 	if zombie:
-		al += {"walker": 0.42, "runner": 0.3, "brute": 0.5, "bloater": 0.2, "spitter": 0.36}.get(ztype, 0.4) + (0.3 if lunge_t > 0.0 and lunge_t < 0.3 else 0.0)
+		# (they stand nearly as a man stands, with a slouch: they used to be bent half over all the time)
+		al += {"walker": 0.1, "runner": 0.16, "brute": 0.2, "bloater": -0.04, "spitter": 0.12}.get(ztype, 0.1)
 		th += sin(t * 0.9) * 0.14 + (0.1 if id % 2 == 0 else -0.1)
+		# The attack, in the body: it rears back as the arms come up, then the whole of it goes forward
+		# and down into the blow (further for the big ones' two-fisted smash and a runner's dive), and
+		# straightens slowly afterwards. The hips go back and then through with it.
+		var au = _atk_u()
+		var av = _atk_v()
+		if lunge_t > 0.0:
+			var back = 0.3 if atk_kind == 3 else 0.2
+			var fwd = 0.42 if atk_kind == 3 else (0.55 if ztype == "runner" else 0.28)
+			al += -back * au * (1.0 - av) + fwd * av
+			# (a swipe twists the shoulders round behind the arm and through)
+			if atk_kind == 1 or atk_kind == 2:
+				th += (1.0 if atk_kind == 1 else -1.0) * (0.12 * au * (1.0 - av) - 0.16 * av)
+			for hi4 in [2, 9, 12]:
+				P[hi4] = P[hi4] + f * (-0.07 * au * (1.0 - av) + 0.1 * av) - Vector3(0, 0.05 * av, 0)
+		elif atk_rec > 0.0:
+			al += 0.3 * (atk_rec / 0.4)
+		# Walking: the body rocks over whichever foot is down and the head rides a beat behind. A leg
+		# that drags takes the weight badly: the hip drops on it and the trunk tips that way.
+		var wk = clampf(spd / 0.8, 0.0, 1.0)
+		th += sin(phase) * 0.06 * wk
+		if ztype != "runner" and (zstyle == 0 or zstyle == 3):
+			var bad = 1.0 if id % 2 == 1 else -1.0
+			var load = maxf(0.0, -cos(phase + (PI if id % 2 == 1 else 0.0))) * wk
+			th += bad * 0.1 * load
+			for hi5 in [2, 9, 12]:
+				P[hi5] = P[hi5] - Vector3(0, 0.05 * load, 0)
 		match zstyle:
 			1:  # lurching, pitched forward and bobbing with every step
-				al += 0.22 + absf(sin(phase)) * 0.12
+				al += 0.07 + absf(sin(phase)) * 0.1
 			2:  # staggering from side to side as it walks
 				th += sin(phase * 0.5) * 0.22
 				for hi2 in [2, 9, 12]:
 					P[hi2] = P[hi2] + r * sin(phase * 0.5) * 0.07
-			3:  # hunched right over
-				al += 0.38
+			3:  # the one in five that stoops
+				al += 0.2
 				for hi3 in [2, 9, 12]:
-					P[hi3] = P[hi3] - Vector3(0, 0.07, 0)
+					P[hi3] = P[hi3] - Vector3(0, 0.03, 0)
 			4:  # stiff and upright, head rolling
-				al -= 0.28
+				al -= 0.1
 				th += sin(t * 0.5) * 0.08
 		if ztype == "runner" and zstyle % 2 == 1:
-			al += 0.25          # the other kind of runner: bent low and fast
+			al += 0.14          # the other kind of runner: bent lower and fast
 	var tw = clampf(G.wrap_a(aim_yaw - body_yaw), -1.1, 1.1)
+	if zombie:
+		# the shoulders swing against the hips as it walks
+		tw += sin(phase) * 0.2 * clampf(spd / 0.8, 0.0, 1.0)
 	var uy = body_yaw + tw
 	var uf = Vector3(sin(uy), 0, cos(uy))
 	var ur = Vector3(-cos(uy), 0, sin(uy))
@@ -1559,12 +1694,15 @@ func stand_pose() -> void:
 		P[0] = P[0] + ur * (sin(t * 0.35) * 0.05)
 	if zombie:
 		# head lolls to one side and juts forward
-		P[1] = P[1] + uf * (0.06 + (0.1 if lunge_t > 0.0 and lunge_t < 0.3 else 0.0)) + ur * (0.05 * sin(t * 0.6) + (0.04 if id % 2 == 0 else -0.04)) - Vector3(0, 0.04, 0)
+		P[1] = P[1] + uf * (0.06 - 0.05 * _atk_u() * (1.0 - _atk_v()) + 0.15 * _atk_v()) + ur * (0.05 * sin(t * 0.6) + (0.04 if id % 2 == 0 else -0.04) - sin(phase - 0.6) * 0.025 * clampf(spd / 0.8, 0.0, 1.0)) - Vector3(0, 0.04, 0)
 		if zstyle == 4:
 			P[0] = P[0] + ur * sin(t * 0.7) * 0.07 - Vector3(0, 0.03, 0)     # head lolling round
 		elif zstyle == 3:
 			P[0] = P[0] + uf * 0.06
 	var A = minf(spd * 0.12, 0.45)
+	if zombie:
+		# (for the ones that are only posed: a swing that matches the ground going by under them)
+		A = clampf(spd / 0.5, 0.0, 1.0) / (zrate(spd) * size_k)
 	var lmx = mlx * mn
 	var lmz = mlz * mn
 	if turning and spd < 0.3:
@@ -1899,7 +2037,7 @@ func lod_glide(cheap: bool = false) -> void:
 			pos += d
 			glide_off += d
 			var gs0 = Vector2(vel.x, vel.z).length()
-			var dph0 = gs0 * (5.0 if prone else (2.3 if zombie else gait_k(gs0))) * G.DT
+			var dph0 = gs0 * (5.0 if prone else (zrate(gs0) if zombie else gait_k(gs0))) * G.DT
 			phase += dph0
 			glide_ph += dph0
 			for b in parts:
@@ -1911,7 +2049,7 @@ func lod_glide(cheap: bool = false) -> void:
 	# the legs keep stepping too, not just the body sliding: move him on, step the walk cycle on, and
 	# pose him, so a walking man looks like he's walking from any height (undone before his next real tick)
 	var gs = Vector2(vel.x, vel.z).length()
-	var dph = gs * (5.0 if prone else (2.3 if zombie else gait_k(gs))) * G.DT
+	var dph = gs * (5.0 if prone else (zrate(gs) if zombie else gait_k(gs))) * G.DT
 	pos += d
 	glide_off += d
 	phase += dph
@@ -2529,21 +2667,144 @@ func resupply() -> void:
 		rockets = 5
 
 # the walking dead: glowing eyes, a slack jaw, blood down the front, torn sleeves; brutes are bulked out
+const ZSHIRTS = [Color(0.55, 0.5, 0.42), Color(0.62, 0.58, 0.5), Color(0.45, 0.48, 0.52), Color(0.58, 0.47, 0.4), Color(0.36, 0.42, 0.5),
+	Color(0.5, 0.32, 0.28), Color(0.42, 0.46, 0.36), Color(0.7, 0.68, 0.62), Color(0.3, 0.3, 0.32), Color(0.62, 0.56, 0.3)]
+const ZTROUSERS = [Color(0.3, 0.33, 0.4), Color(0.25, 0.24, 0.22), Color(0.42, 0.38, 0.3), Color(0.2, 0.22, 0.26), Color(0.36, 0.3, 0.26)]
+const ZHAIR = [Color(0.16, 0.12, 0.09), Color(0.08, 0.07, 0.07), Color(0.45, 0.44, 0.42), Color(0.5, 0.42, 0.26)]
+
+# What makes one of the dead: a face (sunken sockets with a dull light in them, a mouth hanging open on
+# its teeth, blood down the chin), hair or the lack of it, what it was wearing (one of eight outfits),
+# and what happened to it (one of six wounds). The small pieces are only drawn close up.
+# A round patch lying in the skin of the head (an eye socket, an eye, a mouth, a stain): a flattened ball
+# set into the head where the line `dirn` from its middle comes out, turned to lie flat on it there and
+# standing `proud` out of it. Nothing on a face is a box stuck on the front any more.
+func _hset(head: Node3D, dirn: Vector3, size: Vector2, mat: Material, proud: float = 0.002, thick: float = 0.02, hr: Vector3 = HEAD_R, hc: Vector3 = Vector3.ZERO) -> MeshInstance3D:
+	var d = dirn.normalized()
+	var k = 1.0 / sqrt(pow(d.x / hr.x, 2.0) + pow(d.y / hr.y, 2.0) + pow(d.z / hr.z, 2.0))
+	var p = d * k
+	var n = Vector3(p.x / (hr.x * hr.x), p.y / (hr.y * hr.y), p.z / (hr.z * hr.z)).normalized()
+	var bx = Vector3.UP.cross(n)
+	bx = bx.normalized() if bx.length() > 0.01 else Vector3.RIGHT
+	var by = n.cross(bx)
+	var mi = MeshInstance3D.new()
+	mi.mesh = _hm("ball")
+	mi.transform = Transform3D(Basis(bx * size.x, by * size.y, n * thick), hc + p + n * (proud - thick * 0.5))
+	mi.material_override = mat
+	mi.layers = 2
+	head.add_child(mi)
+	return mi
+
+var zeyes: Array = []
+
+# the big ones' eyes: larger, and their own colour
+func eye_glow(mat: Material) -> void:
+	for e in zeyes:
+		if is_instance_valid(e):
+			e.material_override = mat
+			e.scale *= 1.5
+
 func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
 	var eye = _mat_glow("zeye", Color(0.95, 0.85, 0.35))
 	var blood = _mat("zblood", Color(0.32, 0.05, 0.04), false)
 	var dark = _mat("zrot", Color(0.22, 0.2, 0.17), false)
+	var bone = _mat("zbone", Color(0.8, 0.77, 0.66), false)
+	var hsh = id * 13 + int(seed_ * 7.0)
+	var head = parts[2]
+	# the face
+	# (all of it lies in the skin: round hollows for the eyes with a small dull light deep in each, a
+	# round dark mouth, stains that follow the head. A brute's head is a bigger ball, and its face is on that.)
+	var jaw = 0.03 if hsh % 3 == 0 else 0.01
+	var hr = HEAD_R
+	var hc = Vector3.ZERO
+	if ztype == "brute":
+		hr = Vector3(0.155, 0.125, 0.145)
+		hc = Vector3(0, -0.035, 0)
+	var fk = hr.x / HEAD_R.x
+	zeyes = []
 	for e in [-1.0, 1.0]:
-		_mesh(parts[2], Vector3(0.05, 0.03, 0.02), Vector3(e * 0.06, 0.03, -0.126), eye)
-	_mesh(parts[2], Vector3(0.12, 0.05, 0.05), Vector3(0, -0.11, -0.1), dark)
-	_mesh(parts[2], Vector3(0.14, 0.04, 0.03), Vector3(0.03, 0.09, -0.098), blood)
-	_mesh(parts[1], Vector3(0.22, 0.26, 0.02), Vector3(0.05, 0.02, -0.165), blood)
-	_mesh(parts[1], Vector3(0.12, 0.14, 0.02), Vector3(-0.12, -0.14, -0.13), blood)
-	_mesh(parts[1], Vector3(0.1, 0.1, 0.02), Vector3(0.1, -0.05, 0.155), dark)
+		_hset(head, Vector3(e * 0.05, 0.028, -0.12), Vector2(0.058, 0.046) * fk, dark, 0.0015, 0.02, hr, hc)
+		zeyes.append(_hset(head, Vector3(e * 0.049, 0.026, -0.12), Vector2(0.017, 0.017) * fk, eye, 0.0035, 0.008, hr, hc))
+	_hset(head, Vector3(0, -0.075 - jaw * 0.4, -0.105), Vector2(0.08, 0.036 + jaw) * fk, _mat("zmouth", Color(0.08, 0.02, 0.02), false), 0.002, 0.02, hr, hc)
+	_hset(head, Vector3(0, -0.062, -0.112), Vector2(0.056, 0.011) * fk, bone, 0.0035, 0.008, hr, hc)
+	_hset(head, Vector3(0, -0.092 - jaw * 0.8, -0.098), Vector2(0.05, 0.01) * fk, bone, 0.0035, 0.008, hr, hc)
+	if hsh % 3 != 1:
+		# down the chin and the front of the neck
+		_hset(head, Vector3(0.012, -0.118 - jaw * 0.3, -0.07), Vector2(0.05, 0.045) * fk, blood, 0.002, 0.016, hr, hc)
+		_mesh(head, Vector3(0.06, 0.08, 0.006), Vector3(0.012, -0.175, -0.047), blood)
+	_hset(head, Vector3(0.035, 0.085, -0.1), Vector2(0.085, 0.04) * fk, blood, 0.002, 0.016, hr, hc)
+	# hair
+	var plain = ztype in ["walker", "runner", "crawler", "spitter", "bloater"]
+	if ztype != "armored":
+		var hm = _mat("zhair%d" % (hsh % ZHAIR.size()), ZHAIR[hsh % ZHAIR.size()], false)
+		match (hsh / 3) % 5:
+			0:  # bald, the scalp laid open
+				_hset(head, Vector3(-0.03, 0.13, 0.01), Vector2(0.09, 0.11) * fk, blood, 0.002, 0.016, hr, hc)
+			1, 2:
+				_hround(head, "dome", Vector3(0.276, 0.2, 0.286), Vector3(0, 0.055, 0.008), hm, 0.1)
+			3:  # long, hanging down the back
+				_hround(head, "dome", Vector3(0.28, 0.21, 0.29), Vector3(0, 0.05, 0.01), hm, 0.14)
+				_mesh(head, Vector3(0.23, 0.2, 0.05), Vector3(0, -0.06, 0.125), hm)
+			4:  # what's left of it
+				_hround(head, "dome", Vector3(0.2, 0.15, 0.24), Vector3(0.03, 0.075, 0.03), hm, 0.2)
+	# the same stains they all carry
+	_mesh(parts[1], Vector3(0.2, 0.22, 0.02), Vector3(0.06, 0.04, -0.142), blood)
+	_mesh(parts[1], Vector3(0.1, 0.1, 0.02), Vector3(0.1, -0.05, 0.142), dark)
 	# one arm torn bare
 	var bare = 3 if id % 2 == 0 else 5
 	_mesh(parts[bare], Vector3(0.135, 0.33, 0.135), Vector3.ZERO, sk)
 	_mesh(parts[bare + 1], Vector3(0.05, 0.08, 0.13), Vector3(0, 0.06, 0.02), blood)
+	if plain:
+		# what it was wearing
+		match (id * 3 + 1) % 8:
+			1:  # an office: collar and tie
+				_mesh(parts[1], Vector3(0.2, 0.05, 0.02), Vector3(0, 0.215, -0.14), _mat("zcollar", Color(0.72, 0.7, 0.66), false))
+				_mesh(parts[1], Vector3(0.05, 0.26, 0.02), Vector3(0.01, 0.06, -0.146), _mat("ztie", Color(0.42, 0.1, 0.1) if id % 2 == 0 else Color(0.14, 0.18, 0.3), false))
+			2:  # a road gang: what's left of a hi-vis waistcoat
+				var hv = _mat("zhivis", Color(0.78, 0.82, 0.2), false)
+				_mesh(parts[1], Vector3(0.462, 0.34, 0.282), Vector3(0, 0.03, 0), hv)
+				_mesh(parts[1], Vector3(0.468, 0.04, 0.288), Vector3(0, -0.03, 0), _mat("zstripe", Color(0.7, 0.72, 0.72), false))
+			3:  # a hospital: a gown and bare legs
+				var gown = _mat("zgown", Color(0.6, 0.7, 0.72), false)
+				_mesh(parts[1], Vector3(0.46, 0.54, 0.28), Vector3(0, 0, 0), gown)
+				_mesh(parts[0], Vector3(0.4, 0.26, 0.28), Vector3(0, -0.02, 0), gown)
+				for i in [7, 9]:
+					_mesh(parts[i], Vector3(0.176, 0.3, 0.176), Vector3(0, -0.08, 0), sk)
+				for i in [8, 10]:
+					_mesh(parts[i], Vector3(0.156, 0.3, 0.156), Vector3(0, 0.05, 0), sk)
+			4:  # a hood, still up
+				var hood = _mat("zhood", Color(0.2, 0.21, 0.23), false)
+				_hround(head, "dome", Vector3(0.31, 0.31, 0.32), Vector3(0, 0.02, 0.03), hood, 0.3)
+				_mesh(parts[1], Vector3(0.3, 0.1, 0.16), Vector3(0, 0.26, 0.1), hood)
+			5:  # overalls: a bib and braces
+				_mesh(parts[1], Vector3(0.28, 0.3, 0.02), Vector3(0, -0.02, -0.143), uni2)
+				for e2 in [-1.0, 1.0]:
+					_mesh(parts[1], Vector3(0.045, 0.2, 0.282), Vector3(e2 * 0.11, 0.17, 0), uni2)
+			6:  # stripped to the waist
+				_mesh(parts[1], Vector3(0.456, 0.53, 0.276), Vector3.ZERO, sk)
+				for i in [3, 5]:
+					_mesh(parts[i], Vector3(0.135, 0.33, 0.135), Vector3.ZERO, sk)
+			7:  # a kitchen or a butcher's: an apron that was white
+				_mesh(parts[1], Vector3(0.34, 0.5, 0.02), Vector3(0, -0.06, -0.146), _mat("zapron", Color(0.74, 0.72, 0.66), false))
+				_mesh(parts[1], Vector3(0.22, 0.2, 0.02), Vector3(-0.03, -0.12, -0.152), blood)
+		# what happened to it
+		match (id * 11 + 5) % 6:
+			0:  # the ribs laid bare on one side
+				_mesh(parts[1], Vector3(0.16, 0.17, 0.02), Vector3(-0.12, 0.03, -0.146), blood)
+				for k in range(3):
+					_mesh(parts[1], Vector3(0.13, 0.016, 0.02), Vector3(-0.12, 0.08 - k * 0.05, -0.152), bone)
+			1:  # an arm gone at the elbow
+				# (the forearm isn't built yet: it's taken off at the end of _build_body)
+				set_meta("lost_arm", 6 if bare == 3 else 4)
+			2:  # bitten at the neck
+				_mesh(parts[1], Vector3(0.15, 0.1, 0.16), Vector3(0.14 if id % 2 == 0 else -0.14, 0.215, 0.0), blood)
+				_mesh(parts[1], Vector3(0.1, 0.22, 0.02), Vector3(0.13 if id % 2 == 0 else -0.13, 0.08, -0.146), blood)
+			3:  # a trouser leg torn away
+				var leg = 8 if id % 2 == 0 else 10
+				_mesh(parts[leg], Vector3(0.156, 0.32, 0.156), Vector3(0, 0.04, 0), sk)
+				_mesh(parts[leg], Vector3(0.06, 0.16, 0.02), Vector3(0.02, 0.06, -0.08), blood)
+			4:  # opened across the belly
+				_mesh(parts[1], Vector3(0.24, 0.1, 0.02), Vector3(0.0, -0.17, -0.146), blood)
+				_mesh(parts[1], Vector3(0.05, 0.15, 0.04), Vector3(0.05, -0.28, -0.14), _mat("zgut", Color(0.5, 0.2, 0.2), false))
 	if ztype == "brute":
 		_mesh(parts[1], Vector3(0.62, 0.5, 0.4), Vector3(0, 0.05, 0.02), sk)
 		_mesh(parts[1], Vector3(0.56, 0.2, 0.36), Vector3(0, -0.2, 0.0), uni)
@@ -2573,8 +2834,8 @@ func _zombie_look(sk: Material, uni: Material, uni2: Material) -> void:
 	elif ztype == "spitter":
 		# thin, the jaw hanging open over a swollen, glowing throat
 		var acid = _mat_glow("zacid", Color(0.55, 0.85, 0.15))
-		_mesh(parts[2], Vector3(0.12, 0.1, 0.03), Vector3(0, -0.07, -0.13), _mat("zmouth", Color(0.08, 0.02, 0.02), false))
-		_mesh(parts[2], Vector3(0.16, 0.12, 0.14), Vector3(0, -0.17, -0.03), acid)
+		_hset(parts[2], Vector3(0, -0.085, -0.1), Vector2(0.1, 0.075), _mat("zmouth", Color(0.08, 0.02, 0.02), false), 0.003, 0.02)
+		_hpart(parts[2], "ball", Vector3(0.17, 0.14, 0.16), Vector3(0, -0.17, -0.02), acid)
 		_mesh(parts[1], Vector3(0.36, 0.5, 0.2), Vector3.ZERO, sk)
 		_mesh(parts[1], Vector3(0.1, 0.18, 0.02), Vector3(-0.05, 0.08, -0.11), acid)
 	elif ztype == "crawler":
@@ -3694,7 +3955,7 @@ func _tick_alive() -> void:
 	if prone and spd > 0.25 and not zombie and mud_stage < 3 and not swim:
 		Wear.mud_tick(self, G.DT)
 	var ph0 = sin(phase)
-	phase += (spd * (5.0 if prone else (2.3 if zombie else gait_k(spd))) * (zgait if zombie else 1.0) + (6.0 if turning and zombie else 0.0) + (9.0 if stumble > 0.0 else 0.0)) * G.DT
+	phase += (spd * (5.0 if prone else (zrate(spd) if zombie else gait_k(spd))) + (6.0 if turning and zombie else 0.0) + (9.0 if stumble > 0.0 else 0.0)) * G.DT
 	# how hard he's speeding up, slowing or swerving: the body leans with it
 	acc_lp = acc_lp.lerp((Vector3(vel.x, 0, vel.z) - pvel) / G.DT, 0.18)
 	pvel = Vector3(vel.x, 0, vel.z)

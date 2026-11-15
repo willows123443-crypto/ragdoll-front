@@ -109,6 +109,10 @@ func _ready() -> void:
 			_sound_check()
 		if a.begins_with("--bossshot="):
 			_boss_shot(a.substr(11))
+		if a.begins_with("--zedshot="):
+			_zed_shot(a.substr(10))
+		if a == "--zedwalk":
+			_zed_walk()
 		if a == "--brutestage":
 			_brute_stage()
 		if a.begins_with("--fortshot="):
@@ -4942,6 +4946,212 @@ func _boss_shot(dir: String) -> void:
 	for z in made:
 		out.append("%s: head %.2f m up, %d hp" % [z.sname, z.parts[2].global_position.y - z.pos.y, int(z.hp)])
 	print("BOSSSHOT ", " | ".join(out), " | a soldier's head: %.2f m up" % (man.parts[2].global_position.y - man.pos.y))
+	get_tree().quit()
+
+# A quiet field with one soldier standing in it, for looking at the dead
+func _zed_stage() -> Array:
+	await _wait(1.0)
+	stop_attract()
+	G.ui.title.visible = false
+	seed(3)
+	start_game({"map": "field", "mode": "horde", "size": 4, "limit": 999, "reinforce": false, "armor": "none", "teams": 2})
+	await _wait(1.5)
+	Modes.horde_t = 99999.0
+	Modes.auto_board = false
+	Modes.auto_buy = false
+	G.builder = true
+	G.ui.dock.visible = false
+	var c = _free_spot(G.world.capture + Vector3(30.0, 0, 30.0))
+	var men = G.soldiers.filter(func(s): return s.team == 0)
+	for i in range(men.size()):
+		men[i].move_to(Vector3(c.x + 60.0 + i * 2.0, G.world.ground_y(c.x + 60.0 + i * 2.0, c.z), c.z))
+	return [c, men[0]]
+
+func _zed_hold(z, yaw: float) -> void:
+	z.face(yaw)
+	z.think = 9999.0
+	z.target = null
+
+# --zedshot=DIR: the dead close up (two rows of ordinary ones and one of each kind), four moments of
+# them walking seen from the side, and each kind of attack at three moments: drawn back, striking, struck
+func _zed_shot(dir: String) -> void:
+	var st = await _zed_stage()
+	var c: Vector3 = st[0]
+	var man = st[1]
+	var rows = []
+	for r in range(2):
+		var row = []
+		for i in range(7):
+			var z = Modes.spawn_zombie("walker", c.x - 2.7 + i * 0.9, c.z - r * 14.0)
+			_zed_hold(z, 0.0)
+			row.append(z)
+		rows.append(row)
+	var kinds = ["walker", "runner", "spitter", "bloater", "crawler", "brute"]
+	var kz = []
+	for i in range(kinds.size()):
+		var z = Modes.spawn_zombie(kinds[i], c.x - 3.0 + i * 1.2, c.z - 28.0)
+		_zed_hold(z, 0.0)
+		kz.append(z)
+	await _wait(6.5)                 # (the opening message has gone by then)
+	G.ui.dock.visible = false
+	for r in range(2):
+		for z in rows[r]:
+			_zed_hold(z, 0.0)
+		var at = Vector3(c.x, c.y + 1.12, c.z - r * 14.0)
+		await _look(at + Vector3(0, 0.35, 4.3), at)
+		await _wait(0.3)
+		G.ui.dock.visible = false
+		await get_tree().process_frame
+		await _snap(dir, "zed_line%d" % (r + 1))
+		# and three of the faces
+		at = Vector3(c.x - 0.9 + r * 0.9, c.y + 1.56, c.z - r * 14.0 + 0.15)
+		await _look(at + Vector3(0.25, -0.05, 1.25), at)
+		await _wait(0.3)
+		G.ui.dock.visible = false
+		await get_tree().process_frame
+		await _snap(dir, "zed_face%d" % (r + 1))
+	for z in kz:
+		_zed_hold(z, 0.0)
+	var at2 = Vector3(c.x, c.y + 1.0, c.z - 28.0)
+	await _look(at2 + Vector3(0, 0.5, 5.4), at2)
+	await _wait(0.3)
+	G.ui.dock.visible = false
+	await get_tree().process_frame
+	await _snap(dir, "zed_kinds")
+	if _arg("only", "") == "look":
+		get_tree().quit()
+		return
+	# ---- walking: the first row set off towards a man well off to one side
+	for z in rows[1] + kz:
+		z.move_to(Vector3(c.x - 80.0, c.y, c.z - 40.0))
+	man.move_to(Vector3(c.x + 45.0, G.world.ground_y(c.x + 45.0, c.z), c.z))
+	for z in rows[0]:
+		z.face(PI / 2.0)
+		z.think = 0.0
+	await _wait(2.5)
+	for k in range(4):
+		var mid = Vector3.ZERO
+		for z in rows[0]:
+			mid += z.pos
+		mid /= rows[0].size()
+		await _look(Vector3(mid.x + 0.6, c.y + 1.25, mid.z + 6.2), Vector3(mid.x + 0.6, c.y + 0.95, mid.z))
+		G.ui.dock.visible = false
+		await get_tree().process_frame
+		await _snap(dir, "zed_walk%d" % (k + 1))
+		await _wait(0.22)
+	for z in rows[0]:
+		_zed_hold(z, 0.0)
+		z.move_to(Vector3(c.x - 80.0, c.y, c.z - 44.0))
+	# ---- attacking: one at a time, slowed down, against a man who is kept alive and on his feet
+	var mp = Vector3(c.x + 1.0, c.y, c.z + 20.0)
+	man.move_to(Vector3(mp.x, G.world.ground_y(mp.x, mp.z), mp.z))
+	man.face(-PI / 2.0)
+	var todo = [["walker", 0, "grab"], ["walker", 1, "swipe"], ["brute", 3, "smash"], ["runner", 0, "runner"]]
+	for td in todo:
+		var z = Modes.spawn_zombie(td[0], mp.x - 3.2, mp.z)
+		z.face(PI / 2.0)
+		z.think = 0.0
+		z.melee_t = 0.0
+		# (so that the attack it is about to make is the one wanted)
+		if td[0] != "brute":
+			z.atk_n = (int(td[1]) - z.id - 1) % 3 + 3
+		G.ui.dock.visible = false
+		await _look(Vector3(mp.x + 0.9, c.y + 1.75, mp.z + 3.3), Vector3(mp.x - 0.9, c.y + 1.05, mp.z))
+		var t0 = Time.get_ticks_msec()
+		while z.lunge_t <= 0.0 and Time.get_ticks_msec() - t0 < 20000:
+			man.hp = 100.0
+			await get_tree().physics_frame
+		# (one tick to a picture from here, however slowly the pictures are drawn)
+		Engine.max_physics_steps_per_frame = 1
+		var marks = [0.33, 0.15, 0.03]
+		var got = 0
+		t0 = Time.get_ticks_msec()
+		while got < 3 and Time.get_ticks_msec() - t0 < 150000:
+			man.hp = 100.0
+			if z.lunge_t <= marks[got]:
+				print("ZEDSHOT   ", td[2], " t=%.2f gap %.2f m, speed %.1f, hands above shoulders: want %.2f/%.2f, are %.2f/%.2f; ahead of chest: %.2f/%.2f" % [z.lunge_t, G.dist2d(z.pos, man.pos), Vector2(z.vel.x, z.vel.z).length(), z.P[5].y - z.P[3].y, z.P[8].y - z.P[6].y, z.parts[4].global_position.y - z.P[3].y, z.parts[6].global_position.y - z.P[6].y, G.flat(z.parts[4].global_position - z.parts[1].global_position).dot(z.lunge_dir), G.flat(z.parts[6].global_position - z.parts[1].global_position).dot(z.lunge_dir)])
+				G.ui.dock.visible = false
+				await get_tree().process_frame
+				await _snap(dir, "zed_atk_%s%d" % [td[2], got + 1])
+				got += 1
+			await get_tree().physics_frame
+		Engine.max_physics_steps_per_frame = 8
+		print("ZEDSHOT ", td[2], ": kind ", z.atk_kind, ", frames ", got)
+		_zed_hold(z, 0.0)
+		z.move_to(Vector3(c.x - 80.0, c.y, c.z - 50.0))
+		man.hp = 100.0
+		if man.state != "alive":
+			await _wait(3.0)
+		await _wait(0.3)
+	get_tree().quit()
+
+# --zedwalk: do their feet stay put? Twelve of the dead walk at a man for ten seconds; for each foot, how
+# far it moved along the ground while it was on the ground, against how far the body went.
+func _zed_walk() -> void:
+	var st = await _zed_stage()
+	var c: Vector3 = st[0]
+	var man = st[1]
+	man.move_to(Vector3(c.x + 50.0, G.world.ground_y(c.x + 50.0, c.z), c.z))
+	var zs = []
+	for i in range(12):
+		var z = Modes.spawn_zombie("walker" if i < 10 else "runner", c.x - (i % 4) * 1.6, c.z - 3.0 + (i / 4) * 3.0)
+		z.face(PI / 2.0)
+		zs.append(z)
+	G.pc.free_pos = c + Vector3(8.0, 3.0, 8.0)
+	await _look(c + Vector3(8.0, 3.0, 8.0), c + Vector3(8.0, 1.0, 0.0))
+	await _wait(2.0)
+	# every foot's place, every tick; then "on the ground" is within 2.5 cm of the lowest it ever was
+	var rec = {}
+	for z in zs:
+		rec[z.id] = [[], [], []]
+	var far = 0
+	for n in range(600):
+		await get_tree().physics_frame
+		G.pc.free_pos = Vector3(zs[0].pos.x, c.y + 3.0, c.z + 8.0)
+		man.hp = 100.0
+		for z in zs:
+			if z.state != "alive" or z.lunge_t > 0.0 or z.pos.distance_to(man.pos) < 4.0:
+				continue
+			if n == 300 and z._lod_far():
+				far += 1
+			rec[z.id][0].append(z.P[11] - Vector3(0, G.world.ground_y(z.P[11].x, z.P[11].z), 0))
+			rec[z.id][1].append(z.P[14] - Vector3(0, G.world.ground_y(z.P[14].x, z.P[14].z), 0))
+			rec[z.id][2].append(z.pos)
+	var out = []
+	for kind in ["walker", "runner"]:
+		var slide = 0.0
+		var went = 0.0
+		var air = 0
+		var ticks = 0
+		var steps = 0
+		for z in zs:
+			if z.ztype != kind:
+				continue
+			var r = rec[z.id]
+			var m = r[2].size()
+			if m < 60:
+				continue
+			var lo = [9.0, 9.0]
+			for f in range(2):
+				for q in r[f]:
+					lo[f] = minf(lo[f], q.y)
+			for i in range(1, m):
+				var up = 0
+				for f in range(2):
+					var down = r[f][i].y < lo[f] + 0.025
+					var was = r[f][i - 1].y < lo[f] + 0.025
+					if down and was:
+						slide += Vector2(r[f][i].x - r[f][i - 1].x, r[f][i].z - r[f][i - 1].z).length()
+					if down and not was:
+						steps += 1
+					if not down:
+						up += 1
+				if up == 2:
+					air += 1
+				ticks += 1
+				went += Vector2(r[2][i].x - r[2][i - 1].x, r[2][i].z - r[2][i - 1].z).length()
+		out.append("%ss: went %.1f m at %.2f m/s, feet slid %.1f m while down (%.0f%% of the way), %d footfalls (%.2f m each), both feet up %.1f%% of the time" % [kind, went, went * 60.0 / maxf(ticks, 1), slide, 100.0 * slide / maxf(went, 0.01), steps, went / maxf(steps, 1), 100.0 * air / maxf(ticks, 1)])
+	print("ZEDWALK ", " | ".join(out), " | only posed (far from the camera): ", far, " of ", zs.size())
 	get_tree().quit()
 
 # --navtest: the route grid under the old rule (a cell shut when any part of it is near a wall) and the

@@ -2218,7 +2218,7 @@ static func make_zombie(z, kind: String = "walker") -> void:
 					z.bulk(i, Vector3(0.26, 0.36, 0.26), Vector3.ZERO, hide)
 				for i in [4, 6]:
 					z.bulk(i, Vector3(0.24, 0.36, 0.24), Vector3(0, -0.02, 0), hide)
-				z.bulk(2, Vector3(0.2, 0.035, 0.02), Vector3(0, 0.03, -0.15), eyes)
+				z.eye_glow(eyes)
 			"hurler":
 				# rangy and stooped, grey as the masonry it throws, with forearms like clubs
 				var grey = z._mat("zhurl", Color(0.36, 0.38, 0.36), false)
@@ -2227,7 +2227,7 @@ static func make_zombie(z, kind: String = "walker") -> void:
 					z.bulk(i, Vector3(0.26, 0.42, 0.26), Vector3(0, -0.06, 0), grey)
 				for i in [3, 5]:
 					z.bulk(i, Vector3(0.18, 0.34, 0.18), Vector3.ZERO, grey)
-				z.bulk(2, Vector3(0.2, 0.035, 0.02), Vector3(0, 0.03, -0.15), z._mat_glow("zeyes2", Color(0.9, 0.85, 0.3)))
+				z.eye_glow(z._mat_glow("zeyes2", Color(0.9, 0.85, 0.3)))
 			"mother":
 				# pale and swollen: a great belly, and sacs on its back
 				var pale = z._mat("zmother", Color(0.72, 0.66, 0.6), false)
@@ -2236,7 +2236,7 @@ static func make_zombie(z, kind: String = "walker") -> void:
 				z.bulk(1, Vector3(0.58, 0.5, 0.5), Vector3(0, -0.04, -0.06), pale)
 				for q in [Vector3(-0.16, 0.14, 0.2), Vector3(0.14, 0.02, 0.22), Vector3(0.0, 0.26, 0.2)]:
 					z.bulk(1, Vector3(0.2, 0.2, 0.18), q, sac)
-				z.bulk(2, Vector3(0.2, 0.035, 0.02), Vector3(0, 0.03, -0.15), z._mat_glow("zeyes3", Color(0.9, 0.4, 0.6)))
+				z.eye_glow(z._mat_glow("zeyes3", Color(0.9, 0.4, 0.6)))
 	z.grenades = 0
 	z.smokes = 0
 	z.satchels = 0
@@ -2313,7 +2313,14 @@ static func zombie_tick(s) -> void:
 		s.lunge_t -= G.DT
 		AI.stop_move(s)
 		if s.lunge_t > 0.3:
-			s.want = Vector3.ZERO
+			# drawing back for it, and still coming on, slower, turning with him as he moves (it used to stop
+			# dead, and then the lunge fell a good metre short of a man who hadn't stirred)
+			if d > 0.9:
+				s.lunge_dir = to / maxf(d, 0.01)
+				s.want = s.lunge_dir * (spd * 0.6 / s.W["speed"])
+			else:
+				s.want = Vector3.ZERO
+			s.aim_yaw = G.turn_to(s.aim_yaw, atan2(s.lunge_dir.x, s.lunge_dir.z), 5.0 * G.DT)
 		else:
 			s.want = s.lunge_dir * (minf(spd * 1.9, 6.5) / s.W["speed"]) if s.ztype != "crawler" else s.lunge_dir * 0.6
 			if s.melee_t <= 0.0 and d < reach:
@@ -2324,7 +2331,8 @@ static func zombie_tick(s) -> void:
 		return
 	s.melee_t -= G.DT
 	if d < (1.4 if s.ztype == "crawler" else (3.2 if s.has_meta("boss") else 2.4)) and s.melee_t <= 0.0:
-		s.lunge_t = 0.55 if s.ztype != "runner" else 0.42
+		# (a longer drawing-back than before, so that it can be seen coming: longest for the big ones)
+		s.lunge_t = {"runner": 0.45, "brute": 0.8}.get(s.ztype, 0.62)
 		s.lunge_dir = to / maxf(d, 0.01)
 		s.melee_t = 0.0
 		G.audio.groan(s.pos, "snarl")

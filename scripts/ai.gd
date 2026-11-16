@@ -908,7 +908,8 @@ static func follow_route(s) -> void:
 			s.start_climb(T, R["pts"][1].y > end0.y + 1.0)
 			R["i"] = 2 if R["pts"].size() > 2 else 1
 			return
-	if d < 0.4 and absf(wp.y - s.pos.y) < 1.2:
+	# (the dead come to a stair in a crowd: the ones behind count as there when they are within a pace of it)
+	if d < (0.9 if s.zombie else 0.4) and absf(wp.y - s.pos.y) < 1.2:
 		R["i"] += 1
 		if R["i"] >= R["pts"].size():
 			s.route = null

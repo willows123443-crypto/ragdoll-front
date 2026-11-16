@@ -4688,6 +4688,21 @@ func _horde_play() -> void:
 		await _wait(1.0)
 		var men = G.soldiers.filter(func(s): return s.team == 0 and not s.zombie and s.state != "dead").size()
 		lowest = mini(lowest, men)
+		# --zdump=SECS: where each of the dead is at that moment and what it is doing (then stop)
+		var zd = float(_arg("zdump", "0"))
+		if zd > 0.0 and G.sim_time - t0 >= zd:
+			var mm = G.soldiers.filter(func(s): return s.team == 0 and not s.zombie and s.state == "alive")
+			var mmid = Vector3.ZERO
+			for m in mm:
+				mmid += m.pos / maxf(1.0, mm.size())
+			print("%s ZDUMP at %.0f s: wave %d, still to come %d, quiet for %.0f s | men %d round (%.0f, %.0f), in building %s" % [tag, G.sim_time - t0, Modes.horde_wave, Modes.horde_left, Modes.quiet_t, mm.size(), mmid.x, mmid.z, str(mm.map(func(m): return Doors.building_at(m.pos)))])
+			for z in G.soldiers:
+				if z.zombie and z.state != "dead":
+					var near = 1e9
+					for m in mm:
+						near = minf(near, G.dist2d(m.pos, z.pos))
+					print("  %s %s at (%.0f, %.1f, %.0f) %.0f m from the nearest man | speed %.1f | in building %d | far %s frozen %s | feeding %s | route %s | target %s | task %s" % [z.ztype, z.state, z.pos.x, z.pos.y, z.pos.z, near, Vector2(z.vel.x, z.vel.z).length(), Doors.building_at(z.pos), str(z._lod_far()), str(z.lod_frozen), str(z.zfeed_t > 0.0), str(z.route != null), str(z.target != null and is_instance_valid(z.target)), str(z.task)])
+			break
 		if Modes.horde_wave != last_wave:
 			if last_wave > 0:
 				var st = [0, 0, 0, 0]
@@ -4783,6 +4798,23 @@ func _up_test() -> void:
 	out.append("%d men put on its ground floor, then 6 of the dead (unkillable for the test) among them: %s" % [n_in, " | ".join(log)])
 	out.append("the dead started up the stairs %d times" % Modes.upstairs_n)
 	out.append("first man upstairs after %s | first of the dead upstairs after %s | went up without being told %d times" % [("%.0f s" % first_up) if first_up >= 0.0 else "never in 45 s", ("%.0f s" % first_z_up) if first_z_up >= 0.0 else "never in 45 s", Modes.ups])
+	# ...and back down: the living moved 30 m off down the street, do the dead upstairs come down after them?
+	var zu0 = up_of.call(zs)
+	var k5 = 0
+	for m in men:
+		if is_instance_valid(m) and m.state != "dead":
+			var q5: Vector3 = _free_spot(mid + Vector3(30.0 + (k5 % 3) * 1.5, 0, (k5 / 3) * 1.5))
+			m.move_to(Vector3(q5.x, W.ground_y(q5.x, q5.z), q5.z))
+			m.order = {"mode": "move", "point": m.pos}
+			m.route = null
+			m.tower = null
+			k5 += 1
+	var dlog = []
+	for i in range(40):
+		await _wait(1.0)
+		if i % 10 == 9:
+			dlog.append("%ds: %d" % [i + 1, up_of.call(zs)])
+	out.append("the living moved 30 m down the street with %d of the dead upstairs: still upstairs after %s" % [zu0, ", ".join(dlog)])
 	for l in out:
 		print("UPTEST ", l)
 	get_tree().quit()

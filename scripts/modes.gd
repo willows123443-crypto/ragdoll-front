@@ -1149,13 +1149,14 @@ static func _horde(dt: float) -> void:
 		# with none of them within reach of a man, they drop.
 		# ...and a dozen or fewer with nobody killed for a minute and a half go the same way: five of them
 		# shut in somewhere held a self-played Ministry battle in its sixth wave for a quarter of an hour.
-		var kills_now = int(Stats.teams[0]["kills"])
+		# ...and any number of them, with nobody killed on either side for two and a half minutes.
+		var kills_now = int(Stats.teams[0]["kills"]) + lost_log.size()
 		if kills_now != last_kills or horde_left > 0:
 			last_kills = kills_now
 			quiet_t = 0.0
 		else:
 			quiet_t += dt
-		if dead_walking <= 12 and quiet_t > 90.0:
+		if (dead_walking <= 12 and quiet_t > 90.0) or quiet_t > 150.0:
 			quiet_t = 0.0
 			for z in G.soldiers.duplicate():
 				if z.team == 1 and z.state != "dead":
@@ -2622,7 +2623,11 @@ static func zombie_tick(s) -> void:
 		# (Up the stairs of a house after a man at an upstairs window, too: the way there is by the foot
 		# of the stairs and the head of them. They used to walk to the spot underneath him and stand there,
 		# so the upstairs of any house was somewhere the dead could never come.)
-		var routed = s.route != null and G.dist2d(s.route["pts"][s.route["pts"].size() - 1], goal) < 4.0
+		# (On its way down the stairs of a house is routed too. It never was: with the man it wanted more
+		# than four metres from the foot of them it was sent back to the head of the stairs on every
+		# tick, and what had gone upstairs after a man stayed up there for good. Fifteen of them in one
+		# house held a city battle in its first wave for forty-five minutes.)
+		var routed = s.route != null and (G.dist2d(s.route["pts"][s.route["pts"].size() - 1], goal) < 4.0 or s.task == "descend")
 		if not routed and (s.move_target == null or G.dist2d(s.move_target, goal) > 4.0):
 			if br == null:
 				AI.route_to(s, goal, spd)

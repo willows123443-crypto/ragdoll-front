@@ -1076,6 +1076,9 @@ var zhit_t = 0.0
 var zhit_back = 0.0       # +1 rocked back (hit from in front), -1 pitched forward (from behind)
 var zhit_side = 0.0
 var zleg = [0.0, 0.0]
+var spare = false         # nobody picks it as a target (the zombie lesson's one, until it has hold of you)
+var zfeed_t = 0.0         # down over a man it has killed
+var zfeed_s = null
 var zhold = null          # the man it has hold of
 var zhold_t = 0.0
 # ---- a man with one of the dead hanging on to him
@@ -1689,7 +1692,10 @@ func stand_pose() -> void:
 		# straightens slowly afterwards. The hips go back and then through with it.
 		var au = _atk_u()
 		var av = _atk_v()
-		if zhold_t > 0.0:
+		if zfeed_t > 0.0:
+			# down over a man it has killed, at him
+			al += 0.62 + 0.07 * sin(t * 9.0)
+		elif zhold_t > 0.0:
 			# it has hold of a man: bent in over him, worrying at him
 			al += 0.22 + 0.06 * sin(t * 13.0)
 		elif lunge_t > 0.0:

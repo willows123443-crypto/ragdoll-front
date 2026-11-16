@@ -2500,7 +2500,7 @@ func _show_horde() -> void:
 	cols.add_theme_constant_override("v_separation", 12)
 	v.add_child(cols)
 	for mp in [["town", "Town ruins", "Streets and houses round a crossroads. Barricade the roads and fall back to a house when the streets are lost: the men in it board up its windows and doors."],
-			["office", "The Ministry", "One big building, three floors. The men board up the ground floor and hold it; when a floor is overrun they fall back up the stairs and hold the head of them."],
+			["office", "The Ministry", "One big building, three floors. The men board up the ground floor and hold the foot of the stairs together; when a floor is overrun they go up and hold the head of them."],
 			["city", "City blocks", "Tall blocks on a grid of streets: long lines of fire down the avenues, and a great many windows to board."],
 			["factory", "The factory", "Sheds, yards and a works building. Open ground between the walls, and plenty of them to get behind."]]:
 		var pc = PanelContainer.new()
@@ -2528,7 +2528,17 @@ func _show_horde() -> void:
 			_pick_map(mid)))
 		cols.add_child(pc)
 	var hb = HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 10)
 	hb.add_child(_button("  Back  ", func(): horde_panel.visible = false))
+	var lz = _button("  Zombie lesson  ", func():
+		G.main.stop_attract()
+		horde_panel.visible = false
+		title.visible = false
+		menu.visible = false
+		ZLesson.start())
+	lz.tooltip_text = "Five things on the town before the first wave: getting indoors, boarding, buying, a handful of the dead, and throwing one off"
+	hb.add_child(lz)
+	hb.add_child(_label("new to it? a couple of minutes, then the waves start", 13, Color(0.7, 0.72, 0.7)))
 	v.add_child(hb)
 	horde_panel.add_child(v)
 	root.add_child(horde_panel)

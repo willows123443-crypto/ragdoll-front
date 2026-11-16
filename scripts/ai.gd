@@ -958,7 +958,7 @@ static func perceive(s) -> void:
 	var peek_only = false
 	var cand: Array = []
 	for o in G.soldiers:
-		if o.team != s.team and o.state != "dead" and (o != Modes.pilot or o.state != "wounded"):
+		if o.team != s.team and o.state != "dead" and not o.spare and (o != Modes.pilot or o.state != "wounded"):
 			var d2 = o.pos.distance_squared_to(s.pos)
 			if d2 < 160.0 * 160.0:
 				# (the one who's just hit him, or who's firing at him now, comes first even if he's further
@@ -3158,14 +3158,24 @@ static func friendly_in_line(s, from: Vector3, dir: Vector3, L: float):
 	# (a flamethrower's fan is far wider than a bullet's path and reaches 17 m whatever he's aiming at)
 	var flame: bool = s.W["flame"]
 	var end = from + dir * L
+	# against the dead: the one he's aiming at, if it is one of them
+	var zt = s.target if G.mode == "horde" and not s.is_player and s.target != null and is_instance_valid(s.target) and s.target.zombie else null
 	for o in G.soldiers:
 		if o == s or o.team != s.team or o.state == "dead":
 			continue
 		var c = o.chest()
 		if burst_r > 0.0 and c.distance_to(end) < burst_r:
 			return o
+		# Nobody fires at one of the dead with a man of his own within arm's reach of it: at that range the
+		# two are one target. (The last men shot by their own side were all shot from under a metre.)
+		if zt != null and G.dist2d(o.pos, zt.pos) < 1.2 and absf(o.pos.y - zt.pos.y) < 1.2:
+			return o
 		var v = c - from
 		var t = v.dot(dir)
+		# (and a man standing at the shooter's elbow, level with the muzzle or just behind it, is in the
+		# way as well: he used to be passed over for being behind the line's start)
+		if zt != null and t < 0.0 and t > -0.7 and (v - dir * t).length() < 0.7:
+			return o
 		# (against the dead the men stand all round, shooting inwards and across: a round that misses goes
 		# on into whoever is beyond, so the look goes a good way past the target there)
 		if t < 0.0 or t > (17.5 if flame else L + (25.0 if G.mode == "horde" else 4.0)):

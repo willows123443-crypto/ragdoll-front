@@ -78,6 +78,18 @@ static func reset() -> void:
 	last_kills = 0
 	buy_t = 0.0
 	bought = {}
+	rising = []
+	rise_said = -1
+	feeds = 0
+	turned_n = 0
+	put_down = 0
+	made_sure = 0
+	lobby_sent = 0
+	lost_to = {}
+	lost_log = []
+	lobby_p = null
+	lobby_spots = []
+	lobby_t = 0.0
 	downs = 0
 	for r in rocks:
 		if is_instance_valid(r["node"]):
@@ -691,7 +703,9 @@ static func keep_pos() -> Vector3:
 	return Vector3(b["x"], G.world.ground_y(b["x"], b["z"]), b["z"])
 
 # everyone back to the keep (or to the middle, on a map with no building near it)
+static var fall_backs = 0
 static func fall_back() -> String:
+	fall_backs += 1
 	if Levels.on:
 		return _fall_back_floor()
 	var k = keep()
@@ -752,7 +766,20 @@ static func _fall_back_floor(to_k: int = -1) -> String:
 			# Somewhere he can see the head of the stairs from, a few metres back, and facing it: that is
 			# where they will come up, one or two at a time. (They used to stand anywhere within five
 			# metres of it, round a corner as often as not, looking wherever they had been looking.)
+			# (Well back from it if there is anywhere: four to nine metres. At two to five, what came up
+			# the stairs was at arm's length as it arrived, and in battle after battle on Hard the men
+			# who had gone up were all dead within a minute of the first of the dead reaching the top.)
+			var found = false
+			for tries in range(12):
+				var q = Levels.spot_on(k, near, 9.0)
+				var dq = G.dist2d(q, near)
+				if dq > 4.0 and dq < 9.5 and not G.blocked(q + Vector3(0, 1.4, 0), near + Vector3(0, 1.0, 0)):
+					p = q
+					found = true
+					break
 			for tries in range(8):
+				if found:
+					break
 				var q = Levels.spot_on(k, near, 5.0)
 				var dq = G.dist2d(q, near)
 				if dq > 2.0 and dq < 5.5 and not G.blocked(q + Vector3(0, 1.4, 0), near + Vector3(0, 1.0, 0)):
@@ -1083,6 +1110,8 @@ static func _horde(dt: float) -> void:
 	_fortify(dt)
 	_auto_up(dt)
 	_upstairs_duty(dt)
+	_lobby(dt)
+	_rise_tick(dt)
 	_quartermaster(dt)
 	if Levels.on and not horde_in and G.sim_time > 1.0:
 		# (the Ministry: nobody waits for them in the yard)
@@ -1097,7 +1126,7 @@ static func _horde(dt: float) -> void:
 			G.pc.free_pos = from
 			G.pc.free_yaw = atan2(dv.x, dv.z)
 			G.pc.free_pitch = atan2(dv.y, Vector2(dv.x, dv.z).length())
-		G.ui.message("The Ministry. Your men board up the ground floor and hold it; when a floor is overrun they fall back up the stairs by themselves (\"Up a floor\" in the Armoury tab sends them up sooner)")
+		G.ui.message("The Ministry. Your men board up the ground floor and hold the foot of the stairs together; when the floor is overrun they go up by themselves (\"Up a floor\" in Supplies sends them up sooner). A man bitten to death gets up again unless he is shot through the head")
 	var dead_walking = 0
 	for s in G.soldiers:
 		if s.team == 1 and s.state != "dead":
@@ -1167,7 +1196,7 @@ static func _horde(dt: float) -> void:
 		var was_best = horde_best(G.map_id)
 		_record_wave()
 		var rec = ("  A new best for this map (it was %d)." % was_best) if (horde_wave > was_best and was_best > 0) else ""
-		G.ui.message("Wave %d beaten: %d s to dig in. Build barricades and buy weapons (Armoury tab); the men board up the windows and doors of the house they hold. Men in the keep rest and restock.%s" % [horde_wave, int(BREAK), rec])
+		G.ui.message("Wave %d beaten: %d s to dig in. Build barricades and buy weapons (Supplies); the men board up the windows and doors of the house they hold. Men in the keep rest and restock.%s" % [horde_wave, int(BREAK), rec])
 		G.ui.radio(0, "Wave %d done. Points for kills: %d to spend" % [horde_wave, Support.points[0]])
 		_regroup()
 		# where the next lot will come from is known now, so the right side gets boarded in the break
@@ -2163,6 +2192,19 @@ static func _quartermaster(dt: float) -> void:
 	# Ministry was won with 112 replacements and not one machine gun.)
 	var want = mini(G.team_size + horde_wave * 2, MEN_CAP)
 	var guns_due = lmgs < n / 4 or (Levels.on and shotguns < n / 5)
+	# The first guns come before the first replacements: machine guns for three cost less than two men,
+	# and everyone is made up to strength for nothing when the next wave starts. (On Hard, where the
+	# team was under strength in every wave, the points all went on men and not one gun was bought: 34
+	# men lost in twelve minutes to walkers at arm's length.)
+	if n >= 4 and not ("--nogunsfirst" in OS.get_cmdline_user_args()):
+		if lmgs == 0:
+			if free >= 12:
+				_buy("lmg", mid, "machine guns before anything")
+			return
+		if Levels.on and shotguns == 0:
+			if free >= 8:
+				_buy("shotgun", mid, "shotguns for the corridors")
+			return
 	if n < (G.team_size * 3 + 4) / 5 or (n < want and not guns_due):
 		if free >= 32 and want - n >= 4:
 			_buy("men5", mid, "we're %d and want to be %d" % [n, want])
@@ -2358,6 +2400,9 @@ static func zombie_tick(s) -> void:
 				if d < bd:
 					bd = d
 					best = o
+		# (the zombie lesson's one is after you and nobody else)
+		if s.spare and G.player != null and is_instance_valid(G.player) and G.player.is_player and G.player.state != "dead":
+			best = G.player
 		s.target = best
 	var t = s.target
 	s.ready_ = false
@@ -2373,6 +2418,29 @@ static func zombie_tick(s) -> void:
 			s.aim_yaw = G.turn_to(s.aim_yaw, atan2(th2.x, th2.z), 6.0 * G.DT)
 			s.zhold_t = 0.25
 			s.lunge_t = 0.0
+			return
+	if s.zfeed_t > 0.0:
+		# Down over a man it has killed. It stays at him for a few seconds, unless it is hit or a living
+		# man comes within reach: time for the others to shoot it or get clear.
+		var b = s.zfeed_s
+		var off = s.zhit_t > 0.0 or b == null or not is_instance_valid(b) or b.state != "dead"
+		if not off and t != null and is_instance_valid(t) and t.state == "alive" and G.dist2d(t.pos, s.pos) < 2.2 and absf(t.pos.y - s.pos.y) < 1.5:
+			off = true
+		if off:
+			s.zfeed_t = 0.0
+			s.zfeed_s = null
+		else:
+			s.zfeed_t -= G.DT
+			var tb = G.flat(b.parts[1].global_position - s.pos)
+			AI.stop_move(s)
+			s.want = tb.normalized() * 0.6 if tb.length() > 0.8 else Vector3.ZERO
+			if tb.length() > 0.1:
+				s.aim_yaw = G.turn_to(s.aim_yaw, atan2(tb.x, tb.z), 5.0 * G.DT)
+			s.crouch_t = 0.9
+			s.zhold_t = 0.25
+			s.lunge_t = 0.0
+			if randf() < G.DT * 1.2:
+				G.fx.bleed(b.parts[1].global_position + Vector3(0, 0.15, 0), Vector3.UP, false)
 			return
 	s.crouch_t = 0.12 if s.ztype != "brute" else 0.0
 	s.prone_t = s.ztype == "crawler" and not s.has_meta("risen")
@@ -2798,6 +2866,226 @@ static func lose_leg(z, sd: int) -> void:
 		z.zhold = null
 	z.fall(1.3)
 
+# ---- a man the dead have killed
+# The one that killed him goes down over him for a few seconds, and up to two more that are close and
+# have nobody else within reach join it. And if he was bitten (killed in a grip, or by the lunge that
+# ends in one) and it was not one of the big ones that did it, he gets up again as one of them thirty
+# to forty-five seconds later. A round through the head of the body before then, and he stays down.
+static var lost_to = {}               # what the men have been lost to this battle: {"walker": 12, ...}
+static var lost_log: Array = []       # "minute what where" for each
+static var made_sure = 0
+static var feeds = 0
+static var turned_n = 0
+static var put_down = 0
+static var rising: Array = []        # [{"s": the body, "t": when}]
+static var rise_t = 0.0
+static var rise_said = -1
+
+static func _killed_by_dead(t, z, bitten: bool = true) -> void:
+	if not is_instance_valid(t) or t.state != "dead" or t.zombie:
+		return
+	if z != null and is_instance_valid(z) and z.state == "alive" and z.ztype != "brute" and not z.has_meta("boss"):
+		z.zfeed_t = randf_range(4.0, 6.5)
+		z.zfeed_s = t
+		feeds += 1
+		var more = 0
+		for o in G.soldiers:
+			if more >= 2:
+				break
+			if o.zombie and o != z and o.state == "alive" and o.zfeed_t <= 0.0 and o.zhold == null and o.ztype != "brute" and not o.has_meta("boss") and G.dist2d(o.pos, t.pos) < 3.5 and absf(o.pos.y - t.pos.y) < 1.5:
+				o.zfeed_t = randf_range(3.0, 5.0)
+				o.zfeed_s = t
+				more += 1
+	if t.is_player or t == G.player or (z != null and is_instance_valid(z) and (z.ztype == "brute" or z.has_meta("boss"))):
+		return
+	# (only a man who was bitten: killed in a grip, or by the lunge that ends in one. A man clawed down
+	# stays down. With every man lost getting up again in a quarter of a minute, as tough as any walker,
+	# the Ministry on Hard went from won on two seeds of two to lost by the sixth wave on both: a man
+	# lost in the middle of the others was one more of them there at the worst moment.)
+	if not bitten or "--norise" in OS.get_cmdline_user_args():
+		return
+	t.set_meta("will_rise", true)
+	rising.append({"s": t, "t": G.sim_time + randf_range(30.0, 45.0)})
+
+static func _rise_tick(dt: float) -> void:
+	rise_t -= dt
+	if rise_t > 0.0 or rising.is_empty():
+		return
+	rise_t = 0.5
+	for r in rising.duplicate():
+		var b = r["s"]
+		if not is_instance_valid(b) or not (b in G.soldiers) or not b.has_meta("will_rise"):
+			rising.erase(r)
+			continue
+		if G.sim_time < float(r["t"]):
+			# Making sure: a man close by with none of the dead within five metres of him, and nothing he
+			# can see within eight, puts a round through the head of the body before it can get up. (With
+			# them on top of him nobody has the time, and those are the ones that rise. It used to need
+			# nothing in sight at all, and in 26 deaths in a Ministry battle it never once happened.)
+			if randf() < 0.4 and not ("--nosure" in OS.get_cmdline_user_args()):
+				var hp3: Vector3 = b.parts[2].global_position
+				for m in G.soldiers:
+					if m.team != 0 or m.zombie or m.is_player or m.state != "alive" or m.vehicle != null or m.grab_t > 0.0:
+						continue
+					# (nothing he can see within eight metres: the ones further off can wait a second)
+					if m.vis_t != null and is_instance_valid(m.vis_t) and G.dist2d(m.vis_t.pos, m.pos) < 8.0:
+						continue
+					if G.dist2d(m.pos, hp3) > 5.0 or G.dist2d(m.pos, hp3) < 0.8 or absf(m.pos.y - hp3.y) > 1.6:
+						continue
+					if m.task in ["medic", "stretcher", "drag", "help_walk"] or m.dragging != null or m.W["rocket"] or m.W["flame"] or m.W["gl"]:
+						continue
+					if _zombie_within(m.pos, 5.0) or G.blocked(m.head_pos(), hp3 + Vector3(0, 0.1, 0)):
+						continue
+					var dir3 = (hp3 - m.head_pos()).normalized()
+					m.aim_yaw = atan2(dir3.x, dir3.z)
+					G.audio.shot(m.head_pos() + dir3 * 0.6, m.W)
+					G.fx.muzzle(m.head_pos() + dir3 * 0.6, false)
+					Combat.hit_soldier(b, 2, hp3, dir3, 10.0, m, 2.0)
+					made_sure += 1
+					if randf() < 0.35:
+						G.fx.callout(m, G.pick(["Making sure.", "He's not getting up.", "Sorry, mate.", "Stay down."]))
+					break
+			continue
+		# (not while they are still at him)
+		var busy = false
+		for o in G.soldiers:
+			if o.zombie and o.zfeed_t > 0.0 and o.zfeed_s == b:
+				busy = true
+				break
+		if busy:
+			r["t"] = G.sim_time + 1.5
+			continue
+		rising.erase(r)
+		var bp: Vector3 = b.parts[1].global_position
+		var fy = G.world.surface_y(bp.x, bp.z, bp.y + 0.4)
+		var z = spawn_zombie("walker", bp.x, bp.z)
+		if z == null:
+			continue
+		z.move_to(Vector3(bp.x, fy, bp.z))
+		z.set_meta("was_man", true)
+		# (mauled already, and slow: three rifle rounds put him down again whatever the wave. As tough as
+		# any walker and up in a quarter of a minute, every man lost on Hard was one more of them in the
+		# middle of the others, and a Ministry that had held to the ninth wave was lost by the fifth.)
+		z.hp = 60.0
+		z.zspeed = randf_range(2.2, 2.8)
+		z.think = 2.0
+		z.fall(1.6)
+		G.soldiers.erase(b)
+		b.queue_free()
+		turned_n += 1
+		if rise_said != horde_wave:
+			rise_said = horde_wave
+			G.ui.radio(0, "One of ours is getting up again at %s. A round through the head keeps them down" % AI.grid_ref(bp))
+
+# ---------------------------------------------------------------- holding the stairs from the start
+# In the Ministry the men don't string themselves out along a hundred metres of windows. They hold the
+# foot of one staircase together: each has a place within ten metres of it from which he can see it,
+# facing outwards down the corridors, and when the floor is lost that staircase is the one they go up.
+# Boarding goes on as before between waves; a man comes back to his place when it is done.
+static var lobby_p = null
+static var lobby_spots: Array = []
+static var lobby_t = 0.0
+static var lobby_sent = 0
+
+static func _lobby_pick() -> void:
+	var mid = Vector3(Levels.rect.position.x + Levels.rect.size.x * 0.5, Levels.floor_y(0), Levels.rect.position.y + Levels.rect.size.y * 0.5)
+	var n = 0
+	var sum = Vector3.ZERO
+	for s in G.soldiers:
+		if s.team == 0 and not s.zombie and s.state == "alive" and Levels.inside(s.pos, 0.0) and Levels.level_of(s.pos) == 0:
+			sum += s.pos
+			n += 1
+	if n > 0:
+		mid = sum / n
+	var bd = 1e9
+	lobby_p = null
+	for st in Levels.stairs:
+		if int(st["k"]) == 0 and G.dist2d(st["a"], mid) < bd:
+			bd = G.dist2d(st["a"], mid)
+			lobby_p = st["a"]
+	lobby_spots = []
+	if lobby_p == null:
+		return
+	# (Places in sight of the stair foot first, nearest first; then, further out, places a short walk
+	# from it. Asking for a clear line to the stair foot from every one found four places for ten men:
+	# the stairs are in a well with walls round it.)
+	for r in [3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0]:
+		for i in range(16):
+			var a = i * TAU / 16.0 + r * 0.7
+			var q: Vector3 = Levels.spot_on(0, lobby_p + Vector3(cos(a), 0, sin(a)) * r, 0.8)
+			var dq = G.dist2d(q, lobby_p)
+			if dq < 2.2 or dq > 13.0:
+				continue
+			if G.blocked(q + Vector3(0, 1.4, 0), lobby_p + Vector3(0, 1.2, 0)):
+				# not in sight of it: a walk of no more than half as far again as the crow flies, and 15 m
+				var pth = Levels.flat_path(0, q, lobby_p)
+				var pl = 0.0
+				var prev = q
+				for w in pth:
+					pl += G.dist2d(prev, w)
+					prev = w
+				if pth.is_empty() or G.dist2d(prev, lobby_p) > 1.5 or pl > minf(15.0, dq * 1.5 + 2.0):
+					continue
+			var clash = false
+			for o in lobby_spots:
+				if G.dist2d(o["p"], q) < 1.5:
+					clash = true
+					break
+			if clash:
+				continue
+			var out = G.flat(q - lobby_p)
+			lobby_spots.append({"p": q, "face": atan2(out.x, out.z)})
+
+static func _lobby(dt: float) -> void:
+	lobby_t -= dt
+	if lobby_t > 0.0 or not Levels.on or G.over or "--nolobby" in OS.get_cmdline_user_args():
+		return
+	lobby_t = 2.0
+	if lobby_p == null or lobby_spots.is_empty():
+		_lobby_pick()
+		if lobby_spots.is_empty():
+			return
+	var taken = {}
+	var todo = []
+	for s in G.soldiers:
+		if s.team != 0 or s.zombie or s.is_player or s.state != "alive" or s.vehicle != null:
+			continue
+		if not Levels.inside(s.pos, 0.0) or Levels.level_of(s.pos) != 0:
+			if s.has_meta("lobby_i"):
+				s.remove_meta("lobby_i")
+			continue
+		if s.has_meta("lobby_i") and int(s.get_meta("lobby_i")) < lobby_spots.size():
+			taken[int(s.get_meta("lobby_i"))] = true
+		todo.append(s)
+	for s in todo:
+		if s.task in ["fortify", "medic", "stretcher", "drag", "help_walk"] or s.dragging != null or s.grab_t > 0.0:
+			continue
+		var tag = str(s.order.get("tag", "")) if s.order != null else ""
+		# (only men with nothing else to do, or back down from upstairs and arrived: an order of yours stands)
+		if s.order != null and not (tag == "lobby" or (tag == "fallback" and not AI._falling_back(s) and absf(s.order["point"].y - s.pos.y) < 1.6)):
+			continue
+		var li = int(s.get_meta("lobby_i", -1))
+		if li < 0 or li >= lobby_spots.size():
+			var best = -1
+			var bd = 1e9
+			for i in range(lobby_spots.size()):
+				if taken.has(i):
+					continue
+				var d = G.dist2d(lobby_spots[i]["p"], s.pos) + i * 0.3
+				if d < bd:
+					bd = d
+					best = i
+			if best < 0:
+				continue
+			li = best
+			taken[li] = true
+			s.set_meta("lobby_i", li)
+		var sp = lobby_spots[li]
+		if tag != "lobby" or G.dist2d(s.order["point"], sp["p"]) > 0.5:
+			s.order = {"mode": "move", "point": sp["p"], "tag": "lobby", "face": sp["face"], "in": Levels.bi}
+			s.decide_t = 0.0
+			lobby_sent += 1
+
 # ---- a man in the grip of one of the dead
 # A grab that lands takes hold. For a second or so he can do nothing but wrench at it; then he either
 # throws it off (likelier if he's unhurt, surer if a friend is beside him to haul it away, harder with
@@ -2808,12 +3096,12 @@ static var wrenches = 0
 static var p_grabs = 0
 static var p_free = 0
 
-static func _grab(z, t) -> bool:
+static func _grab(z, t, sure: bool = false) -> bool:
 	if t.grab_t > 0.0 or t.state != "alive" or t.vehicle != null:
 		return false
-	if z.ztype == "brute" or z.ztype == "crawler" or z.ztype == "spitter" or z.has_meta("boss") or z.atk_kind != 0 or z.has_meta("breach"):
+	if z.ztype == "brute" or z.ztype == "crawler" or z.ztype == "spitter" or z.has_meta("boss") or (z.atk_kind != 0 and not sure) or z.has_meta("breach"):
 		return false
-	if randf() > 0.45:
+	if not sure and randf() > 0.45:
 		return false
 	t.grab_by = z
 	t.grab_t = randf_range(0.9, 1.4)
@@ -2905,7 +3193,8 @@ static func rescue(s) -> bool:
 		if not is_instance_valid(h) or h == s or h.grab_t <= 0.0 or h.team != s.team:
 			continue
 		var z = h.grab_by
-		if z == null or not is_instance_valid(z) or z.state != "alive":
+		# (the zombie lesson's one is yours to throw off)
+		if z == null or not is_instance_valid(z) or z.state != "alive" or z.has_meta("lesson"):
 			continue
 		var rid = int(h.get_meta("rescuer", -1))
 		if rid != -1 and rid != s.id:
@@ -2986,6 +3275,7 @@ static func grab_tick(s) -> void:
 		if s.hp <= 0.0:
 			_grab_end(s)
 			Combat.kill(s, z, false)
+			_killed_by_dead(s, z, true)
 			return
 		G.audio.voice(s, "scream")
 		s.fall(2.0)
@@ -2994,6 +3284,11 @@ static func grab_tick(s) -> void:
 	_grab_end(s)
 
 static func _claw(z, t, k: float = 1.0, may_grab: bool = true) -> void:
+	# (the zombie lesson's one: it never claws, and the first time it reaches you it takes hold)
+	if z.has_meta("lesson"):
+		if t.is_player:
+			_grab(z, t, true)
+		return
 	var zk = str(z.get_meta("boss")) if z.has_meta("boss") else z.ztype
 	var zr = ZOMBIES[zk]["dmg"] if ZOMBIES.has(zk) else ZOMBIES["walker"]["dmg"]
 	var dmg = randf_range(zr[0], zr[1]) * k
@@ -3005,6 +3300,7 @@ static func _claw(z, t, k: float = 1.0, may_grab: bool = true) -> void:
 		Combat.shake = maxf(Combat.shake, 0.35)
 	if t.hp <= 0.0:
 		Combat.kill(t, z, false)
+		_killed_by_dead(t, z, z.atk_kind == 0)
 	elif may_grab and _grab(z, t):
 		pass
 	elif t.state == "alive" and may_grab and (z.ztype == "brute" or randf() < 0.2):

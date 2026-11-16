@@ -254,6 +254,10 @@ static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, 
 	var b: RigidBody3D = s.parts[part]
 	var imp = dir * force * 1.6
 	if s.state == "dead":
+		# (a round through the head of a man the dead have killed, and he stays down)
+		if part == 2 and s.has_meta("will_rise"):
+			s.remove_meta("will_rise")
+			Modes.put_down += 1
 		s.unsettle()
 		b.apply_impulse(imp * b.mass * 0.25, point - b.global_position)
 		_cap(s, 5.0)
@@ -404,6 +408,17 @@ static func kill(s, attacker, head: bool) -> void:
 	# zombie mode: kills earn points to spend between waves
 	if G.mode == "horde" and s.zombie and attacker != null and attacker.team == 0:
 		Support.earn(0, Modes.kill_pay(s))
+	if G.mode == "horde" and not s.zombie and s.team == 0:
+		# (what the men are lost to, and where: for the self-played battles' logs)
+		var by = "other"
+		if attacker != null and attacker.zombie:
+			by = str(attacker.get_meta("boss")) if attacker.has_meta("boss") else ("risen man" if attacker.has_meta("was_man") else attacker.ztype)
+		elif attacker != null and attacker.team == 0:
+			by = "own side"
+		elif cause != "":
+			by = cause
+		Modes.lost_to[by] = int(Modes.lost_to.get(by, 0)) + 1
+		Modes.lost_log.append("%.1f %s %s" % [G.sim_time / 60.0, by, (Levels.names[Levels.level_of(s.pos)].to_lower() if Levels.inside(s.pos, 0.0) else "outside") if Levels.on else ("indoors" if Doors.building_at(s.pos) >= 0 else "outside")])
 	if s.zombie and s.has_meta("boss"):
 		Modes.boss_down(s)
 	Tactics.note_death(s)
@@ -505,7 +520,7 @@ static func bayonet(s, t) -> void:
 # empty). It hurts, and it knocks the other man back a couple of steps so there's room to shoot.
 static var shove_n = 0
 static func shove(s, t) -> void:
-	if t == null or t.state == "dead" or s.state != "alive":
+	if t == null or t.state == "dead" or s.state != "alive" or t.spare:
 		return
 	shove_n += 1
 	var dir = G.flat(t.pos - s.pos).normalized()

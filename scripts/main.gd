@@ -893,6 +893,17 @@ func _physics_process(_delta: float) -> void:
 	tick_n += 1
 	sim_ms = lerpf(sim_ms, used / 1000.0, 0.05)
 
+# Thirty ticks a second in place of sixty (each one a thirtieth of a second of battle): half the steps
+# for the same battle. `on` is asked for by _step_cap under load; --hz30 forces it for tests.
+var half_rate = false
+func _rate(on: bool) -> void:
+	if on == half_rate:
+		return
+	half_rate = on
+	Engine.physics_ticks_per_second = 30 if on else 60
+	G.STEP = 1.0 / (30.0 if on else 60.0)
+	G.DT = G.STEP
+
 func _sim_step() -> void:
 	G.sim_time += G.DT
 	Prep.step(G.DT)
@@ -922,9 +933,12 @@ func _sim_step() -> void:
 			# every third tick when they're not in a fight (every other while they are): with their rifles
 			# gliding along with them in between, it doesn't show from the commander view
 			var every = 2 if s.vis_t != null or s.supp > 0.3 or s.zombie else 3
+			if half_rate and s.zombie:
+				# (a tick is twice as long already, and the far-off dead are not moved in between)
+				every = 1
 			# (under load the far-off living think one tick in three while they're in a fight and one in
 			# four out of it: see _step_cap)
-			if far_slow and not s.zombie:
+			if far_slow and not s.zombie and not half_rate:
 				every += 1
 			var rem = (fr + s.id) % every
 			if rem != 0 and s.zombie and Soldier.horde_lean:
@@ -940,7 +954,7 @@ func _sim_step() -> void:
 				else:
 					s.lod_glide(rem == 1 or far_slow)
 				continue
-			G.DT = float(every) / 60.0
+			G.DT = float(every) * G.STEP
 			s.lod_unglide()
 			var y0: float = s.body_yaw
 			var a0: float = s.aim_yaw
@@ -948,23 +962,23 @@ func _sim_step() -> void:
 			if is_instance_valid(s):
 				s.yaw_rate = clampf(G.wrap_a(s.body_yaw - y0) / G.DT, -8.0, 8.0)
 				s.aim_rate = clampf(G.wrap_a(s.aim_yaw - a0) / G.DT, -8.0, 8.0)
-			G.DT = 1.0 / 60.0
+			G.DT = G.STEP
 		elif big and s.state == "riding" and not s.is_player and s.mount_t <= 0.0 and (s.hidden_in_vehicle or s.lod_frozen):
 			# crews shut inside a vehicle think every third tick; far-off men riding in the open every other
 			# one, carried along with their seats in between
-			var ev = 3 if s.hidden_in_vehicle else 2
+			var ev = (3 if s.hidden_in_vehicle else 2) - (1 if half_rate else 0)
 			if (fr + s.id) % ev != 0:
 				if not s.hidden_in_vehicle:
 					s.rider_glide()
 				continue
-			G.DT = float(ev) / 60.0
+			G.DT = float(ev) * G.STEP
 			if Soldier.PERF:
 				var r0 = Time.get_ticks_usec()
 				s.tick()
 				AI.pf["state:riding"] = AI.pf.get("state:riding", 0) + Time.get_ticks_usec() - r0
 			else:
 				s.tick()
-			G.DT = 1.0 / 60.0
+			G.DT = G.STEP
 		else:
 			if s.glide_off != Vector3.ZERO or s.glide_ph != 0.0 or s.glide_yaw != 0.0 or s.glide_aim != 0.0:
 				s.lod_unglide()
@@ -1096,22 +1110,50 @@ var step_avg = 0.0
 var step_cap_t = 0.0
 
 var far_slow = false
+var rate_hold = 0.0
+var rate_said = false
 func _step_cap(dt: float) -> void:
 	if "--far3" in OS.get_cmdline_user_args():
 		far_slow = true
-	if not OS.has_feature("web") and not ("--stepcap" in OS.get_cmdline_user_args()):
+	if "--hz30" in OS.get_cmdline_user_args():
+		_rate(true)
+		return
+	# (in a browser, in a finished desktop build, or when a test asks for it: not in the tests, which
+	# must come out the same every time)
+	if not OS.has_feature("web") and OS.is_debug_build() and not ("--stepcap" in OS.get_cmdline_user_args()):
 		return
 	step_avg = lerpf(step_avg, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, 0.05)
 	step_cap_t -= dt
 	if step_cap_t > 0.0:
 		return
 	step_cap_t = 1.0
-	if step_avg > 8.0:
+	# Heavy steps: the battle goes over to thirty ticks a second, each one a thirtieth of a second of
+	# battle, so it takes half the steps to keep the clock true. Two steps to a picture at sixty ran a
+	# 119-man battle at 54% of its proper speed and 16 pictures a second in a browser: slow motion.
+	# Back to sixty when a step is light enough that sixty of them a second would fit with room to spare.
+	if not G.started or "--no30" in OS.get_cmdline_user_args():
+		if half_rate and not G.started:
+			_rate(false)
+		if step_avg > 8.0:
+			Engine.max_physics_steps_per_frame = 2
+			far_slow = true
+		elif step_avg < 5.5:
+			Engine.max_physics_steps_per_frame = 8
+			far_slow = false
+		return
+	rate_hold -= 1.0
+	if not half_rate and step_avg > 8.0 and rate_hold <= 0.0:
+		_rate(true)
 		Engine.max_physics_steps_per_frame = 2
-		far_slow = true
-	elif step_avg < 5.5:
+		rate_hold = 10.0
+		step_avg = 6.0
+		if not rate_said:
+			rate_said = true
+			G.ui.message("A big battle: it now runs at thirty steps a second in place of sixty, to keep its proper speed")
+	elif half_rate and step_avg < 4.5 and rate_hold <= 0.0:
+		_rate(false)
 		Engine.max_physics_steps_per_frame = 8
-		far_slow = false
+		rate_hold = 10.0
 	# (Drawing in the distance inside which bodies are fully simulated while the steps are heavy was tried
 	# here: with the camera down among 100 men it took the simulated living from 16 to 3 and the battle
 	# ran 1.5% faster. Simulated bodies are not where the time goes: about two-thirds of a step is the
@@ -6789,9 +6831,9 @@ func _aud_test() -> void:
 		while Time.get_ticks_msec() - m0 < secs * 1000.0:
 			await get_tree().process_frame
 			mpk = maxf(mpk, maxf(AudioServer.get_bus_peak_volume_left_db(0, 0), AudioServer.get_bus_peak_volume_right_db(0, 0)))
-		print("AUDTEST voices built: shouts %d grunts %d pains %d screams %d, reload %s pin %s door %s steps %s/%s stings %s/%s horde loop %s" % [G.audio.s_shouts.size(), G.audio.s_grunts.size(), G.audio.s_pains.size(), G.audio.s_screams.size(),
+		print("AUDTEST voices built: sounds in the pack %d, grunts %d pains %d screams %d, reload %s pin %s door %s steps %s/%s stings %s/%s horde loop %s" % [G.audio.pack.size(), G.audio.s_grunts.size(), G.audio.s_pains.size(), G.audio.s_screams.size(),
 			G.audio.s_reload != null, G.audio.s_pin != null, G.audio.s_door != null, G.audio.s_step_road != null, G.audio.s_step_floor != null, G.audio.s_win != null, G.audio.s_lose != null, G.audio.s_horde != null])
-		for pr in [["shout", G.audio.s_shouts[0]], ["shout2", G.audio.s_shouts[3]], ["grunt", G.audio.s_grunts[0]], ["pain", G.audio.s_pains[0]], ["scream", G.audio.s_screams[1]], ["reload", G.audio.s_reload], ["pin", G.audio.s_pin], ["door", G.audio.s_door], ["step road", G.audio.s_step_road], ["step floor", G.audio.s_step_floor], ["win", G.audio.s_win], ["lose", G.audio.s_lose], ["horde", G.audio.s_horde], ["rifle", G.audio.s_guns["rifle"]]]:
+		for pr in [["rifle", G.audio.snd("gun_rifle")], ["blast", G.audio.snd("boom")], ["grunt", G.audio.s_grunts[0]], ["pain", G.audio.s_pains[0]], ["scream", G.audio.s_screams[1]], ["reload", G.audio.s_reload], ["pin", G.audio.s_pin], ["door", G.audio.s_door], ["step road", G.audio.s_step_road], ["step floor", G.audio.s_step_floor], ["win", G.audio.s_win], ["lose", G.audio.s_lose], ["horde", G.audio.s_horde], ["rifle", G.audio.s_guns["rifle"]]]:
 			var d: PackedByteArray = pr[1].data
 			var pkv = 0.0
 			var acc2 = 0.0
@@ -7306,10 +7348,16 @@ func _perf_run() -> void:
 		var secs_w = float(_arg("secs", "20"))
 		var tw0 = G.sim_time
 		var near_cam = "--near" in OS.get_cmdline_user_args()
+		# (experiments: the camera turned to the sky so nothing of the battle is drawn; the whole HUD hidden)
+		var look_away = "--lookaway" in OS.get_cmdline_user_args()
+		if "--nohud" in OS.get_cmdline_user_args():
+			G.ui.root.visible = false
 		var sim_n = 0
 		var sim_k = 0
 		while G.sim_time - tw0 < secs_w:
 			await get_tree().process_frame
+			if look_away:
+				G.pc.free_pitch = 1.35
 			if near_cam:
 				# (the camera down among them, where most of the living are inside the simulated distance)
 				var cmid = Vector3.ZERO
@@ -7365,6 +7413,7 @@ func _perf_run() -> void:
 			var kn = co.get_class()
 			kinds[kn] = kinds.get(kn, 0) + 1
 		print("PERF %d bodies in the scene: %s" % [k, str(kinds)])
+		print("PERF %d rate: %d ticks a second now, at most %d steps to a picture, step average %.1f ms" % [k, Engine.physics_ticks_per_second, Engine.max_physics_steps_per_frame, step_avg])
 		print("PERF %d engine: whole physics frame %.1f ms | active bodies %d, pairs %d, islands %d | zombies up %d" % [k, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
 			Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS), Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS), Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT), zc])
 	get_tree().quit()

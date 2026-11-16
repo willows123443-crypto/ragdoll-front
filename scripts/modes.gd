@@ -90,6 +90,8 @@ static func reset() -> void:
 	lobby_p = null
 	lobby_spots = []
 	lobby_t = 0.0
+	rear = []
+	rear_first = []
 	downs = 0
 	for r in rocks:
 		if is_instance_valid(r["node"]):
@@ -746,57 +748,149 @@ static func _fall_back_floor(to_k: int = -1) -> String:
 		return "Everyone is on the %s already: there is nowhere left to go" % Levels.names[top].to_lower()
 	var k = to_k if to_k >= 0 else (0 if low == 99 else low + 1)
 	var mid = Vector3(Levels.rect.position.x + Levels.rect.size.x * 0.5, Levels.floor_y(k), Levels.rect.position.y + Levels.rect.size.y * 0.5)
-	var n = 0
+	var movers = []
 	for s in G.soldiers:
 		if s.team != 0 or s.state != "alive" or s.is_player or s.vehicle != null or s.zombie:
 			continue
 		if Levels.inside(s.pos, 0.0) and Levels.storey_of(s.pos) >= k:
 			continue
-		var near = mid + Vector3(randf_range(-0.3, 0.3) * Levels.rect.size.x, 0, randf_range(-0.25, 0.25) * Levels.rect.size.y)
-		if k > 0:
-			# the head of the nearest staircase that comes up to that floor
-			var bd = 1e9
-			for st in Levels.stairs:
-				if int(st["k"]) == k - 1 and G.dist2d(st["b"], s.pos) < bd:
-					bd = G.dist2d(st["b"], s.pos)
-					near = st["b"]
-		var p = Levels.spot_on(k, near, 5.0 if k > 0 else 4.0)
-		var ord = {"mode": "move", "point": p, "tag": "fallback"}
-		if k > 0:
-			# Somewhere he can see the head of the stairs from, a few metres back, and facing it: that is
-			# where they will come up, one or two at a time. (They used to stand anywhere within five
-			# metres of it, round a corner as often as not, looking wherever they had been looking.)
-			# (Well back from it if there is anywhere: four to nine metres. At two to five, what came up
-			# the stairs was at arm's length as it arrived, and in battle after battle on Hard the men
-			# who had gone up were all dead within a minute of the first of the dead reaching the top.)
-			var found = false
-			for tries in range(12):
-				var q = Levels.spot_on(k, near, 9.0)
-				var dq = G.dist2d(q, near)
-				if dq > 4.0 and dq < 9.5 and not G.blocked(q + Vector3(0, 1.4, 0), near + Vector3(0, 1.0, 0)):
-					p = q
-					found = true
-					break
-			for tries in range(8):
-				if found:
-					break
-				var q = Levels.spot_on(k, near, 5.0)
-				var dq = G.dist2d(q, near)
-				if dq > 2.0 and dq < 5.5 and not G.blocked(q + Vector3(0, 1.4, 0), near + Vector3(0, 1.0, 0)):
-					p = q
-					break
-			ord["point"] = p
-			var tn = G.flat(near - p)
+		movers.append(s)
+	if k == 0:
+		for s in movers:
+			var near0 = mid + Vector3(randf_range(-0.3, 0.3) * Levels.rect.size.x, 0, randf_range(-0.25, 0.25) * Levels.rect.size.y)
+			s.order = {"mode": "move", "point": Levels.spot_on(0, near0, 4.0), "tag": "fallback"}
+			s.decide_t = 0.0
+			_drop_job(s)
+		G.audio.radio_click()
+		if movers.is_empty():
+			return "Everyone is on the %s or above already" % Levels.names[k].to_lower()
+		return "%d men falling back to the %s" % [movers.size(), Levels.names[k].to_lower()]
+	# Up a floor. Each man goes up the staircase nearest him and takes a place of his own in the corridor
+	# beyond the head of it: in sight of the stair head, five to thirteen metres back, no two within a
+	# pace and a half of each other. (They used to pick a place at random within reach of the landing,
+	# two or three on the same spot as often as not, and what came up the stairs was among them at once.)
+	# And they go in two parties. The half furthest from the foot of the stairs goes first and takes the
+	# far places; the half nearest it turns outwards and holds the foot of the stairs until most of the
+	# first party is in place above, or eight seconds, and then follows to the nearer places.
+	var foot = {}       # stair index -> its men, [man, distance to the foot]
+	for s in movers:
+		var bi2 = -1
+		var bd = 1e9
+		for i in range(Levels.stairs.size()):
+			var st = Levels.stairs[i]
+			if int(st["k"]) == k - 1 and G.dist2d(st["b"], s.pos) < bd:
+				bd = G.dist2d(st["b"], s.pos)
+				bi2 = i
+		if bi2 < 0:
+			s.order = {"mode": "move", "point": Levels.spot_on(k, mid, 5.0), "tag": "fallback"}
+			s.decide_t = 0.0
+			_drop_job(s)
+			continue
+		if not foot.has(bi2):
+			foot[bi2] = []
+		foot[bi2].append([s, G.dist2d(Levels.stairs[bi2]["a"], s.pos)])
+	rear = []
+	rear_first = []
+	rear_k = k
+	var sent = 0
+	var held = 0
+	for bi2 in foot:
+		var st = Levels.stairs[bi2]
+		var head: Vector3 = st["b"]
+		# the places: rings round the stair head, the far ones first
+		var places = []
+		for r in [12.0, 10.5, 9.0, 7.5, 6.0, 5.0]:
+			for i in range(14):
+				var a2 = i * TAU / 14.0 + r * 0.9
+				var q: Vector3 = Levels.spot_on(k, head + Vector3(cos(a2), 0, sin(a2)) * r, 0.7)
+				var dq = G.dist2d(q, head)
+				if dq < 4.5 or dq > 13.5 or G.blocked(q + Vector3(0, 1.4, 0), head + Vector3(0, 1.0, 0)):
+					continue
+				var clash = false
+				for o in places:
+					if G.dist2d(o, q) < 1.5:
+						clash = true
+						break
+				if not clash:
+					places.append(q)
+		var men2: Array = foot[bi2]
+		men2.sort_custom(func(x, y): return x[1] > y[1])
+		var first_n = men2.size() if men2.size() <= 3 or "--onegroup" in OS.get_cmdline_user_args() else (men2.size() + 1) / 2
+		for j in range(men2.size()):
+			var s = men2[j][0]
+			var p: Vector3
+			if j < places.size():
+				p = places[j]
+			else:
+				# (more men than places in sight of it: anywhere within reach, as before)
+				p = Levels.spot_on(k, head, 6.0)
+			var ord = {"mode": "move", "point": p, "tag": "fallback"}
+			var tn = G.flat(head - p)
 			if tn.length() > 0.5:
 				ord["face"] = atan2(tn.x, tn.z)
-		s.order = ord
-		s.decide_t = 0.0
-		_drop_job(s)
-		n += 1
+			_drop_job(s)
+			if j < first_n:
+				s.order = ord
+				s.decide_t = 0.0
+				rear_first.append(s)
+				sent += 1
+			else:
+				var out = G.flat(s.pos - st["a"])
+				var hold = {"mode": "move", "point": Levels.spot_on(k - 1, s.pos, 0.6), "tag": "cover", "in": Levels.bi}
+				if out.length() > 0.5:
+					hold["face"] = atan2(out.x, out.z)
+				s.order = hold
+				s.decide_t = 0.0
+				rear.append({"s": s, "ord": ord})
+				held += 1
+	rear_t = G.sim_time + 8.0
 	G.audio.radio_click()
-	if n == 0:
+	if sent + held == 0:
 		return "Everyone is on the %s or above already" % Levels.names[k].to_lower()
-	return "%d men falling back to the %s" % [n, Levels.names[k].to_lower()]
+	if held > 0:
+		return "%d men falling back to the %s, %d holding the foot of the stairs behind them" % [sent, Levels.names[k].to_lower(), held]
+	return "%d men falling back to the %s" % [sent, Levels.names[k].to_lower()]
+
+# the party holding the foot of the stairs follows when most of the first is in place above, or after
+# eight seconds, or at once if the dead are on top of it (three within four metres of a man of it)
+static var rear: Array = []
+static var rear_first: Array = []
+static var rear_k = 0
+static var rear_t = 0.0
+static var rear_released = 0
+
+static func _rear_tick() -> void:
+	if rear.is_empty():
+		return
+	var up = 0
+	var live = 0
+	for s in rear_first:
+		if is_instance_valid(s) and s.state == "alive":
+			live += 1
+			if Levels.inside(s.pos, 0.0) and Levels.storey_of(s.pos) >= rear_k:
+				up += 1
+	var go = G.sim_time > rear_t or live == 0 or up * 10 >= live * 7
+	if not go:
+		for r in rear:
+			var s = r["s"]
+			if not is_instance_valid(s) or s.state != "alive":
+				continue
+			var close = 0
+			for z in G.soldiers:
+				if z.zombie and z.state == "alive" and G.dist2d(z.pos, s.pos) < 4.0 and absf(z.pos.y - s.pos.y) < 1.5:
+					close += 1
+			if close >= 3:
+				go = true
+				break
+	if not go:
+		return
+	for r in rear:
+		var s = r["s"]
+		if is_instance_valid(s) and s.state == "alive" and s.order != null and str(s.order.get("tag", "")) == "cover":
+			s.order = r["ord"]
+			s.decide_t = 0.0
+	rear = []
+	rear_released += 1
 
 # ---------------------------------------------------------------- records, regrouping, rebuilding
 # the furthest wave beaten on each map, kept between sessions
@@ -1111,6 +1205,7 @@ static func _horde(dt: float) -> void:
 	_auto_up(dt)
 	_upstairs_duty(dt)
 	_lobby(dt)
+	_rear_tick()
 	_rise_tick(dt)
 	_quartermaster(dt)
 	if Levels.on and not horde_in and G.sim_time > 1.0:

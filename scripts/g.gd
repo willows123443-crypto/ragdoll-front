@@ -2,6 +2,7 @@ extends Node
 # Global state and helpers shared by every script (autoload "G").
 
 var DT = 1.0 / 60.0   # far soldiers in big battles tick at half rate with a doubled step
+var STEP = 1.0 / 60.0  # one tick of the battle: a sixtieth of a second, or a thirtieth in a big battle under load (see main._rate)
 const GRAV = -9.8
 
 # collision layers
@@ -97,7 +98,7 @@ func soldiers_near(p: Vector3) -> Array:
 			if a != null:
 				out.append_array(a)
 	return out
-var settings = {"horde_best": {}, "horde_diff": 1, "sens": 1.0, "invert_y": false, "volume": 0.8, "sfx": 1.0, "music": 0.5, "blood": true, "callouts": true, "shadows": true, "shadow_mode": "auto", "sandbox_ai_support": false, "grass": true, "time": "day", "weather": "clear", "difficulty": "normal", "ai_style": "random", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true, "finish_cam": true, "render_scale": 1.0, "ai_side": false, "keys": {}}
+var settings = {"horde_best": {}, "horde_diff": 1, "horde_len": 0, "zed_vol": 1.0, "voice_vol": 1.0, "snd_ver": 2, "sens": 1.0, "invert_y": false, "volume": 0.6, "sfx": 1.0, "music": 0.4, "blood": true, "callouts": true, "shadows": true, "shadow_mode": "auto", "sandbox_ai_support": false, "grass": true, "time": "day", "weather": "clear", "difficulty": "normal", "ai_style": "random", "fps": true, "max_soldiers": 300, "lod_dist": 55.0, "voices": true, "finish_cam": true, "render_scale": 1.0, "ai_side": false, "keys": {}}
 
 # ---------------------------------------------------------------- teams: names, armband colours and uniforms
 const UNIFORMS = {
@@ -160,6 +161,12 @@ func load_prefs() -> void:
 		return
 	for k in settings:
 		settings[k] = cf.get_value("settings", k, settings[k])
+	# (the sounds were remade and everything had been too loud: settings saved before that are brought
+	# down once to the new starting levels, and are yours to put back up)
+	if not cf.has_section_key("settings", "snd_ver"):
+		settings["volume"] = minf(float(settings["volume"]), 0.6)
+		settings["music"] = minf(float(settings["music"]), 0.4)
+		settings["snd_ver"] = 2
 	var tc = cf.get_value("teams", "cfg", null)
 	if tc is Array and tc.size() == 4:
 		team_cfg = tc

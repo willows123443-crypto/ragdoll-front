@@ -3358,7 +3358,7 @@ func _show_sounds() -> void:
 	if sounds_panel != null:
 		sounds_panel.queue_free()
 	sounds_panel = _panel(Color(0.1, 0.12, 0.14, 0.98))
-	_place(sounds_panel, Control.PRESET_CENTER, -230, -200, 460, 400)
+	_place(sounds_panel, Control.PRESET_CENTER, -250, -240, 500, 480)
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
 	v.add_child(_label("Try the sounds", 20, Color(0.96, 0.85, 0.5)))
@@ -3371,6 +3371,14 @@ func _show_sounds() -> void:
 		var c = get_viewport().get_camera_3d()
 		return c.global_position - c.global_transform.basis.z * 4.0 if c != null else Vector3.ZERO
 	var list = [
+		["A rifle", func(): G.audio.shot(at.call(), G.WEAPONS["rifle"])],
+		["A machine gun", func():
+			for k in range(6):
+				get_tree().create_timer(k * 0.09).timeout.connect(func(): G.audio.shot(at.call(), G.WEAPONS["lmg"]))],
+		["A shotgun", func(): G.audio.shot(at.call(), G.WEAPONS["shotgun"])],
+		["A round going past", func(): G.audio.crack(at.call(), 1.0)],
+		["A man hit", func(): G.audio.play(G.audio.s_pains[randi() % 3], at.call(), -9.0)],
+		["A man going down", func(): G.audio.play(G.audio.s_screams[randi() % 3], at.call(), -6.0)],
 		["A shove", func(): G.audio.kick(at.call())],
 		["Hammering a plank", func(): G.audio.hammer(at.call())],
 		["A plank torn off", func(): G.audio.tear(at.call())],
@@ -3402,6 +3410,22 @@ func _show_sounds() -> void:
 	zr.add_child(sl)
 	zr.add_child(pc)
 	v.add_child(zr)
+	var vr = HBoxContainer.new()
+	vr.add_theme_constant_override("separation", 8)
+	vr.add_child(_label("Men's cries", 14, Color(0.9, 0.91, 0.88)))
+	var sl2 = HSlider.new()
+	sl2.min_value = 0.0
+	sl2.max_value = 1.0
+	sl2.step = 0.05
+	sl2.value = float(G.settings.get("voice_vol", 1.0))
+	sl2.custom_minimum_size = Vector2(200, 20)
+	var pc2 = _label("%d%%" % int(round(sl2.value * 100.0)), 14, Color(0.9, 0.91, 0.88))
+	sl2.value_changed.connect(func(x):
+		G.settings["voice_vol"] = x
+		pc2.text = "%d%%" % int(round(x * 100.0)))
+	vr.add_child(sl2)
+	vr.add_child(pc2)
+	v.add_child(vr)
 	v.add_child(_button("Done", func():
 		G.save_prefs()
 		sounds_panel.visible = false))

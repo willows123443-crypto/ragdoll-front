@@ -285,6 +285,7 @@ func _status_pills() -> void:
 		return
 	var high = G.pc.rts and G.pc.rts_dist > 140.0
 	var card_order: Array = G.pc.my_squads()
+	var tags = []
 	for q in G.squads:
 		if q["team"] != 0:
 			continue
@@ -346,8 +347,11 @@ func _status_pills() -> void:
 		var box = Rect2(p.x - w * 0.5, p.y - 9.0, w, 18.0)
 		# a pinned squad's tag pulses so it catches the eye
 		var a = 0.86 if st[0] != "Pinned!" else 0.6 + 0.3 * absf(sin(G.sim_time * 5.0))
-		draw_style_box(Hud.pill(Color(0.06, 0.07, 0.08, 0.86), col), box)
-		draw_string(font, box.position + Vector2(8, 13), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(col.r, col.g, col.b, a + 0.14))
+		tags.append([box, col])
+		_word(box.position + Vector2(8, 13), txt, 11, Color(col.r, col.g, col.b, a + 0.14))
+	# (every stem, then every tag: a stem and a tag by turns was two draw calls a squad)
+	for e in tags:
+		draw_style_box(Hud.pill(Color(0.06, 0.07, 0.08, 0.86), e[1]), e[0])
 
 # Casualties you can read from above: every one of your men who's down and still alive gets a white disc
 # with a red cross over him, ringed by how much life he has left. A green line runs to him from whoever
@@ -397,14 +401,30 @@ func _draw() -> void:
 func _draw_all() -> void:
 	if not active():
 		return
+	words = []
 	_man_dots()
 	_casualty_marks()
 	_order_icons()
 	_status_pills()
 	_truck_tags()
+	_flush_words()
 	_minimap(mm_rect)
+	_flush_words()
 	_hover_bar()
 	_income()
+
+# Lettering is kept back and drawn together, after the shapes it sits on: letters come off the font's
+# sheet and shapes don't, and every change from one to the other is another draw call.
+var words: Array = []
+
+func _word(at: Vector2, text: String, size: int, col: Color) -> void:
+	words.append([at, text, size, col])
+
+func _flush_words() -> void:
+	words.sort_custom(func(a, b): return a[2] < b[2])
+	for e in words:
+		draw_string(font, e[0], e[1], HORIZONTAL_ALIGNMENT_LEFT, -1, e[2], e[3])
+	words = []
 
 func _w2m(p: Vector3, r: Rect2, b: Rect2) -> Vector2:
 	return r.position + Vector2((p.x - b.position.x) / b.size.x, (p.z - b.position.y) / b.size.y) * r.size
@@ -432,7 +452,7 @@ func _minimap(r: Rect2) -> void:
 		var col = G.team_color(pt["owner"]) if pt["owner"] >= 0 else Color(0.92, 0.92, 0.92)
 		draw_circle(p, 7.0, Color(0, 0, 0, 0.5))
 		draw_arc(p, 7.0, 0, TAU, 20, col, 2.0)
-		draw_string(font, p + Vector2(-4, 5), pt["name"], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, col)
+		_word(p + Vector2(-4, 5), pt["name"], 11, col)
 	for st in Build.sites:
 		if st["dead"] or (st["team"] != 0 and not st.get("seen0", false)):
 			continue
@@ -460,6 +480,7 @@ func _minimap(r: Rect2) -> void:
 		elif not Fog.hidden(s):
 			Hud.dot(self, p4, 2.4, Color(1.0, 0.3, 0.25))
 	# squads: an arrow from where they are the way they're heading
+	var arrows = []
 	for q in G.squads:
 		if q["team"] != 0:
 			continue
@@ -475,12 +496,15 @@ func _minimap(r: Rect2) -> void:
 		vel /= men.size()
 		var pc = _w2m(c4, r, b)
 		Hud.dot(self, pc, 5.0, Color(0.15, 0.3, 0.6, 0.9))
-		draw_string(font, pc + Vector2(-3, 4), str(q["id"] + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(1, 1, 1))
+		_word(pc + Vector2(-3, 4), str(q["id"] + 1), 9, Color(1, 1, 1))
 		if G.flat(vel).length() > 0.5:
-			var d = Vector2(vel.x / b.size.x, vel.z / b.size.y).normalized()
-			var tipp = pc + d * 14.0
-			draw_line(pc + d * 5.0, tipp, Color(0.75, 0.9, 1.0), 2.0)
-			_poly(PackedVector2Array([tipp + d * 4.0, tipp + Vector2(-d.y, d.x) * 3.5, tipp - Vector2(-d.y, d.x) * 3.5]), Color(0.75, 0.9, 1.0))
+			arrows.append([pc, Vector2(vel.x / b.size.x, vel.z / b.size.y).normalized()])
+	# (the arrows after all the discs: the same kind of thing together)
+	for e in arrows:
+		var d: Vector2 = e[1]
+		var tipp: Vector2 = e[0] + d * 14.0
+		draw_line(e[0] + d * 5.0, tipp, Color(0.75, 0.9, 1.0), 2.0)
+		_poly(PackedVector2Array([tipp + d * 4.0, tipp + Vector2(-d.y, d.x) * 3.5, tipp - Vector2(-d.y, d.x) * 3.5]), Color(0.75, 0.9, 1.0))
 	# vehicles: a tank with its gun, lorries as long boxes, the rest small squares
 	for v in G.vehicles:
 		if v.dead or (v.team != 0 and not v.visible) or v.spec.get("air", false):
@@ -493,8 +517,8 @@ func _minimap(r: Rect2) -> void:
 		var W = 2.6
 		var pts = PackedVector2Array([p5 + f * L + sd * W, p5 + f * L - sd * W, p5 - f * L - sd * W, p5 - f * L + sd * W])
 		_poly(pts, col2)
-		pts.append(pts[0])
-		draw_polyline(pts, Color(0, 0, 0, 0.9), 1.0)
+		for e in range(4):
+			draw_line(pts[e], pts[(e + 1) % 4], Color(0, 0, 0, 0.9), 1.0)
 		if v.turret != null and v.spec["tracked"]:
 			var gy = v.yaw + v.turret_yaw
 			draw_line(p5, p5 + Vector2(sin(gy), cos(gy)) * 7.0, Color(0, 0, 0, 0.9), 1.5)
@@ -529,7 +553,7 @@ func _minimap(r: Rect2) -> void:
 		pts.append(pts[0])
 		draw_polyline(pts, Color(1, 1, 1, 0.8), 1.5)
 	draw_rect(r, Color(0, 0, 0, 0.9), false, 2.0)
-	draw_string(font, r.position + Vector2(5, 14), "MAP · click to look", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.55))
+	_word(r.position + Vector2(5, 14), "MAP · click to look", 10, Color(1, 1, 1, 0.55))
 
 func _mm_input(ev: InputEvent) -> void:
 	if (ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT) or (ev is InputEventMouseMotion and (ev.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0):
@@ -660,7 +684,7 @@ func _truck_tags() -> void:
 		var w = font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 16.0
 		var box = Rect2(sp.x - w * 0.5, sp.y - 22.0, w, 18.0 + (5.0 if stt[1] >= 0.0 else 0.0))
 		draw_style_box(Hud.pill(Color(0.06, 0.07, 0.08, 0.82), stt[2]), box)
-		draw_string(font, box.position + Vector2(8, 13), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, stt[2])
+		_word(box.position + Vector2(8, 13), txt, 11, stt[2])
 		if stt[1] >= 0.0:
 			var br = Rect2(box.position.x + 8, box.end.y - 6, w - 16, 3)
 			draw_rect(br, Color(0, 0, 0, 0.6))
@@ -726,10 +750,16 @@ func _order_icons() -> void:
 				var sidev = Vector2(-dir.y, dir.x)
 				draw_line(p - dir * 6.0, tipp - dir * 2.0, col, 2.5)
 				_poly(PackedVector2Array([tipp + dir * 2.0, tipp - dir * 4.0 + sidev * 4.5, tipp - dir * 4.0 - sidev * 4.5]), col)
-		draw_string(font, p + Vector2(-3, 22), str(q["id"] + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.8))
+		_word(p + Vector2(-3, 22), str(q["id"] + 1), 10, Color(1, 1, 1, 0.8))
 
 # A polygon that can't be cut into triangles (its corners in a line, or not numbers at all: the map is asked
 # to draw before it has a size) is an error in the browser's console every time. Those are skipped.
 func _poly(pts: PackedVector2Array, col: Color) -> void:
-	if pts.size() >= 3 and not Geometry2D.triangulate_polygon(pts).is_empty():
+	# (three or four corners: a primitive, which goes to the graphics card with its neighbours. A polygon
+	# is a draw call of its own)
+	if pts.size() == 3:
+		draw_primitive(pts, PackedColorArray([col, col, col]), PackedVector2Array())
+	elif pts.size() == 4:
+		draw_primitive(pts, PackedColorArray([col, col, col, col]), PackedVector2Array())
+	elif pts.size() > 4 and not Geometry2D.triangulate_polygon(pts).is_empty():
 		draw_colored_polygon(pts, col)

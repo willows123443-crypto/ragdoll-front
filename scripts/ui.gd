@@ -2832,7 +2832,7 @@ func _perf(dt: float) -> void:
 			if s.lod_frozen:
 				far += 1
 	var fps = Engine.get_frames_per_second()
-	perf_lbl.text = "%d fps · %d soldiers (%d simplified) · %d vehicles · sim %.1f ms · %d draws" % [fps, n, far, G.vehicles.size(), G.main.sim_ms, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))]
+	perf_lbl.text = "%d fps · %d soldiers (%d simplified) · %d vehicles · sim %.1f ms · %d draws + %d for this HUD" % [fps, n, far, G.vehicles.size(), G.main.sim_ms, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)), get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_CANVAS, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)]
 	perf_lbl.add_theme_color_override("font_color", Color(0.85, 0.95, 0.8) if fps >= 45 else (Color(1.0, 0.85, 0.4) if fps >= 25 else Color(1.0, 0.45, 0.4)))
 
 var attract_hud = false

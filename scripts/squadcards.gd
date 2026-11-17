@@ -175,6 +175,9 @@ static func doing(q: Dictionary) -> Array:
 func _card(i: int) -> Dictionary:
 	while cards.size() <= i:
 		var k = cards.size()
+		# A card is a button with nothing of its own to show: the column draws every card itself, kind by
+		# kind (see _draw). As a panel, three labels, an icon and a bar each, in that order, the texture
+		# changed a dozen times a card, and each change is another draw call: 110 a picture for nine cards.
 		var b = Button.new()
 		b.custom_minimum_size = Vector2(CW, 38)
 		b.focus_mode = Control.FOCUS_NONE
@@ -185,49 +188,11 @@ func _card(i: int) -> Dictionary:
 		sb.set_border_width_all(1)
 		var sh = sb.duplicate()
 		sh.bg_color = Color(0.14, 0.16, 0.17, 0.85)
-		b.add_theme_stylebox_override("normal", sb)
-		b.add_theme_stylebox_override("hover", sh)
-		b.add_theme_stylebox_override("pressed", sh)
-		var h = HBoxContainer.new()
-		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		h.set_anchors_preset(Control.PRESET_FULL_RECT)
-		h.offset_left = 5
-		h.offset_right = -5
-		h.offset_bottom = -17
-		h.add_theme_constant_override("separation", 5)
-		var num = G.ui._label(str(k + 1), 14, Color(1.0, 0.86, 0.4))
-		num.custom_minimum_size = Vector2(10, 0)
-		h.add_child(num)
-		var ic = TextureRect.new()
-		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		ic.custom_minimum_size = Vector2(28, 12)
-		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		h.add_child(ic)
-		var top = G.ui._label("", 11, Color(0.92, 0.92, 0.88))
-		top.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		top.clip_text = true
-		h.add_child(top)
-		var act = G.ui._label("", 11, Color(0.8, 0.8, 0.8))
-		act.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		h.add_child(act)
-		b.add_child(h)
-		# a row of the men in it: each one's weapon, and a pip for how he's doing
-		var men = Control.new()
-		men.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		men.set_anchors_preset(Control.PRESET_FULL_RECT)
-		men.offset_top = 21
-		men.offset_left = 18
-		men.offset_bottom = -4
-		men.draw.connect(func(): _draw_men(men))
-		b.add_child(men)
-		var bar = ColorRect.new()
-		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		bar.anchor_top = 1.0
-		bar.anchor_bottom = 1.0
-		bar.offset_top = -3
-		bar.offset_left = 3
-		b.add_child(bar)
+		var none = StyleBoxEmpty.new()
+		for st in ["normal", "hover", "pressed", "focus", "disabled"]:
+			b.add_theme_stylebox_override(st, none)
+		b.mouse_entered.connect(queue_redraw)
+		b.mouse_exited.connect(queue_redraw)
 		b.pressed.connect(func():
 			# one click picks the squad; a second click on the same card straight after takes the view to it
 			var now = Time.get_ticks_msec()
@@ -236,7 +201,7 @@ func _card(i: int) -> Dictionary:
 			click_ms = now
 			G.pc.select_squad(k, 1 if dbl else 0))
 		add_child(b)
-		cards.append({"b": b, "sb": sb, "ic": ic, "top": top, "bar": bar, "act": act, "men": men})
+		cards.append({"b": b, "sb": sb, "sh": sh, "q": null, "icon": null, "top": "", "act": "", "act_col": Color(0.8, 0.8, 0.8), "frac": 0.0, "bar_col": Color(0.45, 0.85, 0.4, 0.9)})
 	return cards[i]
 
 func _process(dt: float) -> void:
@@ -273,62 +238,100 @@ func _process_all(dt: float) -> void:
 					sel = true
 		var total = maxi(alive, q.get("size0", q["members"].size()))
 		q["size0"] = total
-		c["ic"].texture = Icons.get_icon(icon_of(q))
-		c["top"].text = "%s %d/%d" % [kind_of(q), alive, total]
+		c["icon"] = Icons.get_icon(icon_of(q))
+		c["top"] = "%s %d/%d" % [kind_of(q), alive, total]
 		var frac = hp / maxf(1.0, total * 100.0)
-		c["bar"].color = Color(0.45, 0.85, 0.4, 0.9) if frac > 0.6 else (Color(0.95, 0.75, 0.3, 0.9) if frac > 0.3 else Color(0.95, 0.35, 0.3, 0.9))
-		c["bar"].offset_right = 3.0 + (CW - 6.0) * clampf(frac, 0.0, 1.0)
+		c["bar_col"] = Color(0.45, 0.85, 0.4, 0.9) if frac > 0.6 else (Color(0.95, 0.75, 0.3, 0.9) if frac > 0.3 else Color(0.95, 0.35, 0.3, 0.9))
+		c["frac"] = clampf(frac, 0.0, 1.0)
 		var d = doing(q)
-		c["act"].text = d[0]
-		c["act"].add_theme_color_override("font_color", d[1])
+		c["act"] = d[0]
+		c["act_col"] = d[1]
 		c["sb"].border_color = Color(Hud.ACCENT.r, Hud.ACCENT.g, Hud.ACCENT.b, 0.95 if sel else 0.0)
-		c["men"].set_meta("q", q)
-		c["men"].queue_redraw()
+		c["sh"].border_color = c["sb"].border_color
+		c["q"] = q
 		c["b"].tooltip_text = "Squad %d: click to select it (or press %d) · double-click to go to it · End cycles through squads in contact" % [i + 1, i + 1]
 	for i in range(n, cards.size()):
 		cards[i]["b"].visible = false
+	queue_redraw()
 
-func _draw_men(c: Control) -> void:
-	var q = (c.get_meta("q") if c.has_meta("q") else null)
-	if q == null:
+# Every card, drawn by the column itself in passes: the panels, then everything that is a plain
+# rectangle, then the little pictures (the same picture together), then the lettering.
+func _draw() -> void:
+	if folded or not visible:
 		return
-	# (Two passes: the little guns, then the bars. Drawn man by man the texture changed twice a man,
-	# and every change is another draw call: sixteen a card, nine cards.)
-	var x = 0.0
-	var bars = []
-	for m in q["members"]:
-		if not is_instance_valid(m):
+	var font = get_theme_default_font()
+	var rects = []       # [Rect2, Color]
+	var pics = []        # [Texture2D, Rect2, Color]
+	var words = []       # [Vector2, String, size, Color, width]
+	var a11 = font.get_ascent(11)
+	var d11 = font.get_descent(11)
+	var a14 = font.get_ascent(14)
+	var d14 = font.get_descent(14)
+	for i in range(cards.size()):
+		var c = cards[i]
+		var b: Button = c["b"]
+		var q = c["q"]
+		if not b.visible or q == null:
 			continue
-		if x + 16.0 > c.size.x:
-			break
-		var col = Color(0.92, 0.92, 0.88)
-		var pip = Color(0.45, 0.9, 0.4)
-		if m.state == "dead":
-			col = Color(0.45, 0.45, 0.45, 0.6)
-			pip = Color(0.3, 0.3, 0.3)
-		elif m.state == "wounded":
-			col = Color(1.0, 0.45, 0.4)
-			pip = Color(1.0, 0.3, 0.25)
-		elif m.hp < 35.0:
-			pip = Color(1.0, 0.35, 0.3)
-		elif m.hp < 70.0:
-			pip = Color(1.0, 0.8, 0.3)
-		var wid: String = m.wid if "wid" in m else "rifle"
-		if m.cls == "medic":
-			wid = "medic"
-		var tex = Icons.get_icon(wid)
-		c.draw_texture_rect(tex, Rect2(x, 0, 15, 6), false, col)
-		bars.append([x, -1.0 if m.state == "dead" else clampf(m.hp / 100.0, 0.05, 1.0), pip])
-		x += 16.5
-	for e in bars:
-		c.draw_rect(Rect2(e[0] + 1, 8, 13, 3), Color(0, 0, 0, 0.5))
-		if e[1] >= 0.0:
-			c.draw_rect(Rect2(e[0] + 1, 8, 13.0 * e[1], 3), e[2])
-	# a vehicle crew's card has a fuel gauge on the right
-	var cv = crew_vehicle(q)
-	if cv != null and not cv.spec.get("static", false) and not cv.spec.get("air", false):
-		var fx = c.size.x - 30.0
-		var fc = Color(0.95, 0.75, 0.3) if cv.fuel > 0.2 else Color(1.0, 0.35, 0.3)
-		c.draw_string(ThemeDB.fallback_font, Vector2(fx - 9.0, 9.0), "F", HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.85, 0.85, 0.8))
-		c.draw_rect(Rect2(fx, 4, 28, 4), Color(0, 0, 0, 0.5))
-		c.draw_rect(Rect2(fx, 4, 28.0 * clampf(cv.fuel, 0.0, 1.0), 4), fc)
+		var r = Rect2(b.position, b.size)
+		draw_style_box(c["sh"] if b.is_hovered() else c["sb"], r)
+		# the top line: number, what it is, how many, what it's doing
+		words.append([Vector2(r.position.x + 5.0, r.position.y + (21.0 - a14 - d14) * 0.5 + a14), str(i + 1), 14, Color(1.0, 0.86, 0.4), -1.0])
+		var tex: Texture2D = c["icon"]
+		if tex != null:
+			var ts = tex.get_size()
+			var k = minf(28.0 / maxf(ts.x, 1.0), 12.0 / maxf(ts.y, 1.0))
+			pics.append([tex, Rect2(r.position + Vector2(20.0 + (28.0 - ts.x * k) * 0.5, 4.5 + (12.0 - ts.y * k) * 0.5), ts * k), Color(1, 1, 1)])
+		var base = r.position.y + (21.0 - a11 - d11) * 0.5 + a11
+		var aw = font.get_string_size(c["act"], HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		words.append([Vector2(r.end.x - 5.0 - aw, base), c["act"], 11, c["act_col"], -1.0])
+		words.append([Vector2(r.position.x + 53.0, base), c["top"], 11, Color(0.92, 0.92, 0.88), maxf(10.0, r.size.x - 53.0 - 5.0 - aw - 5.0)])
+		rects.append([Rect2(r.position.x + 3.0, r.end.y - 3.0, (r.size.x - 6.0) * c["frac"], 3.0), c["bar_col"]])
+		# a row of the men in it: each one's weapon, and a pip for how he's doing
+		var o = r.position + Vector2(18.0, 21.0)
+		var x = 0.0
+		for m in q["members"]:
+			if not is_instance_valid(m):
+				continue
+			if x + 16.0 > r.size.x - 18.0:
+				break
+			var col = Color(0.92, 0.92, 0.88)
+			var pip = Color(0.45, 0.9, 0.4)
+			if m.state == "dead":
+				col = Color(0.45, 0.45, 0.45, 0.6)
+				pip = Color(0.3, 0.3, 0.3)
+			elif m.state == "wounded":
+				col = Color(1.0, 0.45, 0.4)
+				pip = Color(1.0, 0.3, 0.25)
+			elif m.hp < 35.0:
+				pip = Color(1.0, 0.35, 0.3)
+			elif m.hp < 70.0:
+				pip = Color(1.0, 0.8, 0.3)
+			var wid: String = m.wid if "wid" in m else "rifle"
+			if m.cls == "medic":
+				wid = "medic"
+			pics.append([Icons.get_icon(wid), Rect2(o.x + x, o.y, 15, 6), col])
+			rects.append([Rect2(o.x + x + 1, o.y + 8, 13, 3), Color(0, 0, 0, 0.5)])
+			if m.state != "dead":
+				rects.append([Rect2(o.x + x + 1, o.y + 8, 13.0 * clampf(m.hp / 100.0, 0.05, 1.0), 3), pip])
+			x += 16.5
+		# a vehicle crew's card has a fuel gauge on the right
+		var cv = crew_vehicle(q)
+		if cv != null and not cv.spec.get("static", false) and not cv.spec.get("air", false):
+			var fx = r.end.x - 30.0
+			var fc = Color(0.95, 0.75, 0.3) if cv.fuel > 0.2 else Color(1.0, 0.35, 0.3)
+			words.append([Vector2(fx - 9.0, o.y + 9.0), "F", 8, Color(0.85, 0.85, 0.8), -1.0])
+			rects.append([Rect2(fx, o.y + 4, 28, 4), Color(0, 0, 0, 0.5)])
+			rects.append([Rect2(fx, o.y + 4, 28.0 * clampf(cv.fuel, 0.0, 1.0), 4), fc])
+	for e in rects:
+		draw_rect(e[0], e[1])
+	pics.sort_custom(func(p, q2): return p[0].get_rid().get_id() < q2[0].get_rid().get_id())
+	for e in pics:
+		draw_texture_rect(e[0], e[1], false, e[2])
+	# (the dark edge round the letters first, all of it, then the letters: the two come off different
+	# sheets, and going back and forth between them was two draw calls a word)
+	words.sort_custom(func(p, q2): return p[2] < q2[2])
+	for e in words:
+		draw_string_outline(font, e[0], e[1], HORIZONTAL_ALIGNMENT_LEFT, e[4], e[2], 4, Color(0, 0, 0, 0.8))
+	for e in words:
+		draw_string(font, e[0], e[1], HORIZONTAL_ALIGNMENT_LEFT, e[4], e[2], e[3])

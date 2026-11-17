@@ -320,5 +320,11 @@ func _bubbles() -> void:
 
 # (a shape that can't be cut into triangles is an error in the browser's console every time: skipped)
 func _poly(pts: PackedVector2Array, col: Color) -> void:
-	if pts.size() >= 3 and not Geometry2D.triangulate_polygon(pts).is_empty():
+	# (three or four corners: a primitive, which goes to the graphics card with its neighbours. A polygon
+	# is a draw call of its own)
+	if pts.size() == 3:
+		draw_primitive(pts, PackedColorArray([col, col, col]), PackedVector2Array())
+	elif pts.size() == 4:
+		draw_primitive(pts, PackedColorArray([col, col, col, col]), PackedVector2Array())
+	elif pts.size() > 4 and not Geometry2D.triangulate_polygon(pts).is_empty():
 		draw_colored_polygon(pts, col)

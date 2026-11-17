@@ -7542,6 +7542,11 @@ func _perf_run() -> void:
 			G.ui.root.visible = false
 		var sim_n = 0
 		var sim_k = 0
+		# (--hudab: every other round with the HUD hidden, so what it costs is measured in one sitting on
+		# one machine: from one visit to the next a browser's timing has differed by a factor of two)
+		if "--hudab" in OS.get_cmdline_user_args():
+			G.ui.root.visible = k % 2 == 0
+			print("PERF %d: the HUD is %s for this round" % [k, "showing" if k % 2 == 0 else "hidden"])
 		var cv_sum = 0
 		var cv_obj = 0
 		var v3_sum = 0

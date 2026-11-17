@@ -4,7 +4,10 @@ extends CanvasLayer
 var tool = "ctl"
 var tab = "units"
 const MAP_IDS = ["town", "field", "trenches", "forest", "city", "factory", "office", "beach", "valley", "front", "river", "pass", "huge", "random"]
-const TIPS = {"s1": "Click the ground to drop in a soldier", "s5": "Click the ground to drop in five soldiers",
+const TIPS = {"z:rally": "Click a place: every one of the dead goes there and waits, until one of them can see one of the living. Gather them out of sight",
+	"z:attack": "Click a place: every one of the dead goes there, and hunts from there",
+	"z:pit": "Click open ground, no nearer than 28 m to a living man: the dead come up from the pit nearest where you send them",
+	"s1": "Click the ground to drop in a soldier", "s5": "Click the ground to drop in five soldiers",
 	"sp": "Click where this side's reinforcements should arrive", "mv": "Click a point to send the whole side there",
 	"up": "Click a structure to upgrade it: sandbags to a concrete wall, an MG nest to a pillbox, a FOB tent to a hut",
 	"camo": "Click a structure to throw a camouflage net over it (aircraft and artillery won't see it until the enemy gets close)",
@@ -454,6 +457,8 @@ func _tabs() -> Array:
 		return [["units", "Units"], ["vehicles", "Vehicles"], ["support", "Call-ins"], ["build", "Build"], ["command", "Command"], ["fun", "Effects"]]
 	# Against the dead: the orders that matter, what the points buy, and what can be built. (It was five
 	# tabs: Command, Soldiers, Call-ins, Build and Armoury.)
+	if G.mode == "horde" and Hive.on != "":
+		return [["zhorde", "The horde"], ["zspawn", "Spawn"]]
 	if G.mode == "horde":
 		var ho = [["command", "Orders"], ["armoury", "Supplies"]]
 		if not Rules.build(0).is_empty():
@@ -473,6 +478,14 @@ func _tabs() -> Array:
 func _cards(t: String) -> Array:
 	var out = []
 	match t:
+		"zhorde":
+			return [["z:hunt", "Hunt", "the nearest man"], ["z:rally", "Gather", "click a place"], ["z:attack", "Go there", "click a place"],
+				["z:pit", "Dig a pit", "%d biomass" % Hive.PIT_COST], ["ctl", "Be one", "click one of them"]]
+		"zspawn":
+			for k in Hive.PACKS:
+				var pk = Hive.PACKS[k]
+				out.append(["zs:" + k, "%s%s" % [pk["name"], (" ×%d" % pk["n"]) if int(pk["n"]) > 1 else ""], "%d biomass" % pk["cost"]])
+			return out
 		"units":
 			out = [["s1", "Soldier", "click the ground"], ["s5", "Squad of five", "click the ground"], ["ctl", "Take control", "click a soldier · F"],
 				["sp", "Move spawn point", "where reinforcements arrive"]]
@@ -520,7 +533,7 @@ func _cards(t: String) -> Array:
 		"command", "orders":
 			if G.mode == "horde":
 				return [["sel", "Select", "click or drag a box"], ["mv", "Send all", "click a point"], ["o:hold", "Hold", "selected soldiers"],
-					["o:free", "Act freely", "selected soldiers"], ["ctl", "Take control", "click one of your soldiers · F"], ["o:clear", "Deselect", ""]]
+					["o:free", "Act freely", "selected soldiers"], ["o:sure", "Make sure", "a round through the head of each bitten body"], ["ctl", "Take control", "click one of your soldiers · F"], ["o:clear", "Deselect", ""]]
 			out = [["sel", "Select", "click or drag a box"], ["o:hold", "Hold", "selected soldiers"], ["o:charge", "Charge", "selected soldiers"],
 				["o:dismount", "Dismount", "troops out of vehicles"], ["o:free", "Act freely", "selected soldiers"], ["o:clear", "Deselect", ""]]
 			if t == "command":
@@ -711,6 +724,19 @@ const SUP_DESC = {
 
 # what a dock card does, for its hover text
 func _card_desc(id: String) -> String:
+	if id.begins_with("zs:"):
+		var pk = Hive.PACKS[id.substr(3)]
+		return "%s: %s. %d biomass" % [pk["name"], Hive.PACK_TIPS[id.substr(3)], pk["cost"]]
+	if id == "z:hunt":
+		return "Hunt: every one of the dead goes for the nearest of the living"
+	if id == "z:rally":
+		return "Gather: click a place and they go there and wait, until one of them can see one of the living. Gather them out of sight, then let them go all at once"
+	if id == "z:attack":
+		return "Go there: click a place and they go for it, taking no notice of anyone further off than ten metres, and hunt from there"
+	if id == "z:pit":
+		return "Dig a pit (%d biomass): click open ground no nearer than 28 m to a living man. The dead come up from the pit nearest where you send them" % Hive.PIT_COST
+	if id == "ctl" and Hive.on != "":
+		return "Be one of them: click one of the dead. W A S D to move, Shift to run, the mouse to claw, hold F to tear at boards, X to leave it"
 	if id.begins_with("u:"):
 		var k = id.substr(2)
 		var u = Prod.UPGRADES[k]
@@ -732,6 +758,8 @@ func _card_desc(id: String) -> String:
 	return ""
 
 func _pts() -> int:
+	if Hive.on != "":
+		return int(Hive.bio)
 	var t = 0 if G.mode == "commander" else (mini(build_team, G.team_count() - 1) if tab != "support" else 0)
 	return Support.points[t] if t < Support.points.size() else 0
 
@@ -743,7 +771,7 @@ func _dock_points() -> void:
 		return
 	dock_pts_shown = p
 	var show_pts = G.mode == "commander" or G.mode == "horde" or tab in ["support"]
-	dock_pts.text = ("Supply  %d pts" % p) if show_pts else ""
+	dock_pts.text = ("Biomass  %d" % p) if Hive.on != "" else (("Supply  %d pts" % p) if show_pts else "")
 	for e in dock_cards_list:
 		var c = _cost(e[0])
 		e[1].add_theme_color_override("font_color", Color(0.95, 0.95, 0.92) if (c <= 0 or p >= c) else Color(0.55, 0.5, 0.5))
@@ -759,17 +787,31 @@ func _cost(id: String) -> int:
 		return Prod.UPGRADES[id.substr(2)]["cost"]
 	if id.begins_with("h:"):
 		return Modes.SHOP[id.substr(2)]["cost"]
+	if id.begins_with("zs:"):
+		return int(Hive.PACKS[id.substr(3)]["cost"])
+	if id == "z:pit":
+		return Hive.PIT_COST
 	return 0
 
 func _is_action(id: String) -> bool:
-	return id.begins_with("u:") or (id.begins_with("r:") and G.mode != "commander") or id.begins_with("o:") or id.begins_with("f:") or (id.begins_with("sup:") and id.substr(4) in INSTANT)
+	return id.begins_with("zs:") or id == "z:hunt" or id.begins_with("u:") or (id.begins_with("r:") and G.mode != "commander") or id.begins_with("o:") or id.begins_with("f:") or (id.begins_with("sup:") and id.substr(4) in INSTANT)
 
 # a card was clicked: actions happen now, everything else becomes the tool for the next map click
 func _card_clicked(id: String) -> void:
+	if id.begins_with("zs:"):
+		message(Hive.buy(id.substr(3)))
+		dock_pts_shown = -1
+		_dock_points()
+		return
+	if id == "z:hunt":
+		message(Hive.hunt())
+		return
 	if id.begins_with("o:"):
 		var m = id.substr(2)
 		if m == "clear":
 			G.pc.clear_selection()
+		elif m == "sure":
+			message(Modes.make_sure(G.pc.selection.filter(func(x): return is_instance_valid(x) and x is Soldier)))
 		else:
 			G.pc.order_selected(m)
 		return
@@ -2538,7 +2580,36 @@ func _show_horde() -> void:
 		ZLesson.start())
 	lz.tooltip_text = "Five things on the town before the first wave: getting indoors, boarding, buying, a handful of the dead, and throwing one off"
 	hb.add_child(lz)
-	hb.add_child(_label("new to it? a couple of minutes, then the waves start", 13, Color(0.7, 0.72, 0.7)))
+	var lm = _button("  Ministry lesson  ", func():
+		G.main.stop_attract()
+		horde_panel.visible = false
+		title.visible = false
+		menu.visible = false
+		ZLesson.start("office"))
+	lm.tooltip_text = "What is different in the Ministry: the men hold the foot of the stairs, and go up a floor when it is lost"
+	hb.add_child(lm)
+	hb.add_child(_label("a couple of minutes each, then the waves start", 13, Color(0.7, 0.72, 0.7)))
+	# the other side of it: you are the horde
+	var hv = HBoxContainer.new()
+	hv.add_theme_constant_override("separation", 10)
+	hv.add_child(_label("Be the horde:", 15, Color(0.75, 0.9, 0.55)))
+	var go_hive = func(kind: String, map: String):
+		G.main.stop_attract()
+		horde_panel.visible = false
+		title.visible = false
+		menu.visible = false
+		Hive.start(kind, map)
+	var h1 = _button("  Take the house  ", func(): go_hive.call("attack", "town"))
+	h1.tooltip_text = "Soldiers hold the house in the middle of the town. Kill every one of them before the relief column arrives. The easier of the two attacks"
+	var h2 = _button("  Take the Ministry  ", func(): go_hive.call("attack", "office"))
+	h2.tooltip_text = "Soldiers hold the Ministry: three floors, boarded up, and they fall back up the stairs. Kill every one of them before the relief column arrives"
+	var h3 = _button("  Defend the hive  ", func(): go_hive.call("defend", "office"))
+	h3.tooltip_text = "The hive is in the Ministry and the army comes in after its heart, a bigger party each time. Outlast them all"
+	hv.add_child(h1)
+	hv.add_child(h2)
+	hv.add_child(h3)
+	hv.add_child(_label("you buy the dead with biomass and send them", 13, Color(0.7, 0.72, 0.7)))
+	v.add_child(hv)
 	v.add_child(hb)
 	horde_panel.add_child(v)
 	root.add_child(horde_panel)
@@ -2678,6 +2749,9 @@ func finish_bars(on: bool, text: String) -> void:
 func show_win(team: int) -> void:
 	win_title.text = "%s wins" % G.TEAM_NAMES[team]
 	win_title.add_theme_color_override("font_color", G.TEAM_BAND[team].lightened(0.3))
+	if Hive.on != "":
+		win_title.text = Hive.win_text(team)
+		win_title.add_theme_color_override("font_color", Color(0.75, 0.9, 0.55) if team == 1 else Color(1.0, 0.6, 0.5))
 	if team == 1 and G.mode == "laststand":
 		win_title.text = "Overrun after %d wave%s" % [Obj.wave, "" if Obj.wave == 1 else "s"]
 		win_title.add_theme_color_override("font_color", Color(1.0, 0.6, 0.5))
@@ -2925,6 +2999,8 @@ func update_hud(dt: float) -> void:
 		p_name.text = "%s  ·  %s  ·  %s%s" % [s.sname, G.CLASSES.get(s.cls, {"name": "?"})["name"], s.W["name"], st]
 		p_hp.value = maxf(0.0, s.hp)
 		p_ammo.text = "%d | %d     grenades %d · smoke %d" % [s.mag, s.reserve, s.grenades, s.smokes]
+		if s.zombie:
+			p_ammo.text = "W A S D  ·  Shift to run  ·  mouse to claw  ·  hold F to tear at boards  ·  X to leave it"
 		if s.state == "riding" and s.vehicle != null and is_instance_valid(s.vehicle):
 			var rv = s.vehicle
 			p_ammo.text = "%s  ·  armour %d%%" % [rv.spec["name"], int(100.0 * rv.hp / rv.spec["hp"])]

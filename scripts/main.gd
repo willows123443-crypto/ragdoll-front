@@ -113,6 +113,8 @@ func _ready() -> void:
 			_zed_shot(a.substr(10))
 		if a == "--zedwalk":
 			_zed_walk()
+		if a == "--hivetest":
+			_hive_test.call_deferred()
 		if a == "--zlessontest":
 			_zlesson_test.call_deferred()
 		if a == "--reacttest":
@@ -563,6 +565,7 @@ func _clear() -> void:
 func quit_to_title() -> void:
 	Tutorial.stop()
 	ZLesson.stop(false)
+	Hive.stop()
 	var m = G.map_id if G.map_id != "custom" else "town"
 	Modes.daily = {}
 	Campaign.leave_battle()
@@ -603,6 +606,8 @@ func start_game(o: Dictionary) -> void:
 		Tutorial.stop()
 	if not ZLesson.starting:
 		ZLesson.stop(false)
+	if not Hive.starting:
+		Hive.stop()
 	# (what the last battle was saying, the one behind the title screen included, isn't news in this one)
 	for box in [G.ui.radio_box, G.ui.feed_box]:
 		if box != null and is_instance_valid(box):
@@ -936,10 +941,10 @@ func _sim_step() -> void:
 			if half_rate and s.zombie:
 				# (a tick is twice as long already, and the far-off dead are not moved in between)
 				every = 1
-			# (under load the far-off living think one tick in three while they're in a fight and one in
-			# four out of it: see _step_cap)
+			# (under load the far-off living think one tick in four while they're in a fight and one in
+			# six out of it: see _step_cap)
 			if far_slow and not s.zombie and not half_rate:
-				every += 1
+				every *= 2
 			var rem = (fr + s.id) % every
 			if rem != 0 and s.zombie and Soldier.horde_lean:
 				# (the far-off dead move thirty times a second, not sixty: nothing of theirs is touched on
@@ -1127,33 +1132,18 @@ func _step_cap(dt: float) -> void:
 	if step_cap_t > 0.0:
 		return
 	step_cap_t = 1.0
-	# Heavy steps: the battle goes over to thirty ticks a second, each one a thirtieth of a second of
-	# battle, so it takes half the steps to keep the clock true. Two steps to a picture at sixty ran a
-	# 119-man battle at 54% of its proper speed and 16 pictures a second in a browser: slow motion.
-	# Back to sixty when a step is light enough that sixty of them a second would fit with room to spare.
-	if not G.started or "--no30" in OS.get_cmdline_user_args():
-		if half_rate and not G.started:
-			_rate(false)
-		if step_avg > 8.0:
-			Engine.max_physics_steps_per_frame = 2
-			far_slow = true
-		elif step_avg < 5.5:
-			Engine.max_physics_steps_per_frame = 8
-			far_slow = false
-		return
-	rate_hold -= 1.0
-	if not half_rate and step_avg > 8.0 and rate_hold <= 0.0:
-		_rate(true)
+	# Heavy steps: no more than two to a picture, and the far-off living think less often (see _sim_step).
+	# (Going over to thirty steps a second, each a thirtieth of a second of battle, was tried here. In a
+	# browser with 119 men a step at thirty took 35 ms where a step at sixty took 16 to 20: what a step
+	# costs goes with how much battle it covers, since nearly all of it is men thinking on their own
+	# timers. At thirty the battle ran at 74% of its speed and 11 pictures a second; at sixty, 62 to 68%
+	# and 19 to 20. It is still there for tests as --hz30.)
+	if step_avg > 8.0:
 		Engine.max_physics_steps_per_frame = 2
-		rate_hold = 10.0
-		step_avg = 6.0
-		if not rate_said:
-			rate_said = true
-			G.ui.message("A big battle: it now runs at thirty steps a second in place of sixty, to keep its proper speed")
-	elif half_rate and step_avg < 4.5 and rate_hold <= 0.0:
-		_rate(false)
+		far_slow = true
+	elif step_avg < 5.5:
 		Engine.max_physics_steps_per_frame = 8
-		rate_hold = 10.0
+		far_slow = false
 	# (Drawing in the distance inside which bodies are fully simulated while the steps are heavy was tried
 	# here: with the camera down among 100 men it took the simulated living from 16 to 3 and the battle
 	# ran 1.5% faster. Simulated bodies are not where the time goes: about two-thirds of a step is the
@@ -5436,13 +5426,161 @@ func _menu_shot(dir: String) -> void:
 # --reacttest: (1) ten riflemen and thirty of the dead walking at them from 70 m: how often a hit makes
 # one flinch, how many lose a leg and crawl on, and how they die (head, body, limb). (2) Eight men who
 # may not shoot with eight of the dead among them: grabs, and how each ends.
+# --hivetest --kind=attack|defend [--map=town --diff=1 --secs=1500 --seed=7 --pic=DIR]: the horde played
+# by a plain bot, to see that the mode runs and how it comes out. The bot spends its biomass as it gets
+# it (walkers mostly, brutes and armoured when it can, a giant when it has saved for one); attacking, it
+# gathers the horde short of the building until there are 25 and then lets them go, again and again.
+func _hive_test() -> void:
+	await _wait(0.5)
+	stop_attract()
+	G.ui.title.visible = false
+	G.ui.menu.visible = false
+	var kind = _arg("kind", "attack")
+	G.settings["horde_diff"] = int(_arg("diff", "1"))
+	seed(int(_arg("seed", "7")))
+	Hive.start(kind, _arg("map", "town" if kind == "attack" else "office"))
+	var secs = float(_arg("secs", "1500"))
+	var pic = _arg("pic", "")
+	var tag = "HIVETEST %s/%s" % [kind, G.map_id]
+	var t = 0.0
+	var next_log = 60.0
+	var massing = kind == "attack"
+	var c: Vector3 = G.world.capture
+	var gather = Hive.hive_p + (c - Hive.hive_p).normalized() * 12.0
+	if massing:
+		Hive.rally(gather, true)
+	var bought = {}
+	var shots = 0
+	print("%s start: %d soldiers, hive at (%.0f, %.0f), %.0f m from the middle | %s" % [tag, G.alive_count(0), Hive.hive_p.x, Hive.hive_p.z, G.dist2d(Hive.hive_p, c), Hive.status()])
+	if "--climb" in OS.get_cmdline_user_args():
+		# the soldiers alone: with none of the dead about, does a party get to the heart and how long does it take to hurt it?
+		for i in range(18):
+			Hive.queue = []
+			Hive.bio = -1e6
+			Hive.free_t = 1e9
+			Hive.wave_t = 1e9
+			for z in G.soldiers.duplicate():
+				if z.zombie and z.state != "dead" and not z.has_meta("hive"):
+					z.hp = 0.0
+					Combat.kill(z, null, false)
+			await _wait(10.0)
+			var mm1 = G.soldiers.filter(func(m): return m.team == 0 and not m.zombie and m.state == "alive")
+			var rows = []
+			for m in mm1:
+				rows.append("%s f%s %.0f m from his place (dy %.1f) task %s sees %s route %s" % [m.wid, str(Levels.storey_of(m.pos)) if Levels.inside(m.pos, 0.0) else "out", G.dist2d(m.pos, m.order["point"]) if m.order != null else -1.0, (m.order["point"].y - m.pos.y) if m.order != null else 0.0, str(m.task), str(m.vis_t != null), str(m.route != null)])
+			print("%s CLIMB %3d s: heart %d%% | %s" % [tag, (i + 1) * 10, int(100.0 * Hive.heart.hp / float(Hive.heart.get_meta("hp0"))) if Hive.heart != null and is_instance_valid(Hive.heart) else 0, " || ".join(rows)])
+		get_tree().quit()
+		return
+	if "--claw" in OS.get_cmdline_user_args():
+		# being one of the dead yourself: take one over, with a soldier put in front of it, and claw
+		await _wait(8.0)
+		var zz = G.soldiers.filter(func(z): return z.zombie and z.state == "alive" and not z.has_meta("boss"))
+		var mm0 = G.soldiers.filter(func(m): return m.team == 0 and not m.zombie and m.state == "alive")
+		if zz.is_empty() or mm0.is_empty():
+			print("%s claw: nothing to try it with (dead up %d, men %d)" % [tag, zz.size(), mm0.size()])
+		else:
+			var z0 = zz[0]
+			var m0 = mm0[0]
+			G.builder = true
+			var zp: Vector3 = _free_spot(Hive.hive_p + Vector3(0, 0, 14.0))
+			z0.move_to(Vector3(zp.x, G.world.ground_y(zp.x, zp.z), zp.z))
+			m0.move_to(Vector3(zp.x, G.world.ground_y(zp.x, zp.z + 1.3), zp.z + 1.3))
+			G.pc.possess(z0)
+			G.pc.cam_yaw = 0.0
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+			var hp0: float = m0.hp
+			var zp0: Vector3 = z0.pos
+			var held0 = false
+			for i in range(10):
+				G.pc.mouse_down = true
+				G.pc.cam_yaw = 0.0
+				await _wait(0.4)
+				held0 = held0 or (is_instance_valid(m0) and m0.grab_t > 0.0)
+			G.pc.mouse_down = false
+			print("%s claw: took over a %s (is the player: %s) and clawed for four seconds at a soldier 1.3 m in front | his hp %d -> %d, state %s, taken hold of %s | the status line reads: %s" % [tag, z0.ztype, str(z0.is_player), int(hp0), int(m0.hp) if is_instance_valid(m0) else -1, m0.state if is_instance_valid(m0) else "gone", str(held0), G.ui.p_ammo.text])
+			# and walking: W held for two seconds
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+			G.pc.leave_soldier()
+			G.builder = false
+		get_tree().quit()
+		return
+	while t < secs and not G.over:
+		await _wait(2.0)
+		t += 2.0
+		# spend
+		var giants = G.soldiers.filter(func(z): return z.zombie and z.state != "dead" and z.has_meta("boss") and not z.has_meta("hive")).size()
+		var want = "walker"
+		var r = randf()
+		if Hive.bio >= 70.0 and giants == 0 and t > 200.0:
+			want = ["boss", "hurler", "mother"][randi() % 3]
+		elif r < 0.2:
+			want = "brute"
+		elif r < 0.4:
+			want = "armored"
+		elif r < 0.55:
+			want = "runner"
+		elif r < 0.65:
+			want = "spitter"
+		if Hive.can(want) and not Hive.buy(want).begins_with("Not") and not Hive.buy("").begins_with("x"):
+			bought[want] = int(bought.get(want, 0)) + 1
+		if kind == "attack":
+			if massing and Hive.up() >= 24:
+				massing = false
+				Hive.hunt()
+			elif not massing and Hive.up() < 8:
+				massing = true
+				Hive.rally(gather, true)
+		if pic != "" and shots < 3 and t >= [14.0, 40.0, 70.0][shots]:
+			shots += 1
+			G.pc.free_pos = Hive.hive_p + Vector3(0, 30.0, 34.0) if shots == 1 else c + (Hive.hive_p - c).normalized() * 30.0 + Vector3(0, 40.0, 0)
+			var look2: Vector3 = Hive.hive_p if shots == 1 else c
+			var dv2 = look2 - G.pc.free_pos
+			G.pc.free_yaw = atan2(dv2.x, dv2.z)
+			G.pc.free_pitch = atan2(dv2.y, Vector2(dv2.x, dv2.z).length())
+			await _wait(0.6)
+			await _snap(pic, "hive_%s_%d" % [kind, shots])
+		if "--dbg" in OS.get_cmdline_user_args() and int(t) % 10 == 0:
+			var mm = G.soldiers.filter(func(m): return m.team == 0 and not m.zombie and m.state != "dead")
+			var inb = mm.filter(func(m): return Doors.building_at(m.pos) >= 0).size()
+			var see = mm.filter(func(m): return m.vis_t != null).size()
+			var zs = G.soldiers.filter(func(z): return z.zombie and z.state != "dead")
+			var near = zs.filter(func(z): return G.dist2d(z.pos, c) < 30.0).size()
+			var states = {}
+			for m in mm:
+				states[m.state] = int(states.get(m.state, 0)) + 1
+			if Levels.on:
+				var mf = {}
+				var zf = {}
+				for m in mm:
+					var kf = ("f%d" % Levels.storey_of(m.pos)) if Levels.inside(m.pos, 0.0) else "out"
+					mf[kf] = int(mf.get(kf, 0)) + 1
+				for z in zs:
+					var kz = ("f%d" % Levels.storey_of(z.pos)) if Levels.inside(z.pos, 0.0) else "out"
+					zf[kz] = int(zf.get(kz, 0)) + 1
+				var gap = 1e9
+				for m in mm:
+					for z in zs:
+						if not z.has_meta("hive"):
+							gap = minf(gap, m.pos.distance_to(z.pos))
+				var tags = {}
+				for m in mm:
+					var tg = str(m.order.get("tag", "?")) if m.order != null else "none"
+					tags[tg] = int(tags.get(tg, 0)) + 1
+				print("%s DBG %3.0f s floors: men %s orders %s | dead %s (waiting on the order: %s) | nearest man to one of the dead %.0f m | lost so far %d" % [tag, t, str(mf), str(tags), str(zf), str(Hive.order != null and Hive.order["hold"]), gap, Hive.lost])
+			print("%s DBG %3.0f s: men %d (indoors %d, see an enemy %d, states %s, shots fired so far %d) | dead up %d, within 30 m of the middle %d | order %s | boarded %d+%d" % [tag, t, mm.size(), inb, see, str(states), int(Stats.teams[0].get("shots", 0)), zs.size(), near, str(Hive.order != null), Modes.boarded_n, Modes.doors_n])
+		if t >= next_log:
+			next_log += 60.0
+			print("%s %2.0f min: %s | spawned %d, lost %d, soldiers killed %d | bought %s" % [tag, t / 60.0, Hive.status(), Hive.spawned, Hive.lost, Hive.men_killed, str(bought)])
+	print("%s RESULT: %s after %.1f min | %s | spawned %d, lost %d, soldiers killed %d of %d | bought %s | men lost to %s" % [tag, ("over: the %s won" % ("horde" if G.win_team == 1 else "living")) if G.over else "still going", t / 60.0, Hive.status(), Hive.spawned, Hive.lost, Hive.men_killed, Hive.men0, str(bought), str(Modes.lost_to)])
+	get_tree().quit()
+
 # --zlessontest [--pic=DIR]: the zombie lesson played through by doing what each step asks
 func _zlesson_test() -> void:
 	await _wait(0.5)
 	stop_attract()
 	G.ui.title.visible = false
 	G.ui.menu.visible = false
-	ZLesson.start()
+	ZLesson.start(_arg("kind", "town"))
 	var pic = _arg("pic", "")
 	if pic != "":
 		# (pictures only: the first card, then straight to the one that takes hold of you)
@@ -5477,6 +5615,14 @@ func _zlesson_test() -> void:
 			if pic != "" and last in [0, 3, 4]:
 				await _wait(1.2 if last != 3 else 9.0)
 				await _snap(pic, "zlesson_%d" % (last + 1))
+		if ZLesson.kind == "office":
+			# (the Ministry's: the one thing it asks for is Up a floor, on its second card)
+			if ZLesson.step_i == 1 and acted < 1 and ZLesson.t_step > 6.0:
+				acted = 1
+				G.ui.message(Modes.shop("keep", Vector3.ZERO))
+			if ZLesson.step_i == 3 and ZLesson.t_step > 2.0:
+				ZLesson.stop()
+			continue
 		match ZLesson.step_i:
 			0:
 				if acted < 0 and ZLesson.t_step > 2.0:
@@ -5692,6 +5838,43 @@ func _react_test() -> void:
 			why4.append("state %s, sees an enemy %s, %.1f m off, dead within 7 m %s, line blocked %s, still to rise %s" % [g4.state, str(g4.vis_t != null), G.dist2d(g4.pos, hp4), str(Modes._zombie_within(g4.pos, 7.0)), str(G.blocked(g4.head_pos(), hp4 + Vector3(0, 0.1, 0))), str(b4.has_meta("will_rise"))])
 	await _wait(16.0)
 	print("REACTTEST making sure: %d bodies with a man 3.5 m off: shot through the head by him %d, got up %d | six seconds in: %s" % [pairs3, Modes.made_sure - ms0, Modes.turned_n - tn0, " || ".join(why4)])
+	# ---- the order: three bitten bodies, the men 25 m off and told to make sure
+	Modes.rising = []
+	var was_b = G.builder
+	G.builder = false          # (the men were held still for the parts before this one)
+	for i in range(6):
+		spawn_soldier(0, p0.x + i * 2.0, p0.z + 55.0, "rifle")
+	await _wait(0.5)
+	var live5 = G.soldiers.filter(func(m): return m.team == 0 and not m.zombie and m.state == "alive")
+	var nb = mini(2, live5.size() / 3)
+	var os0 = Modes.made_sure
+	var tn5 = Modes.turned_n
+	for i in range(nb):
+		var q6: Vector3 = _free_spot(Vector3(p0.x + i * 10.0, 0, p0.z + 30.0))
+		var v6 = live5[i]
+		v6.move_to(Vector3(q6.x, G.world.ground_y(q6.x, q6.z), q6.z))
+	await _wait(0.4)
+	for i in range(nb):
+		live5[i].hp = 0.0
+		Combat.kill(live5[i], null, false)
+		Modes._killed_by_dead(live5[i], null, true)
+	var k6 = 0
+	for m in live5.slice(nb):
+		if is_instance_valid(m) and m.state == "alive":
+			var q7: Vector3 = _free_spot(Vector3(p0.x + k6 * 2.0, 0, p0.z + 55.0))
+			m.move_to(Vector3(q7.x, G.world.ground_y(q7.x, q7.z), q7.z))
+			m.order = {"mode": "move", "point": m.pos}
+			k6 += 1
+	await _wait(1.0)
+	var said6 = Modes.make_sure([])
+	var marks6 = Modes.rising.filter(func(r): return r.get("mark") != null and is_instance_valid(r["mark"])).size()
+	await _wait(24.0)
+	if "--dbg" in OS.get_cmdline_user_args():
+		for r in Modes.rising:
+			var sm = r.get("man")
+			print("ORDERDBG body %s rise in %.0f s | man %s" % [str(r["s"].parts[1].global_position.snapped(Vector3(0.1, 0.1, 0.1))), float(r["t"]) - G.sim_time, ("%s at %s, %.1f m off, order %s, task %s, blocked %s" % [sm.state, str(sm.pos.snapped(Vector3(0.1, 0.1, 0.1))), G.dist2d(sm.pos, r["s"].parts[2].global_position), str(sm.order), str(sm.task), str(G.blocked(sm.head_pos(), r["s"].parts[2].global_position + Vector3(0, 0.1, 0)))]) if sm != null and is_instance_valid(sm) else "none"])
+	G.builder = was_b
+	print("REACTTEST the order: %d bitten bodies (marked: %d), the men 25 m off | \"%s\" | shot through the head in the next 24 s: %d, got up %d" % [nb, marks6, said6, Modes.made_sure - os0, Modes.turned_n - tn5])
 	get_tree().quit()
 
 # --zedwalk: do their feet stay put? Twelve of the dead walk at a man for ten seconds; for each foot, how

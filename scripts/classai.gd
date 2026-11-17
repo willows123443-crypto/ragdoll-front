@@ -536,9 +536,20 @@ static func _rifle_grenade(s, known: bool, threat: Vector3) -> void:
 	var d = G.dist2d(p, s.pos)
 	if d < 28.0 or d > 115.0 or randf() < 0.5:
 		return
+	var to3 = G.flat(p - s.pos).normalized()
 	for f in G.soldiers:
-		if f.team == s.team and f.state != "dead" and G.dist2d(f.pos, p) < 9.0:
+		if f.team != s.team or f.state == "dead" or f == s:
+			continue
+		if G.dist2d(f.pos, p) < (12.0 if G.mode == "horde" else 9.0):
 			return
+		# (nobody of his own close in front of the muzzle either: a man was killed at five metres by one
+		# that never got away)
+		var fv = G.flat(f.pos - s.pos)
+		if fv.length() < 8.0 and fv.normalized().dot(to3) > 0.6:
+			return
+	# (and a clear way out for it: nothing solid in the first six metres of its climb)
+	if G.blocked(s.head_pos() + Vector3(0, 0.1, 0), s.head_pos() + to3 * 6.0 + Vector3(0, 2.0, 0)):
+		return
 	s.aim_yaw = atan2(p.x - s.pos.x, p.z - s.pos.z)
 	Combat.launch_rifle_grenade(s, s.head_pos() + Vector3(0, 0.1, 0), p + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2)))
 	s.rgren -= 1

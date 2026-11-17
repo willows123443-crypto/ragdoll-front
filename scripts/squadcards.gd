@@ -240,7 +240,7 @@ func _card(i: int) -> Dictionary:
 	return cards[i]
 
 func _process(dt: float) -> void:
-	var show = G.started and G.player == null and not G.ui.menu_open() and not G.editor.active and not G.over
+	var show = G.started and G.player == null and not G.ui.menu_open() and not G.editor.active and not G.over and Hive.on == ""
 	var qs = G.pc.my_squads() if show else []
 	visible = show and not qs.is_empty()
 	if not visible:

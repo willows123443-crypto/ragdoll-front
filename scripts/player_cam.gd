@@ -143,7 +143,12 @@ func possess(s) -> void:
 	if s == null or s.state == "dead":
 		G.ui.message("Pick a living soldier")
 		return
-	if not Rules.free_tools() and s.team != 0:
+	if Hive.on != "":
+		# (playing the horde: any one of the dead but the heart of the hive, and none of the living)
+		if not s.zombie or s.has_meta("hive"):
+			G.ui.message("Pick one of the dead")
+			return
+	elif not Rules.free_tools() and s.team != 0:
 		G.ui.message("That's one of theirs: pick one of your own soldiers")
 		return
 	if G.mode == "commander" and s.team != 0:
@@ -197,6 +202,9 @@ func leave_soldier() -> void:
 		G.ui.tool = "sel"
 
 func player_update(s) -> void:
+	if s.zombie:
+		Hive.player_zombie(s, cam_yaw, mouse_down)
+		return
 	var W = s.W
 	# one of the dead has hold of you: no walking, no shooting, only wrenching at it (F or Space)
 	if s.grab_t > 0.0:
@@ -1063,6 +1071,8 @@ func _key(k: int) -> void:
 			leave_soldier()
 		elif k == KEY_ESCAPE:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		elif s.zombie:
+			pass            # (one of the dead has no magazine to change, no grenade and no knife)
 		elif k == KEY_R and s.state == "alive":
 			if not s.start_reload() and s.reserve <= 0:
 				G.ui.message("No spare magazines")
@@ -1265,12 +1275,24 @@ func use_tool(screen: Vector2) -> void:
 	var d = cam.project_ray_normal(screen)
 	var hit = G.ray(o, o + d * 400.0, G.L_WORLD)
 	var tool = G.ui.tool
-	if not Rules.free_tools() and G.mode != "commander" and not (tool in ["sel", "ctl", "mv"] or tool.begins_with("b:") or tool.begins_with("sup:") or tool.begins_with("h:") or tool in ["up", "camo", "rep", "dis"]):
+	if not Rules.free_tools() and G.mode != "commander" and not (tool in ["sel", "ctl", "mv"] or tool.begins_with("z:") or tool.begins_with("b:") or tool.begins_with("sup:") or tool.begins_with("h:") or tool in ["up", "camo", "rep", "dis"]):
 		return
 	if G.mode == "commander" and not (tool == "sel" or tool.begins_with("b:") or tool.begins_with("sup:") or tool.begins_with("r:") or tool in ["up", "camo", "rep", "dis"]):
 		return
 	if tool == "ctl":
 		possess(pick_soldier(o, d))
+		return
+	if tool.begins_with("z:"):
+		if Hive.on != "" and not hit.is_empty():
+			var zp: Vector3 = hit.position
+			match tool:
+				"z:rally":
+					G.ui.message(Hive.rally(zp, true))
+				"z:attack":
+					G.ui.message(Hive.rally(zp, false))
+				"z:pit":
+					G.ui.message(Hive.dig(zp))
+			G.ui._dock_points()
 		return
 	if tool == "mvA" or tool == "mvB" or tool == "mv":
 		var team = 0 if tool == "mvA" else (1 if tool == "mvB" else _build_team())

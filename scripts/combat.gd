@@ -251,6 +251,12 @@ static func _cap(s, maxv: float) -> void:
 static func hit_soldier(s, part: int, point: Vector3, dir: Vector3, dmg: float, attacker, force: float) -> void:
 	if attacker != null and not is_instance_valid(attacker):
 		attacker = null
+	# The heart of the hive is under a mound of itself. A round does a twentieth of what it would to one
+	# of the dead, and from further off than 22 m next to nothing: they have to come in close and stay
+	# there, a party of them for the best part of a minute (or burn it, or blow it up). At full damage
+	# six riflemen beside it had it dead in seven seconds.
+	if s.has_meta("hive"):
+		dmg *= 0.05 if attacker == null or G.dist2d(attacker.pos, s.pos) <= 22.0 else 0.005
 	var b: RigidBody3D = s.parts[part]
 	var imp = dir * force * 1.6
 	if s.state == "dead":
@@ -408,7 +414,10 @@ static func kill(s, attacker, head: bool) -> void:
 	# zombie mode: kills earn points to spend between waves
 	if G.mode == "horde" and s.zombie and attacker != null and attacker.team == 0:
 		Support.earn(0, Modes.kill_pay(s))
+	if G.mode == "horde" and s.zombie:
+		Hive.dead_lost(s)
 	if G.mode == "horde" and not s.zombie and s.team == 0:
+		Hive.man_lost(s)
 		# (what the men are lost to, and where: for the self-played battles' logs)
 		var by = "other"
 		if attacker != null and attacker.zombie:
@@ -858,7 +867,7 @@ static func throw_grenade(s, target: Vector3, type: String, cook: float = 0.0) -
 				if o.zombie and o.state != "dead" and G.dist2d(o.pos, s.pos) < 7.0 and absf(o.pos.y - s.pos.y) < 2.5:
 					crowded = true
 					break
-		if type == "frag" and (crowded or friend_near(s, target, 9.0 if G.mode == "horde" else 7.0) != null or (G.mode == "horde" and not s.is_player and G.dist2d(s.pos, target) < 12.0)):
+		if type == "frag" and (crowded or friend_near(s, target, 12.0 if G.mode == "horde" else 7.0) != null or (G.mode == "horde" and not s.is_player and G.dist2d(s.pos, target) < 14.0)):
 			s.nade_cd = maxf(s.nade_cd, 4.0)
 			held_n += 1
 			return
@@ -888,7 +897,7 @@ static func release_throw(s) -> void:
 	if s.state != "alive":
 		return
 	# (a second look as it leaves his hand: the men he's throwing past have had a second and more to move)
-	if pend[1] == "frag" and not s.is_player and friend_near(s, pend[0], 7.5 if G.mode == "horde" else 5.5) != null:
+	if pend[1] == "frag" and not s.is_player and friend_near(s, pend[0], 10.0 if G.mode == "horde" else 5.5) != null:
 		s.nade_cd = maxf(s.nade_cd, 4.0)
 		s.throw_t = 0.0
 		held_n += 1

@@ -12,6 +12,15 @@ static var panel: PanelContainer = null
 static var head: Label = null
 static var body: Label = null
 static var d = {}
+static var kind = "town"
+
+# The Ministry's own lesson: the three things that are different there.
+const STEPS_OFFICE = [
+	["The foot of the stairs", "In the Ministry the men don't string themselves out along the windows. Each takes a place round the foot of one staircase, facing out down the corridors, and comes back to it when he has finished boarding. Watch them take their places."],
+	["Up a floor", "Twelve of the dead are coming in. In Supplies press Up a floor: every man goes up the nearest stairs and takes a place a few metres back from the head of them, facing it. (Left alone, the men go up by themselves when a floor is overrun.)"],
+	["The head of the stairs", "They can only come up the stairs, one or two at a time, into the guns. When the floor below is clear again the men go back down by themselves."],
+	["That's the Ministry", "Three floors: there are two more retreats like that one before there is nowhere left to go. Press Start the waves when you are ready."],
+]
 
 const STEPS = [
 	["Get indoors", "The dead come in waves, from one side at a time, and in the open they come from everywhere. At the bottom of the screen open Supplies and press To the keep: every man runs to the house in the middle and holds it."],
@@ -22,10 +31,14 @@ const STEPS = [
 	["That's all you need", "Ten waves, each bigger than the last, and a giant with the tenth. In the Ministry the men hold the foot of the stairs and go up a floor when it is lost. Press Start the waves when you are ready."],
 ]
 
-static func start() -> void:
+static func steps() -> Array:
+	return STEPS_OFFICE if kind == "office" else STEPS
+
+static func start(which: String = "town") -> void:
 	stop(false)
+	kind = which
 	starting = true
-	G.main.start_game({"map": "town", "mode": "horde", "size": 8, "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+	G.main.start_game({"map": kind, "mode": "horde", "size": 10 if kind == "office" else 8, "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
 	starting = false
 	on = true
 	step_i = -1
@@ -101,14 +114,23 @@ static func _build_panel() -> void:
 static func _next() -> void:
 	if not on:
 		return
-	if step_i >= STEPS.size() - 1:
+	if step_i >= steps().size() - 1:
 		stop()
 		return
 	step_i += 1
 	t_step = 0.0
-	head.text = "ZOMBIE LESSON  ·  %d of %d  ·  %s" % [step_i + 1, STEPS.size(), STEPS[step_i][0].to_upper()]
-	body.text = STEPS[step_i][1]
+	head.text = "%s  ·  %d of %d  ·  %s" % ["THE MINISTRY" if kind == "office" else "ZOMBIE LESSON", step_i + 1, steps().size(), steps()[step_i][0].to_upper()]
+	body.text = steps()[step_i][1]
 	G.audio.order_tick(true)
+	if kind == "office":
+		match step_i:
+			1:
+				d["fb0"] = Modes.fall_backs
+				d["up_t"] = -1.0
+				Modes.horde_side = randi() % 4
+				Modes.horde_left = 12
+				Modes.horde_spawn_t = 0.0
+		return
 	match step_i:
 		0:
 			d["fb0"] = Modes.fall_backs
@@ -136,6 +158,28 @@ static func _done_with_it() -> void:
 			if z.has_meta("lesson"):
 				z.remove_meta("lesson")
 
+static func _step_office(_dt: float) -> void:
+	var men = G.soldiers.filter(func(m): return m.team == 0 and not m.zombie and m.state == "alive")
+	match step_i:
+		0:
+			var at = 0
+			for m in men:
+				var li = int(m.get_meta("lobby_i", -1))
+				if li >= 0 and li < Modes.lobby_spots.size() and G.dist2d(m.pos, Modes.lobby_spots[li]["p"]) < 2.0:
+					at += 1
+			if (at >= mini(6, men.size()) and t_step > 6.0) or t_step > 40.0:
+				_next()
+		1:
+			if float(d["up_t"]) < 0.0 and (Modes.fall_backs > int(d["fb0"]) or Modes.ups > 0):
+				d["up_t"] = t_step
+			if float(d["up_t"]) >= 0.0:
+				var up = men.filter(func(m): return Levels.inside(m.pos, 0.0) and Levels.storey_of(m.pos) >= 1).size()
+				if (up >= men.size() and t_step - float(d["up_t"]) > 3.0) or t_step - float(d["up_t"]) > 40.0:
+					_next()
+		2:
+			if t_step > 4.0 and Modes.horde_left <= 0 and _dead_up() == 0:
+				_next()
+
 static func _dead_up() -> int:
 	return G.soldiers.filter(func(z): return z.zombie and z.state != "dead").size()
 
@@ -148,6 +192,9 @@ static func step(dt: float) -> void:
 	t_step += dt
 	# no wave of its own while the lesson is on
 	Modes.horde_t = maxf(Modes.horde_t, 30.0)
+	if kind == "office":
+		_step_office(dt)
+		return
 	match step_i:
 		0:
 			if Modes.fall_backs > int(d["fb0"]) and t_step > 1.0:

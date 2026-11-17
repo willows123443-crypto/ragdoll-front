@@ -78,8 +78,12 @@ static func reset() -> void:
 	last_kills = 0
 	buy_t = 0.0
 	bought = {}
+	for r0 in rising:
+		if r0.get("mark") != null and is_instance_valid(r0["mark"]):
+			r0["mark"].queue_free()
 	rising = []
 	rise_said = -1
+	ordered_sure = 0
 	feeds = 0
 	turned_n = 0
 	put_down = 0
@@ -90,8 +94,6 @@ static func reset() -> void:
 	lobby_p = null
 	lobby_spots = []
 	lobby_t = 0.0
-	rear = []
-	rear_first = []
 	downs = 0
 	for r in rocks:
 		if is_instance_valid(r["node"]):
@@ -120,7 +122,9 @@ static func setup() -> void:
 			if not G.tutorial:
 				G.ui.message("You command Alpha. Destroy the enemy HQ to win. Buy squads, vehicles and fire support with supply points, and mark out buildings for your engineers. Click or drag to select, right-click to send. WASD pans, wheel zooms, Q/E turn")
 		"horde":
-			if horde_endless:
+			if Hive.starting:
+				pass
+			elif horde_endless:
 				G.ui.message("Hold out! Wave after wave of the dead are coming, each bigger than the last, for as long as you can stand. Best here: wave %d" % horde_best(G.map_id))
 			else:
 				G.ui.message("Hold out! Wave after wave of the dead are coming. Survive %d waves" % HORDE_WIN)
@@ -738,6 +742,10 @@ static func fall_back() -> String:
 # The Ministry: everyone who is below the next floor up goes to it and holds the heads of the stairs.
 # With nobody inside yet, everyone goes in to the ground floor.
 # (to_k: the storey to fall back to; left out, it's the one above the lowest any of them is on)
+# (Going up in two parties was tried: each man with a place of his own beyond the stair head, the half
+# furthest from the stairs going first and the half nearest holding the foot of them until the first
+# were up. Five Ministry battles on Hard with it were all lost, in waves 6, 8, 9, 9 and 9; of the six
+# before it, three were won. It is taken out.)
 static func _fall_back_floor(to_k: int = -1) -> String:
 	var low = 99
 	for s in G.soldiers:
@@ -748,149 +756,57 @@ static func _fall_back_floor(to_k: int = -1) -> String:
 		return "Everyone is on the %s already: there is nowhere left to go" % Levels.names[top].to_lower()
 	var k = to_k if to_k >= 0 else (0 if low == 99 else low + 1)
 	var mid = Vector3(Levels.rect.position.x + Levels.rect.size.x * 0.5, Levels.floor_y(k), Levels.rect.position.y + Levels.rect.size.y * 0.5)
-	var movers = []
+	var n = 0
 	for s in G.soldiers:
 		if s.team != 0 or s.state != "alive" or s.is_player or s.vehicle != null or s.zombie:
 			continue
 		if Levels.inside(s.pos, 0.0) and Levels.storey_of(s.pos) >= k:
 			continue
-		movers.append(s)
-	if k == 0:
-		for s in movers:
-			var near0 = mid + Vector3(randf_range(-0.3, 0.3) * Levels.rect.size.x, 0, randf_range(-0.25, 0.25) * Levels.rect.size.y)
-			s.order = {"mode": "move", "point": Levels.spot_on(0, near0, 4.0), "tag": "fallback"}
-			s.decide_t = 0.0
-			_drop_job(s)
-		G.audio.radio_click()
-		if movers.is_empty():
-			return "Everyone is on the %s or above already" % Levels.names[k].to_lower()
-		return "%d men falling back to the %s" % [movers.size(), Levels.names[k].to_lower()]
-	# Up a floor. Each man goes up the staircase nearest him and takes a place of his own in the corridor
-	# beyond the head of it: in sight of the stair head, five to thirteen metres back, no two within a
-	# pace and a half of each other. (They used to pick a place at random within reach of the landing,
-	# two or three on the same spot as often as not, and what came up the stairs was among them at once.)
-	# And they go in two parties. The half furthest from the foot of the stairs goes first and takes the
-	# far places; the half nearest it turns outwards and holds the foot of the stairs until most of the
-	# first party is in place above, or eight seconds, and then follows to the nearer places.
-	var foot = {}       # stair index -> its men, [man, distance to the foot]
-	for s in movers:
-		var bi2 = -1
-		var bd = 1e9
-		for i in range(Levels.stairs.size()):
-			var st = Levels.stairs[i]
-			if int(st["k"]) == k - 1 and G.dist2d(st["b"], s.pos) < bd:
-				bd = G.dist2d(st["b"], s.pos)
-				bi2 = i
-		if bi2 < 0:
-			s.order = {"mode": "move", "point": Levels.spot_on(k, mid, 5.0), "tag": "fallback"}
-			s.decide_t = 0.0
-			_drop_job(s)
-			continue
-		if not foot.has(bi2):
-			foot[bi2] = []
-		foot[bi2].append([s, G.dist2d(Levels.stairs[bi2]["a"], s.pos)])
-	rear = []
-	rear_first = []
-	rear_k = k
-	var sent = 0
-	var held = 0
-	for bi2 in foot:
-		var st = Levels.stairs[bi2]
-		var head: Vector3 = st["b"]
-		# the places: rings round the stair head, the far ones first
-		var places = []
-		for r in [12.0, 10.5, 9.0, 7.5, 6.0, 5.0]:
-			for i in range(14):
-				var a2 = i * TAU / 14.0 + r * 0.9
-				var q: Vector3 = Levels.spot_on(k, head + Vector3(cos(a2), 0, sin(a2)) * r, 0.7)
-				var dq = G.dist2d(q, head)
-				if dq < 4.5 or dq > 13.5 or G.blocked(q + Vector3(0, 1.4, 0), head + Vector3(0, 1.0, 0)):
-					continue
-				var clash = false
-				for o in places:
-					if G.dist2d(o, q) < 1.5:
-						clash = true
-						break
-				if not clash:
-					places.append(q)
-		var men2: Array = foot[bi2]
-		men2.sort_custom(func(x, y): return x[1] > y[1])
-		var first_n = men2.size() if men2.size() <= 3 or "--onegroup" in OS.get_cmdline_user_args() else (men2.size() + 1) / 2
-		for j in range(men2.size()):
-			var s = men2[j][0]
-			var p: Vector3
-			if j < places.size():
-				p = places[j]
-			else:
-				# (more men than places in sight of it: anywhere within reach, as before)
-				p = Levels.spot_on(k, head, 6.0)
-			var ord = {"mode": "move", "point": p, "tag": "fallback"}
-			var tn = G.flat(head - p)
+		var near = mid + Vector3(randf_range(-0.3, 0.3) * Levels.rect.size.x, 0, randf_range(-0.25, 0.25) * Levels.rect.size.y)
+		if k > 0:
+			# the head of the nearest staircase that comes up to that floor
+			var bd = 1e9
+			for st in Levels.stairs:
+				if int(st["k"]) == k - 1 and G.dist2d(st["b"], s.pos) < bd:
+					bd = G.dist2d(st["b"], s.pos)
+					near = st["b"]
+		var p = Levels.spot_on(k, near, 5.0 if k > 0 else 4.0)
+		var ord = {"mode": "move", "point": p, "tag": "fallback"}
+		if k > 0:
+			# Somewhere he can see the head of the stairs from, a few metres back, and facing it: that is
+			# where they will come up, one or two at a time. (They used to stand anywhere within five
+			# metres of it, round a corner as often as not, looking wherever they had been looking.)
+			# (Well back from it if there is anywhere: four to nine metres. At two to five, what came up
+			# the stairs was at arm's length as it arrived, and in battle after battle on Hard the men
+			# who had gone up were all dead within a minute of the first of the dead reaching the top.)
+			var found = false
+			for tries in range(12):
+				var q = Levels.spot_on(k, near, 9.0)
+				var dq = G.dist2d(q, near)
+				if dq > 4.0 and dq < 9.5 and not G.blocked(q + Vector3(0, 1.4, 0), near + Vector3(0, 1.0, 0)):
+					p = q
+					found = true
+					break
+			for tries in range(8):
+				if found:
+					break
+				var q = Levels.spot_on(k, near, 5.0)
+				var dq = G.dist2d(q, near)
+				if dq > 2.0 and dq < 5.5 and not G.blocked(q + Vector3(0, 1.4, 0), near + Vector3(0, 1.0, 0)):
+					p = q
+					break
+			ord["point"] = p
+			var tn = G.flat(near - p)
 			if tn.length() > 0.5:
 				ord["face"] = atan2(tn.x, tn.z)
-			_drop_job(s)
-			if j < first_n:
-				s.order = ord
-				s.decide_t = 0.0
-				rear_first.append(s)
-				sent += 1
-			else:
-				var out = G.flat(s.pos - st["a"])
-				var hold = {"mode": "move", "point": Levels.spot_on(k - 1, s.pos, 0.6), "tag": "cover", "in": Levels.bi}
-				if out.length() > 0.5:
-					hold["face"] = atan2(out.x, out.z)
-				s.order = hold
-				s.decide_t = 0.0
-				rear.append({"s": s, "ord": ord})
-				held += 1
-	rear_t = G.sim_time + 8.0
+		s.order = ord
+		s.decide_t = 0.0
+		_drop_job(s)
+		n += 1
 	G.audio.radio_click()
-	if sent + held == 0:
+	if n == 0:
 		return "Everyone is on the %s or above already" % Levels.names[k].to_lower()
-	if held > 0:
-		return "%d men falling back to the %s, %d holding the foot of the stairs behind them" % [sent, Levels.names[k].to_lower(), held]
-	return "%d men falling back to the %s" % [sent, Levels.names[k].to_lower()]
-
-# the party holding the foot of the stairs follows when most of the first is in place above, or after
-# eight seconds, or at once if the dead are on top of it (three within four metres of a man of it)
-static var rear: Array = []
-static var rear_first: Array = []
-static var rear_k = 0
-static var rear_t = 0.0
-static var rear_released = 0
-
-static func _rear_tick() -> void:
-	if rear.is_empty():
-		return
-	var up = 0
-	var live = 0
-	for s in rear_first:
-		if is_instance_valid(s) and s.state == "alive":
-			live += 1
-			if Levels.inside(s.pos, 0.0) and Levels.storey_of(s.pos) >= rear_k:
-				up += 1
-	var go = G.sim_time > rear_t or live == 0 or up * 10 >= live * 7
-	if not go:
-		for r in rear:
-			var s = r["s"]
-			if not is_instance_valid(s) or s.state != "alive":
-				continue
-			var close = 0
-			for z in G.soldiers:
-				if z.zombie and z.state == "alive" and G.dist2d(z.pos, s.pos) < 4.0 and absf(z.pos.y - s.pos.y) < 1.5:
-					close += 1
-			if close >= 3:
-				go = true
-				break
-	if not go:
-		return
-	for r in rear:
-		var s = r["s"]
-		if is_instance_valid(s) and s.state == "alive" and s.order != null and str(s.order.get("tag", "")) == "cover":
-			s.order = r["ord"]
-			s.decide_t = 0.0
-	rear = []
-	rear_released += 1
+	return "%d men falling back to the %s" % [n, Levels.names[k].to_lower()]
 
 # ---------------------------------------------------------------- records, regrouping, rebuilding
 # the furthest wave beaten on each map, kept between sessions
@@ -902,9 +818,11 @@ static func horde_best(map_id: String, d: int = -1) -> int:
 const DIFF_NAMES = ["Easy", "Normal", "Hard"]
 const DIFF_TIPS = ["A quarter fewer of them, weaker and a little slower, and a kill pays more",
 	"As it was",
-	"Tougher and a little faster, a kill pays less, and in the open nearly half as many again"]
+	"Tougher and a little faster, a kill pays less, and in the open a fifth more of them"]
 
 static func diff() -> int:
+	if Hive.on != "":
+		return 1          # (playing the horde, the setting makes the living harder or easier, not the dead)
 	return clampi(int(G.settings.get("horde_diff", 1)), 0, 2)
 
 static func rec_key(map_id: String, d: int = -1) -> String:
@@ -1201,17 +1119,19 @@ static func _keep_rest(dt: float) -> void:
 static func _horde(dt: float) -> void:
 	_step_drops(dt)
 	_step_rocks(dt)
-	_fortify(dt)
-	_auto_up(dt)
-	_upstairs_duty(dt)
-	_lobby(dt)
-	_rear_tick()
+	# (soldiers come to burn out a hive don't board up, hold the stairs or fall back up them)
+	if Hive.on != "defend":
+		_fortify(dt)
+		_auto_up(dt)
+		_upstairs_duty(dt)
+		_lobby(dt)
 	_rise_tick(dt)
 	_quartermaster(dt)
 	if Levels.on and not horde_in and G.sim_time > 1.0:
 		# (the Ministry: nobody waits for them in the yard)
 		horde_in = true
-		fall_back()
+		if Hive.on != "defend":
+			fall_back()
 		# (the view starts well back from the building, looking down on it: it used to start with the
 		# camera against the south wall)
 		if G.player == null and not G.pc.rts:
@@ -1221,7 +1141,12 @@ static func _horde(dt: float) -> void:
 			G.pc.free_pos = from
 			G.pc.free_yaw = atan2(dv.x, dv.z)
 			G.pc.free_pitch = atan2(dv.y, Vector2(dv.x, dv.z).length())
-		G.ui.message("The Ministry. Your men board up the ground floor and hold the foot of the stairs together; when the floor is overrun they go up by themselves (\"Up a floor\" in Supplies sends them up sooner). A man bitten to death gets up again unless he is shot through the head")
+		if Hive.on == "":
+			G.ui.message("The Ministry. Your men board up the ground floor and hold the foot of the stairs together; when the floor is overrun they go up by themselves (\"Up a floor\" in Supplies sends them up sooner). A man bitten to death gets up again unless he is shot through the head")
+	# (playing the horde: no waves, and its own ways of winning and losing)
+	if Hive.on != "":
+		Hive.step(dt)
+		return
 	var dead_walking = 0
 	for s in G.soldiers:
 		if s.team == 1 and s.state != "dead":
@@ -1354,7 +1279,11 @@ static func wave_size(w: int) -> int:
 		n *= lerpf(0.5, 0.72, clampf((w - 1) / 4.0, 0.0, 1.0))
 		return int(round(n * [0.75, 1.0, 1.0][diff()]))
 	n += 0.5 * w * w
-	return int(round(n * [0.75, 1.0, 1.45][diff()]))
+	# (Hard in the open was nearly half as many again, each nearly half as tough again: left to
+	# themselves the men were never in danger, 25 of 30 left at the worst moment of any wave, and the
+	# battle was simply long: 1,150 of the dead and still in the tenth wave after 45 minutes on the
+	# town and the city. A fifth more of them now; as tough and as fast as they were.)
+	return int(round(n * [0.75, 1.0, 1.2][diff()]))
 
 static func _spawn_pack(n: int) -> void:
 	var W = G.world
@@ -2301,7 +2230,9 @@ static func _quartermaster(dt: float) -> void:
 			if free >= 8:
 				_buy("shotgun", mid, "shotguns for the corridors")
 			return
-	if n < (G.team_size * 3 + 4) / 5 or (n < want and not guns_due):
+	# (besieged by a horde that somebody is playing, nobody gets in to join them: guns, not men)
+	var siege = Hive.on != ""
+	if not siege and (n < (G.team_size * 3 + 4) / 5 or (n < want and not guns_due)):
 		if free >= 32 and want - n >= 4:
 			_buy("men5", mid, "we're %d and want to be %d" % [n, want])
 		elif free >= 7:
@@ -2313,7 +2244,7 @@ static func _quartermaster(dt: float) -> void:
 	elif Levels.on and shotguns < n / 5:
 		if free >= 8:
 			_buy("shotgun", mid, "shotguns for the corridors")
-	elif free >= 60 and n < MEN_CAP - 4:
+	elif free >= 60 and n < MEN_CAP - 4 and not siege:
 		_buy("men5", mid, "points to spare")
 	elif free >= 40 and lmgs < n / 2:
 		_buy("lmg", mid, "points to spare: more machine guns")
@@ -2485,6 +2416,13 @@ static func make_zombie(z, kind: String = "walker") -> void:
 
 # what a zombie does instead of thinking: lurch towards the nearest living soldier, then lunge and bite
 static func zombie_tick(s) -> void:
+	# the heart of the hive: it is one of the dead, and it does nothing but stand there
+	if s.has_meta("hive"):
+		AI.stop_move(s)
+		s.want = Vector3.ZERO
+		s.lunge_t = 0.0
+		s.ready_ = false
+		return
 	s.think -= G.DT
 	if s.think <= 0.0:
 		s.think = 0.7
@@ -2493,6 +2431,11 @@ static func zombie_tick(s) -> void:
 		for o in G.soldiers:
 			if o.team != s.team and (o.state == "alive" or o.state == "wounded" or o.state == "down" or o.state == "getup"):
 				var d = G.dist2d(o.pos, s.pos)
+				# (playing the horde: a man on another floor is further off than he looks on the plan.
+				# The dead round the hive's heart all chose the soldiers standing on the floor below
+				# them and took no notice of the ones shooting them from eight metres away.)
+				if Hive.on != "" and absf(o.pos.y - s.pos.y) > 1.7:
+					d += 12.0 + absf(o.pos.y - s.pos.y) * 5.0
 				if d < bd:
 					bd = d
 					best = o
@@ -2546,6 +2489,10 @@ static func zombie_tick(s) -> void:
 	if s.groan_t <= 0.0:
 		s.groan_t = randf_range(3.0, 8.0)
 		G.audio.groan(s.pos, "brute" if s.ztype == "brute" else ("screech" if s.ztype == "runner" and randf() < 0.5 else "groan"))
+	# (playing the horde: told to gather somewhere or go for a place, it does that unless one of the
+	# living is within reach of it)
+	if Hive.on != "" and Hive.obey(s, t):
+		return
 	if t == null or not is_instance_valid(t) or t.state == "dead":
 		AI.stop_move(s)
 		s.want = Vector3.ZERO
@@ -3005,7 +2952,72 @@ static func _killed_by_dead(t, z, bitten: bool = true) -> void:
 	if not bitten or "--norise" in OS.get_cmdline_user_args():
 		return
 	t.set_meta("will_rise", true)
-	rising.append({"s": t, "t": G.sim_time + randf_range(30.0, 45.0)})
+	# (a mark over him, so it can be seen which of the bodies will get up: it turns red for the last ten seconds)
+	var mk = Label3D.new()
+	mk.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	mk.no_depth_test = true
+	mk.fixed_size = true
+	mk.pixel_size = 0.0011
+	mk.font_size = 20
+	mk.outline_size = 7
+	mk.outline_modulate = Color(0, 0, 0, 0.85)
+	mk.text = "bitten"
+	mk.modulate = Color(0.95, 0.8, 0.35)
+	G.main.add_child(mk)
+	mk.global_position = t.parts[1].global_position + Vector3(0, 0.9, 0)
+	rising.append({"s": t, "t": G.sim_time + randf_range(30.0, 45.0), "mark": mk})
+
+# "Make sure": the nearest free man to each body that will get up is sent to it, to put a round through
+# its head. The men you have selected, or all of them if none are. He goes back to what he was doing after.
+static var ordered_sure = 0
+
+static func make_sure(sel: Array) -> String:
+	var todo = rising.filter(func(r): return is_instance_valid(r["s"]) and r["s"].has_meta("will_rise") and (r.get("man") == null or not is_instance_valid(r["man"]) or r["man"].state != "alive"))
+	if rising.is_empty():
+		return "None of the bodies is going to get up"
+	if todo.is_empty():
+		return "A man is on his way to each of them already"
+	var pool = []
+	for s in (sel if not sel.is_empty() else G.soldiers):
+		if is_instance_valid(s) and s.team == 0 and not s.zombie and not s.is_player and s.state == "alive" and s.vehicle == null and s.grab_t <= 0.0 and not (s.task in ["medic", "stretcher", "drag", "help_walk"]):
+			pool.append(s)
+	for r in rising:
+		pool.erase(r.get("man"))
+	var n = 0
+	for r in todo:
+		var b = r["s"]
+		var bp: Vector3 = b.parts[1].global_position
+		var best = null
+		var bd = 60.0
+		for s in pool:
+			var d = G.dist2d(s.pos, bp) + absf(s.pos.y - bp.y) * 4.0
+			if d < bd:
+				bd = d
+				best = s
+		if best == null:
+			continue
+		pool.erase(best)
+		r["man"] = best
+		r["prev"] = best.order
+		_drop_job(best)
+		var to = G.flat(best.pos - bp)
+		var stand = bp + (to.normalized() * 2.5 if to.length() > 2.6 else to)
+		best.order = {"mode": "move", "point": Vector3(stand.x, bp.y, stand.z), "tag": "sure"}
+		if Levels.on and Levels.inside(bp, 0.0):
+			best.order["in"] = Levels.bi
+		best.decide_t = 0.0
+		n += 1
+	G.audio.radio_click()
+	if n == 0:
+		return "Nobody is free to do it"
+	return "%d %s going to make sure of the bitten" % [n, "man" if n == 1 else "men"]
+
+static func _sure_done(r: Dictionary) -> void:
+	var sm = r.get("man")
+	if sm != null and is_instance_valid(sm) and sm.state == "alive" and sm.order != null and str(sm.order.get("tag", "")) == "sure":
+		sm.order = r.get("prev")
+		sm.decide_t = 0.0
+	r.erase("man")
 
 static func _rise_tick(dt: float) -> void:
 	rise_t -= dt
@@ -3014,9 +3026,34 @@ static func _rise_tick(dt: float) -> void:
 	rise_t = 0.5
 	for r in rising.duplicate():
 		var b = r["s"]
+		var mk = r.get("mark")
 		if not is_instance_valid(b) or not (b in G.soldiers) or not b.has_meta("will_rise"):
 			rising.erase(r)
+			if mk != null and is_instance_valid(mk):
+				mk.queue_free()
+			_sure_done(r)
 			continue
+		if mk != null and is_instance_valid(mk):
+			var left = float(r["t"]) - G.sim_time
+			mk.global_position = b.parts[1].global_position + Vector3(0, 0.9, 0)
+			mk.text = "bitten" if left > 10.0 else "getting up"
+			mk.modulate = Color(0.95, 0.8, 0.35) if left > 10.0 else Color(1.0, 0.35, 0.25)
+		# the man told to make sure of this one: at it as soon as he is within five metres and can see
+		# it, whatever else is about (short of one of the dead within arm's reach of him)
+		var sm = r.get("man")
+		if sm != null and is_instance_valid(sm) and sm.state == "alive" and G.sim_time < float(r["t"]):
+			var hp4: Vector3 = b.parts[2].global_position
+			if G.dist2d(sm.pos, hp4) < 5.0 and absf(sm.pos.y - hp4.y) < 1.8 and not G.blocked(sm.head_pos(), hp4 + Vector3(0, 0.1, 0)) and not _zombie_within(sm.pos, 2.5):
+				var dir4 = (hp4 - sm.head_pos()).normalized()
+				sm.aim_yaw = atan2(dir4.x, dir4.z)
+				G.audio.shot(sm.head_pos() + dir4 * 0.6, sm.W)
+				G.fx.muzzle(sm.head_pos() + dir4 * 0.6, false)
+				Combat.hit_soldier(b, 2, hp4, dir4, 10.0, sm, 2.0)
+				made_sure += 1
+				ordered_sure += 1
+				continue
+		elif sm != null:
+			_sure_done(r)
 		if G.sim_time < float(r["t"]):
 			# Making sure: a man close by with none of the dead within five metres of him, and nothing he
 			# can see within eight, puts a round through the head of the body before it can get up. (With
@@ -3056,6 +3093,9 @@ static func _rise_tick(dt: float) -> void:
 			r["t"] = G.sim_time + 1.5
 			continue
 		rising.erase(r)
+		if mk != null and is_instance_valid(mk):
+			mk.queue_free()
+		_sure_done(r)
 		var bp: Vector3 = b.parts[1].global_position
 		var fy = G.world.surface_y(bp.x, bp.z, bp.y + 0.4)
 		var z = spawn_zombie("walker", bp.x, bp.z)
@@ -3435,6 +3475,8 @@ static func status_text() -> String:
 		"koth":
 			return "hill moves in %d s" % int(koth_t)
 		"horde":
+			if Hive.on != "":
+				return Hive.status()
 			var n = 0
 			for s in G.soldiers:
 				if s.team == 1 and s.state != "dead":

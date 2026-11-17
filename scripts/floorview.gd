@@ -120,9 +120,10 @@ func _process(dt: float) -> void:
 		if not is_instance_valid(s) or s.state != "alive" or not Levels.inside(s.pos, 0.3):
 			continue
 		var k2 = Levels.level_of(s.pos)
-		if s.team == 0:
+		# (when you are the horde the dead are yours and the soldiers the enemy)
+		if (s.team == 0) != (Hive.on != ""):
 			mine[k2] += 1
-		elif not Fog.hidden(s):
+		elif Hive.on != "" or not Fog.hidden(s):
 			theirs[k2] += 1
 	for e in btns:
 		var b: Button = e[0]

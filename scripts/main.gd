@@ -93,6 +93,8 @@ func _ready() -> void:
 			_horde_x_test()
 		if a == "--forttest":
 			_fort_test()
+		if a == "--keeptest":
+			_keep_test()
 		if a == "--navtest":
 			_nav_test()
 		if a == "--hordeplay":
@@ -6108,7 +6110,7 @@ func _fort_shot(dir: String) -> void:
 	Modes.fall_back()
 	for i in range(50):
 		await _wait(0.5)
-		if Modes._everyone_in(kb):
+		if Modes.all_in():
 			break
 	Support.points[0] = 30
 	G.ui.tab = "armoury"
@@ -6288,6 +6290,81 @@ func _camp_save_test() -> void:
 # are in), the dead tear the boards down to get in, men who join a shut house are found inside it, a
 # rebuilt house gets its roof back, the giant of the tenth wave, the three difficulties, a bloater's
 # burst, and what a save keeps of all that.
+# --keeptest [--map=town] [--size=16] [--seed=11] [--pic=DIR]: call everyone to the keep and see where they
+# end up: how many in each house, how close together, how many at a window looking out.
+func _keep_test() -> void:
+	await _wait(0.5)
+	stop_attract()
+	G.ui.title.visible = false
+	var pic = _arg("pic", "")
+	for size in _arg("size", "16").split(","):
+		seed(int(_arg("seed", "11")))
+		start_game({"map": _arg("map", "town"), "mode": "horde", "size": int(size), "limit": 999, "reinforce": true, "armor": "none", "teams": 2})
+		await _wait(1.5)
+		Modes.horde_t = 9999.0
+		Modes.auto_board = false
+		var kb = Modes.keep()
+		if kb < 0:
+			print("KEEPTEST %s: no keep on this map" % _arg("map", "town"))
+			continue
+		var b = G.world.buildings[kb]
+		var kp = Modes.keep_pos()
+		var said = Modes.fall_back()
+		var t_in = -1.0
+		for i in range(80):
+			await _wait(0.5)
+			if Modes.all_in():
+				t_in = (i + 1) * 0.5
+				break
+		await _wait(4.0)
+		var men = G.soldiers.filter(func(m): return m.team == 0 and not m.zombie and m.state == "alive")
+		var by = {}
+		var tight = 0
+		var at_place = 0
+		var closest = 99.0
+		for m in men:
+			var at = Doors.building_at(m.pos)
+			by[at] = int(by.get(at, 0)) + 1
+			var nn = 99.0
+			for o in men:
+				if o != m:
+					nn = minf(nn, G.dist2d(o.pos, m.pos))
+			closest = minf(closest, nn)
+			if nn < 1.0:
+				tight += 1
+			if m.order != null and m.order.get("point") != null and G.dist2d(m.pos, m.order["point"]) < 1.5:
+				at_place += 1
+		var rows = []
+		for h in by:
+			if h < 0:
+				rows.append("outside %d" % by[h])
+			else:
+				var hb = G.world.buildings[h]
+				rows.append("%s %.0f x %.0f m: %d men (room %d, places %d)" % ["the keep" if h == kb else "house %.0f m off" % G.dist2d(Vector3(hb["x"], 0, hb["z"]), kp), hb["w"], hb["d"], by[h], Modes.house_room(h, Modes.house_places(h).size()), Modes.house_places(h).size()])
+		print("KEEPTEST %s, %d men: \"%s\" | everyone indoors after %s | %s | at his place %d of %d | within a metre of another man %d, closest pair %.1f m" % [_arg("map", "town"), men.size(), said, ("%.1f s" % t_in) if t_in >= 0.0 else "more than 40 s", " | ".join(rows), at_place, men.size(), tight, closest])
+		for m in men:
+			if m.order != null and m.order.get("point") != null and (G.dist2d(m.pos, m.order["point"]) >= 1.5 or Doors.building_at(m.pos) < 0):
+				print("   KEEPTEST not at his place: man %d at (%.1f, %.1f) in building %d, %.1f m from his place (%.1f, %.1f) in building %d (ordered into %s) | task %s | move_target %s | cover %s | sees one %s" % [m.id, m.pos.x, m.pos.z, Doors.building_at(m.pos), G.dist2d(m.pos, m.order["point"]), m.order["point"].x, m.order["point"].z, Doors.building_at(m.order["point"]), str(m.order.get("in")), str(m.task), str(m.move_target), str(m.cover != null), str(m.has_seen and G.sim_time - m.seen_t < 4.0)])
+		# pressed again: nobody changes house
+		var before = {}
+		for m in men:
+			before[m] = Doors.building_at(m.pos)
+		Modes.fall_back()
+		await _wait(6.0)
+		var moved = 0
+		for m in men:
+			if is_instance_valid(m) and Doors.building_at(m.pos) != before[m]:
+				moved += 1
+		print("KEEPTEST %s, %d men: called in a second time, %d changed house" % [_arg("map", "town"), men.size(), moved])
+		if pic != "":
+			var eye = kp + Vector3(5.0, 17.0, 11.0)
+			G.pc.free_pos = eye
+			await _look(eye, kp)
+			await _wait(1.0)
+			await _snap(pic, "keep_%s" % size)
+	print("KEEPTEST done")
+	get_tree().quit()
+
 func _fort_test() -> void:
 	await _wait(0.5)
 	seed(11)
@@ -6326,7 +6403,7 @@ func _fort_test() -> void:
 	var t_in = -1.0
 	for i in range(60):
 		await _wait(0.5)
-		if Modes._everyone_in(kb):
+		if Modes.all_in():
 			t_in = (i + 1) * 0.5
 			break
 	out.append("ordered to the keep: everyone inside after %s | with no points: %d boarded, %d at work" % [("%.1f s" % t_in) if t_in >= 0.0 else "more than 30 s", Modes.boarded_n + Modes.doors_n, Modes.jobs.size()])

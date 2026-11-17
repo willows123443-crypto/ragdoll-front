@@ -131,6 +131,9 @@ static func start(kind: String, map: String) -> void:
 		elif Modes.keep() >= 0:
 			held = Modes.keep_pos()
 		Modes.board_up(held)
+		for gb in Modes.garrison:
+			var gh = W.buildings[gb]
+			Modes.board_up(Vector3(gh["x"], W.ground_y(gh["x"], gh["z"]), gh["z"]))
 		var mm = G.soldiers.filter(func(m): return m.team == 0 and not m.zombie and m.state == "alive")
 		for i in range(mm.size()):
 			if i % 5 == 1:

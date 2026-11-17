@@ -101,6 +101,7 @@ static func reset() -> void:
 	rocks = []
 	clear_drops()
 	keep_b = -1
+	garrison = []
 	check_t = 0.0
 	generals = []
 	gen_known = [null, null]
@@ -708,7 +709,55 @@ static func keep_pos() -> Vector3:
 	var b = G.world.buildings[k]
 	return Vector3(b["x"], G.world.ground_y(b["x"], b["z"]), b["z"])
 
-# everyone back to the keep (or to the middle, on a map with no building near it)
+# ---- who goes where when they're called in
+# The keep takes as many men as it has room for and the houses beside it take the rest. (Everyone used to
+# be sent to the one house, to any clear bit of its floor: sixteen men in a room eight metres across,
+# shoulder to shoulder, most of them with nothing to shoot through but the back of another man's head.)
+static var garrison: Array = []      # the houses held by that order, the keep first
+
+# Where a house can take a man: at each ground-floor window and door, a step back from it and facing out
+# through it, then clear floor a good pace from anyone already placed.
+static func house_places(k: int) -> Array:
+	var W = G.world
+	var b = W.buildings[k]
+	var y = W.ground_y(b["x"], b["z"])
+	var res = []
+	for f in _fort_list():
+		if f["b"] != k or not _fort_ok(f):
+			continue
+		var p = _stand(f)
+		if p == null:
+			continue
+		var clear = true
+		for e in res:
+			if G.dist2d(e["p"], p) < 1.5:
+				clear = false
+				break
+		if clear:
+			res.append({"p": p, "face": atan2(f["n"].x, f["n"].z)})
+	var step = 1.7
+	var nx = maxi(1, int((b["w"] - 2.0) / step))
+	var nz = maxi(1, int((b["d"] - 2.0) / step))
+	for ix in range(nx):
+		for iz in range(nz):
+			var p = Vector3(b["x"] + (float(ix) + 0.5 - nx * 0.5) * step, y, b["z"] + (float(iz) + 0.5 - nz * 0.5) * step)
+			if W.solid_at(p.x, p.z, 0.3, y) or W.astar.is_point_solid(W.nav_cell(p.x, p.z)) or Doors.building_at(p) != k:
+				continue
+			var clear = true
+			for e in res:
+				if G.dist2d(e["p"], p) < 1.6:
+					clear = false
+					break
+			if clear:
+				res.append({"p": p, "face": null})
+	return res
+
+# how many men a house holds: one to seven square metres of floor, and never more than it has places for
+static func house_room(k: int, places: int) -> int:
+	var b = G.world.buildings[k]
+	return clampi(int((b["w"] - 1.0) * (b["d"] - 1.0) / 7.0), mini(3, places), places)
+
+# everyone back to the keep and the houses round it (or to the middle, on a map with no building near it)
 static var fall_backs = 0
 static func fall_back() -> String:
 	fall_backs += 1
@@ -716,28 +765,117 @@ static func fall_back() -> String:
 		return _fall_back_floor()
 	var k = keep()
 	var c = keep_pos()
-	var n = 0
+	var men = []
 	for s in G.soldiers:
-		if s.team != 0 or s.state != "alive" or s.is_player or s.vehicle != null:
+		if s.team != 0 or s.state != "alive" or s.is_player or s.vehicle != null or s.zombie:
 			continue
-		var p = c
-		if k >= 0:
-			var b = G.world.buildings[k]
-			# (a clear bit of floor inside it)
-			for tries in range(12):
-				p = Vector3(b["x"] + randf_range(-0.5, 0.5) * (b["w"] - 2.0), c.y, b["z"] + randf_range(-0.5, 0.5) * (b["d"] - 2.0))
-				if not G.world.solid_at(p.x, p.z, 0.3, p.y) and not G.world.astar.is_point_solid(G.world.nav_cell(p.x, p.z)):
-					break
+		men.append(s)
+	garrison = []
+	if k < 0:
+		for s in men:
+			s.order = {"mode": "move", "point": G.main._free_spot(c + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6))), "tag": "fallback"}
+			s.decide_t = 0.0
+			_drop_job(s)
+		G.audio.radio_click()
+		return "%d men falling back to the middle" % men.size()
+	# the keep, then the houses within forty metres of it, nearest first, until there is room for everyone
+	var W = G.world
+	var near = []
+	for i in range(W.buildings.size()):
+		var b = W.buildings[i]
+		if i != k and b["w"] > 4.5 and b["d"] > 4.5 and G.dist2d(Vector3(b["x"], 0, b["z"]), c) < 40.0:
+			near.append(i)
+	near.sort_custom(func(p, q): return G.dist2d(Vector3(W.buildings[p]["x"], 0, W.buildings[p]["z"]), c) < G.dist2d(Vector3(W.buildings[q]["x"], 0, W.buildings[q]["z"]), c))
+	var houses = []          # {"b", "places", "room", "n"}
+	var room = 0
+	for i in [k] + near:
+		if room >= men.size():
+			break
+		var pl = house_places(i)
+		if pl.size() < 2 and i != k:
+			continue
+		var r = house_room(i, pl.size())
+		houses.append({"b": i, "places": pl, "room": r, "n": 0})
+		room += r
+	# (not room enough in all of them: every house takes its share over, up to as many as it has places)
+	var over = 0
+	while room < men.size() and over < 40:
+		over += 1
+		var grew = false
+		for h in houses:
+			if room < men.size() and h["room"] < h["places"].size():
+				h["room"] += 1
+				room += 1
+				grew = true
+		if not grew:
+			break
+	# A man already in one of them stays in it, while it has room. The rest go by turns, nearest the keep
+	# first, each to the first house on the list with a place left; whoever is left when every house is
+	# full takes cover outside the keep's walls.
+	var left = []
+	var house_of = {}
+	for s in men:
+		var at = Doors.building_at(s.pos)
+		var mine = null
+		for h in houses:
+			if h["b"] == at and h["n"] < h["room"]:
+				mine = h
+		if mine != null:
+			mine["n"] += 1
+			house_of[s] = mine
 		else:
-			p = G.main._free_spot(c + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6)))
-		s.order = {"mode": "move", "point": p, "tag": "fallback"}
-		if k >= 0:
-			s.order["in"] = k
+			left.append(s)
+	left.sort_custom(func(p, q): return G.dist2d(p.pos, c) < G.dist2d(q.pos, c))
+	var outside = 0
+	for s in left:
+		for h in houses:
+			if h["n"] < h["room"]:
+				h["n"] += 1
+				house_of[s] = h
+				break
+		if not house_of.has(s):
+			outside += 1
+	for s in men:
+		var ord = {"mode": "move", "tag": "fallback"}
+		if house_of.has(s):
+			var h = house_of[s]
+			# the nearest place in it nobody has taken
+			var bi = -1
+			var bd = 1e9
+			for i in range(h["places"].size()):
+				var e = h["places"][i]
+				if not e.get("taken", false) and G.dist2d(e["p"], s.pos) < bd:
+					bd = G.dist2d(e["p"], s.pos)
+					bi = i
+			var e2 = h["places"][bi]
+			e2["taken"] = true
+			ord["point"] = e2["p"]
+			ord["in"] = h["b"]
+			if e2["face"] != null:
+				ord["face"] = e2["face"]
+		else:
+			var kb = W.buildings[k]
+			var a = randf() * TAU
+			ord["point"] = G.main._free_spot(c + Vector3(cos(a) * (kb["w"] * 0.5 + 3.0), 0, sin(a) * (kb["d"] * 0.5 + 3.0)))
+		s.order = ord
 		s.decide_t = 0.0
 		_drop_job(s)
-		n += 1
+	for h in houses:
+		if h["n"] > 0:
+			garrison.append(h["b"])
 	G.audio.radio_click()
-	return "%d men falling back to %s" % [n, "the keep" if k >= 0 else "the middle"]
+	var others = 0
+	var other_n = 0
+	for h in houses:
+		if h["b"] != k and h["n"] > 0:
+			others += 1
+			other_n += h["n"]
+	var txt = "%d men falling back: %d to the keep" % [men.size(), houses[0]["n"]]
+	if others > 0:
+		txt += ", %d to the %s beside it" % [other_n, "house" if others == 1 else "%d houses" % others]
+	if outside > 0:
+		txt += ", %d outside its walls" % outside
+	return txt
 
 # The Ministry: everyone who is below the next floor up goes to it and holds the heads of the stairs.
 # With nobody inside yet, everyone goes in to the ground floor.
@@ -1111,7 +1249,10 @@ static func _keep_rest(dt: float) -> void:
 	if k < 0:
 		return
 	for s in G.soldiers:
-		if s.team == 0 and s.state == "alive" and Doors.building_at(s.pos) == k:
+		if s.team != 0 or s.state != "alive":
+			continue
+		var at = Doors.building_at(s.pos)
+		if at == k or (at >= 0 and at in garrison):
 			s.hp = minf(100.0, s.hp + 3.0 * dt)
 			if s.reserve < s.W["mag"] * s.W["mags"] and randf() < dt * 0.5:
 				s.reserve = mini(s.W["mag"] * s.W["mags"], s.reserve + s.W["mag"])
@@ -1636,7 +1777,7 @@ const SHOP = {
 	"man": {"name": "Extra man", "cost": 7, "tip": ""},
 	"men5": {"name": "5 extra men", "cost": 32, "tip": ""},
 	"rebuild": {"name": "Rebuild walls", "cost": 12, "tip": "Click a damaged building: the walls and floors it has lost within 14 m of the click are put back (not where someone is standing), and its roof once there are walls to carry it"},
-	"keep": {"name": "To the keep", "cost": 0, "tip": "Everyone runs to the building in the middle and holds it"},
+	"keep": {"name": "To the keep", "cost": 0, "tip": "Everyone runs to the house in the middle and the houses beside it, as many to each as it has room for, and holds them"},
 }
 
 static func shop_instant(k: String) -> bool:
@@ -1727,6 +1868,7 @@ static var forts: Array = []          # every door and ground-floor window: {"ki
 static var forts_made = false
 static var jobs: Array = []           # {"s": the man, "f": the opening, "p": where he stands, "w": time worked, "t0", "cost"}
 static var fort_t = 0.0
+static var fort_rr = 0
 static var boarded_n = 0              # windows boarded this battle
 static var doors_n = 0                # ...and doors
 static var torn_n = 0                 # planks the dead have torn down
@@ -1790,6 +1932,30 @@ static func held_building() -> int:
 			bn = cnt[b]
 			best = b
 	return best if bn >= mini(3, total) and bn > 0 else -1
+
+# Every house they hold: the ones they were sent to that still have a man in them, and the one with most
+# men in it (which is all there was before they were spread over several).
+static func held_buildings() -> Array:
+	var res = []
+	var most = held_building()
+	if most >= 0:
+		res.append(most)
+	for b in garrison:
+		if b in res:
+			continue
+		for s in G.soldiers:
+			if s.team == 0 and s.state == "alive" and not s.zombie and Doors.building_at(s.pos) == b:
+				res.append(b)
+				break
+	return res
+
+# every man is inside one of the houses they hold
+static func all_in() -> bool:
+	var hb = held_buildings()
+	for s in G.soldiers:
+		if s.team == 0 and not s.zombie and s.state != "dead" and not (Doors.building_at(s.pos) in hb):
+			return false
+	return not hb.is_empty()
 
 static func _everyone_in(b: int) -> bool:
 	for s in G.soldiers:
@@ -1859,9 +2025,12 @@ static func _fortify(dt: float) -> void:
 	if fort_t > 0.0 or not auto_board or G.over:
 		return
 	fort_t = 1.0
-	var b = held_building()
-	if b < 0 or jobs.size() >= 4:
+	# (each held house by turns, a second apart)
+	var hb = held_buildings()
+	if hb.is_empty() or jobs.size() >= 4:
 		return
+	fort_rr += 1
+	var b: int = hb[fort_rr % hb.size()]
 	var free_pts: int = Support.points[0]
 	var left: int = board_cap() - board_spent
 	for j in jobs:
@@ -1877,7 +2046,7 @@ static func _fortify(dt: float) -> void:
 		left = 99
 	if free_pts < 1:
 		return
-	var doors_ok = _everyone_in(b)
+	var doors_ok = all_in()
 	var cands = []
 	var any_win = false
 	for f in _fort_list():

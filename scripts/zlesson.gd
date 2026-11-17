@@ -23,7 +23,7 @@ const STEPS_OFFICE = [
 ]
 
 const STEPS = [
-	["Get indoors", "The dead come in waves, from one side at a time, and in the open they come from everywhere. At the bottom of the screen open Supplies and press To the keep: every man runs to the house in the middle and holds it."],
+	["Get indoors", "The dead come in waves, from one side at a time, and in the open they come from everywhere. At the bottom of the screen open Supplies and press To the keep: the men run to the house in the middle and the houses beside it, as many to each as it has room for, and hold them."],
 	["Boarding up", "The men board the windows and doors of the house they hold by themselves: a point a window, two a door, whenever there are points and none of the dead are close. Watch them do the first three. (Boarding: on, in Supplies, turns it off if you would rather keep the points.)"],
 	["Spend the points", "Every one of the dead put down pays points. In Supplies, buy an Extra man: he turns up inside with the others. Machine guns and shotguns are bought there too. Left alone, the men spend the points themselves (Buying: on)."],
 	["Hold them off", "Here come eight. Your men shoot by themselves. A man who is bitten to death gets up again as one of them half a minute or so later, unless he is shot through the head first (your men do it themselves when nothing is close)."],

@@ -68,6 +68,11 @@ func step_floor(d: int) -> void:
 	pick(clampi(k, -1, Levels.n - 1))
 
 func _process(dt: float) -> void:
+	var hp0 = Time.get_ticks_usec()
+	_process_all(dt)
+	G.hp["floor panel"] = G.hp.get("floor panel", 0) + Time.get_ticks_usec() - hp0
+
+func _process_all(dt: float) -> void:
 	var want = Levels.on and G.started and not G.over
 	if want != visible:
 		visible = want
@@ -168,6 +173,6 @@ func _draw() -> void:
 			continue
 		var sp = cam.unproject_position(at)
 		var col: Color = G.team_color(s.team) if G.has_method("team_color") else (Hud.INFO if s.team == 0 else Hud.BAD)
-		draw_circle(sp, 5.0, Color(0, 0, 0, 0.55))
-		draw_circle(sp, 3.6, Color(col, 0.8))
+		Hud.dot(self, sp, 5.0, Color(0, 0, 0, 0.55))
+		Hud.dot(self, sp, 3.6, Color(col, 0.8))
 		draw_string(font, sp + Vector2(6, 4), str(Levels.level_of(s.pos)), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.85))

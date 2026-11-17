@@ -240,6 +240,11 @@ func _card(i: int) -> Dictionary:
 	return cards[i]
 
 func _process(dt: float) -> void:
+	var hp0 = Time.get_ticks_usec()
+	_process_all(dt)
+	G.hp["squad cards"] = G.hp.get("squad cards", 0) + Time.get_ticks_usec() - hp0
+
+func _process_all(dt: float) -> void:
 	var show = G.started and G.player == null and not G.ui.menu_open() and not G.editor.active and not G.over and Hive.on == ""
 	var qs = G.pc.my_squads() if show else []
 	visible = show and not qs.is_empty()
@@ -287,8 +292,10 @@ func _draw_men(c: Control) -> void:
 	var q = (c.get_meta("q") if c.has_meta("q") else null)
 	if q == null:
 		return
+	# (Two passes: the little guns, then the bars. Drawn man by man the texture changed twice a man,
+	# and every change is another draw call: sixteen a card, nine cards.)
 	var x = 0.0
-	var n = 0
+	var bars = []
 	for m in q["members"]:
 		if not is_instance_valid(m):
 			continue
@@ -311,11 +318,12 @@ func _draw_men(c: Control) -> void:
 			wid = "medic"
 		var tex = Icons.get_icon(wid)
 		c.draw_texture_rect(tex, Rect2(x, 0, 15, 6), false, col)
-		c.draw_rect(Rect2(x + 1, 8, 13, 3), Color(0, 0, 0, 0.5))
-		if m.state != "dead":
-			c.draw_rect(Rect2(x + 1, 8, 13.0 * clampf(m.hp / 100.0, 0.05, 1.0), 3), pip)
+		bars.append([x, -1.0 if m.state == "dead" else clampf(m.hp / 100.0, 0.05, 1.0), pip])
 		x += 16.5
-		n += 1
+	for e in bars:
+		c.draw_rect(Rect2(e[0] + 1, 8, 13, 3), Color(0, 0, 0, 0.5))
+		if e[1] >= 0.0:
+			c.draw_rect(Rect2(e[0] + 1, 8, 13.0 * e[1], 3), e[2])
 	# a vehicle crew's card has a fuel gauge on the right
 	var cv = crew_vehicle(q)
 	if cv != null and not cv.spec.get("static", false) and not cv.spec.get("air", false):

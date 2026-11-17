@@ -21,6 +21,26 @@ const SIZE_TITLE = 16
 
 static var _cache = {}
 
+# A filled circle as a textured rectangle. Every draw_circle is a draw call of its own; rectangles that
+# share a texture go to the graphics card together, and in a browser each draw call of the HUD's costs
+# far more than one of the battle's (a dot for every man on the map was a hundred of them a picture).
+static var _dot_tex: Texture2D = null
+
+static func dot_tex() -> Texture2D:
+	if _dot_tex == null:
+		var n = 16
+		var img = Image.create(n, n, false, Image.FORMAT_RGBA8)
+		for y in range(n):
+			for x in range(n):
+				var d = Vector2(x + 0.5 - n * 0.5, y + 0.5 - n * 0.5).length()
+				img.set_pixel(x, y, Color(1, 1, 1, clampf(7.5 - d, 0.0, 1.0)))
+		_dot_tex = ImageTexture.create_from_image(img)
+	return _dot_tex
+
+static func dot(ci: CanvasItem, p: Vector2, r: float, col: Color) -> void:
+	var h = r * 8.0 / 7.0
+	ci.draw_texture_rect(dot_tex(), Rect2(p - Vector2(h, h), Vector2(h, h) * 2.0), false, col)
+
 # a rounded panel with a thin edge; `edge` tints the edge (pass a colour to mark what it is)
 static func pill(bg: Color = BG, edge: Color = EDGE, radius: int = RADIUS) -> StyleBoxFlat:
 	var key = "%s|%s|%d" % [bg.to_html(), edge.to_html(), radius]

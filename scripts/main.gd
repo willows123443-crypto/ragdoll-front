@@ -1154,8 +1154,12 @@ func _process(dt: float) -> void:
 	_step_cap(dt)
 	if G.started:
 		_cycle_step(dt * Engine.time_scale)
+	var hp0 = Time.get_ticks_usec()
 	G.fx.update_callouts(dt)
+	var hp1 = Time.get_ticks_usec()
 	G.ui.update_hud(dt)
+	G.hp["callouts"] = G.hp.get("callouts", 0) + hp1 - hp0
+	G.hp["HUD labels and cards"] = G.hp.get("HUD labels and cards", 0) + Time.get_ticks_usec() - hp1
 	for f in point_flags:
 		if is_instance_valid(f):
 			f.get_child(1).rotation.y = sin(Time.get_ticks_msec() * 0.003 + f.position.x) * 0.3
@@ -7520,6 +7524,7 @@ func _perf_run() -> void:
 		Soldier.pf = [0, 0, 0, 0]
 		Soldier.pfx = [0, 0]
 		AI.pf = {}
+		G.hp = {}
 		# (how the time divides: physics steps run, pictures drawn and wall-clock seconds over the window)
 		if "--nophys" in OS.get_cmdline_user_args():
 			PhysicsServer3D.set_active(false)      # (an experiment: what a step costs with the physics engine itself switched off)
@@ -7537,6 +7542,16 @@ func _perf_run() -> void:
 			G.ui.root.visible = false
 		var sim_n = 0
 		var sim_k = 0
+		var cv_sum = 0
+		var cv_obj = 0
+		var v3_sum = 0
+		var sh_sum = 0
+		for hide in _arg("hide", "").split(",", false):
+			var hn = G.ui.get(hide)
+			if hn != null and hn is CanvasItem:
+				hn.visible = false
+				hn.set_process(false)
+				print("PERF hidden: ", hide)
 		while G.sim_time - tw0 < secs_w:
 			await get_tree().process_frame
 			if look_away:
@@ -7561,11 +7576,41 @@ func _perf_run() -> void:
 						sim_n += 1
 			phys_sum += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
 			phys_n += 1
+			cv_sum += get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_CANVAS, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
+			cv_obj += get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_CANVAS, Viewport.RENDER_INFO_OBJECTS_IN_FRAME)
+			v3_sum += get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
+			sh_sum += get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_SHADOW, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
 		var wall = (Time.get_ticks_msec() - w0) / 1000.0
 		var steps = Engine.get_physics_frames() - pf0
 		var drawn = Engine.get_process_frames() - df0
 		print("PERF %d clock: %.1f s of battle took %.1f s (%.0f%% of full speed) | %d pictures drawn (%.1f a second, %.0f ms each) | %.2f physics steps to a picture, %.1f ms a step on average | so about %.0f ms of each picture is physics and %.0f ms the drawing and the rest | draw calls %d" % [k, secs_w, wall, 100.0 * secs_w / maxf(wall, 0.01), drawn, drawn / maxf(wall, 0.01), 1000.0 * wall / maxf(drawn, 1),
 			float(steps) / maxf(drawn, 1), phys_sum / maxf(phys_n, 1), float(steps) / maxf(drawn, 1) * phys_sum / maxf(phys_n, 1), 1000.0 * wall / maxf(drawn, 1) - float(steps) / maxf(drawn, 1) * phys_sum / maxf(phys_n, 1), int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))])
+		if _arg("pic", "") != "":
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(_arg("pic", "") + "/perf_%d.png" % k)
+		var hpl = ""
+		var hpk = G.hp.keys()
+		hpk.sort_custom(func(a, b): return G.hp[a] > G.hp[b])
+		for hk in hpk:
+			hpl += "%s %.2f  " % [hk, G.hp[hk] / 1000.0 / maxf(drawn, 1)]
+		print("PERF %d each picture, outside the steps (ms): %s" % [k, hpl])
+		if "--cvdump" in OS.get_cmdline_user_args():
+			var cvrows = []
+			for ch in G.ui.root.get_children():
+				if not (ch is CanvasItem) or not ch.is_visible_in_tree():
+					continue
+				var cvn = 1
+				for d in ch.find_children("*", "CanvasItem", true, false):
+					if d.is_visible_in_tree():
+						cvn += 1
+				cvrows.append([cvn, "%s (%s)" % [ch.name, ch.get_class()]])
+			cvrows.sort_custom(func(a, b): return a[0] > b[0])
+			print("PERF canvas items showing, by part of the HUD: ", cvrows.slice(0, 14))
+			var cvoth = []
+			for ch in get_tree().root.get_children():
+				cvoth.append("%s %d" % [ch.name, ch.find_children("*", "CanvasItem", true, false).filter(func(d): return d.is_visible_in_tree()).size()])
+			print("PERF canvas items by root child: ", cvoth)
+		print("PERF %d draw calls a picture: HUD %.0f (for %.0f things), the battle %.0f, its shadows %.0f" % [k, cv_sum / maxf(phys_n, 1), cv_obj / maxf(phys_n, 1), v3_sum / maxf(phys_n, 1), sh_sum / maxf(phys_n, 1)])
 		if near_cam:
 			print("PERF %d near: the living fully simulated at any moment, on average: %.1f" % [k, float(sim_n) / maxf(sim_k, 1)])
 		var n = maxi(tick_n, 1)

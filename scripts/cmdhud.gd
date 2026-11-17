@@ -46,6 +46,11 @@ func active() -> bool:
 		and (G.ui.tacmap == null or not G.ui.tacmap.visible)
 
 func _process(dt: float) -> void:
+	var hp0 = Time.get_ticks_usec()
+	_process_all(dt)
+	G.hp["commander view, working out"] = G.hp.get("commander view, working out", 0) + Time.get_ticks_usec() - hp0
+
+func _process_all(dt: float) -> void:
 	# (this runs while the game is paused, which the battle's own frame doesn't: the lesson's panel and
 	# the row of orders get out of the way of the menu and the battle setup screen)
 	var in_menu = G.ui.menu_open()
@@ -265,8 +270,8 @@ func _man_dots() -> void:
 		if p.x < 0.0 or p.y < 0.0 or p.x > vs.x or p.y > vs.y or _on_panel(p):
 			continue
 		var col: Color = G.team_color(s.team).lightened(0.25)
-		draw_circle(p, 3.6, Color(0, 0, 0, 0.55 * a))
-		draw_circle(p, 2.5, Color(col.r, col.g, col.b, 0.95 * a))
+		Hud.dot(self, p, 3.6, Color(0, 0, 0, 0.55 * a))
+		Hud.dot(self, p, 2.5, Color(col.r, col.g, col.b, 0.95 * a))
 
 func _on_panel(p: Vector2) -> bool:
 	for c in [G.ui.dock, G.ui.squad_cards, G.ui.order_card]:
@@ -330,8 +335,8 @@ func _status_pills() -> void:
 			continue
 		var col: Color = st[1]
 		if high:
-			draw_circle(p, 5.0, Color(0, 0, 0, 0.6))
-			draw_circle(p, 3.5, col)
+			Hud.dot(self, p, 5.0, Color(0, 0, 0, 0.6))
+			Hud.dot(self, p, 3.5, col)
 			continue
 		# (the squad's number, the same one as on its card, and a stem down to the man it's pinned to)
 		var num = card_order.find(q) + 1
@@ -373,11 +378,11 @@ func _casualty_marks() -> void:
 			if not cam.is_position_behind(hp3):
 				var hp2 = cam.unproject_position(hp3)
 				draw_dashed_line(hp2, p, Color(0.5, 1.0, 0.6, 0.85), 1.6, 6.0)
-				draw_circle(hp2, 5.0, Color(0, 0, 0, 0.6))
+				Hud.dot(self, hp2, 5.0, Color(0, 0, 0, 0.6))
 				draw_rect(Rect2(hp2 - Vector2(3.5, 1.2), Vector2(7.0, 2.4)), Color(0.5, 1.0, 0.6))
 				draw_rect(Rect2(hp2 - Vector2(1.2, 3.5), Vector2(2.4, 7.0)), Color(0.5, 1.0, 0.6))
-		draw_circle(p, r + 2.5, Color(0, 0, 0, 0.6))
-		draw_circle(p, r, Color(0.96, 0.96, 0.93))
+		Hud.dot(self, p, r + 2.5, Color(0, 0, 0, 0.6))
+		Hud.dot(self, p, r, Color(0.96, 0.96, 0.93))
 		draw_rect(Rect2(p - Vector2(5.5, 1.8), Vector2(11.0, 3.6)), Color(0.85, 0.12, 0.1))
 		draw_rect(Rect2(p - Vector2(1.8, 5.5), Vector2(3.6, 11.0)), Color(0.85, 0.12, 0.1))
 		var life = clampf(s.hp / 60.0, 0.05, 1.0)
@@ -385,6 +390,11 @@ func _casualty_marks() -> void:
 		draw_arc(p, r + 4.5, -PI / 2.0, -PI / 2.0 + TAU * life, 24, ring, 2.2)
 
 func _draw() -> void:
+	var hp0 = Time.get_ticks_usec()
+	_draw_all()
+	G.hp["commander view, drawing"] = G.hp.get("commander view, drawing", 0) + Time.get_ticks_usec() - hp0
+
+func _draw_all() -> void:
 	if not active():
 		return
 	_man_dots()
@@ -446,9 +456,9 @@ func _minimap(r: Rect2) -> void:
 			continue
 		var p4 = _w2m(s.pos, r, b)
 		if s.team == 0:
-			draw_circle(p4, 1.6, G.team_color(0).lightened(0.45))
+			Hud.dot(self, p4, 1.8, G.team_color(0).lightened(0.45))
 		elif not Fog.hidden(s):
-			draw_circle(p4, 2.2, Color(1.0, 0.3, 0.25))
+			Hud.dot(self, p4, 2.4, Color(1.0, 0.3, 0.25))
 	# squads: an arrow from where they are the way they're heading
 	for q in G.squads:
 		if q["team"] != 0:
@@ -464,7 +474,7 @@ func _minimap(r: Rect2) -> void:
 		c4 /= men.size()
 		vel /= men.size()
 		var pc = _w2m(c4, r, b)
-		draw_circle(pc, 5.0, Color(0.15, 0.3, 0.6, 0.9))
+		Hud.dot(self, pc, 5.0, Color(0.15, 0.3, 0.6, 0.9))
 		draw_string(font, pc + Vector2(-3, 4), str(q["id"] + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(1, 1, 1))
 		if G.flat(vel).length() > 0.5:
 			var d = Vector2(vel.x / b.size.x, vel.z / b.size.y).normalized()

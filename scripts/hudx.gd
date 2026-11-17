@@ -15,6 +15,11 @@ func _process(_dt: float) -> void:
 		queue_redraw()
 
 func _draw() -> void:
+	var hp0 = Time.get_ticks_usec()
+	_draw_all()
+	G.hp["minimap and bubbles"] = G.hp.get("minimap and bubbles", 0) + Time.get_ticks_usec() - hp0
+
+func _draw_all() -> void:
 	var vs = get_viewport_rect().size
 	_bubbles()
 	# (the commander view has its own whole-map minimap)
@@ -56,6 +61,7 @@ func _minimap(r: Rect2) -> void:
 		var hd = b["d"] / 2.0
 		var pts3 = PackedVector2Array([rot.call(Vector3(b["x"] - hw, 0, b["z"] - hd)), rot.call(Vector3(b["x"] + hw, 0, b["z"] - hd)), rot.call(Vector3(b["x"] + hw, 0, b["z"] + hd)), rot.call(Vector3(b["x"] - hw, 0, b["z"] + hd))])
 		_poly_clip(pts3, r, Color(0.1, 0.1, 0.09, 0.9))
+	_flush_polys()
 	for pt in Obj.points:
 		var p = rot.call(pt["p"])
 		if r.has_point(p):
@@ -85,9 +91,9 @@ func _minimap(r: Rect2) -> void:
 			continue
 		if s.team == my_team:
 			var same_squad = G.player != null and is_instance_valid(G.player) and s.squad == G.player.squad
-			draw_circle(p4, 2.6 if same_squad else 1.8, Color(0.6, 1.0, 0.6) if same_squad else G.team_color(s.team).lightened(0.35))
+			Hud.dot(self, p4, 2.8 if same_squad else 2.0, Color(0.6, 1.0, 0.6) if same_squad else G.team_color(s.team).lightened(0.35))
 		elif show_all or _seen(s.pos, my_team):
-			draw_circle(p4, 2.4, Color(1.0, 0.3, 0.25))
+			Hud.dot(self, p4, 2.6, Color(1.0, 0.3, 0.25))
 	# you, at the centre, pointing up
 	_poly(PackedVector2Array([mid + Vector2(0, -6), mid + Vector2(4, 4), mid + Vector2(-4, 4)]), Color(1, 1, 1))
 	draw_rect(r, Color(0, 0, 0, 0.9), false, 2.0)
@@ -96,8 +102,29 @@ func _minimap(r: Rect2) -> void:
 func _poly_clip(pts: PackedVector2Array, r: Rect2, col: Color) -> void:
 	var clip = PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
 	for poly in Geometry2D.intersect_polygons(pts, clip):
-		if poly.size() >= 3 and not Geometry2D.triangulate_polygon(poly).is_empty():
-			draw_colored_polygon(poly, col)
+		if poly.size() < 3:
+			continue
+		var tri = Geometry2D.triangulate_polygon(poly)
+		if tri.is_empty():
+			continue
+		# (kept back and sent as one mesh by _flush_polys: a polygon each was a draw call each)
+		var base = mp_pts.size()
+		mp_pts.append_array(poly)
+		for i in range(poly.size()):
+			mp_cols.append(col)
+		for t in tri:
+			mp_idx.append(base + t)
+
+var mp_pts = PackedVector2Array()
+var mp_cols = PackedColorArray()
+var mp_idx = PackedInt32Array()
+
+func _flush_polys() -> void:
+	if not mp_idx.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), mp_idx, mp_pts, mp_cols)
+	mp_pts = PackedVector2Array()
+	mp_cols = PackedColorArray()
+	mp_idx = PackedInt32Array()
 
 func _seen(p: Vector3, team: int) -> bool:
 	for s in G.soldiers:
@@ -144,7 +171,7 @@ func _compass(c: Vector2, yaw: float) -> void:
 			var om = wrapf(bm - heading, -180.0, 180.0)
 			if absf(om) <= 60.0:
 				var xm = c.x - om / 60.0 * (w / 2.0)
-				draw_circle(Vector2(xm, r.position.y + 12), 3.5, Color(1.0, 0.4, 0.35) if m.state == "wounded" else Color(0.55, 1.0, 0.55))
+				Hud.dot(self, Vector2(xm, r.position.y + 12), 3.5, Color(1.0, 0.4, 0.35) if m.state == "wounded" else Color(0.55, 1.0, 0.55))
 	_poly(PackedVector2Array([Vector2(c.x, r.end.y - 2), Vector2(c.x - 5, r.end.y + 5), Vector2(c.x + 5, r.end.y + 5)]), Color(1, 0.85, 0.3))
 
 # ---------------------------------------------------------------- squad status

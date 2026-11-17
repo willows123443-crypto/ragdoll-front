@@ -2,6 +2,7 @@ extends Node
 # Global state and helpers shared by every script (autoload "G").
 
 var DT = 1.0 / 60.0   # far soldiers in big battles tick at half rate with a doubled step
+var hp = {}             # where a picture's time goes outside the battle's own step, in microseconds (--perfrun prints it)
 var STEP = 1.0 / 60.0  # one tick of the battle: a sixtieth of a second, or a thirtieth in a big battle under load (see main._rate)
 const GRAV = -9.8
 

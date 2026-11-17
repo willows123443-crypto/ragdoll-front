@@ -630,6 +630,11 @@ func cycle_contact() -> void:
 	G.ui.message("Squad %d: %s  ·  %d of your squads in contact%s" % [nxt + 1, SquadCards.doing(qs[nxt])[0], hot.size(), "  ·  End for the next" if hot.size() > 1 else ""])
 
 func _process(dt: float) -> void:
+	var hp0 = Time.get_ticks_usec()
+	_process_all(dt)
+	G.hp["camera and player"] = G.hp.get("camera and player", 0) + Time.get_ticks_usec() - hp0
+
+func _process_all(dt: float) -> void:
 	_cut_tick(dt)
 	_update_rings()
 	_rts_overlay()

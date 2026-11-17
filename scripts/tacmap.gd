@@ -96,7 +96,7 @@ func _draw() -> void:
 		if s.state == "dead" or s.state == "riding":
 			continue
 		if s.team == 0:
-			draw_circle(_to_screen(s.pos), 2.5, G.team_color(0).lightened(0.3))
+			Hud.dot(self, _to_screen(s.pos), 2.5, G.team_color(0).lightened(0.3))
 		elif s.team != 0 and _known_pos(s.pos):
 			var e = _to_screen(s.pos)
 			draw_line(e - Vector2(3, 3), e + Vector2(3, 3), G.team_color(s.team), 2.0)

@@ -232,6 +232,11 @@ func deafen(k: float) -> void:
 		ui_player2.play()
 
 func _process(dt: float) -> void:
+	var hp0 = Time.get_ticks_usec()
+	_process_all(dt)
+	G.hp["sound"] = G.hp.get("sound", 0) + Time.get_ticks_usec() - hp0
+
+func _process_all(dt: float) -> void:
 	if web:
 		_loop_wrap(menu_player)
 		_loop_wrap(horde_player)
